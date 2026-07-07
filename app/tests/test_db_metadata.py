@@ -1,3 +1,6 @@
+from sqlalchemy import Enum as SAEnum
+from sqlalchemy import UniqueConstraint
+
 from app.models.base import Base
 
 
@@ -43,11 +46,14 @@ def test_terms_agreements_constraints_and_enum_values() -> None:
     unique_constraints = {
         constraint.name: tuple(column.name for column in constraint.columns)
         for constraint in terms_agreements.constraints
-        if constraint.__class__.__name__ == "UniqueConstraint"
+        if isinstance(constraint, UniqueConstraint)
     }
 
     assert unique_constraints["uq_terms_agreements_user_terms_type"] == ("user_id", "terms_type")
-    assert terms_agreements.columns["terms_type"].type.enums == [
+
+    terms_type_type = terms_agreements.columns["terms_type"].type
+    assert isinstance(terms_type_type, SAEnum)
+    assert terms_type_type.enums == [
         "service",
         "privacy",
         "sensitive_health",
