@@ -6,8 +6,8 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.db.session import build_database_url
+import app.models
 from app.models.base import Base
-from app.models.users import User
 
 config = context.config
 config.set_main_option("sqlalchemy.url", build_database_url())
