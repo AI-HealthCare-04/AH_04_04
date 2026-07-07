@@ -1,0 +1,2 @@
+class HealthProfileRepository:
+    pass
