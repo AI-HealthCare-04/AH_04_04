@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.db.session import build_database_url
 from app.models.base import Base
+from app.models.terms import Term, TermsAgreement
 from app.models.users import User
 
 config = context.config
