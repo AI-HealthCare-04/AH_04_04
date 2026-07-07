@@ -98,13 +98,14 @@ def upgrade() -> None:
         "terms_agreements",
         sa.Column("agreement_id", sa.BigInteger(), autoincrement=True, nullable=False),
         sa.Column("user_id", sa.BigInteger(), nullable=False),
-        sa.Column("terms_type", sa.Enum("service", "privacy", "health_sensitive", "marketing", name="terms_type_enum"), nullable=False),
+        sa.Column("terms_type", sa.Enum("service", "privacy", "sensitive_health", "marketing", name="terms_type_enum"), nullable=False),
         sa.Column("is_required", sa.Boolean(), nullable=False),
         sa.Column("agreed", sa.Boolean(), nullable=False),
         sa.Column("version", sa.String(length=30), nullable=False),
         sa.Column("agreed_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["users.user_id"]),
         sa.PrimaryKeyConstraint("agreement_id"),
+        sa.UniqueConstraint("user_id", "terms_type", name="uq_terms_agreements_user_terms_type"),
     )
     op.create_index("ix_terms_agreements_user_id", "terms_agreements", ["user_id"])
 

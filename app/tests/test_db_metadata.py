@@ -37,6 +37,24 @@ def test_user_identity_does_not_store_email_or_age() -> None:
     assert "birth_date" in health_profile_columns
 
 
+def test_terms_agreements_constraints_and_enum_values() -> None:
+    terms_agreements = Base.metadata.tables["terms_agreements"]
+
+    unique_constraints = {
+        constraint.name: tuple(column.name for column in constraint.columns)
+        for constraint in terms_agreements.constraints
+        if constraint.__class__.__name__ == "UniqueConstraint"
+    }
+
+    assert unique_constraints["uq_terms_agreements_user_terms_type"] == ("user_id", "terms_type")
+    assert terms_agreements.columns["terms_type"].type.enums == [
+        "service",
+        "privacy",
+        "sensitive_health",
+        "marketing",
+    ]
+
+
 def test_timestamp_columns_have_defaults() -> None:
     for table in Base.metadata.tables.values():
         if "created_at" in table.columns:

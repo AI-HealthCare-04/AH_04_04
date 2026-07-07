@@ -31,7 +31,7 @@ class SoundSize(StrEnum):
 class TermsType(StrEnum):
     SERVICE = "service"
     PRIVACY = "privacy"
-    HEALTH_SENSITIVE = "health_sensitive"
+    SENSITIVE_HEALTH = "sensitive_health"
     MARKETING = "marketing"
 
 
