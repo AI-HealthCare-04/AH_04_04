@@ -1,41 +1,31 @@
-from datetime import date, datetime
-from typing import Annotated
+from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 
 from app.dtos.base import BaseSerializerModel
-from app.models.users import Gender
-from app.core.validators import optional_after_validator
-from app.core.validators import validate_birthday, validate_phone_number
-
-
-class UserUpdateRequest(BaseModel):
-    name: Annotated[str | None, Field(None, min_length=2, max_length=20)]
-    email: Annotated[
-        EmailStr | None,
-        Field(None, max_length=40),
-    ]
-    phone_number: Annotated[
-        str | None,
-        Field(None, description="Available Format: +8201011112222, 01011112222, 010-1111-2222"),
-        optional_after_validator(validate_phone_number),
-    ]
-    birthday: Annotated[
-        date | None,
-        Field(None, description="Date Format: YYYY-MM-DD"),
-        optional_after_validator(validate_birthday),
-    ]
-    gender: Annotated[
-        Gender | None,
-        Field(None, description="'MALE' or 'FEMALE'"),
-    ]
 
 
 class UserInfoResponse(BaseSerializerModel):
-    id: int
-    name: str
-    email: str
-    phone_number: str
-    birthday: date
-    gender: Gender
+    user_id: int
+    provider: str
+    nickname: str
+    onboarding_status: str
     created_at: datetime
+
+
+class UserUpdateRequest(BaseModel):
+    nickname: str | None = Field(default=None, min_length=1, max_length=50)
+
+
+class UserSettingsResponse(BaseModel):
+    notification_enabled: bool = True
+    font_size: str = "default"
+    sound_size: str = "default"
+    music_enabled: bool = True
+
+
+class UserSettingsUpdateRequest(BaseModel):
+    notification_enabled: bool | None = None
+    font_size: str | None = None
+    sound_size: str | None = None
+    music_enabled: bool | None = None

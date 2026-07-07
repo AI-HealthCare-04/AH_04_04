@@ -12,3 +12,7 @@ wheels/
 .coverage
 *.coverage
 .coverage.*
+.pytest_cache/
+_local_template_backup_*/
+app/ml/artifacts/*
+!app/ml/artifacts/.gitkeep

@@ -1,7 +1,7 @@
 [project]
-name = "ai-health-example"
+name = "ah-04-04"
 version = "0.1.0"
-description = "AI 헬스케어 파이널 프로젝트 예시용"
+description = "Senior lifestyle challenge MVP backend"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -9,20 +9,13 @@ dependencies = [
     "pydantic>=2.12.5",
     "pydantic-settings>=2.12.0",
     "python-dateutil>=2.9.0.post0",
-    "redis>=7.1.0",
     "tomlkit>=0.14.0",
+    "tzdata>=2025.2",
 ]
 
 [dependency-groups]
-ai = [
-    "scikit-learn>=1.8.0",
-    "torch",
-    "torchvision",
-    "torchaudio",
-    "sentence-transformers>=5.2.0"
-]
 app = [
-    "aerich>=0.9.2",
+    "alembic>=1.17.2",
     "asyncmy>=0.2.11",
     "bcrypt<=4.0.1",
     "fastapi[standard]>=0.128.0",
@@ -30,7 +23,7 @@ app = [
     "orjson>=3.11.5",
     "passlib[bcrypt]>=1.7.4",
     "pyjwt>=2.10.1",
-    "tortoise-orm>=0.25.3",
+    "sqlalchemy[asyncio]>=2.0.45",
     "uvicorn>=0.40.0",
 ]
 dev = [
@@ -42,51 +35,34 @@ dev = [
     "types-python-dateutil>=2.9.0.20260124",
 ]
 
-[tool.uv.sources]
-torch = [
-    { index = "pytorch-cpu" },
-]
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[tool.aerich]
-tortoise_orm = "app.core.db.databases.TORTOISE_ORM"
-location = "./app/core/db/migrations"
-src_folder = "./."
-
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
+testpaths = ["app/tests"]
+norecursedirs = [".git", ".venv", "_local_template_backup_*"]
 
 [tool.ruff]
-# 기본 라인 길이 설정
 line-length = 120
-target-version = "py312"
+target-version = "py313"
 
 [tool.ruff.lint]
-# 사용할 린트 규칙들 선택
 select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # pyflakes
-    "I",   # isort
-    "C90", # mccabe
-    "B",   # flake8-bugbear
-    "UP",  # pyupgrade
-    "N",   # pep8-naming
+    "E",
+    "W",
+    "F",
+    "I",
+    "C90",
+    "B",
+    "UP",
+    "N",
 ]
 ignore = ["UP046", "E501"]
 
-# 특정 파일에서 무시할 규칙들
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
-"db/migrations/*" = ["ALL"]
+"app/core/db/migrations/*" = ["ALL"]
 
 [tool.ruff.format]
-# 포매터 설정
 quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false
