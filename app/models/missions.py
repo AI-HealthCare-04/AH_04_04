@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import JSON, BigInteger, Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import JSON, BigInteger, Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -110,7 +110,7 @@ class MissionLog(Base):
     earned_points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_on_device_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class SensorSession(Base):
@@ -130,7 +130,7 @@ class SensorSession(Base):
         nullable=False,
     )
     raw_summary: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class MealLog(Base):
@@ -147,7 +147,7 @@ class MealLog(Base):
     protein_meal_count: Mapped[int] = mapped_column(Integer, nullable=False)
     raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     counted_for_daily: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class PhysicalActivityLog(Base):
@@ -185,7 +185,7 @@ class PhysicalActivityLog(Base):
         Enum(SyncStatus, values_callable=enum_values, name="sync_status_enum"),
         nullable=False,
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class GameLog(Base):
@@ -206,4 +206,4 @@ class GameLog(Base):
     success_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     mistake_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

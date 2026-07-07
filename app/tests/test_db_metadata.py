@@ -35,3 +35,13 @@ def test_user_identity_does_not_store_email_or_age() -> None:
     assert "email" not in user_columns
     assert "age" not in health_profile_columns
     assert "birth_date" in health_profile_columns
+
+
+def test_timestamp_columns_have_defaults() -> None:
+    for table in Base.metadata.tables.values():
+        if "created_at" in table.columns:
+            assert table.columns["created_at"].server_default is not None
+
+        if "updated_at" in table.columns:
+            assert table.columns["updated_at"].server_default is not None
+            assert table.columns["updated_at"].onupdate is not None
