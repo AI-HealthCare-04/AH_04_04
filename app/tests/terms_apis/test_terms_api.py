@@ -7,6 +7,8 @@
 from httpx import AsyncClient  # 테스트에서 우리 앱에 가짜 HTTP 요청을 보내는 클라이언트
 from starlette import status  # 상태코드를 이름으로 확인하기 위한 도구
 
+from app.core.terms_catalog import TERMS_CATALOG  # 정적 약관 카탈로그(GET /terms 응답의 출처)
+
 
 # GET /terms 는 로그인이 필요합니다. 토큰 없이 부르면 401이 나야 합니다.
 async def test_get_terms_requires_auth(client: AsyncClient) -> None:
@@ -26,8 +28,25 @@ async def test_agree_terms_requires_auth(client: AsyncClient) -> None:
     assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
 
-# TODO(db-core-models): terms / terms_agreements 테이블이 초기 마이그레이션으로 생성된 뒤,
-# 아래 해피패스 통합 테스트를 추가합니다(로그인 토큰 발급 → 실제 DB 사용):
-#   - GET  /api/v1/terms                 : 활성 약관 목록이 명세서 필드대로 반환되는지
-#   - POST /api/v1/users/me/agreements   : 필수 약관 모두 동의 시 onboarding_status가 "terms_agreed"로 바뀌는지
-#   - POST (필수 약관 미동의)            : 400 + "필수 약관에 동의해야 합니다." 가 반환되는지
+# 정적 카탈로그가 명세서 규격(GET /terms 응답 필드)을 만족하는지 검증합니다. (DB 불필요)
+def test_terms_catalog_shape() -> None:
+    assert len(TERMS_CATALOG) > 0
+    types = {str(spec.terms_type) for spec in TERMS_CATALOG}
+    # 필수 약관 3종이 카탈로그에 존재
+    assert {"service", "privacy", "sensitive_health"} <= types
+    for spec in TERMS_CATALOG:
+        # 명세서 GET /terms 응답 필드가 모두 채워져 있어야 함
+        assert spec.title and spec.version and spec.url
+        assert isinstance(spec.is_required, bool)
+    # 필수/선택 정책 확인
+    assert next(s for s in TERMS_CATALOG if str(s.terms_type) == "service").is_required is True
+    assert next(s for s in TERMS_CATALOG if str(s.terms_type) == "marketing").is_required is False
+
+
+# TODO(test-db-fixture): DB 세션 픽스처(테스트 DB + 트랜잭션 롤백)가 준비되면
+# 아래 해피패스 통합 테스트를 추가합니다(로그인 토큰 발급 → 실제 terms_agreements 저장):
+#   - GET  /api/v1/terms                 : 인증 사용자에게 카탈로그 목록이 명세서 필드대로 반환
+#   - POST /api/v1/users/me/agreements   : 필수 약관 모두 동의 시 onboarding_status가 "terms_agreed"로 변경
+#   - POST (필수 약관 미동의)            : 400 + "필수 약관에 동의해야 합니다."
+#   - POST (구버전 version 제출)          : 409 + "약관이 변경되었습니다. ..."
+#   - POST (catalog에 없는 terms_type)   : 400 + "존재하지 않는 약관이 포함되어 있습니다."

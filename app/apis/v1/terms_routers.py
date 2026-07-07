@@ -41,10 +41,10 @@ async def get_terms(
     # 이 요청에서 사용할 DB 세션을 주입받습니다.
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> TermsListResponse:
-    # 서비스에게 활성 약관 목록을 요청합니다.
+    # 서비스에게 현재 유효한 약관 목록(정적 catalog)을 요청합니다.
     terms = await TermsService(session).get_active_terms()
-    # DB 모델(Term) 리스트를 응답 DTO(TermResponse) 리스트로 변환해 감싸서 반환합니다.
-    # model_validate: ORM 객체 → Pydantic 응답 모델로 변환 (base의 from_attributes=True 덕분에 가능)
+    # 카탈로그 항목(TermSpec) 리스트를 응답 DTO(TermResponse) 리스트로 변환해 감싸서 반환합니다.
+    # model_validate: 속성을 가진 객체 → Pydantic 응답 모델로 변환 (base의 from_attributes=True 덕분에 가능)
     return TermsListResponse(terms=[TermResponse.model_validate(term) for term in terms])
 
 
