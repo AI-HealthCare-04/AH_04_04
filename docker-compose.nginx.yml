@@ -10,3 +10,7 @@ services:
       - app-network
     depends_on:
       - fastapi
+
+networks:
+  app-network:
+    external: true
