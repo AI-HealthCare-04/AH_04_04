@@ -7,6 +7,8 @@ def enum_values(enum_cls: type[StrEnum]) -> list[str]:
 
 class AuthProvider(StrEnum):
     GOOGLE = "google"
+    KAKAO = "kakao"
+    GUEST = "guest"
 
 
 class OnboardingStatus(StrEnum):
@@ -18,13 +20,13 @@ class OnboardingStatus(StrEnum):
 
 class FontSize(StrEnum):
     SMALL = "small"
-    DEFAULT = "default"
+    MEDIUM = "medium"
     LARGE = "large"
 
 
 class SoundSize(StrEnum):
     SMALL = "small"
-    DEFAULT = "default"
+    MEDIUM = "medium"
     LARGE = "large"
 
 
@@ -159,9 +161,10 @@ class SensorType(StrEnum):
 
 
 class RecognitionStatus(StrEnum):
-    RECOGNIZED = "recognized"
+    SUCCESS = "success"
     LOW_CONFIDENCE = "low_confidence"
     FAILED = "failed"
+    MANUAL_OVERRIDE = "manual_override"
 
 
 class ActivitySource(StrEnum):
