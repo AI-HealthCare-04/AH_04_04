@@ -61,6 +61,30 @@ def test_terms_agreements_constraints_and_enum_values() -> None:
     ]
 
 
+def test_v71_enum_contracts() -> None:
+    user_provider_type = Base.metadata.tables["users"].columns["provider"].type
+    font_size_type = Base.metadata.tables["personalized_settings"].columns["font_size"].type
+    sound_size_type = Base.metadata.tables["personalized_settings"].columns["sound_size"].type
+    recognition_status_type = Base.metadata.tables["sensor_sessions"].columns["recognition_status"].type
+
+    assert isinstance(user_provider_type, SAEnum)
+    assert user_provider_type.enums == ["google", "kakao", "guest"]
+
+    assert isinstance(font_size_type, SAEnum)
+    assert font_size_type.enums == ["small", "medium", "large"]
+
+    assert isinstance(sound_size_type, SAEnum)
+    assert sound_size_type.enums == ["small", "medium", "large"]
+
+    assert isinstance(recognition_status_type, SAEnum)
+    assert recognition_status_type.enums == [
+        "success",
+        "low_confidence",
+        "failed",
+        "manual_override",
+    ]
+
+
 def test_timestamp_columns_have_defaults() -> None:
     for table in Base.metadata.tables.values():
         if "created_at" in table.columns:

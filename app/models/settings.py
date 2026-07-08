@@ -14,12 +14,12 @@ class PersonalizedSetting(Base, TimestampMixin):
     font_size: Mapped[FontSize] = mapped_column(
         Enum(FontSize, values_callable=enum_values, name="font_size_enum"),
         nullable=False,
-        default=FontSize.DEFAULT,
+        default=FontSize.MEDIUM,
     )
     sound_size: Mapped[SoundSize] = mapped_column(
         Enum(SoundSize, values_callable=enum_values, name="sound_size_enum"),
         nullable=False,
-        default=SoundSize.DEFAULT,
+        default=SoundSize.MEDIUM,
     )
     pet_type: Mapped[str] = mapped_column(String(50), nullable=False, default="default")
     music_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
