@@ -8,7 +8,7 @@
 # =====================================================================================
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.dtos.base import BaseSerializerModel
 from app.models.enums import (
@@ -31,7 +31,10 @@ class MissionResponse(BaseSerializerModel):
     mission_template_id: int
     mission_type: str
     title: str
+    description: str | None
     level: str
+    # 응답 필드명은 target_value 이지만, ORM 컬럼은 default_target_value 이므로 alias로 매핑한다.
+    target_value: int = Field(validation_alias="default_target_value")
     target_unit: str
     requires_safety_notice: bool
     daily_count_limit: int | None
