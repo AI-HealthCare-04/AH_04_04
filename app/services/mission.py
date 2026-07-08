@@ -198,6 +198,31 @@ class MissionService:
 
     # ---------------- PATCH /mission-logs/{id} ----------------
 
+    @staticmethod
+    def _validate_completion_detail(mission_type: MissionType, data: MissionLogUpdateRequest) -> None:
+        """완료 시 mission_type ↔ detail 조합 검증.
+        걷기는 walking_detail만, 운동은 exercise_detail만 허용하고, 해당 detail은 필수로 요구한다.
+        (detail 없이 success=true로 완료해 집계/포인트가 반영되는 것을 막는다.)
+        """
+        if mission_type == MissionType.WALKING:
+            if data.walking_detail is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail="걷기 완료에는 walking_detail이 필요합니다."
+                )
+            if data.exercise_detail is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail="걷기 미션에는 exercise_detail을 보낼 수 없습니다."
+                )
+        elif mission_type == MissionType.EXERCISE:
+            if data.exercise_detail is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail="운동 완료에는 exercise_detail이 필요합니다."
+                )
+            if data.walking_detail is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail="운동 미션에는 walking_detail을 보낼 수 없습니다."
+                )
+
     async def update_mission_log(
         self, user: User, mission_log_id: int, data: MissionLogUpdateRequest
     ) -> MissionLogUpdateResponse:
@@ -211,6 +236,8 @@ class MissionService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail="이미 완료된 미션입니다.",
             )
+
+        self._validate_completion_detail(log.mission_type, data)
 
         template = await self.repo.get_template(log.mission_template_id)
         reward_points = template.reward_points if template else 0
