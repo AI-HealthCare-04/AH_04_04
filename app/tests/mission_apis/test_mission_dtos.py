@@ -31,6 +31,19 @@ def test_mission_log_create_rejects_bad_mission_type() -> None:
         )
 
 
+def test_mission_log_create_rejects_bad_game_type() -> None:
+    # game_type을 DTO에서 enum으로 검증하므로, 잘못된 값은 내부 예외가 아니라 422(ValidationError)여야 한다.
+    with pytest.raises(ValidationError):
+        MissionLogCreateRequest.model_validate(
+            {
+                "mission_template_id": 1,
+                "mission_type": "game",
+                "status": "completed",
+                "game_detail": {"game_type": "tetris", "completed": True},
+            }
+        )
+
+
 def test_sensor_session_accepts_v71_recognition_status() -> None:
     # v7.1 확정값
     for value in ("success", "low_confidence", "failed", "manual_override"):

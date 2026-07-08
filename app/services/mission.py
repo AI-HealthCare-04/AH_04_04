@@ -28,12 +28,11 @@ from app.models.enums import (
     ActivitySource,
     ActivityType,
     DailyResult,
-    GameType,
     MissionStatus,
     MissionType,
     SyncStatus,
 )
-from app.models.missions import GameLog, MealLog, MissionLog, PhysicalActivityLog
+from app.models.missions import GameLog, MealLog, MissionLog, MissionTemplate, PhysicalActivityLog
 from app.models.users import User
 from app.repositories.mission_repository import MissionRepository
 from app.services.mission_scoring import compute_daily_result, compute_earned_points
@@ -61,28 +60,49 @@ class MissionService:
 
     # ---------------- POST /mission-logs ----------------
 
+    # 종류별 허용 status: 식사/게임은 즉시완료, 운동/걷기는 시작(in_progress)→PATCH 완료
+    _IMMEDIATE_TYPES = frozenset({MissionType.MEAL, MissionType.GAME})
+    _START_TYPES = frozenset({MissionType.EXERCISE, MissionType.WALKING})
+
     async def create_mission_log(self, user: User, data: MissionLogCreateRequest) -> MissionLogCreateResponse:
         template = await self.repo.get_template(data.mission_template_id)
         if template is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="존재하지 않는 미션입니다.")
 
+        # 클라이언트가 보낸 mission_type을 신뢰하지 않고 template과 일치하는지 검증한다.
+        if data.mission_type != template.mission_type:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="미션 종류가 템플릿과 일치하지 않습니다.",
+            )
+
+        # 종류별 허용 status 조합 검증
+        if template.mission_type in self._IMMEDIATE_TYPES and data.status != MissionStatus.COMPLETED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="식사/게임 미션은 즉시 완료로만 생성할 수 있습니다.",
+            )
+        if template.mission_type in self._START_TYPES and data.status != MissionStatus.IN_PROGRESS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="운동/걷기 미션은 시작(in_progress)으로만 생성할 수 있습니다.",
+            )
+
         if data.status == MissionStatus.IN_PROGRESS:
-            return await self._start_mission(user, data, template.requires_safety_notice)
-        if data.status == MissionStatus.COMPLETED:
-            return await self._complete_immediately(user, data, template.reward_points)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="허용되지 않는 status 값입니다.")
+            return await self._start_mission(user, data, template)
+        return await self._complete_immediately(user, data, template)
 
     async def _start_mission(
-        self, user: User, data: MissionLogCreateRequest, requires_safety_notice: bool
+        self, user: User, data: MissionLogCreateRequest, template: MissionTemplate
     ) -> MissionLogCreateResponse:
         # 운동/걷기 시작: 안전 고지가 필요한 미션인데 확인 안 됐으면 막는다.
-        if requires_safety_notice and not data.safety_notice_confirmed:
+        if template.requires_safety_notice and not data.safety_notice_confirmed:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="안전 고지 확인이 필요합니다.")
 
         log = MissionLog(
             user_id=user.user_id,
             mission_template_id=data.mission_template_id,
-            mission_type=data.mission_type,
+            mission_type=template.mission_type,
             status=MissionStatus.IN_PROGRESS,
             success=False,
             safety_notice_confirmed=bool(data.safety_notice_confirmed),
@@ -105,7 +125,7 @@ class MissionService:
         )
 
     async def _complete_immediately(
-        self, user: User, data: MissionLogCreateRequest, reward_points: int
+        self, user: User, data: MissionLogCreateRequest, template: MissionTemplate
     ) -> MissionLogCreateResponse:
         # 식사/게임 즉시완료
         success = bool(data.success)
@@ -113,18 +133,18 @@ class MissionService:
         counted_for_daily = success
 
         # 식사는 1일 1회만 카운트
-        if data.mission_type == MissionType.MEAL:
+        if template.mission_type == MissionType.MEAL:
             already = await self.repo.count_meal_missions_today(user.user_id)
             if already >= 1:
                 daily_limit_reached = True
                 counted_for_daily = False
 
-        earned_points = compute_earned_points(counted_for_daily, reward_points)
+        earned_points = compute_earned_points(counted_for_daily, template.reward_points)
 
         log = MissionLog(
             user_id=user.user_id,
             mission_template_id=data.mission_template_id,
-            mission_type=data.mission_type,
+            mission_type=template.mission_type,
             status=MissionStatus.COMPLETED,
             performed_at=data.created_on_device_at,
             actual_value=data.actual_value,
@@ -155,7 +175,7 @@ class MissionService:
             await self.repo.add_game_log(
                 GameLog(
                     mission_log_id=log.mission_log_id,
-                    game_type=GameType(gd.game_type),
+                    game_type=gd.game_type,
                     score=gd.score,
                     duration_sec=gd.duration_sec,
                     success_count=gd.success_count,
@@ -184,6 +204,13 @@ class MissionService:
         log = await self.repo.get_mission_log(mission_log_id, user.user_id)
         if log is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="미션 로그를 찾을 수 없습니다.")
+
+        # 이미 완료된 로그의 재완료를 막는다. (상세 로그 unique 제약으로 500 나는 것 방지)
+        if log.status != MissionStatus.IN_PROGRESS:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="이미 완료된 미션입니다.",
+            )
 
         template = await self.repo.get_template(log.mission_template_id)
         reward_points = template.reward_points if template else 0
@@ -262,8 +289,22 @@ class MissionService:
     # ---------------- 공통: 오늘자 요약 재계산 ----------------
 
     async def _refresh_daily_summary(self, user_id: int) -> DailyResult:
-        counted = await self.repo.count_counted_missions_today(user_id)
+        breakdown = await self.repo.counted_breakdown_today(user_id)
+        meal = breakdown.get(MissionType.MEAL, 0)
+        exercise = breakdown.get(MissionType.EXERCISE, 0)
+        walking = breakdown.get(MissionType.WALKING, 0)
+        game = breakdown.get(MissionType.GAME, 0)
+        counted = meal + exercise + walking + game
         points = await self.repo.sum_earned_points_today(user_id)
         daily_result = compute_daily_result(counted)
-        await self.repo.upsert_daily_summary(user_id, counted, points, daily_result)
+        await self.repo.upsert_daily_summary(
+            user_id=user_id,
+            counted_mission_count=counted,
+            meal_counted=meal > 0,
+            exercise_count=exercise,
+            walking_count=walking,
+            game_count=game,
+            earned_points=points,
+            daily_result=daily_result,
+        )
         return daily_result

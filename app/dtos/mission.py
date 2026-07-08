@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from app.dtos.base import BaseSerializerModel
 from app.models.enums import (
     ActivityType,
+    GameType,
     InputMethod,
     Intensity,
     MissionStatus,
@@ -55,7 +56,7 @@ class MealDetail(BaseModel):
 
 
 class GameDetail(BaseModel):
-    game_type: str
+    game_type: GameType
     score: int | None = None
     duration_sec: int | None = None
     success_count: int | None = None

@@ -110,17 +110,19 @@ class MissionRepository:
         )
         return int(await self.session.scalar(stmt) or 0)
 
-    async def count_counted_missions_today(self, user_id: int) -> int:
+    async def counted_breakdown_today(self, user_id: int) -> dict[MissionType, int]:
+        """오늘 '카운트된' 미션을 종류별로 집계 (일일 요약의 종류별 컬럼 채우기용)."""
         stmt = (
-            select(func.count())
-            .select_from(MissionLog)
+            select(MissionLog.mission_type, func.count())
             .where(
                 MissionLog.user_id == user_id,
                 MissionLog.counted_for_daily.is_(True),
                 func.date(MissionLog.created_at) == func.current_date(),
             )
+            .group_by(MissionLog.mission_type)
         )
-        return int(await self.session.scalar(stmt) or 0)
+        rows = await self.session.execute(stmt)
+        return {mission_type: int(count) for mission_type, count in rows.all()}
 
     async def sum_earned_points_today(self, user_id: int) -> int:
         stmt = select(func.coalesce(func.sum(MissionLog.earned_points), 0)).where(
@@ -149,19 +151,35 @@ class MissionRepository:
         self,
         user_id: int,
         counted_mission_count: int,
+        meal_counted: bool,
+        exercise_count: int,
+        walking_count: int,
+        game_count: int,
         earned_points: int,
         daily_result: DailyResult,
     ) -> None:
-        """오늘자(서버 기준 current_date) 요약을 (user_id, summary_date)로 원자적 upsert."""
+        """오늘자(서버 기준 current_date) 요약을 (user_id, summary_date)로 원자적 upsert.
+
+        NOT NULL 컬럼(meal_counted/exercise_count/walking_count/game_count)은 Core insert가
+        ORM의 Python default를 거치지 않으므로 반드시 명시해야 INSERT가 실패하지 않는다.
+        """
         stmt = mysql_insert(DailyActivitySummary).values(
             user_id=user_id,
             summary_date=func.current_date(),
             counted_mission_count=counted_mission_count,
+            meal_counted=meal_counted,
+            exercise_count=exercise_count,
+            walking_count=walking_count,
+            game_count=game_count,
             earned_points=earned_points,
             daily_result=daily_result,
         )
         stmt = stmt.on_duplicate_key_update(
             counted_mission_count=stmt.inserted.counted_mission_count,
+            meal_counted=stmt.inserted.meal_counted,
+            exercise_count=stmt.inserted.exercise_count,
+            walking_count=stmt.inserted.walking_count,
+            game_count=stmt.inserted.game_count,
             earned_points=stmt.inserted.earned_points,
             daily_result=stmt.inserted.daily_result,
         )
