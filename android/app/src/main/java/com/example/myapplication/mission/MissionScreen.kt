@@ -118,7 +118,7 @@ private fun MissionCard(mission: Mission) {
             Spacer(modifier = Modifier.height(6.dp))
 
             Text(
-                text = mission.description,
+                text = mission.description.orEmpty(),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
