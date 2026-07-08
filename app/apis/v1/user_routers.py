@@ -36,9 +36,9 @@ async def get_user_settings(
     return UserSettingsResponse()
 
 
-@user_router.patch("/me/settings", response_model=UserSettingsUpdateRequest, status_code=status.HTTP_200_OK)
+@user_router.patch("/me/settings", response_model=UserSettingsResponse, status_code=status.HTTP_200_OK)
 async def update_user_settings(
     update_data: UserSettingsUpdateRequest,
     user: Annotated[User, Depends(get_request_user)],
-) -> UserSettingsUpdateRequest:
+) -> UserSettingsResponse:
     return await UserSettingsService().update_settings(update_data)
