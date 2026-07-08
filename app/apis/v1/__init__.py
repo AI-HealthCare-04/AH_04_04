@@ -9,6 +9,7 @@ from app.apis.v1.mission_log_routers import mission_log_router
 from app.apis.v1.mission_routers import mission_router
 from app.apis.v1.physical_assessment_routers import physical_assessment_router
 from app.apis.v1.risk_prediction_routers import risk_prediction_router
+from app.apis.v1.sensor_routers import sensor_router
 from app.apis.v1.terms_routers import terms_router
 from app.apis.v1.user_routers import user_router
 
@@ -23,4 +24,5 @@ v1_routers.include_router(risk_prediction_router)
 v1_routers.include_router(activity_profile_router)
 v1_routers.include_router(mission_router)
 v1_routers.include_router(mission_log_router)
+v1_routers.include_router(sensor_router)
 v1_routers.include_router(dashboard_router)
