@@ -16,3 +16,7 @@ wheels/
 _local_template_backup_*/
 app/ml/artifacts/*
 !app/ml/artifacts/.gitkeep
+!app/ml/artifacts/missing_rules.yaml
+!app/ml/artifacts/model_config.yaml
+!app/ml/artifacts/sarcopenia_model_minimal.joblib
+!app/ml/artifacts/sarcopenia_model_with_waist.joblib

@@ -1,0 +1,31 @@
+age_min: 65
+
+protein:
+  low_g_per_kg: 0.8
+  sufficient_g_per_kg: 1.2
+
+split:
+  mode: temporal
+  train_years: [2022]
+  validation_years: [2023]
+  test_size: 0.2
+  stratified_cv:
+    n_splits: 5
+    shuffle: true
+    random_state: 42
+  random_state: 42
+
+feature_sets:
+  default: exam_lifestyle_nutrition
+  compare:
+    - app_minimal
+    - app_minimal_plus_protein
+    - exam_lifestyle_no_glucose_no_protein
+    - exam_lifestyle
+    - exam_lifestyle_nutrition
+
+target_label: sarcopenia_bia_label
+
+smote:
+  enabled: false
+  random_state: 42
