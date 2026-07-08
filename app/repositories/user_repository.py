@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import select
@@ -22,9 +23,10 @@ class UserRepository:
         )
         return await self.session.scalar(stmt)
 
-    async def create_google_user(self, social_id: str, nickname: str) -> User:
+    # 소셜 로그인(google/kakao) 사용자 생성. provider만 다르고 흐름은 동일하므로 공통 메서드로 둡니다.
+    async def create_social_user(self, provider: AuthProvider, social_id: str, nickname: str) -> User:
         user = User(
-            provider=AuthProvider.GOOGLE,
+            provider=provider,
             social_id=social_id,
             nickname=nickname,
             onboarding_status=OnboardingStatus.PENDING,
@@ -33,6 +35,14 @@ class UserRepository:
         self.session.add(user)
         await self.session.flush()
         return user
+
+    # 게스트(체험하기) 사용자 생성.
+    # 개인정보는 받지 않지만, UNIQUE(provider, social_id) 구조를 지키기 위해
+    # 서버가 매 호출마다 비식별 랜덤 ID("guest:<uuid>")를 social_id로 생성합니다.
+    # → 호출마다 새 게스트가 생기므로 여러 명이 동시에 체험해도 데이터가 섞이지 않습니다.
+    async def create_guest_user(self, nickname: str) -> User:
+        social_id = f"guest:{uuid.uuid4().hex}"
+        return await self.create_social_user(AuthProvider.GUEST, social_id, nickname)
 
     async def update_last_login(self, user: User) -> None:
         user.last_login_at = datetime.now(config.TIMEZONE)
