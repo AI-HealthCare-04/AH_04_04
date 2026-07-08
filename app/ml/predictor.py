@@ -17,6 +17,7 @@ from app.models.enums import ModelVariant, RiskLevel
 ARTIFACT_DIR = Path(__file__).resolve().parent / "artifacts"
 MINIMAL_ARTIFACT_PATH = ARTIFACT_DIR / "sarcopenia_model_minimal.joblib"
 WITH_WAIST_ARTIFACT_PATH = ARTIFACT_DIR / "sarcopenia_model_with_waist.joblib"
+MEDIUM_RISK_THRESHOLD_RATIO = 0.5
 
 MINIMAL_FEATURE_COLUMNS: tuple[str, ...] = (
     "age",
@@ -134,7 +135,8 @@ def features_from_health_profile(profile: Any) -> dict[str, Any]:
 def _risk_level(score: float, threshold: float) -> RiskLevel:
     if score >= threshold:
         return RiskLevel.HIGH
-    if score >= threshold * 0.5:
+    # MVP uses a conservative middle band below the model-selected high-risk threshold.
+    if score >= threshold * MEDIUM_RISK_THRESHOLD_RATIO:
         return RiskLevel.MEDIUM
     return RiskLevel.LOW
 
@@ -189,7 +191,7 @@ class RiskPredictor:
             risk_level=level,
             care_stage=_care_stage(level),
             display_message=_display_message(level),
-            model_version=f"sarcopenia_lr_{bundle.get('feature_set', 'unknown')}_v1",
+            model_version=str(bundle.get("model_version") or f"sarcopenia_lr_{bundle.get('feature_set', 'unknown')}_v1"),
             model_variant=ModelVariant.WITH_WAIST if include_waist else ModelVariant.MINIMAL,
             input_snapshot=snapshot,
             threshold=threshold,
