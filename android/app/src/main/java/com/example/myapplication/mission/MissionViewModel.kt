@@ -2,7 +2,6 @@ package com.example.myapplication.mission
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.myapplication.network.LoginRequest
 import com.example.myapplication.network.Mission
 import com.example.myapplication.network.MissionApi
 import com.example.myapplication.network.TokenHolder
@@ -31,7 +30,7 @@ class MissionViewModel : ViewModel() {
         viewModelScope.launch {
             _uiState.value = MissionUiState.Loading
             try {
-                val loginResp = api.login(LoginRequest("test-user-1"))
+                val loginResp = api.guestLogin()
                 TokenHolder.token = loginResp.accessToken
                 val missionsResp = api.getMissions()
                 _uiState.value = MissionUiState.Success(missionsResp.missions)

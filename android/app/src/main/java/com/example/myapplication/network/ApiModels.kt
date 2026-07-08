@@ -18,7 +18,8 @@ data class Mission(
     @SerialName("mission_template_id") val missionTemplateId: Int,
     @SerialName("mission_type") val missionType: String,
     val title: String,
-    val description: String,
+    // 백엔드 DTO가 nullable(str | None)이라 안전하게 nullable로 맞춤
+    val description: String? = null,
     val level: String,
     @SerialName("target_value") val targetValue: Int,
     @SerialName("target_unit") val targetUnit: String,
