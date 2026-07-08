@@ -27,8 +27,22 @@ async def test_kakao_login_requires_authorization_code(client: AsyncClient) -> N
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
-# TODO(test-db-fixture): DB 세션 픽스처 준비 후 해피패스 통합 테스트 추가
-#   - POST /auth/guest: 매 호출마다 다른 user_id + 다른 토큰, is_new_user=true, user.is_guest=true,
-#                       onboarding_status="pending" (호출 2번 → user_id 서로 다른지)
-#   - POST /auth/login/google (신규): is_new_user=true / (재로그인): is_new_user=false
+# google/kakao는 실제 OAuth 미구현이라, 유효한 코드를 보내도 501(미구현)을 반환해야 합니다.
+# (임의 문자열로 토큰이 발급되던 문제 방지 — 지영님 리뷰 반영)
+async def test_google_login_not_implemented(client: AsyncClient) -> None:
+    response = await client.post("/api/v1/auth/login/google", json={"authorization_code": "dummy"})
+    assert response.status_code == status.HTTP_501_NOT_IMPLEMENTED
+    assert "error_detail" in response.json()
+
+
+async def test_kakao_login_not_implemented(client: AsyncClient) -> None:
+    response = await client.post("/api/v1/auth/login/kakao", json={"authorization_code": "dummy"})
+    assert response.status_code == status.HTTP_501_NOT_IMPLEMENTED
+    assert "error_detail" in response.json()
+
+
+# TODO(test-db-fixture): DB 세션 픽스처 준비 후 게스트 해피패스 통합 테스트 추가
+#   - POST /auth/guest: 호출마다 다른 user_id + 다른 토큰, is_new_user=true, user.is_guest=true,
+#                       onboarding_status="pending"
 #   - 발급된 access_token으로 GET /users/me 접근되는지 (end-to-end)
+# (google/kakao 재로그인 테스트는 실제 OAuth 구현 PR에서 함께 추가)
