@@ -1,0 +1,14 @@
+default_survey_missing_codes: [8, 9, 88, 99, 888, 999]
+
+categorical_keep_not_applicable: []
+
+categorical_missing_codes:
+  hypertension_diagnosis: [8, 9, 88, 99]
+  hypertension_medication: [8, 9, 88, 99]
+  hypertension_current: [8, 9, 88, 99]
+  hypertension_treatment: [8, 9, 88, 99]
+  smoking: [8, 9, 88, 99]
+  drinking: [8, 9, 88, 99]
+  physical_activity: [8, 9, 88, 99]
+
+numeric_missing_codes: {}
