@@ -1,18 +1,23 @@
-from fastapi import APIRouter, status
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.db.session import get_db_session
+from app.dependencies.security import get_request_user
+from app.dtos.dashboard import HomeResponse
+from app.models.users import User
+from app.services.dashboard import DashboardService
 
 dashboard_router = APIRouter(tags=["dashboard"])
 
 
-@dashboard_router.get("/home", status_code=status.HTTP_200_OK)
-async def get_home() -> dict[str, dict | None]:
-    return {
-        "user": {"nickname": "회원님"},
-        "point_balance": {"current_points": 0},
-        "activity_profile": None,
-        "latest_prediction": None,
-        "today_summary": {"counted_mission_count": 0, "daily_result": "none"},
-        "available_mission_summary": {"meal": 0, "exercise": 0, "walking": 0, "game": 0},
-    }
+@dashboard_router.get("/home", response_model=HomeResponse, status_code=status.HTTP_200_OK)
+async def get_home(
+    user: Annotated[User, Depends(get_request_user)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> HomeResponse:
+    return await DashboardService(session).get_home(user)
 
 
 @dashboard_router.get("/dashboard/stamps", status_code=status.HTTP_200_OK)
