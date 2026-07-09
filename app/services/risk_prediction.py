@@ -3,9 +3,14 @@ from decimal import Decimal
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dtos.risk_prediction import CareStage, RiskPredictionCreateRequest, RiskPredictionResponse
+from app.dtos.risk_prediction import (
+    CareStage,
+    RiskPredictionCreateRequest,
+    RiskPredictionCreateResponse,
+    RiskPredictionResponse,
+)
 from app.ml.predictor import RiskPredictor, features_from_health_profile
-from app.models.enums import RiskLevel
+from app.models.enums import OnboardingStatus, RiskLevel
 from app.models.health import HealthProfile
 from app.models.predictions import RiskPrediction
 from app.models.users import User
@@ -24,17 +29,22 @@ class RiskPredictionService:
         self,
         user: User,
         data: RiskPredictionCreateRequest,
-    ) -> RiskPredictionResponse:
+    ) -> RiskPredictionCreateResponse:
         profile = await self.profile_repo.get_profile(data.profile_id, user.user_id)
         if profile is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Health profile not found.")
-        return await self._predict_and_save(user, profile)
+        prediction = await self._predict_and_save(user, profile, complete_onboarding=True)
+        return RiskPredictionCreateResponse(
+            **self._to_response(prediction).model_dump(),
+            onboarding_status=user.onboarding_status.value,
+        )
 
     async def reassess_latest_profile(self, user: User) -> RiskPredictionResponse:
         profile = await self.profile_repo.get_latest_profile(user.user_id)
         if profile is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Health profile not found.")
-        return await self._predict_and_save(user, profile)
+        prediction = await self._predict_and_save(user, profile)
+        return self._to_response(prediction)
 
     async def get_latest_prediction(self, user: User) -> RiskPredictionResponse:
         prediction = await self.prediction_repo.get_latest_prediction(user.user_id)
@@ -42,7 +52,13 @@ class RiskPredictionService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Risk prediction not found.")
         return self._to_response(prediction)
 
-    async def _predict_and_save(self, user: User, profile: HealthProfile) -> RiskPredictionResponse:
+    async def _predict_and_save(
+        self,
+        user: User,
+        profile: HealthProfile,
+        *,
+        complete_onboarding: bool = False,
+    ) -> RiskPrediction:
         result = await self.predictor.predict(features_from_health_profile(profile))
         prediction = RiskPrediction(
             user_id=user.user_id,
@@ -54,14 +70,18 @@ class RiskPredictionService:
             input_snapshot=result.input_snapshot,
         )
         await self.prediction_repo.create_risk_prediction(prediction)
+        if complete_onboarding:
+            user.onboarding_status = OnboardingStatus.COMPLETED
         await self.session.commit()
         await self.session.refresh(prediction)
-        return self._to_response(prediction)
+        return prediction
 
     def _to_response(self, prediction: RiskPrediction) -> RiskPredictionResponse:
         care_stage = self._care_stage_from_risk_level(prediction.internal_risk_level)
         return RiskPredictionResponse(
             prediction_id=prediction.prediction_id,
+            profile_id=prediction.profile_id,
+            model_variant=prediction.model_variant.value,
             care_stage=care_stage,
             display_message=self._display_message(care_stage),
         )

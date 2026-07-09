@@ -15,6 +15,12 @@ class CareStage(StrEnum):
 
 class RiskPredictionResponse(BaseModel):
     prediction_id: int
+    profile_id: int
+    model_variant: str
     care_stage: CareStage
     display_message: str
     disclaimer: str = "본 결과는 참고용이며 의학적 진단이 아닙니다."
+
+
+class RiskPredictionCreateResponse(RiskPredictionResponse):
+    onboarding_status: str
