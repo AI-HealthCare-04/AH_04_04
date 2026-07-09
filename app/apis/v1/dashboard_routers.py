@@ -27,4 +27,5 @@ async def get_dashboard_summary(days: int = 14) -> dict:
 
 @dashboard_router.get("/users/me/points", status_code=status.HTTP_200_OK)
 async def get_points() -> dict:
-    return {"current_points": 0, "earn_logs": [], "spend_logs": []}
+    # 명세 §32: v6.0에서 point_spend_logs 제거 → 사용 이력(spend_logs) 미노출. 잔액+적립 이력만 반환.
+    return {"current_points": 0, "earn_logs": []}
