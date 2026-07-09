@@ -29,6 +29,11 @@ class UserSettingsResponse(BaseModel):
     music_enabled: bool = True
 
 
+# [응답] 고객센터 정보 (명세 §12). 문의용 이메일 1개.
+class SupportResponse(BaseModel):
+    email: str
+
+
 # [요청] 설정 부분 변경 (명세 §10). 보낸 필드만 변경한다.
 # font/sound는 enum으로 좁혀 잘못된 값("huge" 등)을 422로 거부한다.
 # None은 "변경 안 함"으로 취급되어 서비스에서 exclude_none으로 무시된다(명시적 null → no-op).
