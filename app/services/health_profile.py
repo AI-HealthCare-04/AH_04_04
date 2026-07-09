@@ -96,6 +96,4 @@ class HealthProfileService:
         kidney_status: KidneyStatus,
         protein_restriction_status: ProteinRestrictionStatus,
     ) -> bool:
-        if kidney_status in {KidneyStatus.KIDNEY_DISEASE, KidneyStatus.DIALYSIS}:
-            return False
-        return protein_restriction_status != ProteinRestrictionStatus.RESTRICTED
+        return kidney_status == KidneyStatus.NONE and protein_restriction_status == ProteinRestrictionStatus.NONE
