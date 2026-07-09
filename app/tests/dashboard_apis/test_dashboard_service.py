@@ -1,5 +1,9 @@
 import asyncio
+from datetime import date
 from typing import cast
+
+import pytest
+from fastapi import HTTPException
 
 from app.dtos.dashboard import HomeAvailableMissionSummary
 from app.models.users import User
@@ -56,3 +60,16 @@ def test_available_mission_summary_empty() -> None:
     result = asyncio.run(service._available_mission_summary(_USER))
 
     assert result == HomeAvailableMissionSummary(meal=0, exercise=0, walking=0, game=0)
+
+
+def test_month_range_returns_first_and_last_day() -> None:
+    # 2월(윤년 아님) 말일까지 정확히 계산한다.
+    assert DashboardService._month_range("2026-02") == (date(2026, 2, 1), date(2026, 2, 28))
+    assert DashboardService._month_range("2026-07") == (date(2026, 7, 1), date(2026, 7, 31))
+
+
+@pytest.mark.parametrize("bad_month", ["2026", "2026-7", "2026-13", "2026-00", "not-a-month", "2026-07-01", ""])
+def test_month_range_rejects_invalid_format(bad_month: str) -> None:
+    with pytest.raises(HTTPException) as exc:
+        DashboardService._month_range(bad_month)
+    assert exc.value.status_code == 400

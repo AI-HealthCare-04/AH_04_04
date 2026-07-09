@@ -1,11 +1,11 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db.session import get_db_session
 from app.dependencies.security import get_request_user
-from app.dtos.dashboard import HomeResponse
+from app.dtos.dashboard import HomeResponse, StampsResponse
 from app.models.users import User
 from app.services.dashboard import DashboardService
 
@@ -20,9 +20,16 @@ async def get_home(
     return await DashboardService(session).get_home(user)
 
 
-@dashboard_router.get("/dashboard/stamps", status_code=status.HTTP_200_OK)
-async def get_stamps(month: str) -> dict:
-    return {"month": month, "days": []}
+@dashboard_router.get("/dashboard/stamps", response_model=StampsResponse, status_code=status.HTTP_200_OK)
+async def get_stamps(
+    user: Annotated[User, Depends(get_request_user)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    # 명세 §30: month 누락 시 FastAPI 기본 422가 아니라 400을 내기 위해 optional로 받고 수동 검증한다.
+    month: str | None = None,
+) -> StampsResponse:
+    if not month:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="month 파라미터가 필요합니다.")
+    return await DashboardService(session).get_stamps(user, month)
 
 
 @dashboard_router.get("/dashboard/summary", status_code=status.HTTP_200_OK)

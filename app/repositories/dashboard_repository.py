@@ -3,6 +3,8 @@
 # 사용하는 테이블: point_balances, daily_activity_summaries (둘 다 dashboard 도메인 모델)
 # 다른 도메인 데이터(미션/예측)는 각 도메인의 공개 인터페이스를 Service에서 소비한다.
 # =====================================================================================
+from datetime import date
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,3 +27,19 @@ class DashboardRepository:
             DailyActivitySummary.summary_date == func.current_date(),
         )
         return await self.session.scalar(stmt)
+
+    async def get_summaries_between(
+        self, user_id: int, start: date, end: date
+    ) -> list[DailyActivitySummary]:
+        """기간(start~end, 양끝 포함) 내 일자별 활동 요약을 날짜 오름차순으로 반환."""
+        stmt = (
+            select(DailyActivitySummary)
+            .where(
+                DailyActivitySummary.user_id == user_id,
+                DailyActivitySummary.summary_date >= start,
+                DailyActivitySummary.summary_date <= end,
+            )
+            .order_by(DailyActivitySummary.summary_date)
+        )
+        result = await self.session.scalars(stmt)
+        return list(result.all())
