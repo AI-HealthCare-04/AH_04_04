@@ -1,0 +1,42 @@
+package com.aihealthcare.ah0404.mission
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.aihealthcare.ah0404.network.Mission
+import com.aihealthcare.ah0404.network.MissionApi
+import com.aihealthcare.ah0404.network.TokenHolder
+import com.aihealthcare.ah0404.network.retrofit
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+
+sealed class MissionUiState {
+    object Loading : MissionUiState()
+    data class Success(val missions: List<Mission>) : MissionUiState()
+    data class Error(val message: String) : MissionUiState()
+}
+
+class MissionViewModel : ViewModel() {
+    private val api = retrofit.create(MissionApi::class.java)
+
+    private val _uiState = MutableStateFlow<MissionUiState>(MissionUiState.Loading)
+    val uiState: StateFlow<MissionUiState> = _uiState
+
+    init {
+        loadMissions()
+    }
+
+    fun loadMissions() {
+        viewModelScope.launch {
+            _uiState.value = MissionUiState.Loading
+            try {
+                val loginResp = api.guestLogin()
+                TokenHolder.token = loginResp.accessToken
+                val missionsResp = api.getMissions()
+                _uiState.value = MissionUiState.Success(missionsResp.missions)
+            } catch (e: Exception) {
+                _uiState.value = MissionUiState.Error(e.message ?: "알 수 없는 오류")
+            }
+        }
+    }
+}
