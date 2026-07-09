@@ -43,14 +43,16 @@ class DashboardService:
     async def _available_mission_summary(self, user: User) -> HomeAvailableMissionSummary:
         # 미션 도메인 공개 인터페이스(get_missions)를 소비해 유형별 수행 가능 미션 수를 센다.
         #   TODO: 오늘 완료분/식사 1일 1회 등 '잔여' 반영은 후속(mission 담당과 조율).
-        missions = await self.mission_service.get_missions(user, None, None)
+        missions = await self.mission_service.get_missions(user, mission_type=None, level=None)
         counts = dict.fromkeys(
             (MissionType.MEAL, MissionType.EXERCISE, MissionType.WALKING, MissionType.GAME), 0
         )
         for mission in missions:
-            mission_type = MissionType(mission.mission_type)
-            if mission_type in counts:
-                counts[mission_type] += 1
+            try:
+                mission_type = MissionType(mission.mission_type)
+            except ValueError:
+                continue  # enum에 없는 타입은 방어적으로 건너뛴다(500 방지)
+            counts[mission_type] += 1
         return HomeAvailableMissionSummary(
             meal=counts[MissionType.MEAL],
             exercise=counts[MissionType.EXERCISE],
