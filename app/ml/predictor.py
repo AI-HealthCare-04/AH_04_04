@@ -45,8 +45,6 @@ WITH_WAIST_FEATURE_COLUMNS: tuple[str, ...] = (
 class RiskPredictionResult:
     risk_score: float
     risk_level: RiskLevel
-    care_stage: str
-    display_message: str
     model_version: str
     model_variant: ModelVariant
     input_snapshot: dict[str, Any]
@@ -141,21 +139,6 @@ def _risk_level(score: float, threshold: float) -> RiskLevel:
     return RiskLevel.LOW
 
 
-def _care_stage(level: RiskLevel) -> str:
-    if level == RiskLevel.HIGH:
-        return "focused_care"
-    if level == RiskLevel.MEDIUM:
-        return "caution"
-    return "maintain"
-
-
-def _display_message(level: RiskLevel) -> str:
-    if level == RiskLevel.HIGH:
-        return "근감소 위험 가능성이 높게 예측되었습니다. 무리하지 않는 범위에서 운동 미션을 시작해 보세요."
-    if level == RiskLevel.MEDIUM:
-        return "근감소 위험 신호가 일부 있습니다. 걷기와 근력 운동을 꾸준히 이어가 보세요."
-    return "현재 입력값 기준 위험도는 낮은 편입니다. 지금처럼 생활습관 미션을 이어가 보세요."
-
 
 class RiskPredictor:
     def __init__(
@@ -189,8 +172,6 @@ class RiskPredictor:
         return RiskPredictionResult(
             risk_score=score,
             risk_level=level,
-            care_stage=_care_stage(level),
-            display_message=_display_message(level),
             model_version=str(bundle.get("model_version") or f"sarcopenia_lr_{bundle.get('feature_set', 'unknown')}_v1"),
             model_variant=ModelVariant.WITH_WAIST if include_waist else ModelVariant.MINIMAL,
             input_snapshot=snapshot,
