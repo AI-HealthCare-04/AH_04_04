@@ -85,12 +85,20 @@ class ActivityLevel(StrEnum):
     HARD = "hard"
 
 
+# 현재 난이도 상태의 사유 (user_activity_profiles.level_reason). 명세 v7.2 운동 난이도 조회.
 class LevelReason(StrEnum):
-    RULE = "rule"
     INITIAL_TEST = "initial_test"
-    REASSESSMENT = "reassessment"
+    RULE = "rule"
+    LLM_RECOMMENDATION = "llm_recommendation"
     USER_SELECTED = "user_selected"
-    DEFAULT = "default"
+
+
+# 난이도 '변경 요청'의 사유 (운동 난이도 변경 요청 본문 reason_type). level_reason과 분리한다.
+# 요청 이력은 후속 activity_level_change_logs 테이블에 남긴다(현재는 검증만, 미저장).
+class ReasonType(StrEnum):
+    RULE = "rule"
+    LLM_RECOMMENDATION = "llm_recommendation"
+    USER_REQUEST = "user_request"
 
 
 class ModelVariant(StrEnum):

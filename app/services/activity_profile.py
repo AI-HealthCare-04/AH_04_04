@@ -35,7 +35,9 @@ class ActivityProfileService:
             await self.repo.create_profile(profile)
 
         profile.current_level = data.to_level
-        profile.level_reason = data.reason_type
+        # 사용자 수락 변경의 결과 상태 사유는 항상 user_selected. 요청 reason_type(변경 사유)은
+        # 이력용이라 여기서 저장하지 않는다(후속 activity_level_change_logs에 기록 예정).
+        profile.level_reason = LevelReason.USER_SELECTED
         await self.repo.update_profile(profile)
         await self.session.commit()
         await self.session.refresh(profile)
@@ -53,7 +55,8 @@ class ActivityProfileService:
         return UserActivityProfile(
             user_id=user_id,
             current_level=ActivityLevel.EASY,
-            level_reason=LevelReason.DEFAULT,
+            # 건강체크를 건너뛴 사용자의 기본 난이도도 서버 규칙에 따른 결정이므로 rule.
+            level_reason=LevelReason.RULE,
             physical_assessment_id=None,
             started_at=datetime.now(config.TIMEZONE),
         )
