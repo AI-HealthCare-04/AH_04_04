@@ -1,3 +1,5 @@
+from datetime import date
+
 from pydantic import BaseModel
 
 from app.models.enums import ActivityLevel, DailyResult
@@ -41,3 +43,17 @@ class HomeResponse(BaseModel):
     latest_prediction: HomeLatestPrediction | None
     today_summary: HomeTodaySummary
     available_mission_summary: HomeAvailableMissionSummary
+
+
+# [응답] 월별 스탬프 요약 (명세 §30). 조회 월의 일자별 성취(daily_activity_summaries)를 반환한다.
+# 활동이 있는 날(요약 행이 있는 날)만 담고, 나머지는 프론트가 none으로 처리한다.
+class StampDay(BaseModel):
+    date: date
+    daily_result: DailyResult
+    counted_mission_count: int
+    earned_points: int
+
+
+class StampsResponse(BaseModel):
+    month: str
+    days: list[StampDay]

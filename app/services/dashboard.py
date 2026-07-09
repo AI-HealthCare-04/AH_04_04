@@ -1,3 +1,7 @@
+import calendar
+from datetime import date
+
+from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dtos.dashboard import (
@@ -7,6 +11,8 @@ from app.dtos.dashboard import (
     HomeTodaySummary,
     HomeUser,
     PointBalanceResponse,
+    StampDay,
+    StampsResponse,
 )
 from app.models.enums import ActivityLevel, DailyResult, MissionType
 from app.models.users import User
@@ -39,6 +45,34 @@ class DashboardService:
             ),
             available_mission_summary=available,
         )
+
+    async def get_stamps(self, user: User, month: str) -> StampsResponse:
+        start, end = self._month_range(month)
+        summaries = await self.repo.get_summaries_between(user.user_id, start, end)
+        days = [
+            StampDay(
+                date=summary.summary_date,
+                daily_result=summary.daily_result,
+                counted_mission_count=summary.counted_mission_count,
+                earned_points=summary.earned_points,
+            )
+            for summary in summaries
+        ]
+        return StampsResponse(month=month, days=days)
+
+    @staticmethod
+    def _month_range(month: str) -> tuple[date, date]:
+        """`YYYY-MM` → 해당 월의 (1일, 말일). 형식이 잘못되면 400."""
+        try:
+            year, month_num = (int(part) for part in month.split("-", 1))
+            start = date(year, month_num, 1)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="month 형식이 올바르지 않습니다. (YYYY-MM)",
+            ) from exc
+        last_day = calendar.monthrange(year, month_num)[1]
+        return start, date(year, month_num, last_day)
 
     async def _available_mission_summary(self, user: User) -> HomeAvailableMissionSummary:
         # 미션 도메인 공개 인터페이스(get_missions)를 소비해 유형별 수행 가능 미션 수를 센다.
