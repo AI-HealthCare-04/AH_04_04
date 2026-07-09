@@ -1,7 +1,10 @@
 import asyncio
 from typing import cast
 
-from app.dtos.dashboard import HomeAvailableMissionSummary
+import pytest
+from fastapi import HTTPException, status
+
+from app.dtos.dashboard import HomeAvailableMissionSummary, HomeLatestPrediction
 from app.models.users import User
 from app.services.dashboard import DashboardService
 
@@ -12,6 +15,12 @@ _USER = cast(User, object())
 class _FakeMission:
     def __init__(self, mission_type: str) -> None:
         self.mission_type = mission_type
+
+
+class _FakePrediction:
+    def __init__(self, care_stage: str, display_message: str) -> None:
+        self.care_stage = care_stage
+        self.display_message = display_message
 
 
 def _service_with_missions(missions: list[_FakeMission]) -> DashboardService:
@@ -56,3 +65,37 @@ def test_available_mission_summary_empty() -> None:
     result = asyncio.run(service._available_mission_summary(_USER))
 
     assert result == HomeAvailableMissionSummary(meal=0, exercise=0, walking=0, game=0)
+
+
+def _service_with_risk(*, result: object = None, raises: Exception | None = None) -> DashboardService:
+    service = DashboardService(session=None)  # type: ignore[arg-type]
+
+    async def fake_get_latest(user: object) -> object:
+        if raises is not None:
+            raise raises
+        return result
+
+    service.risk_service.get_latest_prediction = fake_get_latest  # type: ignore[assignment]
+    return service
+
+
+def test_latest_prediction_maps_when_present() -> None:
+    service = _service_with_risk(result=_FakePrediction("good", "지금처럼 이어가 보세요."))
+
+    result = asyncio.run(service._latest_prediction(_USER))
+
+    assert result == HomeLatestPrediction(care_stage="good", display_message="지금처럼 이어가 보세요.")
+
+
+def test_latest_prediction_none_when_prediction_missing() -> None:
+    # 예측 없음(단독 조회 메서드의 404)은 홈에서 null로 변환된다.
+    service = _service_with_risk(raises=HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="none"))
+
+    assert asyncio.run(service._latest_prediction(_USER)) is None
+
+
+def test_latest_prediction_reraises_non_404() -> None:
+    service = _service_with_risk(raises=HTTPException(status_code=500, detail="boom"))
+
+    with pytest.raises(HTTPException):
+        asyncio.run(service._latest_prediction(_USER))
