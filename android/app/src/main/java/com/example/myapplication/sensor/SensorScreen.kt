@@ -3,6 +3,8 @@
 package com.example.myapplication.sensor
 
 import android.content.Context
+import android.content.Intent
+import com.example.myapplication.pet.WalkingChallengeActivity
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -181,6 +183,14 @@ fun StepCounterSection() {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("리셋 (0부터 다시 세기)", fontSize = 18.sp, modifier = Modifier.padding(8.dp))
+            }
+            Button(
+                onClick = {
+                    context.startActivity(Intent(context, WalkingChallengeActivity::class.java))
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("🐶 강아지와 산책하기", fontSize = 18.sp, modifier = Modifier.padding(8.dp))
             }
             DebugPanel {
                 DebugRow("원시 크기", "%.2f m/s²".format(rawMag.value))
