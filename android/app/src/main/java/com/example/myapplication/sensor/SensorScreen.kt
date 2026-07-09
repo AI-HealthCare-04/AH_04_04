@@ -10,6 +10,7 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,6 +18,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import com.example.myapplication.pet.PetIdle
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -134,6 +137,7 @@ fun StepCounterSection() {
         }
     }
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -201,6 +205,13 @@ fun StepCounterSection() {
                 DebugRow("피크 간격 허용", "${WalkingStepDetectorLogic.MIN_PEAK_INTERVAL_MS}~${WalkingStepDetectorLogic.MAX_PEAK_INTERVAL_MS} ms")
             }
         }
+    }
+        // 배경 없는(투명) 마스코트 강아지 — 다른 화면으로 옮기려면 이 한 줄만 이동
+        PetIdle(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .size(200.dp)
+        )
     }
 }
 
