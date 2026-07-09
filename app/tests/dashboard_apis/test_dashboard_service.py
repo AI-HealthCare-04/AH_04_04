@@ -68,7 +68,7 @@ def test_month_range_returns_first_and_last_day() -> None:
     assert DashboardService._month_range("2026-07") == (date(2026, 7, 1), date(2026, 7, 31))
 
 
-@pytest.mark.parametrize("bad_month", ["2026", "2026-13", "not-a-month", "2026-07-01", ""])
+@pytest.mark.parametrize("bad_month", ["2026", "2026-7", "2026-13", "2026-00", "not-a-month", "2026-07-01", ""])
 def test_month_range_rejects_invalid_format(bad_month: str) -> None:
     with pytest.raises(HTTPException) as exc:
         DashboardService._month_range(bad_month)

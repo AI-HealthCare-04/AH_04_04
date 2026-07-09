@@ -1,4 +1,5 @@
 import calendar
+import re
 from datetime import date
 
 from fastapi import HTTPException, status
@@ -63,10 +64,16 @@ class DashboardService:
     @staticmethod
     def _month_range(month: str) -> tuple[date, date]:
         """`YYYY-MM` → 해당 월의 (1일, 말일). 형식이 잘못되면 400."""
+        # `YYYY-MM` 형식을 엄격히 요구한다(예: `2026-7`은 거부).
+        if not re.fullmatch(r"\d{4}-\d{2}", month):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="month 형식이 올바르지 않습니다. (YYYY-MM)",
+            )
         try:
             year, month_num = (int(part) for part in month.split("-", 1))
             start = date(year, month_num, 1)
-        except (ValueError, TypeError) as exc:
+        except ValueError as exc:  # 형식은 맞지만 월 범위 밖(예: 2026-13/2026-00)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="month 형식이 올바르지 않습니다. (YYYY-MM)",
