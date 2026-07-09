@@ -2,6 +2,7 @@
 
 # Request : 예외 핸들러가 넘겨받는 '들어온 요청' 객체 (여기선 직접 쓰진 않지만 시그니처상 필요)
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import ORJSONResponse
 
 # Starlette의 HTTPException을 가져옵니다.
@@ -34,6 +35,19 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
         # headers      : 인증 실패(401) 시 붙는 WWW-Authenticate 같은 헤더를 잃지 않도록 그대로 전달합니다.
         headers=getattr(exc, "headers", None),
     )
+
+
+# -------------------------------------------------------------------------------------
+# 요청 검증 실패(RequestValidationError)도 {"error_detail": ...} 규격으로 통일합니다.
+# FastAPI 기본값은 {"detail": [ {loc, msg, type}, ... ]} (422)이지만, 우리 명세는 error_detail.
+# 상태코드는 검증 실패 표준인 422를 유지하고, 문제 필드를 함께 안내합니다.
+# -------------------------------------------------------------------------------------
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> ORJSONResponse:
+    # 각 오류 위치의 마지막 요소(필드명)를 모아 어떤 필드가 문제인지 알려준다.
+    fields = ", ".join(str(error["loc"][-1]) for error in exc.errors() if error.get("loc"))
+    detail = f"입력값이 올바르지 않습니다. (필드: {fields})" if fields else "입력값이 올바르지 않습니다."
+    return ORJSONResponse(status_code=422, content={"error_detail": detail})
 
 
 app.include_router(v1_routers)

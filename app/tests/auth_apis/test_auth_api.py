@@ -19,6 +19,10 @@ async def test_logout_requires_auth(client: AsyncClient) -> None:
 async def test_google_login_requires_authorization_code(client: AsyncClient) -> None:
     response = await client.post("/api/v1/auth/login/google", json={})
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    body = response.json()
+    # 검증 실패도 전역 핸들러가 명세 규격 {"error_detail": ...}로 통일한다(기본 {"detail":[...]} 아님).
+    assert "error_detail" in body
+    assert "detail" not in body
 
 
 # kakao 로그인도 동일.
