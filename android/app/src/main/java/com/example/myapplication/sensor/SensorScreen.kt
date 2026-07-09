@@ -3,11 +3,14 @@
 package com.example.myapplication.sensor
 
 import android.content.Context
+import android.content.Intent
+import com.example.myapplication.pet.WalkingChallengeActivity
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,6 +18,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import com.example.myapplication.pet.PetIdle
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -132,6 +137,7 @@ fun StepCounterSection() {
         }
     }
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -182,6 +188,14 @@ fun StepCounterSection() {
             ) {
                 Text("리셋 (0부터 다시 세기)", fontSize = 18.sp, modifier = Modifier.padding(8.dp))
             }
+            Button(
+                onClick = {
+                    context.startActivity(Intent(context, WalkingChallengeActivity::class.java))
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("🐶 강아지와 산책하기", fontSize = 18.sp, modifier = Modifier.padding(8.dp))
+            }
             DebugPanel {
                 DebugRow("원시 크기", "%.2f m/s²".format(rawMag.value))
                 DebugRow("필터된 크기 (알고리즘 입력)", "%.2f m/s²".format(filteredMag.value))
@@ -191,6 +205,13 @@ fun StepCounterSection() {
                 DebugRow("피크 간격 허용", "${WalkingStepDetectorLogic.MIN_PEAK_INTERVAL_MS}~${WalkingStepDetectorLogic.MAX_PEAK_INTERVAL_MS} ms")
             }
         }
+    }
+        // 배경 없는(투명) 마스코트 강아지 — 다른 화면으로 옮기려면 이 한 줄만 이동
+        PetIdle(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .size(200.dp)
+        )
     }
 }
 
