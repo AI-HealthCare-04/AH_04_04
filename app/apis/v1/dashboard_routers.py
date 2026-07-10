@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db.session import get_db_session
 from app.dependencies.security import get_request_user
-from app.dtos.dashboard import HomeResponse, StampsResponse
+from app.dtos.dashboard import HomeResponse, PointsResponse, StampsResponse
 from app.models.users import User
 from app.services.dashboard import DashboardService
 
@@ -37,7 +37,10 @@ async def get_dashboard_summary(days: int = 14) -> dict:
     return {"range_days": days, "activity_trend": [], "lifestyle_records": {}, "risk_change": []}
 
 
-@dashboard_router.get("/users/me/points", status_code=status.HTTP_200_OK)
-async def get_points() -> dict:
-    # 명세 §32: v6.0에서 point_spend_logs 제거 → 사용 이력(spend_logs) 미노출. 잔액+적립 이력만 반환.
-    return {"current_points": 0, "earn_logs": []}
+@dashboard_router.get("/users/me/points", response_model=PointsResponse, status_code=status.HTTP_200_OK)
+async def get_points(
+    user: Annotated[User, Depends(get_request_user)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> PointsResponse:
+    # 포인트 잔액·적립 이력 조회(인증 필요). 사용 이력(point_spend_logs)은 v6.0에서 제거되어 미노출.
+    return await DashboardService(session).get_points(user)
