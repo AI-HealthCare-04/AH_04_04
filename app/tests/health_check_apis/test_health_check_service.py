@@ -8,30 +8,35 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dtos.health_check import HealthCheckSessionCreateRequest, HealthCheckVoiceRequest
-from app.models.enums import HealthCheckStatus, InputMethod
+from app.models.activity import UserActivityProfile
+from app.models.enums import ActivityLevel, HealthCheckStatus, InputMethod, LevelReason, OnboardingStatus
 from app.models.health import HealthCheckSession
 from app.models.users import User
 from app.services.health_check import HealthCheckService
 
 _NOW = datetime(2026, 7, 10, 12, 0, 0)
-_USER = cast(User, SimpleNamespace(user_id=1))
 
 
 class _FakeSession:
     def __init__(self) -> None:
         self.committed = False
-        self.refreshed: object | None = None
+        self.refreshed: list[object] = []
 
     async def commit(self) -> None:
         self.committed = True
 
     async def refresh(self, instance: object) -> None:
-        self.refreshed = instance
+        self.refreshed.append(instance)
         if isinstance(instance, HealthCheckSession):
             if instance.session_id is None:
                 instance.session_id = 100
             if instance.created_at is None:
                 instance.created_at = _NOW
+        if isinstance(instance, UserActivityProfile):
+            if instance.activity_profile_id is None:
+                instance.activity_profile_id = 200
+            if instance.updated_at is None:
+                instance.updated_at = _NOW
 
 
 class _FakeHealthCheckRepository:
@@ -54,14 +59,37 @@ class _FakeHealthCheckRepository:
         return health_check_session
 
 
+class _FakeActivityProfileRepository:
+    def __init__(self, activity_profile: UserActivityProfile | None = None) -> None:
+        self.activity_profile = activity_profile
+        self.created_profile: UserActivityProfile | None = None
+
+    async def get_by_user_id(self, user_id: int) -> UserActivityProfile | None:
+        return self.activity_profile
+
+    async def create_profile(self, profile: UserActivityProfile) -> UserActivityProfile:
+        profile.activity_profile_id = 200
+        profile.updated_at = _NOW
+        self.activity_profile = profile
+        self.created_profile = profile
+        return profile
+
+
+def _user() -> User:
+    return cast(User, SimpleNamespace(user_id=1, onboarding_status=OnboardingStatus.PENDING))
+
+
 def _service(
     health_check_session: HealthCheckSession | None = None,
-) -> tuple[HealthCheckService, _FakeHealthCheckRepository, _FakeSession]:
+    activity_profile: UserActivityProfile | None = None,
+) -> tuple[HealthCheckService, _FakeHealthCheckRepository, _FakeActivityProfileRepository, _FakeSession]:
     session = _FakeSession()
     repo = _FakeHealthCheckRepository(health_check_session)
+    activity_repo = _FakeActivityProfileRepository(activity_profile)
     service = HealthCheckService(cast(AsyncSession, session))
     service.repo = repo  # type: ignore[assignment]
-    return service, repo, session
+    service.activity_repo = activity_repo  # type: ignore[assignment]
+    return service, repo, activity_repo, session
 
 
 def _started_session() -> HealthCheckSession:
@@ -77,10 +105,22 @@ def _started_session() -> HealthCheckSession:
     )
 
 
-async def test_start_session_creates_started_form_session() -> None:
-    service, repo, session = _service()
+def _activity_profile() -> UserActivityProfile:
+    return UserActivityProfile(
+        activity_profile_id=201,
+        user_id=1,
+        current_level=ActivityLevel.NORMAL,
+        level_reason=LevelReason.USER_SELECTED,
+        physical_assessment_id=None,
+        started_at=_NOW,
+        updated_at=_NOW,
+    )
 
-    result = await service.start_session(_USER, HealthCheckSessionCreateRequest())
+
+async def test_start_session_creates_started_form_session() -> None:
+    service, repo, _, session = _service()
+
+    result = await service.start_session(_user(), HealthCheckSessionCreateRequest())
 
     assert result.session_id == 100
     assert result.status == HealthCheckStatus.STARTED
@@ -92,18 +132,18 @@ async def test_start_session_creates_started_form_session() -> None:
 
 
 async def test_save_voice_transcript_completes_started_session() -> None:
-    service, repo, session = _service(_started_session())
+    service, repo, _, session = _service(_started_session())
 
     result = await service.save_voice_transcript(
-        _USER,
+        _user(),
         10,
-        HealthCheckVoiceRequest(raw_transcript="키는 160이고 몸무게는 55예요."),
+        HealthCheckVoiceRequest(raw_transcript="height 160 weight 55"),
     )
 
     assert result.session_id == 10
     assert result.status == HealthCheckStatus.COMPLETED
     assert result.input_method == InputMethod.VOICE
-    assert result.raw_transcript == "키는 160이고 몸무게는 55예요."
+    assert result.raw_transcript == "height 160 weight 55"
     assert result.has_estimated_value is True
     assert result.completed_at is not None
     assert repo.health_check_session is not None
@@ -111,37 +151,58 @@ async def test_save_voice_transcript_completes_started_session() -> None:
     assert session.committed is True
 
 
-async def test_skip_session_marks_started_session_skipped() -> None:
-    service, repo, session = _service(_started_session())
+async def test_skip_session_marks_started_session_skipped_and_completes_onboarding() -> None:
+    service, repo, activity_repo, session = _service(_started_session())
+    user = _user()
 
-    result = await service.skip_session(_USER, 10)
+    result = await service.skip_session(user, 10)
 
+    assert result.session_id == 10
     assert result.status == HealthCheckStatus.SKIPPED
-    assert result.completed_at is not None
+    assert result.onboarding_status == OnboardingStatus.COMPLETED
+    assert result.activity_profile.current_level == ActivityLevel.EASY
+    assert result.activity_profile.level_reason == LevelReason.RULE
+    assert user.onboarding_status == OnboardingStatus.COMPLETED
     assert repo.health_check_session is not None
     assert repo.health_check_session.status == HealthCheckStatus.SKIPPED
+    assert repo.health_check_session.completed_at is not None
+    assert activity_repo.created_profile is not None
     assert session.committed is True
 
 
+async def test_skip_session_reuses_existing_activity_profile() -> None:
+    existing_profile = _activity_profile()
+    service, _, activity_repo, _ = _service(_started_session(), existing_profile)
+
+    result = await service.skip_session(_user(), 10)
+
+    assert result.activity_profile.activity_profile_id == existing_profile.activity_profile_id
+    assert result.activity_profile.current_level == ActivityLevel.NORMAL
+    assert result.activity_profile.level_reason == LevelReason.USER_SELECTED
+    assert activity_repo.created_profile is None
+
+
 async def test_missing_session_returns_404() -> None:
-    service, _, session = _service()
+    service, _, _, session = _service()
 
     with pytest.raises(HTTPException) as exc:
-        await service.skip_session(_USER, 999)
+        await service.skip_session(_user(), 999)
 
     assert exc.value.status_code == 404
+    assert exc.value.detail == "세션을 찾을 수 없습니다."
     assert session.committed is False
 
 
 async def test_finished_session_cannot_be_changed_again() -> None:
     finished = _started_session()
     finished.status = HealthCheckStatus.SKIPPED
-    service, _, session = _service(finished)
+    service, _, _, session = _service(finished)
 
     with pytest.raises(HTTPException) as exc:
-        await service.save_voice_transcript(_USER, 10, HealthCheckVoiceRequest(raw_transcript="다시 입력"))
+        await service.save_voice_transcript(_user(), 10, HealthCheckVoiceRequest(raw_transcript="retry input"))
 
     assert exc.value.status_code == 409
+    assert exc.value.detail == "이미 종료된 세션입니다."
     assert session.committed is False
 
 
@@ -153,3 +214,12 @@ def test_create_request_rejects_invalid_input_method() -> None:
 def test_voice_request_requires_transcript() -> None:
     with pytest.raises(ValidationError):
         HealthCheckVoiceRequest.model_validate({"raw_transcript": ""})
+
+    with pytest.raises(ValidationError):
+        HealthCheckVoiceRequest.model_validate({"raw_transcript": "   "})
+
+
+def test_voice_request_strips_transcript() -> None:
+    result = HealthCheckVoiceRequest.model_validate({"raw_transcript": "  height 160  "})
+
+    assert result.raw_transcript == "height 160"

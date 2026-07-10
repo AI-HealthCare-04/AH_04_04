@@ -8,6 +8,7 @@ from app.dependencies.security import get_request_user
 from app.dtos.health_check import (
     HealthCheckSessionCreateRequest,
     HealthCheckSessionResponse,
+    HealthCheckSkipResponse,
     HealthCheckVoiceRequest,
 )
 from app.models.users import User
@@ -41,12 +42,12 @@ async def parse_health_check_voice(
 
 @health_check_router.post(
     "/sessions/{session_id}/skip",
-    response_model=HealthCheckSessionResponse,
+    response_model=HealthCheckSkipResponse,
     status_code=status.HTTP_200_OK,
 )
 async def skip_health_check(
     session_id: int,
     user: Annotated[User, Depends(get_request_user)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
-) -> HealthCheckSessionResponse:
+) -> HealthCheckSkipResponse:
     return await HealthCheckService(session).skip_session(user, session_id)
