@@ -32,10 +32,10 @@ class WalkingFlowInstrumentedTest {
         val walking = api.getMissions().missions.firstOrNull { it.missionType == "walking" }
         requireNotNull(walking) { "available 미션에 walking 타입이 없습니다. seed 확인 필요." }
 
-        val result = WalkingFlowUseCase(api).runFakeWalkingFlow(
+        val result = WalkingFlowUseCase(api).runWalkingFlow(
             missionTemplateId = walking.missionTemplateId,
-            fakeSteps = 1000,
-            fakeDurationSec = 600,
+            steps = 1000,
+            durationSec = 600,
         )
 
         assertEquals("completed", result.finalStatus)
