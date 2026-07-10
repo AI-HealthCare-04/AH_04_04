@@ -1,5 +1,6 @@
 import asyncio
 from datetime import date
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -12,6 +13,8 @@ from app.services.dashboard import DashboardService
 
 # 카운팅 로직만 검증하므로 user는 스텁된 get_missions로 전달만 되고 실제로 쓰이지 않는다.
 _USER = cast(User, object())
+# get_home은 user.nickname을 읽으므로 홈 테스트에는 닉네임이 있는 사용자를 쓴다.
+_HOME_USER = cast(User, SimpleNamespace(user_id=1, nickname="테스터"))
 
 
 class _FakeMission:
@@ -117,6 +120,55 @@ def test_latest_prediction_reraises_non_404() -> None:
 
     with pytest.raises(HTTPException):
         asyncio.run(service._latest_prediction(_USER))
+
+
+def _service_for_home(*, profile: object | None) -> tuple[DashboardService, dict[str, object]]:
+    # get_home의 모든 의존을 스텁해 DB 없이 난이도 연결만 검증한다.
+    service = DashboardService(session=None)  # type: ignore[arg-type]
+    captured: dict[str, object] = {}
+
+    async def fake_get_current_points(user_id: object) -> int:
+        return 0
+
+    async def fake_get_today_summary(user_id: object) -> object:
+        return None
+
+    async def fake_get_by_user_id(user_id: object) -> object:
+        return profile
+
+    async def fake_get_missions(user: object, mission_type: object = None, level: object = None) -> list[object]:
+        captured["mission_level"] = level
+        return []
+
+    async def fake_get_latest(user: object) -> object:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="none")
+
+    service.repo.get_current_points = fake_get_current_points  # type: ignore[assignment]
+    service.repo.get_today_summary = fake_get_today_summary  # type: ignore[assignment]
+    service.activity_repo.get_by_user_id = fake_get_by_user_id  # type: ignore[assignment]
+    service.mission_service.get_missions = fake_get_missions  # type: ignore[assignment]
+    service.risk_service.get_latest_prediction = fake_get_latest  # type: ignore[assignment]
+    return service, captured
+
+
+def test_get_home_uses_real_activity_level() -> None:
+    # 프로필이 있으면 홈 표시 난이도가 실제 current_level을 따르고, 미션 수 산정도 같은 레벨로 한다.
+    service, captured = _service_for_home(profile=SimpleNamespace(current_level=ActivityLevel.HARD))
+
+    result = asyncio.run(service.get_home(_HOME_USER))
+
+    assert result.activity_profile.current_level == ActivityLevel.HARD
+    assert captured["mission_level"] == ActivityLevel.HARD  # 표시 레벨 == 카운트 레벨
+
+
+def test_get_home_defaults_easy_when_no_profile() -> None:
+    # 프로필이 아직 없으면(건강체크 스킵/기초체력검사 전) 기본 easy로 본다.
+    service, captured = _service_for_home(profile=None)
+
+    result = asyncio.run(service.get_home(_HOME_USER))
+
+    assert result.activity_profile.current_level == ActivityLevel.EASY
+    assert captured["mission_level"] == ActivityLevel.EASY
 
 
 def test_month_range_returns_first_and_last_day() -> None:
