@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import cast
@@ -156,4 +157,33 @@ async def test_create_assessment_sets_activity_profile_from_walk_speed() -> None
     assert assessment_repo.created.used_for_level_setting is True
     assert activity_repo.created is not None
     assert activity_repo.created.physical_assessment_id == 30
+    assert session.committed is True
+
+
+async def test_create_assessment_keeps_level_when_walk_skipped() -> None:
+    existing = UserActivityProfile(
+        activity_profile_id=100,
+        user_id=1,
+        current_level=ActivityLevel.NORMAL,
+        level_reason=LevelReason.INITIAL_TEST,
+        physical_assessment_id=10,
+        started_at=datetime(2026, 7, 10, 12, 0, 0),
+    )
+    service, assessment_repo, activity_repo, session = _service(existing)
+    user = cast(User, SimpleNamespace(user_id=1))
+
+    response = await service.create_assessment(
+        user,
+        PhysicalAssessmentCreateRequest(
+            chair_stand_skipped=True,
+            walk_6m_skipped=True,
+        ),
+    )
+
+    assert response.used_for_level_setting is False
+    assert response.activity_profile.current_level == ActivityLevel.NORMAL
+    assert assessment_repo.created is not None
+    assert assessment_repo.created.used_for_level_setting is False
+    assert activity_repo.updated is None
+    assert activity_repo.created is None
     assert session.committed is True

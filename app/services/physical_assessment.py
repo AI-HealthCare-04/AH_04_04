@@ -58,11 +58,15 @@ class PhysicalAssessmentService:
             used_for_level_setting=used_for_level_setting,
         )
         await self.repo.create_physical_assessment(assessment)
-        activity_profile = await self._upsert_activity_profile(
-            user_id=user.user_id,
-            current_level=activity_level,
-            physical_assessment_id=assessment.physical_assessment_id,
-        )
+        if used_for_level_setting:
+            activity_profile = await self._upsert_activity_profile(
+                user_id=user.user_id,
+                current_level=activity_level,
+                physical_assessment_id=assessment.physical_assessment_id,
+            )
+        else:
+            # 걷기 스킵 등으로 난이도 산정 불가 → 기존 레벨 유지(강등 방지). 없으면 기본만 생성.
+            activity_profile = await self._get_or_create_default_profile(user.user_id)
         await self.session.commit()
         await self.session.refresh(assessment)
         await self.session.refresh(activity_profile)
@@ -121,4 +125,18 @@ class PhysicalAssessmentService:
         profile.physical_assessment_id = physical_assessment_id
         profile.started_at = now_kst()
         await self.activity_repo.update_profile(profile)
+        return profile
+
+    async def _get_or_create_default_profile(self, user_id: int) -> UserActivityProfile:
+        profile = await self.activity_repo.get_by_user_id(user_id)
+        if profile is not None:
+            return profile  # 기존 레벨 그대로 유지
+        profile = UserActivityProfile(
+            user_id=user_id,
+            current_level=ActivityLevel.EASY,
+            level_reason=LevelReason.RULE,
+            physical_assessment_id=None,
+            started_at=now_kst(),
+        )
+        await self.activity_repo.create_profile(profile)
         return profile
