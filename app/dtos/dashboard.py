@@ -72,3 +72,29 @@ class StampDay(BaseModel):
 class StampsResponse(BaseModel):
     month: str
     days: list[StampDay]
+
+
+# [응답] 대시보드 시각화 (GET /dashboard/summary). 최근 days일 구간의 활동 추이·생활기록·위험도 변화.
+class ActivityTrendPoint(BaseModel):
+    date: date
+    moderate_equivalent_min: float
+
+
+class LifestyleRecords(BaseModel):
+    meal_days: int
+    game_count: int
+
+
+class RiskChangePoint(BaseModel):
+    at: datetime
+    care_stage: str
+
+
+class DashboardSummaryResponse(BaseModel):
+    range_days: int
+    baseline_date: date
+    total_moderate_equivalent_min: float
+    activity_trend: list[ActivityTrendPoint]
+    lifestyle_records: LifestyleRecords
+    # risk_change는 예측 이력(지영님 도메인)이 준비되면 채운다. 현재는 빈 배열.
+    risk_change: list[RiskChangePoint]

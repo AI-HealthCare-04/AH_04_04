@@ -1,17 +1,21 @@
 import calendar
 import re
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.utils.clock import today_kst
 from app.dtos.dashboard import (
+    ActivityTrendPoint,
+    DashboardSummaryResponse,
     HomeActivityProfile,
     HomeAvailableMissionSummary,
     HomeLatestPrediction,
     HomeResponse,
     HomeTodaySummary,
     HomeUser,
+    LifestyleRecords,
     PointBalanceResponse,
     PointsResponse,
     StampDay,
@@ -21,6 +25,7 @@ from app.models.enums import ActivityLevel, DailyResult, MissionType
 from app.models.users import User
 from app.repositories.activity_profile_repository import ActivityProfileRepository
 from app.repositories.dashboard_repository import DashboardRepository
+from app.services.activity_metrics import moderate_equivalent_min
 from app.services.mission import MissionService
 from app.services.risk_prediction import RiskPredictionService
 
@@ -68,6 +73,48 @@ class DashboardService:
         return HomeLatestPrediction(
             care_stage=prediction.care_stage,
             display_message=prediction.display_message,
+        )
+
+    _SUMMARY_MAX_DAYS = 90
+
+    async def get_summary(self, user: User, days: int) -> DashboardSummaryResponse:
+        # 최근 days일(오늘 포함) 구간의 활동 추이·생활기록·위험도 변화를 집계한다.
+        if days < 1 or days > self._SUMMARY_MAX_DAYS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"days는 1~{self._SUMMARY_MAX_DAYS} 사이여야 합니다.",
+            )
+        end = today_kst()
+        start = end - timedelta(days=days - 1)
+
+        # 활동 추이: 신체활동 로그를 일자별로 중강도 상당 분으로 환산·합산.
+        #   구간 전체 날짜를 0으로 채워, 활동 없는 날도 추이에 0으로 나타난다.
+        per_day: dict[date, float] = {start + timedelta(days=offset): 0.0 for offset in range(days)}
+        logs = await self.repo.get_activity_logs_between(user.user_id, start, end)
+        for log in logs:
+            if log.activity_date in per_day:
+                per_day[log.activity_date] += moderate_equivalent_min(
+                    log.activity_type, log.intensity, log.duration_min, log.met_value
+                )
+        activity_trend = [
+            ActivityTrendPoint(date=day, moderate_equivalent_min=round(value, 1))
+            for day, value in sorted(per_day.items())
+        ]
+        total = round(sum(per_day.values()), 1)
+
+        # 생활 기록: daily_activity_summaries에서 식사한 날 수 / 게임 횟수 합.
+        summaries = await self.repo.get_summaries_between(user.user_id, start, end)
+        meal_days = sum(1 for summary in summaries if summary.meal_counted)
+        game_count = sum(summary.game_count for summary in summaries)
+
+        return DashboardSummaryResponse(
+            range_days=days,
+            baseline_date=start,
+            total_moderate_equivalent_min=total,
+            activity_trend=activity_trend,
+            lifestyle_records=LifestyleRecords(meal_days=meal_days, game_count=game_count),
+            # risk_change는 예측 이력(지영님 도메인)이 준비되면 채운다. 현재는 빈 배열.
+            risk_change=[],
         )
 
     async def get_points(self, user: User) -> PointsResponse:

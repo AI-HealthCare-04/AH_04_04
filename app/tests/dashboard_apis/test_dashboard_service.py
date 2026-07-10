@@ -1,19 +1,21 @@
 import asyncio
-from datetime import date
+from collections.abc import Sequence
+from datetime import date, timedelta
 from types import SimpleNamespace
 from typing import cast
 
 import pytest
 from fastapi import HTTPException, status
 
+from app.core.utils.clock import today_kst
 from app.dtos.dashboard import HomeAvailableMissionSummary, HomeLatestPrediction
-from app.models.enums import ActivityLevel
+from app.models.enums import ActivityLevel, ActivityType
 from app.models.users import User
 from app.services.dashboard import DashboardService
 
 # 카운팅 로직만 검증하므로 user는 스텁된 get_missions로 전달만 되고 실제로 쓰이지 않는다.
 _USER = cast(User, object())
-# user_id를 읽는 경로(get_points 등)에는 id가 있는 사용자를 쓴다.
+# user_id를 읽는 경로(get_points/get_summary 등)에는 id가 있는 사용자를 쓴다.
 _USER_WITH_ID = cast(User, SimpleNamespace(user_id=1))
 # get_home은 user.nickname을 읽으므로 홈 테스트에는 닉네임이 있는 사용자를 쓴다.
 _HOME_USER = cast(User, SimpleNamespace(user_id=1, nickname="테스터"))
@@ -122,6 +124,58 @@ def test_latest_prediction_reraises_non_404() -> None:
 
     with pytest.raises(HTTPException):
         asyncio.run(service._latest_prediction(_USER))
+
+
+def _summary_service(*, logs: Sequence[object], summaries: Sequence[object]) -> DashboardService:
+    service = DashboardService(session=None)  # type: ignore[arg-type]
+
+    async def fake_logs(user_id: object, start: object, end: object) -> Sequence[object]:
+        return logs
+
+    async def fake_summaries(user_id: object, start: object, end: object) -> Sequence[object]:
+        return summaries
+
+    service.repo.get_activity_logs_between = fake_logs  # type: ignore[assignment]
+    service.repo.get_summaries_between = fake_summaries  # type: ignore[assignment]
+    return service
+
+
+def test_get_summary_aggregates_trend_total_and_lifestyle() -> None:
+    today = today_kst()
+    # 오늘 걷기 10분(=10) + 20분(=20) → 오늘 합 30. 구간은 0으로 채워진다.
+    logs = [
+        SimpleNamespace(activity_date=today, activity_type=ActivityType.WALKING, intensity=None,
+                        duration_min=10, met_value=None),
+        SimpleNamespace(activity_date=today, activity_type=ActivityType.WALKING, intensity=None,
+                        duration_min=20, met_value=None),
+    ]
+    summaries = [
+        SimpleNamespace(meal_counted=True, game_count=2),
+        SimpleNamespace(meal_counted=False, game_count=1),
+        SimpleNamespace(meal_counted=True, game_count=0),
+    ]
+    service = _summary_service(logs=logs, summaries=summaries)
+
+    result = asyncio.run(service.get_summary(_USER_WITH_ID, days=7))
+
+    assert result.range_days == 7
+    assert result.baseline_date == today - timedelta(days=6)
+    assert len(result.activity_trend) == 7  # 구간 전체 0-fill
+    assert result.total_moderate_equivalent_min == 30.0
+    assert result.activity_trend[-1].date == today
+    assert result.activity_trend[-1].moderate_equivalent_min == 30.0
+    assert result.activity_trend[0].moderate_equivalent_min == 0.0  # 활동 없는 날은 0
+    assert result.lifestyle_records.meal_days == 2  # meal_counted True인 날 수
+    assert result.lifestyle_records.game_count == 3  # game_count 합
+    assert result.risk_change == []
+
+
+@pytest.mark.parametrize("bad_days", [0, -1, 91])
+def test_get_summary_rejects_out_of_range_days(bad_days: int) -> None:
+    service = DashboardService(session=None)  # type: ignore[arg-type]
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(service.get_summary(_USER_WITH_ID, days=bad_days))
+    assert exc.value.status_code == 400
 
 
 def test_get_points_returns_real_balance_and_empty_earn_logs() -> None:
