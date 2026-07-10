@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dtos.activity_profile import ActivityProfileUpdateRequest
-from app.models.activity import UserActivityProfile
+from app.models.activity import ActivityLevelChangeLog, UserActivityProfile
 from app.models.enums import ActivityLevel, LevelReason, ReasonType
 from app.models.users import User
 from app.services.activity_profile import ActivityProfileService
@@ -38,6 +38,7 @@ class _FakeActivityProfileRepository:
     def __init__(self, profile: UserActivityProfile | None = None) -> None:
         self.profile = profile
         self.created_profile: UserActivityProfile | None = None
+        self.created_level_change_log: ActivityLevelChangeLog | None = None
 
     async def get_by_user_id(self, user_id: int) -> UserActivityProfile | None:
         return self.profile
@@ -53,6 +54,10 @@ class _FakeActivityProfileRepository:
         profile.updated_at = _NOW
         self.profile = profile
         return profile
+
+    async def create_level_change_log(self, log: ActivityLevelChangeLog) -> ActivityLevelChangeLog:
+        self.created_level_change_log = log
+        return log
 
 
 def _service(
@@ -108,6 +113,13 @@ async def test_update_profile_changes_existing_profile() -> None:
     assert result.level_reason == LevelReason.USER_SELECTED
     assert repo.profile is not None
     assert repo.profile.current_level == ActivityLevel.HARD
+    assert repo.created_level_change_log is not None
+    assert repo.created_level_change_log.user_id == 1
+    assert repo.created_level_change_log.from_level == ActivityLevel.EASY
+    assert repo.created_level_change_log.to_level == ActivityLevel.HARD
+    assert repo.created_level_change_log.reason_type == ReasonType.USER_REQUEST
+    assert repo.created_level_change_log.reason_text is None
+    assert repo.created_level_change_log.accepted_by_user is True
     assert session.committed is True
 
 
@@ -127,6 +139,28 @@ async def test_update_profile_creates_profile_when_missing() -> None:
     assert result.current_level == ActivityLevel.NORMAL
     assert result.level_reason == LevelReason.USER_SELECTED
     assert repo.created_profile is not None
+    assert repo.created_level_change_log is not None
+    assert repo.created_level_change_log.from_level == ActivityLevel.EASY
+    assert repo.created_level_change_log.to_level == ActivityLevel.NORMAL
+    assert repo.created_level_change_log.reason_type == ReasonType.LLM_RECOMMENDATION
+    assert session.committed is True
+
+
+async def test_update_profile_does_not_log_when_level_is_unchanged() -> None:
+    service, repo, session = _service(_profile())
+
+    result = await service.update_profile(
+        _USER,
+        ActivityProfileUpdateRequest(
+            to_level=ActivityLevel.EASY,
+            reason_type=ReasonType.USER_REQUEST,
+            accepted_by_user=True,
+        ),
+    )
+
+    assert result.current_level == ActivityLevel.EASY
+    assert result.level_reason == LevelReason.USER_SELECTED
+    assert repo.created_level_change_log is None
     assert session.committed is True
 
 

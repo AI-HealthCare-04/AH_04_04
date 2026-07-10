@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
 from app.dtos.activity_profile import ActivityProfileResponse, ActivityProfileUpdateRequest
-from app.models.activity import UserActivityProfile
+from app.models.activity import ActivityLevelChangeLog, UserActivityProfile
 from app.models.enums import ActivityLevel, LevelReason
 from app.models.users import User
 from app.repositories.activity_profile_repository import ActivityProfileRepository
@@ -34,11 +34,21 @@ class ActivityProfileService:
             profile = self._build_default_profile(user.user_id)
             await self.repo.create_profile(profile)
 
+        from_level = profile.current_level
         profile.current_level = data.to_level
-        # 사용자 수락 변경의 결과 상태 사유는 항상 user_selected. 요청 reason_type(변경 사유)은
-        # 이력용이라 여기서 저장하지 않는다(후속 activity_level_change_logs에 기록 예정).
         profile.level_reason = LevelReason.USER_SELECTED
         await self.repo.update_profile(profile)
+        if from_level != data.to_level:
+            await self.repo.create_level_change_log(
+                ActivityLevelChangeLog(
+                    user_id=user.user_id,
+                    from_level=from_level,
+                    to_level=data.to_level,
+                    reason_type=data.reason_type,
+                    reason_text=None,
+                    accepted_by_user=data.accepted_by_user,
+                )
+            )
         await self.session.commit()
         await self.session.refresh(profile)
         return ActivityProfileResponse.model_validate(profile)
