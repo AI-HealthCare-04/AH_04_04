@@ -4,7 +4,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from app.dtos.health_profile import HealthProfileCreateRequest, HealthProfileResponse
+from app.dtos.health_profile import HealthProfileCreateRequest, HealthProfileCreateResponse, HealthProfileResponse
 from app.models.enums import (
     ActivityInputSource,
     InputMethod,
@@ -68,11 +68,17 @@ def test_health_profile_request_accepts_unknown_waist() -> None:
         waist_cm=None,
         walking_practice=True,
         strength_exercise=False,
+        activity_input_source=ActivityInputSource.SELF_REPORT,
+        input_method=InputMethod.VOICE,
+        has_estimated_value=False,
     )
 
     assert data.waist_cm is None
     assert data.kidney_status == KidneyStatus.UNKNOWN
     assert data.protein_restriction_status == ProteinRestrictionStatus.UNKNOWN
+    assert data.activity_input_source == ActivityInputSource.SELF_REPORT
+    assert data.input_method == InputMethod.VOICE
+    assert data.has_estimated_value is False
 
 
 def test_health_profile_response_serializes_decimals_as_numbers() -> None:
@@ -105,6 +111,22 @@ def test_health_profile_response_serializes_decimals_as_numbers() -> None:
     assert dumped["waist_cm"] is None
 
 
+def test_health_profile_create_response_matches_post_contract() -> None:
+    response = HealthProfileCreateResponse(
+        profile_id=55,
+        bmi=Decimal("22.7"),
+        protein_challenge_allowed=True,
+    )
+
+    dumped = response.model_dump(mode="json")
+
+    assert dumped == {
+        "profile_id": 55,
+        "bmi": 22.7,
+        "protein_challenge_allowed": True,
+    }
+
+
 def test_health_profile_request_rejects_invalid_enum_value() -> None:
     with pytest.raises(ValidationError):
         HealthProfileCreateRequest.model_validate(
@@ -115,5 +137,8 @@ def test_health_profile_request_rejects_invalid_enum_value() -> None:
                 "weight_kg": Decimal("50.0"),
                 "walking_practice": True,
                 "strength_exercise": False,
+                "activity_input_source": "self_report",
+                "input_method": "form",
+                "has_estimated_value": False,
             }
         )

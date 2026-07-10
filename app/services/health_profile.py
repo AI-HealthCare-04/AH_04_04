@@ -5,8 +5,8 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.clock import today_kst
-from app.dtos.health_profile import HealthProfileCreateRequest, HealthProfileResponse
-from app.models.enums import ActivityInputSource, InputMethod, KidneyStatus, ProteinRestrictionStatus
+from app.dtos.health_profile import HealthProfileCreateRequest, HealthProfileCreateResponse, HealthProfileResponse
+from app.models.enums import KidneyStatus, ProteinRestrictionStatus
 from app.models.health import HealthProfile
 from app.models.users import User
 from app.repositories.health_profile_repository import HealthProfileRepository
@@ -17,7 +17,7 @@ class HealthProfileService:
         self.session = session
         self.repo = HealthProfileRepository(session)
 
-    async def create_profile(self, user: User, data: HealthProfileCreateRequest) -> HealthProfileResponse:
+    async def create_profile(self, user: User, data: HealthProfileCreateRequest) -> HealthProfileCreateResponse:
         if data.session_id is not None:
             session = await self.repo.get_session(data.session_id, user.user_id)
             if session is None:
@@ -34,7 +34,7 @@ class HealthProfileService:
             waist_cm=data.waist_cm,
             walking_practice=data.walking_practice,
             strength_exercise=data.strength_exercise,
-            activity_input_source=ActivityInputSource.SELF_REPORT,
+            activity_input_source=data.activity_input_source,
             activity_window_days=None,
             kidney_status=data.kidney_status,
             protein_restriction_status=data.protein_restriction_status,
@@ -42,13 +42,17 @@ class HealthProfileService:
                 data.kidney_status,
                 data.protein_restriction_status,
             ),
-            input_method=InputMethod.FORM,
-            has_estimated_value=False,
+            input_method=data.input_method,
+            has_estimated_value=data.has_estimated_value,
         )
         await self.repo.create_profile(profile)
         await self.session.commit()
         await self.session.refresh(profile)
-        return self.to_response(profile)
+        return HealthProfileCreateResponse(
+            profile_id=profile.profile_id,
+            bmi=profile.bmi,
+            protein_challenge_allowed=profile.protein_challenge_allowed,
+        )
 
     async def get_latest_profile(self, user: User) -> HealthProfileResponse:
         profile = await self.repo.get_latest_profile(user.user_id)

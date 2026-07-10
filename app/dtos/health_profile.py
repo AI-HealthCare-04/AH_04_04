@@ -17,6 +17,19 @@ class HealthProfileCreateRequest(BaseModel):
     strength_exercise: bool
     kidney_status: KidneyStatus = KidneyStatus.UNKNOWN
     protein_restriction_status: ProteinRestrictionStatus = ProteinRestrictionStatus.UNKNOWN
+    activity_input_source: ActivityInputSource
+    input_method: InputMethod
+    has_estimated_value: bool
+
+
+class HealthProfileCreateResponse(BaseModel):
+    profile_id: int
+    bmi: Decimal
+    protein_challenge_allowed: bool
+
+    @field_serializer("bmi")
+    def serialize_bmi_as_number(self, value: Decimal) -> float:
+        return float(value)
 
 
 class HealthProfileResponse(BaseModel):

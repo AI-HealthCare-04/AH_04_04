@@ -1,10 +1,8 @@
-from datetime import datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.dtos.base import BaseSerializerModel
-from app.models.enums import AssessmentType
+from app.models.enums import ActivityLevel, AssessmentType, LevelReason
 
 
 class PhysicalAssessmentCreateRequest(BaseModel):
@@ -17,7 +15,6 @@ class PhysicalAssessmentCreateRequest(BaseModel):
     walk_6m_skipped: bool = False
     pain_reported: bool = False
     dizziness_reported: bool = False
-    used_for_level_setting: bool = False
 
     @model_validator(mode="after")
     def validate_measurements(self) -> "PhysicalAssessmentCreateRequest":
@@ -32,16 +29,13 @@ class PhysicalAssessmentCreateRequest(BaseModel):
         return self
 
 
-class PhysicalAssessmentResponse(BaseSerializerModel):
+class PhysicalAssessmentActivityProfile(BaseModel):
+    current_level: ActivityLevel
+    level_reason: LevelReason
+
+
+class PhysicalAssessmentResponse(BaseModel):
     physical_assessment_id: int
-    assessment_type: AssessmentType
-    chair_stand_5_time_sec: Decimal | None
-    chair_stand_skipped: bool
-    walk_6m_time_sec: Decimal | None
-    walk_6m_distance_m: Decimal | None
     walk_6m_speed_mps: Decimal | None
-    walk_6m_skipped: bool
-    pain_reported: bool
-    dizziness_reported: bool
     used_for_level_setting: bool
-    created_at: datetime
+    activity_profile: PhysicalAssessmentActivityProfile

@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db.session import get_db_session
 from app.dependencies.security import get_request_user
-from app.dtos.health_profile import HealthProfileCreateRequest, HealthProfileResponse
+from app.dtos.health_profile import HealthProfileCreateRequest, HealthProfileCreateResponse, HealthProfileResponse
 from app.models.users import User
 from app.services.health_profile import HealthProfileService
 
@@ -20,10 +20,10 @@ async def get_latest_health_profile(
     return await HealthProfileService(session).get_latest_profile(user)
 
 
-@health_profile_router.post("", response_model=HealthProfileResponse, status_code=status.HTTP_201_CREATED)
+@health_profile_router.post("", response_model=HealthProfileCreateResponse, status_code=status.HTTP_201_CREATED)
 async def create_health_profile(
     data: HealthProfileCreateRequest,
     user: Annotated[User, Depends(get_request_user)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
-) -> HealthProfileResponse:
+) -> HealthProfileCreateResponse:
     return await HealthProfileService(session).create_profile(user, data)

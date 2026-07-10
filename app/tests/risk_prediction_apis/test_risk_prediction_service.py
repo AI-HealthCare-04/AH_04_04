@@ -2,8 +2,11 @@ from datetime import datetime
 from decimal import Decimal
 from types import SimpleNamespace
 
-from app.dtos.risk_prediction import CareStage, RiskPredictionCreateResponse
-from app.models.enums import ModelVariant, OnboardingStatus, RiskLevel
+import pytest
+from pydantic import ValidationError
+
+from app.dtos.risk_prediction import CareStage, RiskPredictionCreateResponse, RiskPredictionReassessRequest
+from app.models.enums import ActivityInputSource, ModelVariant, OnboardingStatus, RiskLevel
 from app.services.risk_prediction import RiskPredictionService
 
 
@@ -65,6 +68,35 @@ def test_create_response_includes_onboarding_status() -> None:
     )
 
     assert response.onboarding_status == "completed"
+
+
+def test_reassess_request_accepts_only_supported_activity_windows() -> None:
+    assert RiskPredictionReassessRequest(activity_window_days=7).activity_window_days == 7
+    assert RiskPredictionReassessRequest(activity_window_days=14).activity_window_days == 14
+
+    with pytest.raises(ValidationError):
+        RiskPredictionReassessRequest.model_validate({"activity_window_days": 30})
+
+
+def test_reassess_response_uses_v73_contract_without_model_variant() -> None:
+    prediction = SimpleNamespace(
+        prediction_id=90,
+        profile_id=72,
+        internal_risk_level=RiskLevel.MEDIUM,
+    )
+
+    response = RiskPredictionService(session=None)._to_reassess_response(prediction)  # type: ignore[arg-type]
+    dumped = response.model_dump(mode="json")
+
+    assert dumped == {
+        "profile_id": 72,
+        "prediction_id": 90,
+        "care_stage": "maintain",
+        "display_message": RiskPredictionService._display_message(CareStage.MAINTAIN),
+        "disclaimer": "본 결과는 참고용이며 의학적 진단이 아닙니다.",
+        "activity_input_source": ActivityInputSource.SERVICE_LOG.value,
+    }
+    assert "model_variant" not in dumped
 
 
 def test_history_item_includes_dashboard_trend_fields() -> None:

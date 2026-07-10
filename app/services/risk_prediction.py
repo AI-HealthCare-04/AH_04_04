@@ -9,10 +9,12 @@ from app.dtos.risk_prediction import (
     RiskPredictionCreateResponse,
     RiskPredictionHistoryItem,
     RiskPredictionHistoryResponse,
+    RiskPredictionReassessRequest,
+    RiskPredictionReassessResponse,
     RiskPredictionResponse,
 )
 from app.ml.predictor import RiskPredictor, features_from_health_profile
-from app.models.enums import OnboardingStatus, RiskLevel
+from app.models.enums import ActivityInputSource, InputMethod, OnboardingStatus, RiskLevel
 from app.models.health import HealthProfile
 from app.models.predictions import RiskPrediction
 from app.models.users import User
@@ -41,12 +43,21 @@ class RiskPredictionService:
             onboarding_status=user.onboarding_status.value,
         )
 
-    async def reassess_latest_profile(self, user: User) -> RiskPredictionResponse:
+    async def reassess_latest_profile(
+        self,
+        user: User,
+        data: RiskPredictionReassessRequest,
+    ) -> RiskPredictionReassessResponse:
         profile = await self.profile_repo.get_latest_profile(user.user_id)
         if profile is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Health profile not found.")
-        prediction = await self._predict_and_save(user, profile)
-        return self._to_response(prediction)
+        reassessment_profile = await self._create_reassessment_profile(
+            user=user,
+            source_profile=profile,
+            activity_window_days=data.activity_window_days,
+        )
+        prediction = await self._predict_and_save(user, reassessment_profile)
+        return self._to_reassess_response(prediction)
 
     async def get_latest_prediction(self, user: User) -> RiskPredictionResponse:
         prediction = await self.prediction_repo.get_latest_prediction(user.user_id)
@@ -95,6 +106,44 @@ class RiskPredictionService:
             care_stage=care_stage,
             display_message=self._display_message(care_stage),
         )
+
+    def _to_reassess_response(self, prediction: RiskPrediction) -> RiskPredictionReassessResponse:
+        care_stage = self._care_stage_from_risk_level(prediction.internal_risk_level)
+        return RiskPredictionReassessResponse(
+            profile_id=prediction.profile_id,
+            prediction_id=prediction.prediction_id,
+            care_stage=care_stage,
+            display_message=self._display_message(care_stage),
+        )
+
+    async def _create_reassessment_profile(
+        self,
+        *,
+        user: User,
+        source_profile: HealthProfile,
+        activity_window_days: int,
+    ) -> HealthProfile:
+        profile = HealthProfile(
+            user_id=user.user_id,
+            session_id=None,
+            birth_date=source_profile.birth_date,
+            sex=source_profile.sex,
+            height_cm=source_profile.height_cm,
+            weight_kg=source_profile.weight_kg,
+            bmi=source_profile.bmi,
+            waist_cm=source_profile.waist_cm,
+            walking_practice=source_profile.walking_practice,
+            strength_exercise=source_profile.strength_exercise,
+            activity_input_source=ActivityInputSource.SERVICE_LOG,
+            activity_window_days=activity_window_days,
+            kidney_status=source_profile.kidney_status,
+            protein_restriction_status=source_profile.protein_restriction_status,
+            protein_challenge_allowed=source_profile.protein_challenge_allowed,
+            input_method=InputMethod.SERVICE_LOG,
+            has_estimated_value=False,
+        )
+        await self.profile_repo.create_profile(profile)
+        return profile
 
     @staticmethod
     def _to_history_item(prediction: RiskPrediction) -> RiskPredictionHistoryItem:
