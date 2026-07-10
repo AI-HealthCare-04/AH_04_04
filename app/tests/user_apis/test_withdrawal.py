@@ -40,3 +40,15 @@ async def test_withdraw_requires_authentication(db_client: AsyncClient) -> None:
     # 인증 없이 탈퇴 시도 → 401
     resp = await db_client.request("DELETE", "/api/v1/users/me", json={"confirm": True})
     assert resp.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+async def test_withdraw_missing_confirm_returns_422(db_client: AsyncClient) -> None:
+    # 계약: confirm=false는 400(비즈니스 거부), confirm 누락은 422(스키마 검증 실패).
+    # confirm이 필수 필드라 누락은 서비스에 닿기 전 Pydantic 검증에서 422가 된다(팀 에러표준 = 명세 v7.3).
+    auth = await _guest_auth(db_client)
+    resp = await db_client.request("DELETE", "/api/v1/users/me", json={}, headers=auth)
+    assert resp.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    # 탈퇴가 안 됐으므로 토큰은 그대로 유효
+    me = await db_client.get("/api/v1/users/me", headers=auth)
+    assert me.status_code == status.HTTP_200_OK
