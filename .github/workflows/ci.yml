@@ -56,3 +56,11 @@ jobs:
           TEST_DB_USER: root
           TEST_DB_PASSWORD: ${{ secrets.TEST_DB_PASSWORD }}
         run: uv run --group app --group dev pytest
+
+      - name: Alembic migration round-trip + drift check
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: "3306"
+          DB_USER: root
+          DB_PASSWORD: ${{ secrets.TEST_DB_PASSWORD }}
+        run: uv run --group app --group dev python scripts/check_migrations.py
