@@ -32,12 +32,23 @@ def _mysql_url(database: str | None) -> URL:
     return URL.create(
         "mysql+asyncmy",
         username=os.getenv("TEST_DB_USER", "root"),
-        password=os.getenv("TEST_DB_PASSWORD", "Password123@!"),
+        # 비밀번호는 하드코딩하지 않는다. 미설정 시 접속이 실패해 통합 테스트를 스킵(또는 CI에선 실패)한다.
+        password=os.getenv("TEST_DB_PASSWORD"),
         host=os.getenv("TEST_DB_HOST", "127.0.0.1"),
         port=int(os.getenv("TEST_DB_PORT", "3306")),
         database=database,
         query={"charset": "utf8mb4"},
     )
+
+
+def _skip_or_fail_without_mysql(reason: str) -> None:
+    # TEST_DB_REQUIRED가 설정되면(=CI 파이프라인) 스킵이 아니라 실패시킨다.
+    #   → "CI 초록 = 통합 테스트 실제 실행"을 보장(MySQL 없으면 초록이 '스킵'이 되는 함정 방지).
+    #   ci.yml에서 MySQL service와 함께 TEST_DB_REQUIRED=1을 켠다. 로컬은 미설정이라 스킵.
+    #   (범용 CI 환경변수는 로컬 셸에도 설정돼 있을 수 있어 명시적 플래그를 쓴다.)
+    if os.getenv("TEST_DB_REQUIRED"):
+        pytest.fail(f"TEST_DB_REQUIRED인데 MySQL 미가용 → 통합 테스트가 실행되지 못했습니다: {reason}")
+    pytest.skip(f"MySQL 미가용 → 통합 테스트 스킵: {reason}")
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -47,14 +58,13 @@ async def _mysql_engine() -> AsyncGenerator[AsyncEngine]:
         _mysql_url(None),
         isolation_level="AUTOCOMMIT",
         poolclass=NullPool,
-        connect_args={"connect_timeout": 5},  # MySQL 미가용 시 빠르게 실패→스킵
+        connect_args={"connect_timeout": 5},  # MySQL 미가용 시 빠르게 실패
     )
     try:
         async with admin.connect() as conn:
             await conn.execute(text(f"CREATE DATABASE IF NOT EXISTS {_TEST_DB_NAME}"))
-    except Exception as exc:  # noqa: BLE001  (어떤 연결 오류든 MySQL 미가용으로 간주해 스킵)
-        await admin.dispose()
-        pytest.skip(f"MySQL 미가용 → 통합 테스트 스킵 ({type(exc).__name__})")
+    except Exception as exc:  # noqa: BLE001  (어떤 연결 오류든 MySQL 미가용으로 간주)
+        _skip_or_fail_without_mysql(type(exc).__name__)
     finally:
         await admin.dispose()
 
