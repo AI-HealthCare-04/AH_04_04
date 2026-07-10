@@ -12,6 +12,7 @@ from typing import Any
 import joblib  # type: ignore[import-untyped]
 import pandas as pd  # type: ignore[import-untyped]
 
+from app.core.utils.clock import today_kst
 from app.models.enums import ModelVariant, RiskLevel
 
 ARTIFACT_DIR = Path(__file__).resolve().parent / "artifacts"
@@ -62,7 +63,7 @@ def load_model_bundle(artifact_path: Path) -> dict[str, Any]:
 
 
 def calculate_age(birth_date: date, today: date | None = None) -> int:
-    today = today or date.today()
+    today = today or today_kst()
     age = today.year - birth_date.year
     if (today.month, today.day) < (birth_date.month, birth_date.day):
         age -= 1
