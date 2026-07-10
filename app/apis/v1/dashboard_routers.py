@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db.session import get_db_session
 from app.dependencies.security import get_request_user
-from app.dtos.dashboard import HomeResponse, StampsResponse
+from app.dtos.dashboard import DashboardSummaryResponse, HomeResponse, StampsResponse
 from app.models.users import User
 from app.services.dashboard import DashboardService
 
@@ -32,9 +32,13 @@ async def get_stamps(
     return await DashboardService(session).get_stamps(user, month)
 
 
-@dashboard_router.get("/dashboard/summary", status_code=status.HTTP_200_OK)
-async def get_dashboard_summary(days: int = 14) -> dict:
-    return {"range_days": days, "activity_trend": [], "lifestyle_records": {}, "risk_change": []}
+@dashboard_router.get("/dashboard/summary", response_model=DashboardSummaryResponse, status_code=status.HTTP_200_OK)
+async def get_dashboard_summary(
+    user: Annotated[User, Depends(get_request_user)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    days: int = 14,
+) -> DashboardSummaryResponse:
+    return await DashboardService(session).get_summary(user, days)
 
 
 @dashboard_router.get("/users/me/points", status_code=status.HTTP_200_OK)
