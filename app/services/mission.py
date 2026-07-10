@@ -29,20 +29,29 @@ from app.models.enums import (
     ActivitySource,
     ActivityType,
     DailyResult,
+    KidneyStatus,
     MissionStatus,
     MissionType,
+    ProteinRestrictionStatus,
     SyncStatus,
 )
+from app.models.health import HealthProfile
 from app.models.missions import GameLog, MealLog, MissionLog, MissionTemplate, PhysicalActivityLog
 from app.models.users import User
+from app.repositories.health_profile_repository import HealthProfileRepository
 from app.repositories.mission_repository import MissionRepository
 from app.services.mission_scoring import compute_daily_result, compute_earned_points
+
+# 신장/단백질 제한으로 고단백(requires_kidney_check) 미션을 숨겨야 하는 상태.
+# unknown은 강제 차단하지 않는다(과도한 제한 방지). 명시적 제한 상태만 필터한다.
+_KIDNEY_RESTRICTED_STATUSES = frozenset({KidneyStatus.KIDNEY_DISEASE, KidneyStatus.DIALYSIS})
 
 
 class MissionService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repo = MissionRepository(session)
+        self.health_repo = HealthProfileRepository(session)
 
     # ---------------- GET /missions ----------------
 
@@ -54,10 +63,24 @@ class MissionService:
     ) -> list[MissionResponse]:
         # 레벨 우선순위: 쿼리로 명시한 값 > 사용자의 현재 레벨 > (없으면 전체)
         effective_level = level or await self.repo.get_user_current_level(user.user_id)
-        # TODO(health 담당 연동): requires_kidney_check / 단백질 제한 필터는 최신 health_profile이
-        #                         필요해 아직 미적용. health 도메인 완성 후 조인 예정.
-        templates = await self.repo.get_active_templates(level=effective_level, mission_type=mission_type)
+        # 안전 필터: 신장/단백질 제한 사용자에게는 고단백(requires_kidney_check) 미션을 숨긴다.
+        latest_profile = await self.health_repo.get_latest_profile(user.user_id)
+        exclude_kidney_check = self._should_hide_kidney_missions(latest_profile)
+        templates = await self.repo.get_active_templates(
+            level=effective_level,
+            mission_type=mission_type,
+            exclude_kidney_check=exclude_kidney_check,
+        )
         return [MissionResponse.model_validate(t) for t in templates]
+
+    @staticmethod
+    def _should_hide_kidney_missions(profile: HealthProfile | None) -> bool:
+        """최신 건강 프로필의 신장/단백질 상태로 고단백 미션 숨김 여부를 판정."""
+        if profile is None:
+            return False
+        kidney_restricted = profile.kidney_status in _KIDNEY_RESTRICTED_STATUSES
+        protein_restricted = profile.protein_restriction_status == ProteinRestrictionStatus.RESTRICTED
+        return kidney_restricted or protein_restricted
 
     # ---------------- POST /mission-logs ----------------
 
