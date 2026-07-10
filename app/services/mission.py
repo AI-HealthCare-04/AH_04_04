@@ -16,6 +16,7 @@ from decimal import Decimal
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.utils.clock import today_kst
 from app.dtos.mission import (
     MissionLogCreateRequest,
     MissionLogCreateResponse,
@@ -163,7 +164,7 @@ class MissionService:
             await self.repo.add_meal_log(
                 MealLog(
                     mission_log_id=log.mission_log_id,
-                    meal_date=date.today(),
+                    meal_date=today_kst(),
                     protein_foods=data.meal_detail.protein_foods,
                     protein_meal_count=data.meal_detail.protein_meal_count,
                     raw_text=data.meal_detail.raw_text,
@@ -267,7 +268,7 @@ class MissionService:
             await self.repo.add_physical_activity_log(
                 PhysicalActivityLog(
                     mission_log_id=log.mission_log_id,
-                    activity_date=date.today(),
+                    activity_date=today_kst(),
                     activity_type=ActivityType.WALKING,
                     duration_min=wd.duration_min,
                     distance_km=wd.distance_km,
@@ -284,7 +285,7 @@ class MissionService:
             await self.repo.add_physical_activity_log(
                 PhysicalActivityLog(
                     mission_log_id=log.mission_log_id,
-                    activity_date=date.today(),
+                    activity_date=today_kst(),
                     activity_type=ed.activity_type or ActivityType.SEATED_EXERCISE,
                     intensity=ed.intensity,
                     duration_min=ed.duration_min,

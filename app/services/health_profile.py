@@ -4,6 +4,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.utils.clock import today_kst
 from app.dtos.health_profile import HealthProfileCreateRequest, HealthProfileResponse
 from app.models.enums import ActivityInputSource, InputMethod, KidneyStatus, ProteinRestrictionStatus
 from app.models.health import HealthProfile
@@ -85,7 +86,7 @@ class HealthProfileService:
 
     @staticmethod
     def calculate_age(birth_date: date, today: date | None = None) -> int:
-        today = today or date.today()
+        today = today or today_kst()
         age = today.year - birth_date.year
         if (today.month, today.day) < (birth_date.month, birth_date.day):
             age -= 1
