@@ -97,7 +97,7 @@ class RiskPredictionService:
     @staticmethod
     def _display_message(care_stage: CareStage) -> str:
         if care_stage == CareStage.ACTION_NEEDED:
-            return "근감소 위험 신호가 있습니다. 무리하지 않는 범위에서 맞춤 운동 미션을 시작해 보세요."
+            return "근감소 위험 신호가 있어요. 무리하지 않는 범위에서 맞춤 운동 미션을 시작해 보세요."
         if care_stage == CareStage.MAINTAIN:
-            return "생활습관 관리가 필요한 상태입니다. 걷기와 근력 운동을 꾸준히 이어가 보세요."
-        return "현재 입력값 기준 위험도는 낮은 편입니다. 지금처럼 생활습관 미션을 이어가 보세요."
+            return "생활습관 관리가 필요한 상태예요. 걷기와 근력 운동을 꾸준히 이어가 보세요."
+        return "현재 입력값 기준으로 위험도는 낮은 편이에요. 지금처럼 생활습관 미션을 이어가 보세요."
