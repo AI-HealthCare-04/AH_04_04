@@ -8,8 +8,8 @@ from app.dtos.physical_assessment import (
     PhysicalAssessmentCreateRequest,
     PhysicalAssessmentResponse,
 )
-from app.models.activity import UserActivityProfile
-from app.models.enums import ActivityLevel, LevelReason
+from app.models.activity import ActivityLevelChangeLog, UserActivityProfile
+from app.models.enums import ActivityLevel, LevelReason, ReasonType
 from app.models.health import PhysicalAssessment
 from app.models.users import User
 from app.repositories.activity_profile_repository import ActivityProfileRepository
@@ -65,7 +65,7 @@ class PhysicalAssessmentService:
                 physical_assessment_id=assessment.physical_assessment_id,
             )
         else:
-            # 걷기 스킵 등으로 난이도 산정 불가 → 기존 레벨 유지(강등 방지). 없으면 기본만 생성.
+            # Walk measurement was skipped, so keep the existing level. If none exists, create the default.
             activity_profile = await self._get_or_create_default_profile(user.user_id)
         await self.session.commit()
         await self.session.refresh(assessment)
@@ -120,17 +120,29 @@ class PhysicalAssessmentService:
             await self.activity_repo.create_profile(profile)
             return profile
 
+        from_level = profile.current_level
         profile.current_level = current_level
         profile.level_reason = LevelReason.INITIAL_TEST
         profile.physical_assessment_id = physical_assessment_id
         profile.started_at = now_kst()
         await self.activity_repo.update_profile(profile)
+        if from_level != current_level:
+            await self.activity_repo.create_level_change_log(
+                ActivityLevelChangeLog(
+                    user_id=user_id,
+                    from_level=from_level,
+                    to_level=current_level,
+                    reason_type=ReasonType.RULE,
+                    reason_text=f"physical_assessment:{physical_assessment_id}",
+                    accepted_by_user=True,
+                )
+            )
         return profile
 
     async def _get_or_create_default_profile(self, user_id: int) -> UserActivityProfile:
         profile = await self.activity_repo.get_by_user_id(user_id)
         if profile is not None:
-            return profile  # 기존 레벨 그대로 유지
+            return profile
         profile = UserActivityProfile(
             user_id=user_id,
             current_level=ActivityLevel.EASY,

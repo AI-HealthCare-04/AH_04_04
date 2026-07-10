@@ -8,8 +8,8 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dtos.physical_assessment import PhysicalAssessmentCreateRequest
-from app.models.activity import UserActivityProfile
-from app.models.enums import ActivityLevel, LevelReason
+from app.models.activity import ActivityLevelChangeLog, UserActivityProfile
+from app.models.enums import ActivityLevel, LevelReason, ReasonType
 from app.models.health import PhysicalAssessment
 from app.models.users import User
 from app.services.physical_assessment import PhysicalAssessmentService
@@ -41,6 +41,7 @@ class _FakeActivityProfileRepository:
         self.profile = profile
         self.created: UserActivityProfile | None = None
         self.updated: UserActivityProfile | None = None
+        self.created_level_change_log: ActivityLevelChangeLog | None = None
 
     async def get_by_user_id(self, user_id: int) -> UserActivityProfile | None:
         return self.profile
@@ -55,6 +56,10 @@ class _FakeActivityProfileRepository:
         self.profile = profile
         self.updated = profile
         return profile
+
+    async def create_level_change_log(self, log: ActivityLevelChangeLog) -> ActivityLevelChangeLog:
+        self.created_level_change_log = log
+        return log
 
 
 def _service(
@@ -160,6 +165,36 @@ async def test_create_assessment_sets_activity_profile_from_walk_speed() -> None
     assert session.committed is True
 
 
+async def test_create_assessment_logs_activity_level_change() -> None:
+    existing = UserActivityProfile(
+        activity_profile_id=100,
+        user_id=1,
+        current_level=ActivityLevel.HARD,
+        level_reason=LevelReason.USER_SELECTED,
+        physical_assessment_id=10,
+        started_at=datetime(2026, 7, 10, 12, 0, 0),
+    )
+    service, _, activity_repo, _ = _service(existing)
+    user = cast(User, SimpleNamespace(user_id=1))
+
+    response = await service.create_assessment(
+        user,
+        PhysicalAssessmentCreateRequest(
+            chair_stand_5_time_sec=Decimal("11.2"),
+            walk_6m_time_sec=Decimal("6.5"),
+            walk_6m_distance_m=Decimal("6.0"),
+        ),
+    )
+
+    assert response.activity_profile.current_level == ActivityLevel.NORMAL
+    assert activity_repo.created_level_change_log is not None
+    assert activity_repo.created_level_change_log.from_level == ActivityLevel.HARD
+    assert activity_repo.created_level_change_log.to_level == ActivityLevel.NORMAL
+    assert activity_repo.created_level_change_log.reason_type == ReasonType.RULE
+    assert activity_repo.created_level_change_log.reason_text == "physical_assessment:30"
+    assert activity_repo.created_level_change_log.accepted_by_user is True
+
+
 async def test_create_assessment_keeps_level_when_walk_skipped() -> None:
     existing = UserActivityProfile(
         activity_profile_id=100,
@@ -186,4 +221,5 @@ async def test_create_assessment_keeps_level_when_walk_skipped() -> None:
     assert assessment_repo.created.used_for_level_setting is False
     assert activity_repo.updated is None
     assert activity_repo.created is None
+    assert activity_repo.created_level_change_log is None
     assert session.committed is True

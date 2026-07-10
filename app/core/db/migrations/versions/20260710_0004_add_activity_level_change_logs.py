@@ -1,6 +1,6 @@
 """add activity level change logs
 
-Revision ID: 0004_add_activity_level_change_logs
+Revision ID: 0004_add_activity_change_logs
 Revises: 0003_align_level_reason_enum
 Create Date: 2026-07-10 00:00:00
 """
@@ -38,6 +38,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # DROP TABLE이 인덱스·FK까지 함께 제거한다.
-    # (MySQL은 FK가 사용하는 인덱스를 단독으로 못 지워 1553 에러가 남)
+    # Dropping the table lets MySQL remove FK-backed indexes with it.
+    # Dropping the index first can fail with errno 1553.
     op.drop_table("activity_level_change_logs")

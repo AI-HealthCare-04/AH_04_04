@@ -1,12 +1,25 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from pydantic import ValidationError
 
 from app.dtos.risk_prediction import CareStage, RiskPredictionCreateResponse, RiskPredictionReassessRequest
-from app.models.enums import ActivityInputSource, ModelVariant, OnboardingStatus, RiskLevel
+from app.models.enums import (
+    ActivityInputSource,
+    InputMethod,
+    KidneyStatus,
+    ModelVariant,
+    OnboardingStatus,
+    ProteinRestrictionStatus,
+    RiskLevel,
+    Sex,
+)
+from app.models.health import HealthProfile
+from app.models.predictions import RiskPrediction
+from app.models.users import User
 from app.services.risk_prediction import RiskPredictionService
 
 
@@ -171,3 +184,93 @@ async def test_get_recent_predictions_returns_empty_list_for_non_positive_limit(
 
     assert response.predictions == []
     assert repo.called is False
+
+
+async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:
+    source_profile = HealthProfile(
+        profile_id=55,
+        user_id=1,
+        session_id=10,
+        birth_date=date(1958, 3, 1),
+        sex=Sex.MALE,
+        height_cm=Decimal("160.00"),
+        weight_kg=Decimal("58.00"),
+        bmi=Decimal("22.7"),
+        waist_cm=Decimal("82.00"),
+        walking_practice=True,
+        strength_exercise=False,
+        activity_input_source=ActivityInputSource.SELF_REPORT,
+        activity_window_days=None,
+        kidney_status=KidneyStatus.NONE,
+        protein_restriction_status=ProteinRestrictionStatus.NONE,
+        protein_challenge_allowed=True,
+        input_method=InputMethod.FORM,
+        has_estimated_value=False,
+    )
+
+    class _ProfileRepo:
+        def __init__(self) -> None:
+            self.created_profile: HealthProfile | None = None
+            self.latest_called_with: int | None = None
+
+        async def get_latest_profile(self, user_id: int) -> HealthProfile:
+            self.latest_called_with = user_id
+            return source_profile
+
+        async def create_profile(self, profile: HealthProfile) -> HealthProfile:
+            profile.profile_id = 72
+            self.created_profile = profile
+            return profile
+
+    class _PredictionRepo:
+        def __init__(self) -> None:
+            self.created_prediction: RiskPrediction | None = None
+
+        async def create_risk_prediction(self, prediction: RiskPrediction) -> RiskPrediction:
+            prediction.prediction_id = 90
+            self.created_prediction = prediction
+            return prediction
+
+    class _Predictor:
+        async def predict(self, features: object) -> object:
+            return SimpleNamespace(
+                model_version="test",
+                model_variant=ModelVariant.WITH_WAIST,
+                risk_score=0.42,
+                risk_level=RiskLevel.MEDIUM,
+                input_snapshot={},
+            )
+
+    session = SimpleNamespace(committed=False, refreshed=None)
+
+    async def commit() -> None:
+        session.committed = True
+
+    async def refresh(instance: object) -> None:
+        session.refreshed = instance
+
+    session.commit = commit
+    session.refresh = refresh
+
+    service = RiskPredictionService(session=None, predictor=_Predictor())  # type: ignore[arg-type]
+    profile_repo = _ProfileRepo()
+    prediction_repo = _PredictionRepo()
+    service.session = session  # type: ignore[assignment]
+    service.profile_repo = profile_repo  # type: ignore[assignment]
+    service.prediction_repo = prediction_repo  # type: ignore[assignment]
+
+    response = await service.reassess_latest_profile(
+        cast(User, SimpleNamespace(user_id=1)),
+        RiskPredictionReassessRequest(activity_window_days=14),
+    )
+
+    assert profile_repo.latest_called_with == 1
+    assert profile_repo.created_profile is not None
+    assert profile_repo.created_profile.profile_id == 72
+    assert profile_repo.created_profile.activity_input_source == ActivityInputSource.SERVICE_LOG
+    assert profile_repo.created_profile.activity_window_days == 14
+    assert profile_repo.created_profile.input_method == InputMethod.SERVICE_LOG
+    assert response.profile_id == 72
+    assert response.prediction_id == 90
+    assert response.activity_input_source == ActivityInputSource.SERVICE_LOG
+    assert session.committed is True
