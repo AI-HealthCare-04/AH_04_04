@@ -7,6 +7,8 @@ from app.dtos.risk_prediction import (
     CareStage,
     RiskPredictionCreateRequest,
     RiskPredictionCreateResponse,
+    RiskPredictionHistoryItem,
+    RiskPredictionHistoryResponse,
     RiskPredictionResponse,
 )
 from app.ml.predictor import RiskPredictor, features_from_health_profile
@@ -52,6 +54,14 @@ class RiskPredictionService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Risk prediction not found.")
         return self._to_response(prediction)
 
+    async def get_recent_predictions(self, user: User, limit: int = 7) -> RiskPredictionHistoryResponse:
+        if limit <= 0:
+            return RiskPredictionHistoryResponse(predictions=[])
+        predictions = await self.prediction_repo.get_recent_predictions(user.user_id, limit)
+        return RiskPredictionHistoryResponse(
+            predictions=[self._to_history_item(prediction) for prediction in predictions],
+        )
+
     async def _predict_and_save(
         self,
         user: User,
@@ -84,6 +94,17 @@ class RiskPredictionService:
             model_variant=prediction.model_variant.value,
             care_stage=care_stage,
             display_message=self._display_message(care_stage),
+        )
+
+    @staticmethod
+    def _to_history_item(prediction: RiskPrediction) -> RiskPredictionHistoryItem:
+        return RiskPredictionHistoryItem(
+            prediction_id=prediction.prediction_id,
+            created_at=prediction.created_at,
+            care_stage=RiskPredictionService._care_stage_from_risk_level(prediction.internal_risk_level),
+            risk_level=prediction.internal_risk_level,
+            risk_score=prediction.internal_risk_score,
+            model_variant=prediction.model_variant,
         )
 
     @staticmethod

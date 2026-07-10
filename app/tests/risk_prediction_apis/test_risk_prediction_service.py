@@ -1,3 +1,5 @@
+from datetime import datetime
+from decimal import Decimal
 from types import SimpleNamespace
 
 from app.dtos.risk_prediction import CareStage, RiskPredictionCreateResponse
@@ -63,3 +65,77 @@ def test_create_response_includes_onboarding_status() -> None:
     )
 
     assert response.onboarding_status == "completed"
+
+
+def test_history_item_includes_dashboard_trend_fields() -> None:
+    prediction = SimpleNamespace(
+        prediction_id=11,
+        created_at=datetime(2026, 7, 10, 12, 0, 0),
+        internal_risk_level=RiskLevel.MEDIUM,
+        internal_risk_score=Decimal("0.427"),
+        model_variant=ModelVariant.WITH_WAIST,
+    )
+
+    item = RiskPredictionService._to_history_item(prediction)  # type: ignore[arg-type]
+
+    assert item.prediction_id == 11
+    assert item.created_at == datetime(2026, 7, 10, 12, 0, 0)
+    assert item.care_stage == CareStage.MAINTAIN
+    assert item.risk_level == RiskLevel.MEDIUM
+    assert item.risk_score == Decimal("0.427")
+    assert item.model_variant == ModelVariant.WITH_WAIST
+
+
+async def test_get_recent_predictions_returns_history_items_in_repo_order() -> None:
+    predictions: list[object] = [
+        SimpleNamespace(
+            prediction_id=12,
+            created_at=datetime(2026, 7, 10, 12, 0, 0),
+            internal_risk_level=RiskLevel.HIGH,
+            internal_risk_score=Decimal("0.751"),
+            model_variant=ModelVariant.MINIMAL,
+        ),
+        SimpleNamespace(
+            prediction_id=11,
+            created_at=datetime(2026, 7, 9, 12, 0, 0),
+            internal_risk_level=RiskLevel.LOW,
+            internal_risk_score=Decimal("0.121"),
+            model_variant=ModelVariant.WITH_WAIST,
+        ),
+    ]
+    repo = SimpleNamespace(called_with=None)
+
+    async def fake_get_recent_predictions(user_id: int, limit: int) -> list[object]:
+        repo.called_with = (user_id, limit)
+        return predictions
+
+    repo.get_recent_predictions = fake_get_recent_predictions
+    service = RiskPredictionService(session=None)  # type: ignore[arg-type]
+    service.prediction_repo = repo  # type: ignore[assignment]
+    user = SimpleNamespace(user_id=1)
+
+    response = await service.get_recent_predictions(user, limit=2)  # type: ignore[arg-type]
+
+    assert repo.called_with == (1, 2)
+    assert [item.prediction_id for item in response.predictions] == [12, 11]
+    assert response.predictions[0].care_stage == CareStage.ACTION_NEEDED
+    assert response.predictions[1].care_stage == CareStage.GOOD
+    assert response.predictions[0].risk_level == RiskLevel.HIGH
+    assert response.predictions[1].risk_score == Decimal("0.121")
+
+
+async def test_get_recent_predictions_returns_empty_list_for_non_positive_limit() -> None:
+    repo = SimpleNamespace(called=False)
+
+    async def fake_get_recent_predictions(user_id: int, limit: int) -> list[object]:
+        repo.called = True
+        return []
+
+    repo.get_recent_predictions = fake_get_recent_predictions
+    service = RiskPredictionService(session=None)  # type: ignore[arg-type]
+    service.prediction_repo = repo  # type: ignore[assignment]
+
+    response = await service.get_recent_predictions(SimpleNamespace(user_id=1), limit=0)  # type: ignore[arg-type]
+
+    assert response.predictions == []
+    assert repo.called is False
