@@ -1,6 +1,6 @@
 import asyncio
 from collections.abc import Sequence
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from typing import cast
 
@@ -126,7 +126,9 @@ def test_latest_prediction_reraises_non_404() -> None:
         asyncio.run(service._latest_prediction(_USER))
 
 
-def _summary_service(*, logs: Sequence[object], summaries: Sequence[object]) -> DashboardService:
+def _summary_service(
+    *, logs: Sequence[object], summaries: Sequence[object], predictions: Sequence[object] = ()
+) -> DashboardService:
     service = DashboardService(session=None)  # type: ignore[arg-type]
 
     async def fake_logs(user_id: object, start: object, end: object) -> Sequence[object]:
@@ -135,8 +137,13 @@ def _summary_service(*, logs: Sequence[object], summaries: Sequence[object]) -> 
     async def fake_summaries(user_id: object, start: object, end: object) -> Sequence[object]:
         return summaries
 
+    async def fake_recent(user: object, limit: int) -> object:
+        # get_recent_predictions는 최근순 목록을 담은 응답을 돌려준다.
+        return SimpleNamespace(predictions=list(predictions))
+
     service.repo.get_activity_logs_between = fake_logs  # type: ignore[assignment]
     service.repo.get_summaries_between = fake_summaries  # type: ignore[assignment]
+    service.risk_service.get_recent_predictions = fake_recent  # type: ignore[assignment]
     return service
 
 
@@ -168,6 +175,24 @@ def test_get_summary_aggregates_trend_total_and_lifestyle() -> None:
     assert result.lifestyle_records.meal_days == 2  # meal_counted True인 날 수
     assert result.lifestyle_records.game_count == 3  # game_count 합
     assert result.risk_change == []
+
+
+def test_get_summary_maps_risk_change_chronologically() -> None:
+    # 예측 이력은 최근순으로 온다(newer 먼저). risk_change는 오래된→최신으로 뒤집혀야 한다.
+    newer = datetime(2026, 7, 10, 12, 0, 0)
+    older = datetime(2026, 7, 3, 12, 0, 0)
+    predictions = [
+        SimpleNamespace(created_at=newer, care_stage="action_needed"),
+        SimpleNamespace(created_at=older, care_stage="maintain"),
+    ]
+    service = _summary_service(logs=[], summaries=[], predictions=predictions)
+
+    result = asyncio.run(service.get_summary(_USER_WITH_ID, days=7))
+
+    assert [(p.at, p.care_stage) for p in result.risk_change] == [
+        (older, "maintain"),
+        (newer, "action_needed"),
+    ]
 
 
 @pytest.mark.parametrize("bad_days", [0, -1, 91])

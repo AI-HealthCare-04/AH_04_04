@@ -18,6 +18,7 @@ from app.dtos.dashboard import (
     LifestyleRecords,
     PointBalanceResponse,
     PointsResponse,
+    RiskChangePoint,
     StampDay,
     StampsResponse,
 )
@@ -76,6 +77,8 @@ class DashboardService:
         )
 
     _SUMMARY_MAX_DAYS = 90
+    # 위험도 변화 추이에 담을 최근 예측 개수(예측은 사용자가 산출할 때만 생기는 희소 이벤트).
+    _RISK_CHANGE_LIMIT = 14
 
     async def get_summary(self, user: User, days: int) -> DashboardSummaryResponse:
         # 최근 days일(오늘 포함) 구간의 활동 추이·생활기록·위험도 변화를 집계한다.
@@ -113,9 +116,18 @@ class DashboardService:
             total_moderate_equivalent_min=total,
             activity_trend=activity_trend,
             lifestyle_records=LifestyleRecords(meal_days=meal_days, game_count=game_count),
-            # risk_change는 예측 이력(지영님 도메인)이 준비되면 채운다. 현재는 빈 배열.
-            risk_change=[],
+            risk_change=await self._risk_change(user),
         )
+
+    async def _risk_change(self, user: User) -> list[RiskChangePoint]:
+        # 예측 도메인 공개 인터페이스(get_recent_predictions)를 소비한다.
+        #   최근순으로 오므로 시계열 그래프용으로 오래된→최신 순서로 뒤집는다.
+        #   care_stage는 예측 도메인이 계산한 값을 그대로 쓴다(매핑 단일 출처).
+        history = await self.risk_service.get_recent_predictions(user, limit=self._RISK_CHANGE_LIMIT)
+        return [
+            RiskChangePoint(at=item.created_at, care_stage=item.care_stage)
+            for item in reversed(history.predictions)
+        ]
 
     async def get_points(self, user: User) -> PointsResponse:
         # 잔액은 point_balances에서 실제 조회. 적립 이력(point_earn_logs)은 아직 미도입 테이블이라

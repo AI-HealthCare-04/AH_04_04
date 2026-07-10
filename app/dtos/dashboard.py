@@ -96,5 +96,5 @@ class DashboardSummaryResponse(BaseModel):
     total_moderate_equivalent_min: float
     activity_trend: list[ActivityTrendPoint]
     lifestyle_records: LifestyleRecords
-    # risk_change는 예측 이력(지영님 도메인)이 준비되면 채운다. 현재는 빈 배열.
+    # 위험도 변화 추이(오래된→최신). 예측 이력이 없으면 빈 배열.
     risk_change: list[RiskChangePoint]
