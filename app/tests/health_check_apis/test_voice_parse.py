@@ -107,12 +107,43 @@ def test_sex_variants(transcript: str, expected: str) -> None:
     assert _parse(VoiceParseField.SEX, transcript).value == expected
 
 
+def test_sex_ignores_single_char_false_positive() -> None:
+    # "남편이랑 왔어요"의 '남'을 male로 오탐하면 안 된다 → 폼 폴백.
+    result = _parse(VoiceParseField.SEX, "남편이랑 왔어요")
+    assert result.value is None
+    assert result.needs_confirmation is False
+
+
 def test_kidney_and_protein_status() -> None:
     assert _parse(VoiceParseField.KIDNEY_STATUS, "투석 받아요").value == "dialysis"
     assert _parse(VoiceParseField.KIDNEY_STATUS, "없어요").value == "none"
     assert _parse(VoiceParseField.KIDNEY_STATUS, "잘 모르겠어요").value == "unknown"
     assert _parse(VoiceParseField.PROTEIN_RESTRICTION_STATUS, "단백질 제한하고 있어요").value == "restricted"
     assert _parse(VoiceParseField.PROTEIN_RESTRICTION_STATUS, "몰라요").value == "unknown"
+
+
+@pytest.mark.parametrize(
+    "field,transcript,expected",
+    [
+        # 부정 표현이 긍정/질환 힌트보다 우선해야 반대 값으로 확정되지 않는다.
+        (VoiceParseField.STRENGTH_EXERCISE, "운동 안 하고 있어요", False),
+        (VoiceParseField.WALKING_PRACTICE, "안 해요", False),
+        (VoiceParseField.KIDNEY_STATUS, "투석 안 받아요", "none"),
+        (VoiceParseField.KIDNEY_STATUS, "신장병 없어요", "none"),
+        (VoiceParseField.PROTEIN_RESTRICTION_STATUS, "단백질 제한 안 해요", "none"),
+        (VoiceParseField.PROTEIN_RESTRICTION_STATUS, "제한 없어요", "none"),
+    ],
+)
+def test_negation_is_resolved_before_positive_hints(
+    field: VoiceParseField, transcript: str, expected: object
+) -> None:
+    result = _parse(field, transcript)
+    assert result.value == expected
+
+    # 긍정 케이스는 그대로 유지되는지 대조.
+    assert _parse(VoiceParseField.KIDNEY_STATUS, "투석 받아요").value == "dialysis"
+    assert _parse(VoiceParseField.KIDNEY_STATUS, "신장병 있어요").value == "kidney_disease"
+    assert _parse(VoiceParseField.PROTEIN_RESTRICTION_STATUS, "제한하고 있어요").value == "restricted"
 
 
 def test_out_of_range_measurement_falls_back_to_form() -> None:

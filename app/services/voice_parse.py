@@ -23,10 +23,19 @@ _HEIGHT_RANGE = (100.0, 250.0)
 _WEIGHT_RANGE = (20.0, 300.0)
 _WAIST_RANGE = (30.0, 200.0)
 
-# 예/아니오/모름 판정(순서 중요: 모름 → 아니오 → 예)
+# 예/아니오/모름 판정(순서 중요: 모름 → 부정 → 긍정)
 _UNKNOWN_HINTS = ("몰라", "모르", "글쎄", "기억")
-_NO_HINTS = ("아니", "아뇨", "안해", "안함", "없어", "없다", "못해", "안 ")
+# 부정 표현. 긍정/질환 힌트보다 **먼저** 검사해 "운동 안 해요", "투석 안 받아요",
+# "신장병 없어요"가 반대 값으로 확정되지 않게 한다(공백은 사전에 제거하므로 "안 " 같은
+# 뒤공백 패턴은 쓰지 않는다).
+# 한계: "신장이 안 좋아요"(=질환 있음)처럼 부정이 형용사에 붙는 경우는 none으로 잡힌다.
+# 확인 단계(needs_confirmation)로 커버하고, 세밀한 구분은 후속 과제로 둔다.
+_NEGATION_HINTS = ("안", "않", "못", "아니", "아뇨", "없")
 _YES_HINTS = ("네", "예", "응", "그렇", "맞", "해요", "한다", "있어", "있다", "가끔", "자주")
+
+
+def _has_negation(text: str) -> bool:
+    return any(hint in text for hint in _NEGATION_HINTS)
 
 
 def _korean_to_number(text: str) -> float | None:
@@ -127,9 +136,15 @@ def _parse_birth_date(transcript: str) -> str | None:
 
 def _parse_sex(transcript: str) -> str | None:
     text = transcript.replace(" ", "")
-    if any(hint in text for hint in ("남자", "남성", "남")):
+    # 두 글자 이상 확정 표현을 우선. 단일 글자(남/여)는 "남편"·"여동생" 등 오탐이 있어
+    # 답변이 사실상 그 글자뿐일 때만 인정한다.
+    if any(hint in text for hint in ("남자", "남성")):
         return Sex.MALE.value
-    if any(hint in text for hint in ("여자", "여성", "여")):
+    if any(hint in text for hint in ("여자", "여성")):
+        return Sex.FEMALE.value
+    if text == "남":
+        return Sex.MALE.value
+    if text == "여":
         return Sex.FEMALE.value
     return None
 
@@ -138,7 +153,7 @@ def _parse_bool(transcript: str) -> bool | None:
     text = transcript.replace(" ", "")
     if any(hint in text for hint in _UNKNOWN_HINTS):
         return None
-    if any(hint in text for hint in _NO_HINTS):
+    if _has_negation(text):  # 부정을 긍정보다 먼저: "운동 안 하고 있어요" → False
         return False
     if any(hint in text for hint in _YES_HINTS):
         return True
@@ -149,12 +164,13 @@ def _parse_kidney_status(transcript: str) -> str | None:
     text = transcript.replace(" ", "")
     if any(hint in text for hint in _UNKNOWN_HINTS):
         return KidneyStatus.UNKNOWN.value
+    # 부정("없어요"·"안 받아요")을 질환·투석 힌트보다 먼저 → "신장병 없어요"·"투석 안 받아요" → none
+    if _has_negation(text) or any(hint in text for hint in ("정상", "괜찮")):
+        return KidneyStatus.NONE.value
     if "투석" in text:
         return KidneyStatus.DIALYSIS.value
     if any(hint in text for hint in ("신장병", "신장질환", "콩팥병", "신부전")):
         return KidneyStatus.KIDNEY_DISEASE.value
-    if any(hint in text for hint in ("없", "정상", "아니", "괜찮")):
-        return KidneyStatus.NONE.value
     return None
 
 
@@ -162,10 +178,11 @@ def _parse_protein_restriction(transcript: str) -> str | None:
     text = transcript.replace(" ", "")
     if any(hint in text for hint in _UNKNOWN_HINTS):
         return ProteinRestrictionStatus.UNKNOWN.value
+    # 부정("없어요"·"안 해요")을 제한 힌트보다 먼저 → "제한 없어요"·"단백질 제한 안 해요" → none
+    if _has_negation(text) or any(hint in text for hint in ("정상", "자유", "괜찮")):
+        return ProteinRestrictionStatus.NONE.value
     if any(hint in text for hint in ("제한", "줄여", "줄이", "조절")):
         return ProteinRestrictionStatus.RESTRICTED.value
-    if any(hint in text for hint in ("없", "정상", "아니", "자유", "괜찮")):
-        return ProteinRestrictionStatus.NONE.value
     return None
 
 
