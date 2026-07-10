@@ -6,6 +6,7 @@ from app.models.base import Base
 
 def test_core_db_metadata_tables() -> None:
     assert set(Base.metadata.tables) == {
+        "activity_level_change_logs",
         "daily_activity_summaries",
         "game_logs",
         "health_check_sessions",
@@ -28,7 +29,6 @@ def test_core_db_metadata_tables() -> None:
 def test_deferred_tables_are_not_in_initial_metadata() -> None:
     assert "point_earn_logs" not in Base.metadata.tables
     assert "point_spend_logs" not in Base.metadata.tables
-    assert "activity_level_change_logs" not in Base.metadata.tables
 
 
 def test_user_identity_does_not_store_email_or_age() -> None:
@@ -96,6 +96,32 @@ def test_level_reason_enum_contract() -> None:
         "llm_recommendation",
         "user_selected",
     ]
+
+
+def test_activity_level_change_logs_contract() -> None:
+    logs = Base.metadata.tables["activity_level_change_logs"]
+
+    assert set(logs.columns.keys()) == {
+        "level_change_id",
+        "user_id",
+        "from_level",
+        "to_level",
+        "reason_type",
+        "reason_text",
+        "accepted_by_user",
+        "created_at",
+    }
+
+    from_level_type = logs.columns["from_level"].type
+    to_level_type = logs.columns["to_level"].type
+    reason_type_type = logs.columns["reason_type"].type
+
+    assert isinstance(from_level_type, SAEnum)
+    assert from_level_type.enums == ["easy", "normal", "hard"]
+    assert isinstance(to_level_type, SAEnum)
+    assert to_level_type.enums == ["easy", "normal", "hard"]
+    assert isinstance(reason_type_type, SAEnum)
+    assert reason_type_type.enums == ["rule", "llm_recommendation", "user_request"]
 
 
 def test_timestamp_columns_have_defaults() -> None:

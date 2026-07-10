@@ -1,4 +1,4 @@
-from app.models.activity import UserActivityProfile
+from app.models.activity import ActivityLevelChangeLog, UserActivityProfile
 from app.models.dashboard import DailyActivitySummary, PointBalance
 from app.models.health import HealthCheckSession, HealthProfile, PhysicalAssessment
 from app.models.missions import GameLog, MealLog, MissionLog, MissionTemplate, PhysicalActivityLog, SensorSession
@@ -8,6 +8,7 @@ from app.models.terms import TermsAgreement
 from app.models.users import User
 
 __all__ = [
+    "ActivityLevelChangeLog",
     "DailyActivitySummary",
     "GameLog",
     "HealthCheckSession",
