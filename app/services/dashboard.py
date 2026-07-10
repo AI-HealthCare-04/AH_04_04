@@ -17,11 +17,13 @@ from app.dtos.dashboard import (
     HomeUser,
     LifestyleRecords,
     PointBalanceResponse,
+    PointsResponse,
     StampDay,
     StampsResponse,
 )
 from app.models.enums import ActivityLevel, DailyResult, MissionType
 from app.models.users import User
+from app.repositories.activity_profile_repository import ActivityProfileRepository
 from app.repositories.dashboard_repository import DashboardRepository
 from app.services.activity_metrics import moderate_equivalent_min
 from app.services.mission import MissionService
@@ -32,16 +34,19 @@ class DashboardService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repo = DashboardRepository(session)
+        self.activity_repo = ActivityProfileRepository(session)
         self.mission_service = MissionService(session)
         self.risk_service = RiskPredictionService(session)
 
     async def get_home(self, user: User) -> HomeResponse:
         current_points = await self.repo.get_current_points(user.user_id)
         summary = await self.repo.get_today_summary(user.user_id)
-        # activity 도메인 미구현 → 기본 난이도 easy. 표시(activity_profile)와 미션 수 산정에
-        #   같은 레벨을 써서 "easy로 표시되는데 전체 레벨을 센" 불일치를 막는다(정인/지영 리뷰 반영).
-        #   TODO: activity 도메인 완성 후 사용자의 실제 current_level로 교체.
-        effective_level = ActivityLevel.EASY
+        # 사용자의 실제 운동 난이도(user_activity_profiles.current_level)를 읽어온다.
+        #   프로필이 아직 없으면(건강체크 스킵/기초체력검사 전) 기본 easy로 본다.
+        #   표시(activity_profile)와 미션 수 산정에 같은 레벨을 써서
+        #   "표시 레벨과 카운트 레벨이 어긋나는" 불일치를 막는다(정인/지영 리뷰 반영).
+        profile = await self.activity_repo.get_by_user_id(user.user_id)
+        effective_level = profile.current_level if profile else ActivityLevel.EASY
         available = await self._available_mission_summary(user, effective_level)
         latest_prediction = await self._latest_prediction(user)
         return HomeResponse(
@@ -111,6 +116,12 @@ class DashboardService:
             # risk_change는 예측 이력(지영님 도메인)이 준비되면 채운다. 현재는 빈 배열.
             risk_change=[],
         )
+
+    async def get_points(self, user: User) -> PointsResponse:
+        # 잔액은 point_balances에서 실제 조회. 적립 이력(point_earn_logs)은 아직 미도입 테이블이라
+        #   현재는 빈 배열로 응답한다(v6.0에서 사용 이력 point_spend_logs는 제거되어 노출하지 않음).
+        current_points = await self.repo.get_current_points(user.user_id)
+        return PointsResponse(current_points=current_points, earn_logs=[])
 
     async def get_stamps(self, user: User, month: str) -> StampsResponse:
         start, end = self._month_range(month)
