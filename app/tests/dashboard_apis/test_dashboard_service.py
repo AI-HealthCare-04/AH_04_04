@@ -1,5 +1,6 @@
 import asyncio
 from datetime import date
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -12,6 +13,8 @@ from app.services.dashboard import DashboardService
 
 # 카운팅 로직만 검증하므로 user는 스텁된 get_missions로 전달만 되고 실제로 쓰이지 않는다.
 _USER = cast(User, object())
+# user_id를 읽는 경로(get_points 등)에는 id가 있는 사용자를 쓴다.
+_USER_WITH_ID = cast(User, SimpleNamespace(user_id=1))
 
 
 class _FakeMission:
@@ -117,6 +120,21 @@ def test_latest_prediction_reraises_non_404() -> None:
 
     with pytest.raises(HTTPException):
         asyncio.run(service._latest_prediction(_USER))
+
+
+def test_get_points_returns_real_balance_and_empty_earn_logs() -> None:
+    # 잔액은 point_balances에서 실제 조회, 적립 이력(point_earn_logs 미도입)은 빈 배열.
+    service = DashboardService(session=None)  # type: ignore[arg-type]
+
+    async def fake_get_current_points(user_id: object) -> int:
+        return 120
+
+    service.repo.get_current_points = fake_get_current_points  # type: ignore[assignment]
+
+    result = asyncio.run(service.get_points(_USER_WITH_ID))
+
+    assert result.current_points == 120
+    assert result.earn_logs == []
 
 
 def test_month_range_returns_first_and_last_day() -> None:

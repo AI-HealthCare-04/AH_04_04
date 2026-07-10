@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 from pydantic import BaseModel
 
@@ -11,6 +11,21 @@ class HomeUser(BaseModel):
 
 class PointBalanceResponse(BaseModel):
     current_points: int
+
+
+# GET /users/me/points — 포인트 잔액 + 적립 이력.
+# earn_logs 항목 계약(명세). 적립 이력 테이블(point_earn_logs)은 MVP 이후로 미뤄져 있어
+#   현재는 항상 빈 배열로 응답한다(테이블 도입 시 채운다).
+class PointEarnLogItem(BaseModel):
+    earn_id: int
+    earned_points: int
+    reason: str
+    created_at: datetime
+
+
+class PointsResponse(BaseModel):
+    current_points: int
+    earn_logs: list[PointEarnLogItem]
 
 
 class HomeActivityProfile(BaseModel):

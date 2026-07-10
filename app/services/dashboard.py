@@ -13,6 +13,7 @@ from app.dtos.dashboard import (
     HomeTodaySummary,
     HomeUser,
     PointBalanceResponse,
+    PointsResponse,
     StampDay,
     StampsResponse,
 )
@@ -64,6 +65,12 @@ class DashboardService:
             care_stage=prediction.care_stage,
             display_message=prediction.display_message,
         )
+
+    async def get_points(self, user: User) -> PointsResponse:
+        # 잔액은 point_balances에서 실제 조회. 적립 이력(point_earn_logs)은 아직 미도입 테이블이라
+        #   현재는 빈 배열로 응답한다(v6.0에서 사용 이력 point_spend_logs는 제거되어 노출하지 않음).
+        current_points = await self.repo.get_current_points(user.user_id)
+        return PointsResponse(current_points=current_points, earn_logs=[])
 
     async def get_stamps(self, user: User, month: str) -> StampsResponse:
         start, end = self._month_range(month)
