@@ -29,10 +29,8 @@ from app.models.enums import (
     ActivitySource,
     ActivityType,
     DailyResult,
-    KidneyStatus,
     MissionStatus,
     MissionType,
-    ProteinRestrictionStatus,
     SyncStatus,
 )
 from app.models.health import HealthProfile
@@ -41,10 +39,6 @@ from app.models.users import User
 from app.repositories.health_profile_repository import HealthProfileRepository
 from app.repositories.mission_repository import MissionRepository
 from app.services.mission_scoring import compute_daily_result, compute_earned_points
-
-# 신장/단백질 제한으로 고단백(requires_kidney_check) 미션을 숨겨야 하는 상태.
-# unknown은 강제 차단하지 않는다(과도한 제한 방지). 명시적 제한 상태만 필터한다.
-_KIDNEY_RESTRICTED_STATUSES = frozenset({KidneyStatus.KIDNEY_DISEASE, KidneyStatus.DIALYSIS})
 
 
 class MissionService:
@@ -75,12 +69,12 @@ class MissionService:
 
     @staticmethod
     def _should_hide_kidney_missions(profile: HealthProfile | None) -> bool:
-        """최신 건강 프로필의 신장/단백질 상태로 고단백 미션 숨김 여부를 판정."""
+        """고단백 미션 숨김 여부. 서버가 이미 계산·저장한 protein_challenge_allowed를
+        단일 진실원천으로 사용한다(kidney/protein 규칙 재구현 금지).
+        프로필이 없으면(건강체크 전) 숨기지 않는다."""
         if profile is None:
             return False
-        kidney_restricted = profile.kidney_status in _KIDNEY_RESTRICTED_STATUSES
-        protein_restricted = profile.protein_restriction_status == ProteinRestrictionStatus.RESTRICTED
-        return kidney_restricted or protein_restricted
+        return not profile.protein_challenge_allowed
 
     # ---------------- POST /mission-logs ----------------
 

@@ -4,15 +4,16 @@ from typing import cast
 
 import pytest
 
-from app.models.enums import ActivityLevel, KidneyStatus, ProteinRestrictionStatus
+from app.models.enums import ActivityLevel
 from app.models.users import User
 from app.services.mission import MissionService
 
 _USER = cast(User, SimpleNamespace(user_id=1))
 
 
-def _profile(*, kidney: KidneyStatus, protein: ProteinRestrictionStatus) -> SimpleNamespace:
-    return SimpleNamespace(kidney_status=kidney, protein_restriction_status=protein)
+def _profile(*, protein_challenge_allowed: bool) -> SimpleNamespace:
+    # 필터는 서버가 계산·저장한 protein_challenge_allowed만 참조한다.
+    return SimpleNamespace(protein_challenge_allowed=protein_challenge_allowed)
 
 
 # ---------------- _should_hide_kidney_missions (순수 판정) ----------------
@@ -24,20 +25,15 @@ def test_hide_when_no_profile_returns_false() -> None:
 
 
 @pytest.mark.parametrize(
-    "kidney,protein,expected",
+    "allowed,expected_hide",
     [
-        (KidneyStatus.NONE, ProteinRestrictionStatus.NONE, False),
-        (KidneyStatus.UNKNOWN, ProteinRestrictionStatus.UNKNOWN, False),  # unknown은 차단 안 함
-        (KidneyStatus.KIDNEY_DISEASE, ProteinRestrictionStatus.NONE, True),
-        (KidneyStatus.DIALYSIS, ProteinRestrictionStatus.NONE, True),
-        (KidneyStatus.NONE, ProteinRestrictionStatus.RESTRICTED, True),
+        (True, False),  # 단백질 챌린지 허용 → 숨기지 않음
+        (False, True),  # 불허(신장/단백질 제한, unknown 포함) → 숨김
     ],
 )
-def test_hide_by_kidney_or_protein_status(
-    kidney: KidneyStatus, protein: ProteinRestrictionStatus, expected: bool
-) -> None:
-    profile = _profile(kidney=kidney, protein=protein)
-    assert MissionService._should_hide_kidney_missions(cast(object, profile)) is expected  # type: ignore[arg-type]
+def test_hide_follows_protein_challenge_allowed(allowed: bool, expected_hide: bool) -> None:
+    profile = _profile(protein_challenge_allowed=allowed)
+    assert MissionService._should_hide_kidney_missions(cast(object, profile)) is expected_hide  # type: ignore[arg-type]
 
 
 # ---------------- get_missions 배선 (필터 플래그 전달) ----------------
@@ -65,18 +61,24 @@ def _service_capturing_filter(*, profile: object | None) -> tuple[MissionService
     return service, captured
 
 
-def test_get_missions_hides_kidney_missions_for_restricted_user() -> None:
-    profile = _profile(kidney=KidneyStatus.DIALYSIS, protein=ProteinRestrictionStatus.NONE)
-    service, captured = _service_capturing_filter(profile=profile)
+def test_get_missions_hides_kidney_missions_when_challenge_not_allowed() -> None:
+    service, captured = _service_capturing_filter(profile=_profile(protein_challenge_allowed=False))
 
     asyncio.run(service.get_missions(_USER, mission_type=None, level=ActivityLevel.EASY))
 
     assert captured["exclude_kidney_check"] is True
 
 
-def test_get_missions_keeps_kidney_missions_for_unrestricted_user() -> None:
-    profile = _profile(kidney=KidneyStatus.NONE, protein=ProteinRestrictionStatus.NONE)
-    service, captured = _service_capturing_filter(profile=profile)
+def test_get_missions_keeps_kidney_missions_when_challenge_allowed() -> None:
+    service, captured = _service_capturing_filter(profile=_profile(protein_challenge_allowed=True))
+
+    asyncio.run(service.get_missions(_USER, mission_type=None, level=ActivityLevel.EASY))
+
+    assert captured["exclude_kidney_check"] is False
+
+
+def test_get_missions_keeps_all_when_no_profile() -> None:
+    service, captured = _service_capturing_filter(profile=None)
 
     asyncio.run(service.get_missions(_USER, mission_type=None, level=ActivityLevel.EASY))
 
