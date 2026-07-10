@@ -3,14 +3,16 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.db.session import build_database_url
 import app.models
 from app.models.base import Base
 
 config = context.config
-config.set_main_option("sqlalchemy.url", build_database_url())
+# build_database_url()은 자격증명을 안전하게(escape 포함) 담은 URL 객체를 준다.
+# alembic ConfigParser(sqlalchemy.url 문자열 %-보간)를 거치면 escape된 %xx가 깨지고
+# 비밀번호도 마스킹되므로, set_main_option을 쓰지 않고 URL 객체를 직접 사용한다.
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -38,11 +40,7 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_migrations_online() -> None:
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    connectable = create_async_engine(build_database_url(), poolclass=pool.NullPool)
 
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
