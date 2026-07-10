@@ -101,6 +101,7 @@ class RiskPredictionService:
         return RiskPredictionHistoryItem(
             prediction_id=prediction.prediction_id,
             created_at=prediction.created_at,
+            care_stage=RiskPredictionService._care_stage_from_risk_level(prediction.internal_risk_level),
             risk_level=prediction.internal_risk_level,
             risk_score=prediction.internal_risk_score,
             model_variant=prediction.model_variant,

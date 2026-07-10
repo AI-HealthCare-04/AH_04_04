@@ -33,6 +33,7 @@ class RiskPredictionCreateResponse(RiskPredictionResponse):
 class RiskPredictionHistoryItem(BaseModel):
     prediction_id: int
     created_at: datetime
+    care_stage: CareStage
     risk_level: RiskLevel
     risk_score: Decimal
     model_variant: ModelVariant
