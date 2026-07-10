@@ -18,6 +18,11 @@ class UserUpdateRequest(BaseModel):
     nickname: str | None = Field(default=None, min_length=1, max_length=50)
 
 
+# [요청] 회원탈퇴 (DELETE /users/me). confirm=true여야 진행하고, 아니면 400으로 거부한다.
+class UserWithdrawRequest(BaseModel):
+    confirm: bool
+
+
 # [응답] 설정 조회/변경 공통 응답 (명세 §8/§10). 항상 전체 설정(5필드)을 반환한다.
 # 기본값은 personalized_settings 모델 기본값과 동일하게 맞춘다(font/sound=medium, pet_type="default").
 # font/sound는 DB enum(small/medium/large)과 동일하게 타입을 좁혀 v7.2 계약을 보호한다.

@@ -13,7 +13,9 @@ class UserRepository:
         self.session = session
 
     async def get_user(self, user_id: int) -> User | None:
-        return await self.session.get(User, user_id)
+        # 탈퇴(soft-delete)된 사용자는 조회되지 않는다 → 인증 경로에서 자동으로 401 처리된다.
+        stmt = select(User).where(User.user_id == user_id, User.deleted_at.is_(None))
+        return await self.session.scalar(stmt)
 
     async def get_by_provider_social_id(self, provider: AuthProvider, social_id: str) -> User | None:
         stmt = select(User).where(
@@ -52,3 +54,8 @@ class UserRepository:
         user.nickname = nickname
         await self.session.flush()
         return user
+
+    async def soft_delete(self, user: User) -> None:
+        # 물리 삭제가 아니라 deleted_at만 찍는다(soft-delete). 조회/인증에서 자동 제외된다.
+        user.deleted_at = datetime.now(config.TIMEZONE)
+        await self.session.flush()

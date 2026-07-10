@@ -1,6 +1,12 @@
+from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dtos.users import UserSettingsResponse, UserSettingsUpdateRequest, UserUpdateRequest
+from app.dtos.users import (
+    UserSettingsResponse,
+    UserSettingsUpdateRequest,
+    UserUpdateRequest,
+    UserWithdrawRequest,
+)
 from app.models.users import User
 from app.repositories.user_repository import UserRepository
 
@@ -16,6 +22,17 @@ class UserManageService:
             await self.session.commit()
             await self.session.refresh(user)
         return user
+
+    async def withdraw(self, user: User, data: UserWithdrawRequest) -> None:
+        # soft-delete: deleted_at만 찍는다. 이후 get_user가 이 사용자를 걸러내 기존 토큰도 즉시 무효화된다.
+        # 물리 파기/보존기간은 파기정책 확정 후 별도 배치로 분리한다(soft-delete 우선).
+        if data.confirm is not True:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="회원탈퇴를 진행하려면 confirm이 true여야 합니다.",
+            )
+        await self.user_repo.soft_delete(user)
+        await self.session.commit()
 
 
 class UserSettingsService:
