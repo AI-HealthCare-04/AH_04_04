@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from alembic import op
 import sqlalchemy as sa
 
-revision: str = "0004_add_activity_level_change_logs"
+revision: str = "0004_add_activity_change_logs"
 down_revision: str | None = "0003_align_level_reason_enum"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -38,5 +38,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_activity_level_change_logs_user_id", table_name="activity_level_change_logs")
+    # DROP TABLE이 인덱스·FK까지 함께 제거한다.
+    # (MySQL은 FK가 사용하는 인덱스를 단독으로 못 지워 1553 에러가 남)
     op.drop_table("activity_level_change_logs")
