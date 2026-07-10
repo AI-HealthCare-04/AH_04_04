@@ -42,9 +42,9 @@ class JwtService:
             verified = token_class(token=token)
             return verified
         except ExpiredTokenError as err:
-            raise HTTPException(status_code=401, detail=f"{token_type} token has expired.") from err
+            raise HTTPException(status_code=401, detail="인증이 만료되었습니다. 다시 로그인해 주세요.") from err
         except TokenError as err:
-            raise HTTPException(status_code=400, detail="Provided invalid token.") from err
+            raise HTTPException(status_code=401, detail="인증 정보가 올바르지 않습니다.") from err
 
     def refresh_jwt(self, refresh_token: str) -> AccessToken:
         verified_rt = self.verify_jwt(token=refresh_token, token_type="refresh")
