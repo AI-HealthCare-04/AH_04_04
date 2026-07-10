@@ -187,12 +187,13 @@ async def test_create_assessment_logs_activity_level_change() -> None:
     )
 
     assert response.activity_profile.current_level == ActivityLevel.NORMAL
+    assert response.activity_profile.level_reason == LevelReason.RULE
     assert activity_repo.created_level_change_log is not None
     assert activity_repo.created_level_change_log.from_level == ActivityLevel.HARD
     assert activity_repo.created_level_change_log.to_level == ActivityLevel.NORMAL
     assert activity_repo.created_level_change_log.reason_type == ReasonType.RULE
     assert activity_repo.created_level_change_log.reason_text == "physical_assessment:30"
-    assert activity_repo.created_level_change_log.accepted_by_user is True
+    assert activity_repo.created_level_change_log.accepted_by_user is False
 
 
 async def test_create_assessment_keeps_level_when_walk_skipped() -> None:

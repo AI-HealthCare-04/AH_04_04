@@ -122,7 +122,7 @@ class PhysicalAssessmentService:
 
         from_level = profile.current_level
         profile.current_level = current_level
-        profile.level_reason = LevelReason.INITIAL_TEST
+        profile.level_reason = LevelReason.RULE
         profile.physical_assessment_id = physical_assessment_id
         profile.started_at = now_kst()
         await self.activity_repo.update_profile(profile)
@@ -134,7 +134,7 @@ class PhysicalAssessmentService:
                     to_level=current_level,
                     reason_type=ReasonType.RULE,
                     reason_text=f"physical_assessment:{physical_assessment_id}",
-                    accepted_by_user=True,
+                    accepted_by_user=False,
                 )
             )
         return profile
