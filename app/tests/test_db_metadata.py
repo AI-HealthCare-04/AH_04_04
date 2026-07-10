@@ -85,6 +85,19 @@ def test_v71_enum_contracts() -> None:
     ]
 
 
+def test_level_reason_enum_contract() -> None:
+    # 운동 난이도 상태 사유(user_activity_profiles.level_reason)는 명세 확정값만 가진다.
+    # #23에서 default/reassessment 제거 + llm_recommendation 추가(마이그레이션 0003)와 계약 일치 검증.
+    level_reason_type = Base.metadata.tables["user_activity_profiles"].columns["level_reason"].type
+    assert isinstance(level_reason_type, SAEnum)
+    assert level_reason_type.enums == [
+        "initial_test",
+        "rule",
+        "llm_recommendation",
+        "user_selected",
+    ]
+
+
 def test_timestamp_columns_have_defaults() -> None:
     for table in Base.metadata.tables.values():
         if "created_at" in table.columns:
