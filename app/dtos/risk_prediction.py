@@ -1,6 +1,10 @@
+from datetime import datetime
+from decimal import Decimal
 from enum import StrEnum
 
 from pydantic import BaseModel
+
+from app.models.enums import ModelVariant, RiskLevel
 
 
 class RiskPredictionCreateRequest(BaseModel):
@@ -24,3 +28,15 @@ class RiskPredictionResponse(BaseModel):
 
 class RiskPredictionCreateResponse(RiskPredictionResponse):
     onboarding_status: str
+
+
+class RiskPredictionHistoryItem(BaseModel):
+    prediction_id: int
+    created_at: datetime
+    risk_level: RiskLevel
+    risk_score: Decimal
+    model_variant: ModelVariant
+
+
+class RiskPredictionHistoryResponse(BaseModel):
+    predictions: list[RiskPredictionHistoryItem]

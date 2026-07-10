@@ -21,3 +21,13 @@ class RiskPredictionRepository:
             .limit(1)
         )
         return await self.session.scalar(stmt)
+
+    async def get_recent_predictions(self, user_id: int, limit: int) -> list[RiskPrediction]:
+        stmt = (
+            select(RiskPrediction)
+            .where(RiskPrediction.user_id == user_id)
+            .order_by(RiskPrediction.created_at.desc(), RiskPrediction.prediction_id.desc())
+            .limit(limit)
+        )
+        result = await self.session.scalars(stmt)
+        return list(result)
