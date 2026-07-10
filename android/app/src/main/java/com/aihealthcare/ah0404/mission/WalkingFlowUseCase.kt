@@ -28,8 +28,8 @@ import kotlin.math.roundToInt
  *  request/response 본문은 NetworkClient 의 HttpLoggingInterceptor(BODY) 가
  *  Logcat 에 자동으로 찍는다. 아래 Log 는 단계 구분용 마커.
  *
- *  나중에 ④ 단계에서 fakeSteps/fakeDurationSec 자리에 WalkingStepDetectorLogic 이
- *  누적한 실제 값만 꽂으면 실제 센서 연동으로 넘어간다.
+ *  steps/durationSec 에는 WalkingSession 이 실제 가속도계로 측정한 값을 넘긴다.
+ *  (헤드리스 테스트는 고정값을 넘겨 흐름만 검증)
  * ============================================================================
  */
 class WalkingFlowUseCase(
@@ -49,13 +49,16 @@ class WalkingFlowUseCase(
     )
 
     /**
-     * 가짜 데이터로 걷기 전체 흐름을 1회 태운다.
+     * 걷기 전체 흐름을 1회 태운다. steps/durationSec 에 실제 센서 측정값(또는
+     * 헤드리스 테스트용 고정값)을 넘긴다.
      * @param missionTemplateId 대상 걷기 미션 템플릿 id (GET /missions 로 확인한 값)
+     * @param steps 측정된 걸음 수 (WalkingStepDetectorLogic.count)
+     * @param durationSec 세션 경과 시간(초)
      */
-    suspend fun runFakeWalkingFlow(
+    suspend fun runWalkingFlow(
         missionTemplateId: Int,
-        fakeSteps: Int = 1000,
-        fakeDurationSec: Int = 600,
+        steps: Int = 1000,
+        durationSec: Int = 600,
     ): Result {
         // ① 게스트 로그인 → 토큰
         val login = api.guestLogin()
@@ -73,21 +76,21 @@ class WalkingFlowUseCase(
         val logId = started.missionLogId
         Log.i(TAG, "② 걷기 시작 OK → mission_log_id=$logId, status=${started.status}")
 
-        // ③ 센서 결과 저장 (accelerometer, 가짜 걸음/시간)
+        // ③ 센서 결과 저장 (accelerometer, 측정된 걸음/시간)
         val sensor = api.createSensorSession(
             SensorSessionCreateRequest(
                 missionLogId = logId,
                 sensorType = "accelerometer",
                 recognitionStatus = "success",
-                detectedCount = fakeSteps,
-                durationSec = fakeDurationSec,
+                detectedCount = steps,
+                durationSec = durationSec,
             )
         )
         Log.i(TAG, "③ 센서 저장 OK → sensor_session_id=${sensor.sensorSessionId}, status=${sensor.recognitionStatus}")
 
         // ④ 걷기 완료 (completed + success=true + walking_detail)
-        val durationMin = fakeDurationSec / 60f
-        val distanceKm = (fakeSteps * strideMeters / 1000f).let { (it * 100).roundToInt() / 100f }
+        val durationMin = durationSec / 60f
+        val distanceKm = (steps * strideMeters / 1000f).let { (it * 100).roundToInt() / 100f }
         val completed = api.completeMissionLog(
             missionLogId = logId,
             body = MissionLogUpdateRequest(
@@ -96,7 +99,7 @@ class WalkingFlowUseCase(
                 walkingDetail = WalkingDetail(
                     durationMin = durationMin,
                     distanceKm = distanceKm,
-                    steps = fakeSteps,
+                    steps = steps,
                 ),
             ),
         )
@@ -108,7 +111,7 @@ class WalkingFlowUseCase(
 
         return Result(
             missionLogId = logId,
-            steps = fakeSteps,
+            steps = steps,
             durationMin = durationMin,
             distanceKm = distanceKm,
             finalStatus = completed.status,
