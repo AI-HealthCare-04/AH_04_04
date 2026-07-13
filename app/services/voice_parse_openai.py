@@ -7,8 +7,10 @@
 - 새 의존성을 만들지 않으려고 OpenAI 공식 SDK 대신 이미 있는 ``httpx`` 로 REST 를 직접 호출한다.
 - ``.env`` 의 ``OPENAI_API_KEY`` 가 있어야 동작한다(없으면 ``RuntimeError``).
 - 상식 범위 밖 수치는 규칙기반과 동일하게 오인식으로 보고 ``value=None`` 처리한다.
+- 생년월일은 규칙기반과 동일하게 실제 달력 날짜만 통과시킨다(불가능/형식오류 → ``value=None``).
 """
 import json
+from datetime import date
 
 import httpx
 
@@ -99,7 +101,14 @@ def _coerce(field: VoiceParseField, value: object) -> bool | float | str | None:
         return value if isinstance(value, bool) else None
 
     if field is VoiceParseField.BIRTH_DATE:
-        return value if isinstance(value, str) and value else None
+        if not isinstance(value, str):
+            return None
+        try:
+            # 규칙기반 파서와 동일하게 실제 달력 날짜만 인정한다. "1958-13-40"(불가능한 날짜)이나
+            # "1958/03/01"(형식 위반)은 ValueError → None 으로 폼 폴백. 통과 시 정규 ISO(YYYY-MM-DD)로 반환.
+            return date.fromisoformat(value).isoformat()
+        except ValueError:
+            return None
 
     allowed = _ALLOWED_STRING_VALUES.get(field)
     if allowed is not None:
