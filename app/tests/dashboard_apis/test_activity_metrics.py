@@ -4,10 +4,14 @@
 #   1) met_value 있으면 그대로  2) 없으면 activity_type 기본 MET
 #   3) 기본 MET를 쓴 경우에만 intensity 보정  4) duration 없으면 0
 # =====================================================================================
+from datetime import date
 from decimal import Decimal
+from types import SimpleNamespace
+
+import pytest
 
 from app.models.enums import ActivityType, Intensity
-from app.services.activity_metrics import moderate_equivalent_min
+from app.services.activity_metrics import derive_activity_practice_flags, moderate_equivalent_min
 
 
 def test_met_value_takes_priority_and_ignores_intensity() -> None:
@@ -36,3 +40,62 @@ def test_intensity_adjusts_only_when_using_default_met() -> None:
 
 def test_none_duration_is_zero() -> None:
     assert moderate_equivalent_min(ActivityType.WALKING, None, None, None) == 0.0
+
+
+def test_activity_practice_flags_follow_model_weekly_definitions() -> None:
+    logs = [
+        SimpleNamespace(
+            activity_date=date(2026, 7, day),
+            activity_type=ActivityType.WALKING,
+            duration_min=30,
+            reps=None,
+            sets=None,
+        )
+        for day in range(1, 6)
+    ] + [
+        SimpleNamespace(
+            activity_date=date(2026, 7, day),
+            activity_type=ActivityType.SEATED_EXERCISE,
+            duration_min=10,
+            reps=None,
+            sets=None,
+        )
+        for day in (1, 3)
+    ]
+
+    walking_practice, strength_exercise = derive_activity_practice_flags(logs, activity_window_days=7)  # type: ignore[arg-type]
+
+    assert walking_practice is True
+    assert strength_exercise is True
+
+
+def test_activity_practice_flags_scale_weekly_definitions_for_fourteen_days() -> None:
+    logs = [
+        SimpleNamespace(
+            activity_date=date(2026, 7, day),
+            activity_type=ActivityType.WALKING,
+            duration_min=30,
+            reps=None,
+            sets=None,
+        )
+        for day in range(1, 10)
+    ] + [
+        SimpleNamespace(
+            activity_date=date(2026, 7, day),
+            activity_type=ActivityType.STANDING_EXERCISE,
+            duration_min=None,
+            reps=10,
+            sets=1,
+        )
+        for day in (1, 3, 8, 10)
+    ]
+
+    walking_practice, strength_exercise = derive_activity_practice_flags(logs, activity_window_days=14)  # type: ignore[arg-type]
+
+    assert walking_practice is False
+    assert strength_exercise is True
+
+
+def test_activity_practice_flags_reject_unsupported_window() -> None:
+    with pytest.raises(ValueError, match="must be 7 or 14"):
+        derive_activity_practice_flags([], activity_window_days=10)

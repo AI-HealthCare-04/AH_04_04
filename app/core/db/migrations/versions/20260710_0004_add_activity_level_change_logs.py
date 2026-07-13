@@ -1,6 +1,6 @@
 """add activity level change logs
 
-Revision ID: 0004_add_activity_level_change_logs
+Revision ID: 0004_add_activity_change_logs
 Revises: 0003_align_level_reason_enum
 Create Date: 2026-07-10 00:00:00
 """
@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from alembic import op
 import sqlalchemy as sa
 
-revision: str = "0004_add_activity_level_change_logs"
+revision: str = "0004_add_activity_change_logs"
 down_revision: str | None = "0003_align_level_reason_enum"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -38,5 +38,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_activity_level_change_logs_user_id", table_name="activity_level_change_logs")
+    # Dropping the table lets MySQL remove FK-backed indexes with it.
+    # Dropping the index first can fail with errno 1553.
     op.drop_table("activity_level_change_logs")
