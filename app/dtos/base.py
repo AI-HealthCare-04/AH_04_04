@@ -7,10 +7,13 @@ from app.core import config
 
 
 def _serialize_kst(value: datetime) -> str:
-    # naive datetime은 MySQL 세션 tz(+09:00) 기준의 KST 벽시계 값이므로 KST 오프셋을 부착한다.
-    # 이미 tz-aware면 그대로 ISO8601로 직렬화한다.
+    # 항상 KST 오프셋(+09:00)을 보장한다.
+    #   - naive: MySQL 세션 tz(+09:00) 기준의 KST 벽시계 값이므로 KST를 부착한다.
+    #   - tz-aware: 다른 tz(예: UTC)일 수 있으므로 astimezone으로 KST로 정규화한다.
     if value.tzinfo is None:
         value = value.replace(tzinfo=config.TIMEZONE)
+    else:
+        value = value.astimezone(config.TIMEZONE)
     return value.isoformat()
 
 
