@@ -30,7 +30,8 @@ class SensorService:
 
         sensor_session = SensorSession(
             mission_log_id=data.mission_log_id,
-            sensor_type=SensorType(data.sensor_type),
+            # 가속도계 단일 센서라 요청에서 sensor_type을 받지 않고 서버가 상수로 저장한다(v7.8).
+            sensor_type=SensorType.ACCELEROMETER,
             detected_count=data.detected_count,
             duration_sec=data.duration_sec,
             motion_score=data.motion_score,
