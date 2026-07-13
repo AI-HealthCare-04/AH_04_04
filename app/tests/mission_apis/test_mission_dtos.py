@@ -44,17 +44,10 @@ def test_mission_log_create_rejects_bad_game_type() -> None:
         )
 
 
-def test_sensor_session_accepts_v71_recognition_status() -> None:
-    # v7.1 확정값
+def test_sensor_session_accepts_recognition_status() -> None:
+    # 확정값 (sensor_type은 v7.8에서 제거 — 가속도계 단일)
     for value in ("success", "low_confidence", "failed", "manual_override"):
         req = SensorSessionCreateRequest.model_validate(
-            {"mission_log_id": 1, "sensor_type": "step_counter", "recognition_status": value}
+            {"mission_log_id": 1, "recognition_status": value}
         )
         assert req.recognition_status == value
-
-
-def test_sensor_session_rejects_unknown_sensor_type() -> None:
-    with pytest.raises(ValidationError):
-        SensorSessionCreateRequest.model_validate(
-            {"mission_log_id": 1, "sensor_type": "pedometer", "recognition_status": "success"}
-        )
