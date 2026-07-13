@@ -1,8 +1,10 @@
+from datetime import timedelta
 from decimal import Decimal
 
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.utils.clock import today_kst
 from app.dtos.risk_prediction import (
     CareStage,
     RiskPredictionCreateRequest,
@@ -18,13 +20,16 @@ from app.models.enums import ActivityInputSource, InputMethod, OnboardingStatus,
 from app.models.health import HealthProfile
 from app.models.predictions import RiskPrediction
 from app.models.users import User
+from app.repositories.dashboard_repository import DashboardRepository
 from app.repositories.health_profile_repository import HealthProfileRepository
 from app.repositories.risk_prediction_repository import RiskPredictionRepository
+from app.services.activity_metrics import derive_activity_practice_flags
 
 
 class RiskPredictionService:
     def __init__(self, session: AsyncSession, predictor: RiskPredictor | None = None):
         self.session = session
+        self.dashboard_repo = DashboardRepository(session)
         self.profile_repo = HealthProfileRepository(session)
         self.prediction_repo = RiskPredictionRepository(session)
         self.predictor = predictor or RiskPredictor()
@@ -123,6 +128,17 @@ class RiskPredictionService:
         source_profile: HealthProfile,
         activity_window_days: int,
     ) -> HealthProfile:
+        end_date = today_kst()
+        start_date = end_date - timedelta(days=activity_window_days - 1)
+        activity_logs = await self.dashboard_repo.get_activity_logs_between(
+            user.user_id,
+            start_date,
+            end_date,
+        )
+        walking_practice, strength_exercise = derive_activity_practice_flags(
+            activity_logs,
+            activity_window_days=activity_window_days,
+        )
         profile = HealthProfile(
             user_id=user.user_id,
             session_id=None,
@@ -132,15 +148,15 @@ class RiskPredictionService:
             weight_kg=source_profile.weight_kg,
             bmi=source_profile.bmi,
             waist_cm=source_profile.waist_cm,
-            walking_practice=source_profile.walking_practice,
-            strength_exercise=source_profile.strength_exercise,
+            walking_practice=walking_practice,
+            strength_exercise=strength_exercise,
             activity_input_source=ActivityInputSource.SERVICE_LOG,
             activity_window_days=activity_window_days,
             kidney_status=source_profile.kidney_status,
             protein_restriction_status=source_profile.protein_restriction_status,
             protein_challenge_allowed=source_profile.protein_challenge_allowed,
             input_method=InputMethod.SERVICE_LOG,
-            has_estimated_value=False,
+            has_estimated_value=True,
         )
         await self.profile_repo.create_profile(profile)
         return profile

@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from app.dtos.risk_prediction import CareStage, RiskPredictionCreateResponse, RiskPredictionReassessRequest
 from app.models.enums import (
     ActivityInputSource,
+    ActivityType,
     InputMethod,
     KidneyStatus,
     ModelVariant,
@@ -21,6 +22,35 @@ from app.models.health import HealthProfile
 from app.models.predictions import RiskPrediction
 from app.models.users import User
 from app.services.risk_prediction import RiskPredictionService
+
+
+def _reassessment_activity_logs() -> list[object]:
+    logs: list[object] = []
+    logs.extend(
+        [
+            SimpleNamespace(
+                activity_date=date(2026, 7, day),
+                activity_type=ActivityType.WALKING,
+                duration_min=Decimal("30"),
+                reps=None,
+                sets=None,
+            )
+            for day in range(1, 11)
+        ]
+    )
+    logs.extend(
+        [
+            SimpleNamespace(
+                activity_date=date(2026, 7, day),
+                activity_type=ActivityType.SEATED_EXERCISE,
+                duration_min=Decimal("10"),
+                reps=None,
+                sets=None,
+            )
+            for day in (1, 3, 8, 10)
+        ]
+    )
+    return logs
 
 
 def test_care_stage_uses_api_contract_values() -> None:
@@ -186,7 +216,7 @@ async def test_get_recent_predictions_returns_empty_list_for_non_positive_limit(
     assert repo.called is False
 
 
-async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:
+async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  # noqa: C901
     source_profile = HealthProfile(
         profile_id=55,
         user_id=1,
@@ -231,6 +261,14 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:
             self.created_prediction = prediction
             return prediction
 
+    class _DashboardRepo:
+        def __init__(self) -> None:
+            self.called_with: tuple[int, date, date] | None = None
+
+        async def get_activity_logs_between(self, user_id: int, start: date, end: date) -> list[object]:
+            self.called_with = (user_id, start, end)
+            return _reassessment_activity_logs()
+
     class _Predictor:
         async def predict(self, features: object) -> object:
             return SimpleNamespace(
@@ -255,9 +293,11 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:
     service = RiskPredictionService(session=None, predictor=_Predictor())  # type: ignore[arg-type]
     profile_repo = _ProfileRepo()
     prediction_repo = _PredictionRepo()
+    dashboard_repo = _DashboardRepo()
     service.session = session  # type: ignore[assignment]
     service.profile_repo = profile_repo  # type: ignore[assignment]
     service.prediction_repo = prediction_repo  # type: ignore[assignment]
+    service.dashboard_repo = dashboard_repo  # type: ignore[assignment]
 
     response = await service.reassess_latest_profile(
         cast(User, SimpleNamespace(user_id=1)),
@@ -270,6 +310,11 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:
     assert profile_repo.created_profile.activity_input_source == ActivityInputSource.SERVICE_LOG
     assert profile_repo.created_profile.activity_window_days == 14
     assert profile_repo.created_profile.input_method == InputMethod.SERVICE_LOG
+    assert profile_repo.created_profile.walking_practice is True
+    assert profile_repo.created_profile.strength_exercise is True
+    assert profile_repo.created_profile.has_estimated_value is True
+    assert dashboard_repo.called_with is not None
+    assert dashboard_repo.called_with[0] == 1
     assert response.profile_id == 72
     assert response.prediction_id == 90
     assert response.activity_input_source == ActivityInputSource.SERVICE_LOG
