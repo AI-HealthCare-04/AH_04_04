@@ -8,6 +8,8 @@ from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
 
+import pytest
+
 from app.models.enums import ActivityType, Intensity
 from app.services.activity_metrics import derive_activity_practice_flags, moderate_equivalent_min
 
@@ -92,3 +94,8 @@ def test_activity_practice_flags_scale_weekly_definitions_for_fourteen_days() ->
 
     assert walking_practice is False
     assert strength_exercise is True
+
+
+def test_activity_practice_flags_reject_unsupported_window() -> None:
+    with pytest.raises(ValueError, match="must be 7 or 14"):
+        derive_activity_practice_flags([], activity_window_days=10)

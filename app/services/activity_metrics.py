@@ -82,9 +82,9 @@ def derive_activity_practice_flags(
     activity_window_days: int,
 ) -> tuple[bool, bool]:
     """Convert service logs into the model's walking and strength features."""
-    weeks = activity_window_days // 7
-    if weeks not in (1, 2):
+    if activity_window_days not in (7, 14):
         raise ValueError("activity_window_days must be 7 or 14.")
+    weeks = activity_window_days // 7
 
     walking_minutes_by_day: defaultdict[date, float] = defaultdict(float)
     strength_days: set[date] = set()
