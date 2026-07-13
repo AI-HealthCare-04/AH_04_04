@@ -4,9 +4,9 @@ from decimal import ROUND_HALF_UP, Decimal
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.utils.clock import today_kst
+from app.core.utils.clock import now_kst, today_kst
 from app.dtos.health_profile import HealthProfileCreateRequest, HealthProfileCreateResponse, HealthProfileResponse
-from app.models.enums import KidneyStatus, ProteinRestrictionStatus
+from app.models.enums import HealthCheckStatus, KidneyStatus, ProteinRestrictionStatus
 from app.models.health import HealthProfile
 from app.models.users import User
 from app.repositories.health_profile_repository import HealthProfileRepository
@@ -18,9 +18,10 @@ class HealthProfileService:
         self.repo = HealthProfileRepository(session)
 
     async def create_profile(self, user: User, data: HealthProfileCreateRequest) -> HealthProfileCreateResponse:
+        health_check_session = None
         if data.session_id is not None:
-            session = await self.repo.get_session(data.session_id, user.user_id)
-            if session is None:
+            health_check_session = await self.repo.get_session(data.session_id, user.user_id)
+            if health_check_session is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Health check session not found.")
 
         profile = HealthProfile(
@@ -46,6 +47,11 @@ class HealthProfileService:
             has_estimated_value=data.has_estimated_value,
         )
         await self.repo.create_profile(profile)
+        # 프로필 저장 = 건강체크 세션의 최종 완료 시점(음성 재확인 /voice는 세션을 완료시키지 않으므로 여기서 확정).
+        #   STARTED 세션만 COMPLETED로 원자적으로(같은 커밋) 갱신한다. skip 등 이미 종료된 세션은 건드리지 않는다.
+        if health_check_session is not None and health_check_session.status == HealthCheckStatus.STARTED:
+            health_check_session.status = HealthCheckStatus.COMPLETED
+            health_check_session.completed_at = now_kst()
         await self.session.commit()
         await self.session.refresh(profile)
         return HealthProfileCreateResponse(
