@@ -114,6 +114,20 @@ async def db_client(_mysql_engine: AsyncEngine) -> AsyncGenerator[AsyncClient]:
 
 
 @pytest_asyncio.fixture
+async def db_session(_mysql_engine: AsyncEngine) -> AsyncGenerator[AsyncSession]:
+    # repo 수준 통합 테스트용 세션. db_client와 동일하게 매 테스트 전 전체 테이블을 비운다.
+    async with _mysql_engine.begin() as conn:
+        await conn.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
+        for table in Base.metadata.sorted_tables:
+            await conn.execute(text(f"TRUNCATE TABLE {table.name}"))
+        await conn.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
+
+    session_factory = async_sessionmaker(_mysql_engine, expire_on_commit=False, autoflush=False)
+    async with session_factory() as session:
+        yield session
+
+
+@pytest_asyncio.fixture
 async def client() -> AsyncGenerator[AsyncClient]:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as test_client:
         yield test_client
