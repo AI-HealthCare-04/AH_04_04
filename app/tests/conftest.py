@@ -114,17 +114,18 @@ async def db_client(_mysql_engine: AsyncEngine) -> AsyncGenerator[AsyncClient]:
 
 
 @pytest_asyncio.fixture
-async def db_session(_mysql_engine: AsyncEngine) -> AsyncGenerator[AsyncSession]:
-    # repo 수준 통합 테스트용 세션. db_client와 동일하게 매 테스트 전 전체 테이블을 비운다.
+async def db_sessionmaker(_mysql_engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
+    # repo 수준 통합 테스트용 세션 팩토리. 세션을 직접 yield하지 않고 팩토리를 돌려주는 이유:
+    # async-gen fixture의 teardown은 pytest-asyncio가 별도 루프에서 돌려서, 열린 세션을
+    # teardown에서 닫으면 "다른 루프" 에러가 난다. 팩토리를 주면 세션 open/close가 테스트
+    # 본문(같은 루프) 안에서 끝나 이 문제가 없다. 셋업에서 매 테스트 전 전체 테이블을 비운다.
     async with _mysql_engine.begin() as conn:
         await conn.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
         for table in Base.metadata.sorted_tables:
             await conn.execute(text(f"TRUNCATE TABLE {table.name}"))
         await conn.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
 
-    session_factory = async_sessionmaker(_mysql_engine, expire_on_commit=False, autoflush=False)
-    async with session_factory() as session:
-        yield session
+    return async_sessionmaker(_mysql_engine, expire_on_commit=False, autoflush=False)
 
 
 @pytest_asyncio.fixture
