@@ -42,6 +42,33 @@ async def test_fetch_google_profile_bad_code_maps_to_400() -> None:
     assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
 
 
+async def test_fetch_google_profile_null_sub_maps_to_400() -> None:
+    # 비정상 응답(sub=null)이면 social_id를 'None'으로 만들지 않고 400으로 거절한다.
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/token"):
+            return httpx.Response(200, json={"access_token": "at"})
+        return httpx.Response(200, json={"sub": None, "name": "홍길동"})
+
+    async with _mock_client(handler) as client:
+        with pytest.raises(HTTPException) as exc:
+            await fetch_google_profile("code", client)
+
+    assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+
+
+async def test_fetch_kakao_profile_null_id_maps_to_400() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/token"):
+            return httpx.Response(200, json={"access_token": "at"})
+        return httpx.Response(200, json={"id": None, "kakao_account": {"profile": {"nickname": "x"}}})
+
+    async with _mock_client(handler) as client:
+        with pytest.raises(HTTPException) as exc:
+            await fetch_kakao_profile("code", client)
+
+    assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+
+
 async def test_fetch_kakao_profile_parses_id_and_nickname() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/token"):

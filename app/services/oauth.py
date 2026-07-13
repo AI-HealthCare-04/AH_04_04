@@ -28,6 +28,14 @@ def _invalid_code() -> HTTPException:
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="유효하지 않은 인가 코드입니다.")
 
 
+def _require_social_id(raw: object) -> str:
+    # provider 고유 ID(sub/id)가 null이거나 빈 값이면 거절한다.
+    #   (str(None)="None"을 social_id로 쓰면 비정상 응답들이 한 계정으로 뭉치는 위험)
+    if raw is None or str(raw).strip() == "":
+        raise _invalid_code()
+    return str(raw)
+
+
 async def fetch_google_profile(code: str, client: httpx.AsyncClient) -> OAuthProfile:
     try:
         token = await client.post(
@@ -47,7 +55,7 @@ async def fetch_google_profile(code: str, client: httpx.AsyncClient) -> OAuthPro
         )
         info.raise_for_status()
         data = info.json()
-        return OAuthProfile(social_id=str(data["sub"]), nickname=data.get("name"))
+        return OAuthProfile(social_id=_require_social_id(data.get("sub")), nickname=data.get("name"))
     except (httpx.HTTPError, KeyError, ValueError) as exc:  # 네트워크/HTTP오류·응답형식 불일치
         raise _invalid_code() from exc
 
@@ -71,6 +79,6 @@ async def fetch_kakao_profile(code: str, client: httpx.AsyncClient) -> OAuthProf
         info.raise_for_status()
         data = info.json()
         nickname = data.get("kakao_account", {}).get("profile", {}).get("nickname")
-        return OAuthProfile(social_id=str(data["id"]), nickname=nickname)
+        return OAuthProfile(social_id=_require_social_id(data.get("id")), nickname=nickname)
     except (httpx.HTTPError, KeyError, ValueError) as exc:
         raise _invalid_code() from exc
