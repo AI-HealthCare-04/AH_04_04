@@ -3,8 +3,10 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+from fastapi import HTTPException, status
 
-from app.models.enums import ActivityLevel
+from app.dtos.mission import MissionLogCreateRequest
+from app.models.enums import ActivityLevel, MissionStatus, MissionType
 from app.models.users import User
 from app.services.mission import MissionService
 
@@ -83,3 +85,115 @@ def test_get_missions_keeps_all_when_no_profile() -> None:
     asyncio.run(service.get_missions(_USER, mission_type=None, level=ActivityLevel.EASY))
 
     assert captured["exclude_kidney_check"] is False
+
+
+# ---------------- create_mission_log 안전 차단 (목록 필터 우회 방지) ----------------
+
+
+def _meal_template(*, requires_kidney_check: bool) -> SimpleNamespace:
+    return SimpleNamespace(
+        mission_template_id=10,
+        mission_type=MissionType.MEAL,
+        requires_kidney_check=requires_kidney_check,
+        reward_points=10,
+    )
+
+
+def _meal_request() -> MissionLogCreateRequest:
+    # 식사(즉시완료) 최소 요청. success=False라 상세/집계 없이 저장 경로만 탄다.
+    return MissionLogCreateRequest(
+        mission_template_id=10,
+        mission_type=MissionType.MEAL,
+        status=MissionStatus.COMPLETED,
+        success=False,
+    )
+
+
+def _service_for_create(*, template: object, profile: object | None) -> tuple[MissionService, dict[str, bool]]:
+    service = MissionService(session=cast(object, SimpleNamespace(commit=_noop)))  # type: ignore[arg-type]
+    flags = {"log_created": False}
+
+    async def fake_get_template(template_id: object) -> object:
+        return template
+
+    async def fake_latest_profile(user_id: object) -> object:
+        return profile
+
+    async def fake_create_mission_log(log: object) -> object:
+        flags["log_created"] = True
+        cast(SimpleNamespace, log).mission_log_id = 1
+        return log
+
+    async def fake_count_meal(user_id: object) -> int:
+        return 0
+
+    async def fake_breakdown(user_id: object) -> dict[object, int]:
+        return {}
+
+    async def fake_sum_points(user_id: object) -> int:
+        return 0
+
+    async def fake_upsert(**kwargs: object) -> None:
+        return None
+
+    service.repo.get_template = fake_get_template  # type: ignore[assignment]
+    service.health_repo.get_latest_profile = fake_latest_profile  # type: ignore[assignment]
+    service.repo.create_mission_log = fake_create_mission_log  # type: ignore[assignment]
+    service.repo.count_meal_missions_today = fake_count_meal  # type: ignore[assignment]
+    service.repo.counted_breakdown_today = fake_breakdown  # type: ignore[assignment]
+    service.repo.sum_earned_points_today = fake_sum_points  # type: ignore[assignment]
+    service.repo.upsert_daily_summary = fake_upsert  # type: ignore[assignment]
+    return service, flags
+
+
+async def _noop() -> None:
+    return None
+
+
+def test_create_mission_log_blocks_restricted_user_for_kidney_mission() -> None:
+    # protein_challenge_allowed=False 사용자는 목록에서 숨겨질 뿐 아니라 직접 생성도 거부되어야 한다.
+    service, flags = _service_for_create(
+        template=_meal_template(requires_kidney_check=True),
+        profile=_profile(protein_challenge_allowed=False),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(service.create_mission_log(_USER, _meal_request()))
+
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+    assert flags["log_created"] is False  # 로그/포인트가 생성되지 않아야 한다
+
+
+def test_create_mission_log_allows_kidney_mission_when_challenge_allowed() -> None:
+    service, flags = _service_for_create(
+        template=_meal_template(requires_kidney_check=True),
+        profile=_profile(protein_challenge_allowed=True),
+    )
+
+    asyncio.run(service.create_mission_log(_USER, _meal_request()))
+
+    assert flags["log_created"] is True
+
+
+def test_create_mission_log_allows_kidney_mission_when_no_profile() -> None:
+    # GET 계약과 동일하게 프로필 없음(건강체크 전)은 과도 제한하지 않는다.
+    service, flags = _service_for_create(
+        template=_meal_template(requires_kidney_check=True),
+        profile=None,
+    )
+
+    asyncio.run(service.create_mission_log(_USER, _meal_request()))
+
+    assert flags["log_created"] is True
+
+
+def test_create_mission_log_allows_non_kidney_mission_for_restricted_user() -> None:
+    # requires_kidney_check=False 미션은 제한 사용자도 정상 수행 가능해야 한다.
+    service, flags = _service_for_create(
+        template=_meal_template(requires_kidney_check=False),
+        profile=_profile(protein_challenge_allowed=False),
+    )
+
+    asyncio.run(service.create_mission_log(_USER, _meal_request()))
+
+    assert flags["log_created"] is True
