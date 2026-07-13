@@ -12,14 +12,20 @@
 
 from dataclasses import dataclass
 
+import httpx
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import config
 from app.core.utils.nickname import generate_nickname
 from app.dtos.auth import SocialLoginRequest
+from app.models.enums import AuthProvider
 from app.models.users import User
 from app.repositories.user_repository import UserRepository
 from app.services.jwt import JwtService
+from app.services.oauth import OAuthProfile, fetch_google_profile, fetch_kakao_profile
+
+_HTTP_TIMEOUT = 10.0
 
 
 # 로그인 처리 결과 묶음. 라우터가 이 값으로 응답 DTO를 만듭니다.
@@ -37,21 +43,41 @@ class AuthService:
         self.jwt_service = JwtService()
 
     async def login_with_google(self, data: SocialLoginRequest) -> LoginResult:
-        # TODO(OAuth): 실제 구글 OAuth 구현 시
-        #   1) 인가코드로 구글 토큰 교환 → 2) id_token 검증 후 sub(구글 고유 ID) 추출
-        #   3) sub를 social_id로 (provider, social_id) 조회/생성 후 JWT 발급
-        # 크리덴셜 준비 전까지는 미구현 응답으로 둡니다(임의 문자열 토큰 발급 방지).
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="구글 로그인은 아직 준비 중입니다. 체험하기(게스트)로 이용해 주세요.",
-        )
+        # 크리덴셜 미구성이면 501(안전장치). 구성되면 인가코드→프로필 교환 후 (provider, social_id) 로그인.
+        if not (config.GOOGLE_CLIENT_ID and config.GOOGLE_CLIENT_SECRET and config.GOOGLE_REDIRECT_URI):
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail="구글 로그인은 아직 준비 중입니다. 체험하기(게스트)로 이용해 주세요.",
+            )
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+            profile = await fetch_google_profile(data.authorization_code, client)
+        return await self._social_login(AuthProvider.GOOGLE, profile)
 
     async def login_with_kakao(self, data: SocialLoginRequest) -> LoginResult:
-        # TODO(OAuth): 카카오 로그인은 MVP 후순위. 구글 방식과 동일하게 구현 예정.
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="카카오 로그인은 아직 준비 중입니다. 체험하기(게스트)로 이용해 주세요.",
-        )
+        if not (config.KAKAO_CLIENT_ID and config.KAKAO_REDIRECT_URI):
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail="카카오 로그인은 아직 준비 중입니다. 체험하기(게스트)로 이용해 주세요.",
+            )
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+            profile = await fetch_kakao_profile(data.authorization_code, client)
+        return await self._social_login(AuthProvider.KAKAO, profile)
+
+    async def _social_login(self, provider: AuthProvider, profile: OAuthProfile) -> LoginResult:
+        # (provider, social_id)로 기존 사용자를 찾고, 없으면 생성한다(신규=is_new_user True).
+        #   탈퇴자는 get_by_provider_social_id가 deleted_at 필터로 제외 → 재로그인 시 신규 생성.
+        user = await self.user_repo.get_by_provider_social_id(provider, profile.social_id)
+        is_new_user = user is None
+        if user is None:
+            user = await self.user_repo.create_social_user(
+                provider, profile.social_id, profile.nickname or generate_nickname()
+            )
+        else:
+            await self.user_repo.update_last_login(user)
+        await self.session.commit()
+        await self.session.refresh(user)
+        access_token = str(self.jwt_service.create_access_token(user))
+        return LoginResult(user=user, access_token=access_token, is_new_user=is_new_user)
 
     # 게스트(체험하기): 매 호출마다 새 익명 사용자 생성. 항상 신규(is_new_user=True).
     async def guest_login(self) -> LoginResult:
