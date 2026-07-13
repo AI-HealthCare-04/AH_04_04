@@ -5,7 +5,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db.session import get_db_session
 from app.dependencies.security import get_request_user
-from app.dtos.risk_prediction import RiskPredictionCreateRequest, RiskPredictionCreateResponse, RiskPredictionResponse
+from app.dtos.risk_prediction import (
+    RiskPredictionCreateRequest,
+    RiskPredictionCreateResponse,
+    RiskPredictionReassessRequest,
+    RiskPredictionReassessResponse,
+    RiskPredictionResponse,
+)
 from app.models.users import User
 from app.services.risk_prediction import RiskPredictionService
 
@@ -29,9 +35,14 @@ async def create_risk_prediction(
     return await RiskPredictionService(session).create_prediction(user, data)
 
 
-@risk_prediction_router.post("/reassess", response_model=RiskPredictionResponse, status_code=status.HTTP_201_CREATED)
+@risk_prediction_router.post(
+    "/reassess",
+    response_model=RiskPredictionReassessResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def reassess_risk_prediction(
+    data: RiskPredictionReassessRequest,
     user: Annotated[User, Depends(get_request_user)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
-) -> RiskPredictionResponse:
-    return await RiskPredictionService(session).reassess_latest_profile(user)
+) -> RiskPredictionReassessResponse:
+    return await RiskPredictionService(session).reassess_latest_profile(user, data)

@@ -1,14 +1,19 @@
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel
 
-from app.models.enums import ModelVariant, RiskLevel
+from app.models.enums import ActivityInputSource, ModelVariant, RiskLevel
 
 
 class RiskPredictionCreateRequest(BaseModel):
     profile_id: int
+
+
+class RiskPredictionReassessRequest(BaseModel):
+    activity_window_days: Literal[7, 14]
 
 
 class CareStage(StrEnum):
@@ -28,6 +33,15 @@ class RiskPredictionResponse(BaseModel):
 
 class RiskPredictionCreateResponse(RiskPredictionResponse):
     onboarding_status: str
+
+
+class RiskPredictionReassessResponse(BaseModel):
+    profile_id: int
+    prediction_id: int
+    care_stage: CareStage
+    display_message: str
+    disclaimer: str = "본 결과는 참고용이며 의학적 진단이 아닙니다."
+    activity_input_source: ActivityInputSource = ActivityInputSource.SERVICE_LOG
 
 
 class RiskPredictionHistoryItem(BaseModel):

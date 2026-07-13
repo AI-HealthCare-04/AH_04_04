@@ -1,6 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.enums import ActivityInputSource
 from app.models.health import HealthCheckSession, HealthProfile
 
 
@@ -30,7 +31,10 @@ class HealthProfileRepository:
     async def get_latest_profile(self, user_id: int) -> HealthProfile | None:
         stmt = (
             select(HealthProfile)
-            .where(HealthProfile.user_id == user_id)
+            .where(
+                HealthProfile.user_id == user_id,
+                HealthProfile.activity_input_source != ActivityInputSource.SERVICE_LOG,
+            )
             .order_by(HealthProfile.created_at.desc(), HealthProfile.profile_id.desc())
             .limit(1)
         )

@@ -13,9 +13,13 @@
 #   공식을 상수/헬퍼로 분리해 둔다(미션/센서 도메인에서도 재사용 가능).
 # 표시·동기부여용 지표이며 임상 수치는 아니다. 계수는 MET 표준(Compendium) 근사값.
 # =====================================================================================
+from collections import defaultdict
+from collections.abc import Iterable
+from datetime import date
 from decimal import Decimal
 
 from app.models.enums import ActivityType, Intensity
+from app.models.missions import PhysicalActivityLog
 
 # 중강도 기준 MET. 이 값으로 나눠 "중강도 상당 분"으로 정규화한다.
 MODERATE_MET_BASELINE = 3.0
@@ -38,6 +42,19 @@ INTENSITY_FACTOR: dict[Intensity, float] = {
     Intensity.HIGH: 1.3,
 }
 
+# Model feature meanings: pa_walk_30min_5days / pa_muscle_2days.
+# A 14-day window applies the same weekly standard twice.
+WALKING_MINUTES_PER_DAY = 30.0
+WALKING_DAYS_PER_WEEK = 5
+STRENGTH_DAYS_PER_WEEK = 2
+_STRENGTH_ACTIVITY_TYPES = frozenset(
+    {
+        ActivityType.CHAIR_STAND,
+        ActivityType.SEATED_EXERCISE,
+        ActivityType.STANDING_EXERCISE,
+    }
+)
+
 
 def moderate_equivalent_min(
     activity_type: ActivityType,
@@ -57,3 +74,32 @@ def moderate_equivalent_min(
             effective_met *= INTENSITY_FACTOR.get(intensity, 1.0)
 
     return round(float(duration_min) * effective_met / MODERATE_MET_BASELINE, 1)
+
+
+def derive_activity_practice_flags(
+    logs: Iterable[PhysicalActivityLog],
+    *,
+    activity_window_days: int,
+) -> tuple[bool, bool]:
+    """Convert service logs into the model's walking and strength features."""
+    if activity_window_days not in (7, 14):
+        raise ValueError("activity_window_days must be 7 or 14.")
+    weeks = activity_window_days // 7
+
+    walking_minutes_by_day: defaultdict[date, float] = defaultdict(float)
+    strength_days: set[date] = set()
+    for log in logs:
+        if log.activity_type == ActivityType.WALKING:
+            walking_minutes_by_day[log.activity_date] += float(log.duration_min or 0)
+        elif log.activity_type in _STRENGTH_ACTIVITY_TYPES and (
+            log.duration_min is not None or log.reps is not None or log.sets is not None
+        ):
+            strength_days.add(log.activity_date)
+
+    walking_days = sum(
+        minutes >= WALKING_MINUTES_PER_DAY for minutes in walking_minutes_by_day.values()
+    )
+    return (
+        walking_days >= WALKING_DAYS_PER_WEEK * weeks,
+        len(strength_days) >= STRENGTH_DAYS_PER_WEEK * weeks,
+    )

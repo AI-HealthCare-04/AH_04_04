@@ -5,7 +5,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db.session import get_db_session
 from app.dependencies.security import get_request_user
-from app.dtos.users import UserInfoResponse, UserSettingsResponse, UserSettingsUpdateRequest, UserUpdateRequest
+from app.dtos.users import (
+    UserInfoResponse,
+    UserSettingsResponse,
+    UserSettingsUpdateRequest,
+    UserUpdateRequest,
+    UserWithdrawRequest,
+)
 from app.models.users import User
 from app.services.users import UserManageService, UserSettingsService
 
@@ -27,6 +33,16 @@ async def update_user_me_info(
 ) -> UserInfoResponse:
     updated_user = await UserManageService(session).update_user(user=user, data=update_data)
     return UserInfoResponse.model_validate(updated_user)
+
+
+@user_router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+async def withdraw_user_me(
+    delete_data: UserWithdrawRequest,
+    user: Annotated[User, Depends(get_request_user)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> None:
+    # 회원탈퇴(soft-delete). deleted_at을 찍어 이후 인증을 무효화한다.
+    await UserManageService(session).withdraw(user=user, data=delete_data)
 
 
 @user_router.get("/me/settings", response_model=UserSettingsResponse, status_code=status.HTTP_200_OK)
