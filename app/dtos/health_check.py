@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel
 
 from app.dtos.activity_profile import ActivityProfileResponse
 from app.dtos.base import BaseSerializerModel
@@ -11,17 +11,8 @@ class HealthCheckSessionCreateRequest(BaseModel):
     input_method: InputMethod = InputMethod.FORM
 
 
-class HealthCheckVoiceRequest(BaseModel):
-    raw_transcript: str = Field(min_length=1)
-    has_estimated_value: bool = True
-
-    @field_validator("raw_transcript")
-    @classmethod
-    def validate_raw_transcript(cls, value: str) -> str:
-        stripped = value.strip()
-        if not stripped:
-            raise ValueError("raw_transcript must not be blank.")
-        return stripped
+# 음성 입력의 요청/응답 계약은 app/dtos/voice_parse.py (VoiceParseRequest/Response)를 사용한다.
+# (POST /health-check/sessions/{id}/voice — field+raw_transcript → field/value/needs_confirmation)
 
 
 class HealthCheckSessionResponse(BaseSerializerModel):

@@ -9,8 +9,8 @@ from app.dtos.health_check import (
     HealthCheckSessionCreateRequest,
     HealthCheckSessionResponse,
     HealthCheckSkipResponse,
-    HealthCheckVoiceRequest,
 )
+from app.dtos.voice_parse import VoiceParseRequest, VoiceParseResponse
 from app.models.activity import UserActivityProfile
 from app.models.enums import (
     ActivityLevel,
@@ -23,6 +23,7 @@ from app.models.health import HealthCheckSession
 from app.models.users import User
 from app.repositories.activity_profile_repository import ActivityProfileRepository
 from app.repositories.health_check_repository import HealthCheckRepository
+from app.services.voice_parse import VoiceParseService
 
 
 class HealthCheckService:
@@ -44,22 +45,22 @@ class HealthCheckService:
         await self.session.refresh(health_check_session)
         return HealthCheckSessionResponse.model_validate(health_check_session)
 
-    async def save_voice_transcript(
+    async def parse_voice(
         self,
         user: User,
         session_id: int,
-        data: HealthCheckVoiceRequest,
-    ) -> HealthCheckSessionResponse:
+        data: VoiceParseRequest,
+    ) -> VoiceParseResponse:
+        # 음성 재확인(보조입력): 원문(raw_transcript)을 세션에 저장하고, 해당 field를 파싱해 값을 돌려준다.
+        #   - 세션을 완료(COMPLETED) 처리하지 않는다 — 이건 필드별 확인 단계이지 세션 종료가 아니다.
+        #     세션 완료는 skip 또는 이후 프로필 저장 흐름에서 담당한다.
+        #   - transcript는 세션에 1회 저장(참조 구조)하고, 파싱 자체는 stateless(정인 파서 재사용).
         health_check_session = await self._get_started_session(session_id, user.user_id)
         health_check_session.input_method = InputMethod.VOICE
         health_check_session.raw_transcript = data.raw_transcript
-        health_check_session.has_estimated_value = data.has_estimated_value
-        health_check_session.status = HealthCheckStatus.COMPLETED
-        health_check_session.completed_at = datetime.now(config.TIMEZONE)
         await self.repo.update_session(health_check_session)
         await self.session.commit()
-        await self.session.refresh(health_check_session)
-        return HealthCheckSessionResponse.model_validate(health_check_session)
+        return VoiceParseService.parse(data.field, data.raw_transcript)
 
     async def skip_session(self, user: User, session_id: int) -> HealthCheckSkipResponse:
         health_check_session = await self._get_started_session(session_id, user.user_id)
