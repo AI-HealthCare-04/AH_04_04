@@ -1,9 +1,7 @@
-from datetime import datetime
-
 from pydantic import BaseModel
 
 from app.dtos.activity_profile import ActivityProfileResponse
-from app.dtos.base import BaseSerializerModel
+from app.dtos.base import BaseSerializerModel, KstDatetime
 from app.models.enums import HealthCheckStatus, InputMethod
 
 
@@ -21,8 +19,8 @@ class HealthCheckSessionResponse(BaseSerializerModel):
     input_method: InputMethod
     raw_transcript: str | None
     has_estimated_value: bool
-    created_at: datetime
-    completed_at: datetime | None
+    created_at: KstDatetime
+    completed_at: KstDatetime | None
 
 
 class HealthCheckSkipResponse(BaseModel):

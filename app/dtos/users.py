@@ -1,8 +1,6 @@
-from datetime import datetime
-
 from pydantic import BaseModel, Field
 
-from app.dtos.base import BaseSerializerModel
+from app.dtos.base import BaseSerializerModel, KstDatetime
 from app.models.enums import FontSize, SoundSize
 
 
@@ -11,7 +9,7 @@ class UserInfoResponse(BaseSerializerModel):
     provider: str
     nickname: str
     onboarding_status: str
-    created_at: datetime
+    created_at: KstDatetime
 
 
 class UserUpdateRequest(BaseModel):

@@ -1,7 +1,8 @@
-from datetime import date, datetime
+from datetime import date
 
 from pydantic import BaseModel
 
+from app.dtos.base import KstDatetime
 from app.models.enums import ActivityLevel, DailyResult
 
 
@@ -20,7 +21,7 @@ class PointEarnLogItem(BaseModel):
     earn_id: int
     earned_points: int
     reason: str
-    created_at: datetime
+    created_at: KstDatetime
 
 
 class PointsResponse(BaseModel):
@@ -86,7 +87,7 @@ class LifestyleRecords(BaseModel):
 
 
 class RiskChangePoint(BaseModel):
-    at: datetime
+    at: KstDatetime
     care_stage: str
 
 

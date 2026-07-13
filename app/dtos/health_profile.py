@@ -1,8 +1,9 @@
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 
 from pydantic import BaseModel, Field, field_serializer
 
+from app.dtos.base import KstDatetime
 from app.models.enums import ActivityInputSource, InputMethod, KidneyStatus, ProteinRestrictionStatus, Sex
 
 
@@ -50,7 +51,7 @@ class HealthProfileResponse(BaseModel):
     protein_challenge_allowed: bool
     input_method: InputMethod
     has_estimated_value: bool
-    created_at: datetime
+    created_at: KstDatetime
 
     @field_serializer("height_cm", "weight_kg", "bmi", "waist_cm")
     def serialize_decimal_as_number(self, value: Decimal | None) -> float | None:
