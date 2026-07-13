@@ -9,7 +9,7 @@ from fastapi import HTTPException, status
 
 from app.core.utils.clock import today_kst
 from app.dtos.dashboard import HomeAvailableMissionSummary, HomeLatestPrediction
-from app.models.enums import ActivityLevel, ActivityType
+from app.models.enums import ActivityLevel, ActivityType, MissionType
 from app.models.users import User
 from app.services.dashboard import DashboardService
 
@@ -203,19 +203,29 @@ def test_get_summary_rejects_out_of_range_days(bad_days: int) -> None:
     assert exc.value.status_code == 400
 
 
-def test_get_points_returns_real_balance_and_empty_earn_logs() -> None:
-    # 잔액은 point_balances에서 실제 조회, 적립 이력(point_earn_logs 미도입)은 빈 배열.
+def test_get_points_derives_balance_and_earn_logs_from_mission_logs() -> None:
+    # 잔액·적립이력 모두 mission_logs에서 파생. 잔액은 합계, 이력은 earned_points>0 로그를 매핑.
     service = DashboardService(session=None)  # type: ignore[arg-type]
+    earned = SimpleNamespace(
+        mission_log_id=7, earned_points=10, mission_type=MissionType.GAME, created_at=datetime(2026, 7, 13, 9, 0, 0)
+    )
 
     async def fake_get_current_points(user_id: object) -> int:
         return 120
 
+    async def fake_get_earn_logs(user_id: object) -> list[object]:
+        return [earned]
+
     service.repo.get_current_points = fake_get_current_points  # type: ignore[assignment]
+    service.repo.get_earn_logs = fake_get_earn_logs  # type: ignore[assignment]
 
     result = asyncio.run(service.get_points(_USER_WITH_ID))
 
     assert result.current_points == 120
-    assert result.earn_logs == []
+    assert len(result.earn_logs) == 1
+    assert result.earn_logs[0].earn_id == 7
+    assert result.earn_logs[0].earned_points == 10
+    assert result.earn_logs[0].reason == "game"
 
 
 def _service_for_home(*, profile: object | None) -> tuple[DashboardService, dict[str, object]]:

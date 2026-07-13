@@ -17,6 +17,7 @@ from app.dtos.dashboard import (
     HomeUser,
     LifestyleRecords,
     PointBalanceResponse,
+    PointEarnLogItem,
     PointsResponse,
     RiskChangePoint,
     StampDay,
@@ -130,10 +131,20 @@ class DashboardService:
         ]
 
     async def get_points(self, user: User) -> PointsResponse:
-        # 잔액은 point_balances에서 실제 조회. 적립 이력(point_earn_logs)은 아직 미도입 테이블이라
-        #   현재는 빈 배열로 응답한다(v6.0에서 사용 이력 point_spend_logs는 제거되어 노출하지 않음).
+        # 잔액·적립이력 모두 mission_logs.earned_points에서 파생한다.
+        #   포인트는 미션 완료로만 적립되고 v6.0에서 순증가(사용 이력 제거)라
+        #   별도 잔액/이력 테이블 없이 미션 로그가 단일 원천이다(중복 저장 방지).
         current_points = await self.repo.get_current_points(user.user_id)
-        return PointsResponse(current_points=current_points, earn_logs=[])
+        earn_logs = [
+            PointEarnLogItem(
+                earn_id=log.mission_log_id,
+                earned_points=log.earned_points,
+                reason=log.mission_type.value,
+                created_at=log.created_at,
+            )
+            for log in await self.repo.get_earn_logs(user.user_id)
+        ]
+        return PointsResponse(current_points=current_points, earn_logs=earn_logs)
 
     async def get_stamps(self, user: User, month: str) -> StampsResponse:
         start, end = self._month_range(month)
