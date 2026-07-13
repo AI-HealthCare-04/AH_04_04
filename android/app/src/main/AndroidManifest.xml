@@ -3,6 +3,15 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- STT 음성 보조입력(SpeechRecognizer). 런타임 권한 요청 필요. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Android 11+ 에서 음성 인식 서비스 패키지 가시성 확보 -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
 
     <!-- 걷기·흔들기 모두 가속도계 기반. 런타임 권한은 불필요.
          센서가 없는 기기에서도 설치 가능하도록 required=false -->

@@ -14,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -21,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.aihealthcare.ah0404.mission.MissionScreen
 import com.aihealthcare.ah0404.sensor.SensorScreen
+import com.aihealthcare.ah0404.voice.VoiceProbeScreen
 import com.aihealthcare.ah0404.ui.theme.MyApplicationTheme
 
 class MainActivity : ComponentActivity() {
@@ -47,12 +49,19 @@ class MainActivity : ComponentActivity() {
                                 icon = { Icon(Icons.Default.FitnessCenter, contentDescription = null) },
                                 label = { Text("센서") }
                             )
+                            NavigationBarItem(
+                                selected = selectedTab == 2,
+                                onClick = { selectedTab = 2 },
+                                icon = { Icon(Icons.Default.Mic, contentDescription = null) },
+                                label = { Text("음성") }
+                            )
                         }
                     }
                 ) { innerPadding ->
                     when (selectedTab) {
                         0 -> MissionScreen(modifier = Modifier.padding(innerPadding))
                         1 -> SensorScreen(modifier = Modifier.padding(innerPadding))
+                        2 -> VoiceProbeScreen(modifier = Modifier.padding(innerPadding))
                     }
                 }
             }
