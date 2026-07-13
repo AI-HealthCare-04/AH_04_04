@@ -14,7 +14,7 @@ from datetime import date
 
 import httpx
 
-from app.core import config
+from app.core import config, default_logger
 from app.dtos.voice_parse import VoiceParseField, VoiceParseResponse
 from app.models.enums import KidneyStatus, ProteinRestrictionStatus, Sex
 
@@ -142,18 +142,21 @@ class OpenAIVoiceParseService:
         }
         headers = {"Authorization": f"Bearer {config.OPENAI_API_KEY}"}
 
-        async with httpx.AsyncClient(timeout=config.OPENAI_TIMEOUT) as client:
-            response = await client.post(
-                f"{config.OPENAI_BASE_URL}/chat/completions",
-                json=payload,
-                headers=headers,
-            )
-            response.raise_for_status()
-            data = response.json()
-
-        content = data["choices"][0]["message"]["content"]
+        # OpenAI 4xx/5xx·429·타임아웃·네트워크 오류, 응답 구조 이상, JSON 파싱 실패는 모두
+        # STT 실패로 간주해 None 을 돌려준다 → _coerce 를 거쳐 value=None(needs_confirmation=False)
+        # → 앱 수동입력 폼 폴백. 팀 원칙("STT 실패 시 진행 차단 금지")에 맞춰 예외를 밖으로 올리지 않는다.
+        # (JSONDecodeError 는 ValueError 의 하위라 아래 ValueError 로 함께 잡힌다.)
         try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError:
+            async with httpx.AsyncClient(timeout=config.OPENAI_TIMEOUT) as client:
+                response = await client.post(
+                    f"{config.OPENAI_BASE_URL}/chat/completions",
+                    json=payload,
+                    headers=headers,
+                )
+                response.raise_for_status()
+                data = response.json()
+            content = data["choices"][0]["message"]["content"]
+            return json.loads(content).get("value")
+        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
+            default_logger.warning("OpenAI voice parse 실패(field=%s): %s", field.value, exc)
             return None
-        return parsed.get("value")

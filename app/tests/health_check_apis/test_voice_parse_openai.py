@@ -4,8 +4,10 @@
 핵심 검증: LLM 이 계약을 벗어난 값(불가능한 날짜, 범위 밖 수치, bool 아닌 예/아니오,
 enum 밖 문자열)을 내놓아도 규칙기반 파서와 동일하게 value=None 으로 폼 폴백하는가.
 """
+import httpx
 import pytest
 
+from app.core import config
 from app.dtos.voice_parse import VoiceParseField
 from app.services.voice_parse_openai import OpenAIVoiceParseService
 
@@ -90,3 +92,72 @@ async def test_sex_enum_validated(
 ) -> None:
     result = await _parse_with_raw(monkeypatch, VoiceParseField.SEX, raw)
     assert result.value == expected
+
+
+# ── OpenAI 호출 실패 → 폼 폴백 (라이브 승격 대비: 예외를 500으로 올리지 않는다) ──────────────
+
+
+class _FakeResponse:
+    def __init__(self, payload: object) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        pass
+
+    def json(self) -> object:
+        return self._payload
+
+
+def _fake_client_raising(exc: Exception) -> type:
+    """post 에서 exc 를 던지는 httpx.AsyncClient 대체."""
+
+    class _Client:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        async def __aenter__(self) -> "_Client":
+            return self
+
+        async def __aexit__(self, *args: object) -> bool:
+            return False
+
+        async def post(self, *args: object, **kwargs: object) -> _FakeResponse:
+            raise exc
+
+    return _Client
+
+
+def _fake_client_returning(payload: object) -> type:
+    """post 에서 payload 를 담은 응답을 주는 httpx.AsyncClient 대체."""
+
+    class _Client:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        async def __aenter__(self) -> "_Client":
+            return self
+
+        async def __aexit__(self, *args: object) -> bool:
+            return False
+
+        async def post(self, *args: object, **kwargs: object) -> _FakeResponse:
+            return _FakeResponse(payload)
+
+    return _Client
+
+
+async def test_openai_network_error_falls_back_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config, "OPENAI_API_KEY", "sk-test")  # 키 체크 통과
+    monkeypatch.setattr(httpx, "AsyncClient", _fake_client_raising(httpx.ConnectError("boom")))
+    result = await OpenAIVoiceParseService.parse(VoiceParseField.HEIGHT_CM, "백육십")
+    assert result.value is None
+    assert result.needs_confirmation is False
+
+
+async def test_openai_malformed_response_falls_back_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config, "OPENAI_API_KEY", "sk-test")
+    # choices 키가 없는 비정상 응답 → KeyError → None 폴백
+    monkeypatch.setattr(httpx, "AsyncClient", _fake_client_returning({"unexpected": "shape"}))
+    result = await OpenAIVoiceParseService.parse(VoiceParseField.WALKING_PRACTICE, "네")
+    assert result.value is None
+    assert result.needs_confirmation is False
