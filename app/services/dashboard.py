@@ -22,6 +22,7 @@ from app.dtos.dashboard import (
     StampDay,
     StampsResponse,
 )
+from app.models.dashboard import DailyActivitySummary
 from app.models.enums import ActivityLevel, DailyResult, MissionType
 from app.models.users import User
 from app.repositories.activity_profile_repository import ActivityProfileRepository
@@ -48,7 +49,7 @@ class DashboardService:
         #   "표시 레벨과 카운트 레벨이 어긋나는" 불일치를 막는다(정인/지영 리뷰 반영).
         profile = await self.activity_repo.get_by_user_id(user.user_id)
         effective_level = profile.current_level if profile else ActivityLevel.EASY
-        available = await self._available_mission_summary(user, effective_level)
+        available = await self._available_mission_summary(user, effective_level, summary)
         latest_prediction = await self._latest_prediction(user)
         return HomeResponse(
             user=HomeUser(nickname=user.nickname),
@@ -170,12 +171,15 @@ class DashboardService:
         return start, date(year, month_num, last_day)
 
     async def _available_mission_summary(
-        self, user: User, level: ActivityLevel
+        self, user: User, level: ActivityLevel, today_summary: DailyActivitySummary | None = None
     ) -> HomeAvailableMissionSummary:
-        # 미션 도메인 공개 인터페이스(get_missions)를 소비해 유형별 수행 가능 미션 수를 센다.
+        # 미션 도메인 공개 인터페이스(get_missions)를 소비해 유형별 '수행 가능한' 미션 수를 센다.
         #   레벨을 명시해 넘겨 홈 표시 레벨과 카운트 산정 레벨을 일치시킨다.
-        #   TODO: 오늘 완료분/식사 1일 1회 등 '잔여' 반영은 후속(mission 담당과 조율).
+        #   '잔여' 반영: 오늘 이미 일일 한도(daily_count_limit)를 채운 미션은 제외한다.
+        #     (예: 식사 1일 1회 → 오늘 식사를 이미 카운트했으면 '가능한 미션'에서 뺀다.)
+        #     오늘 카운트는 daily_activity_summaries(get_home이 이미 조회한 today_summary)에서 읽는다.
         missions = await self.mission_service.get_missions(user, mission_type=None, level=level)
+        counted_today = self._counted_today_by_type(today_summary)
         counts = dict.fromkeys(
             (MissionType.MEAL, MissionType.EXERCISE, MissionType.WALKING, MissionType.GAME), 0
         )
@@ -184,6 +188,9 @@ class DashboardService:
                 mission_type = MissionType(mission.mission_type)
             except ValueError:
                 continue  # enum에 없는 타입은 방어적으로 건너뛴다(500 방지)
+            limit = mission.daily_count_limit
+            if limit is not None and counted_today.get(mission_type, 0) >= limit:
+                continue  # 오늘 한도 소진 → 수행 가능 아님
             counts[mission_type] += 1
         return HomeAvailableMissionSummary(
             meal=counts[MissionType.MEAL],
@@ -191,3 +198,16 @@ class DashboardService:
             walking=counts[MissionType.WALKING],
             game=counts[MissionType.GAME],
         )
+
+    @staticmethod
+    def _counted_today_by_type(today_summary: DailyActivitySummary | None) -> dict[MissionType, int]:
+        # 오늘 유형별로 이미 카운트된 수. 요약이 없으면(오늘 활동 없음) 전부 0으로 본다.
+        #   식사는 1일 1회라 bool(meal_counted)을 0/1로 환산한다.
+        if today_summary is None:
+            return {}
+        return {
+            MissionType.MEAL: 1 if today_summary.meal_counted else 0,
+            MissionType.EXERCISE: today_summary.exercise_count,
+            MissionType.WALKING: today_summary.walking_count,
+            MissionType.GAME: today_summary.game_count,
+        }
