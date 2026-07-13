@@ -1,10 +1,10 @@
-from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel
 
+from app.dtos.base import KstDatetime
 from app.models.enums import ActivityInputSource, ModelVariant, RiskLevel
 
 
@@ -46,7 +46,7 @@ class RiskPredictionReassessResponse(BaseModel):
 
 class RiskPredictionHistoryItem(BaseModel):
     prediction_id: int
-    created_at: datetime
+    created_at: KstDatetime
     care_stage: CareStage
     risk_level: RiskLevel
     risk_score: Decimal

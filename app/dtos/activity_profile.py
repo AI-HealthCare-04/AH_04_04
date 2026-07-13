@@ -1,8 +1,6 @@
-from datetime import datetime
-
 from pydantic import BaseModel
 
-from app.dtos.base import BaseSerializerModel
+from app.dtos.base import BaseSerializerModel, KstDatetime
 from app.models.enums import ActivityLevel, LevelReason, ReasonType
 
 
@@ -11,8 +9,8 @@ class ActivityProfileResponse(BaseSerializerModel):
     current_level: ActivityLevel
     level_reason: LevelReason
     physical_assessment_id: int | None
-    started_at: datetime
-    updated_at: datetime
+    started_at: KstDatetime
+    updated_at: KstDatetime
 
 
 # PATCH /users/me/activity-profile 활동 난이도 변경 요청.
