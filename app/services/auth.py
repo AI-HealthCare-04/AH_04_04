@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.utils.nickname import generate_nickname
 from app.dtos.auth import SocialLoginRequest
 from app.models.users import User
 from app.repositories.user_repository import UserRepository
@@ -54,7 +55,7 @@ class AuthService:
 
     # 게스트(체험하기): 매 호출마다 새 익명 사용자 생성. 항상 신규(is_new_user=True).
     async def guest_login(self) -> LoginResult:
-        user = await self.user_repo.create_guest_user(nickname="체험하는분")
+        user = await self.user_repo.create_guest_user(nickname=generate_nickname())
         await self.session.commit()
         await self.session.refresh(user)
         access_token = str(self.jwt_service.create_access_token(user))
