@@ -48,13 +48,15 @@ async def withdraw_user_me(
 @user_router.get("/me/settings", response_model=UserSettingsResponse, status_code=status.HTTP_200_OK)
 async def get_user_settings(
     user: Annotated[User, Depends(get_request_user)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> UserSettingsResponse:
-    return UserSettingsResponse()
+    return await UserSettingsService(session).get_settings(user)
 
 
 @user_router.patch("/me/settings", response_model=UserSettingsResponse, status_code=status.HTTP_200_OK)
 async def update_user_settings(
     update_data: UserSettingsUpdateRequest,
     user: Annotated[User, Depends(get_request_user)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> UserSettingsResponse:
-    return await UserSettingsService().update_settings(update_data)
+    return await UserSettingsService(session).update_settings(user, update_data)
