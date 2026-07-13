@@ -36,13 +36,20 @@ class MissionRepository:
         self,
         level: ActivityLevel | None = None,
         mission_type: MissionType | None = None,
+        exclude_kidney_check: bool = False,
     ) -> list[MissionTemplate]:
-        """활성 미션 템플릿을 레벨/종류로 필터링해 display_order 순으로 반환."""
+        """활성 미션 템플릿을 레벨/종류로 필터링해 display_order 순으로 반환.
+
+        exclude_kidney_check=True면 신장/단백질 제한 사용자에게 위험한
+        (requires_kidney_check=True) 미션을 제외한다. (안전 필터)
+        """
         stmt = select(MissionTemplate).where(MissionTemplate.is_active.is_(True))
         if level is not None:
             stmt = stmt.where(MissionTemplate.level == level)
         if mission_type is not None:
             stmt = stmt.where(MissionTemplate.mission_type == mission_type)
+        if exclude_kidney_check:
+            stmt = stmt.where(MissionTemplate.requires_kidney_check.is_(False))
         stmt = stmt.order_by(MissionTemplate.display_order)
         result = await self.session.scalars(stmt)
         return list(result.all())

@@ -79,6 +79,8 @@ MISSION_TEMPLATES: list[dict] = [
         "target_unit": TargetUnit.COUNT,
         "daily_count_limit": 1,
         "reward_points": 5,
+        # 신장질환/투석·단백질 제한 사용자에게는 노출 금지 (GET /missions 안전 필터)
+        "requires_kidney_check": True,
     },
     # 게임
     {

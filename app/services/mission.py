@@ -33,8 +33,10 @@ from app.models.enums import (
     MissionType,
     SyncStatus,
 )
+from app.models.health import HealthProfile
 from app.models.missions import GameLog, MealLog, MissionLog, MissionTemplate, PhysicalActivityLog
 from app.models.users import User
+from app.repositories.health_profile_repository import HealthProfileRepository
 from app.repositories.mission_repository import MissionRepository
 from app.services.mission_scoring import compute_daily_result, compute_earned_points
 
@@ -43,6 +45,7 @@ class MissionService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repo = MissionRepository(session)
+        self.health_repo = HealthProfileRepository(session)
 
     # ---------------- GET /missions ----------------
 
@@ -54,10 +57,24 @@ class MissionService:
     ) -> list[MissionResponse]:
         # 레벨 우선순위: 쿼리로 명시한 값 > 사용자의 현재 레벨 > (없으면 전체)
         effective_level = level or await self.repo.get_user_current_level(user.user_id)
-        # TODO(health 담당 연동): requires_kidney_check / 단백질 제한 필터는 최신 health_profile이
-        #                         필요해 아직 미적용. health 도메인 완성 후 조인 예정.
-        templates = await self.repo.get_active_templates(level=effective_level, mission_type=mission_type)
+        # 안전 필터: 신장/단백질 제한 사용자에게는 고단백(requires_kidney_check) 미션을 숨긴다.
+        latest_profile = await self.health_repo.get_latest_profile(user.user_id)
+        exclude_kidney_check = self._should_hide_kidney_missions(latest_profile)
+        templates = await self.repo.get_active_templates(
+            level=effective_level,
+            mission_type=mission_type,
+            exclude_kidney_check=exclude_kidney_check,
+        )
         return [MissionResponse.model_validate(t) for t in templates]
+
+    @staticmethod
+    def _should_hide_kidney_missions(profile: HealthProfile | None) -> bool:
+        """고단백 미션 숨김 여부. 서버가 이미 계산·저장한 protein_challenge_allowed를
+        단일 진실원천으로 사용한다(kidney/protein 규칙 재구현 금지).
+        프로필이 없으면(건강체크 전) 숨기지 않는다."""
+        if profile is None:
+            return False
+        return not profile.protein_challenge_allowed
 
     # ---------------- POST /mission-logs ----------------
 
@@ -76,6 +93,18 @@ class MissionService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="미션 종류가 템플릿과 일치하지 않습니다.",
             )
+
+        # 안전 차단(단일 원천): 목록 숨김(GET /missions)만으로는 캐시된 목록·직접 호출로 우회되므로,
+        # 실제 수행을 만드는 여기서도 동일하게 막는다. GET과 같은 protein_challenge_allowed를 쓰며
+        # 프로필 없음은 허용(GET 계약과 동일), False인 경우에만 거부한다(신장/단백질 제한 = 카테고리
+        # 금지라 재시도로 해소되지 않으므로 403).
+        if template.requires_kidney_check:
+            latest_profile = await self.health_repo.get_latest_profile(user.user_id)
+            if self._should_hide_kidney_missions(latest_profile):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="신장/단백질 제한으로 수행할 수 없는 미션입니다.",
+                )
 
         # 종류별 허용 status 조합 검증
         if template.mission_type in self._IMMEDIATE_TYPES and data.status != MissionStatus.COMPLETED:
