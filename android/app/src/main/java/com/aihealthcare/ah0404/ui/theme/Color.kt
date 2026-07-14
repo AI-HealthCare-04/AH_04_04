@@ -39,6 +39,10 @@ val AigoTertiaryContainer = Color(0xFFC1E9FB)
 val AigoOnTertiaryContainer = Color(0xFF001F29)
 val AigoSurfaceVariant = Color(0xFFDDE5DB)      // 연한 중립 녹색 면
 val AigoOnSurfaceVariant = Color(0xFF414942)
+// 주의(경고) 배지 — M3 표준 슬롯에 없는 의미색. 화면에서 raw hex 대신 이 토큰 참조(§0-1, §11).
+val AigoWarningContainer = Color(0xFFFFF3CD)    // 연한 앰버 배경(안전 확인 등)
+val AigoOnWarningContainer = Color(0xFF856404)  // 앰버 배경 위 글자
+
 val AigoScrim = Color(0xFF000000)
 val AigoInverseSurface = Color(0xFF2E312D)
 val AigoInverseOnSurface = Color(0xFFEFF1EB)

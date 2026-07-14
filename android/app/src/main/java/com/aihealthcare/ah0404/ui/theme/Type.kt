@@ -39,12 +39,28 @@ private val NotoSansKR = FontFamily(
     ),
 )
 
+/** 앱 기본 글꼴(Noto Sans KR). Theme 에서 bare Text 의 기본 글꼴로 provide 한다. */
+val AigoFontFamily: FontFamily = NotoSansKR
+
+// 문서 §2에서 크기를 지정한 7개 스타일은 아래에서 완전 재정의하고,
+// 나머지 8개(display*/headlineMedium/headlineSmall/titleSmall/bodySmall/labelSmall)는
+// M3 기본 메트릭을 유지하되 글꼴만 Noto Sans KR 로 교체한다.
+// → 화면이 어떤 M3 텍스트 스타일을 쓰더라도 항상 한글 브랜드 폰트가 적용된다.
+private val Default = Typography()
+
+private fun TextStyle.withNoto() = copy(fontFamily = NotoSansKR)
+
 val Typography = Typography(
+    displayLarge = Default.displayLarge.withNoto(),
+    displayMedium = Default.displayMedium.withNoto(),
+    displaySmall = Default.displaySmall.withNoto(),
     // 큰 화면 타이틀
     headlineLarge = TextStyle(
         fontFamily = NotoSansKR, fontWeight = FontWeight.Bold,
         fontSize = 30.sp, lineHeight = 40.sp,
     ),
+    headlineMedium = Default.headlineMedium.withNoto(),
+    headlineSmall = Default.headlineSmall.withNoto(),
     // 화면 제목
     titleLarge = TextStyle(
         fontFamily = NotoSansKR, fontWeight = FontWeight.Bold,
@@ -55,6 +71,7 @@ val Typography = Typography(
         fontFamily = NotoSansKR, fontWeight = FontWeight.Medium,
         fontSize = 20.sp, lineHeight = 28.sp,
     ),
+    titleSmall = Default.titleSmall.withNoto(),
     // 본문(기본)
     bodyLarge = TextStyle(
         fontFamily = NotoSansKR, fontWeight = FontWeight.Normal,
@@ -65,6 +82,7 @@ val Typography = Typography(
         fontFamily = NotoSansKR, fontWeight = FontWeight.Normal,
         fontSize = 16.sp, lineHeight = 24.sp,
     ),
+    bodySmall = Default.bodySmall.withNoto(),
     // 버튼 글자
     labelLarge = TextStyle(
         fontFamily = NotoSansKR, fontWeight = FontWeight.Bold,
@@ -75,4 +93,5 @@ val Typography = Typography(
         fontFamily = NotoSansKR, fontWeight = FontWeight.Medium,
         fontSize = 14.sp, lineHeight = 20.sp,
     ),
+    labelSmall = Default.labelSmall.withNoto(),
 )

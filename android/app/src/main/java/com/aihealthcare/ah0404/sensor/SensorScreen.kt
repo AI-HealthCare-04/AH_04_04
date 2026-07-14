@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.size
 import com.aihealthcare.ah0404.pet.PetIdle
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
@@ -43,6 +42,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
+import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
 import kotlin.math.sqrt
 
 @Composable
@@ -177,25 +178,21 @@ fun StepCounterSection() {
             )
             Text("걸음", fontSize = 22.sp, color = MaterialTheme.colorScheme.secondary)
             Spacer(Modifier.height(8.dp))
-            Button(
+            AigoSecondaryButton(
+                text = "리셋 (0부터 다시 세기)",
                 onClick = {
                     walkLogic.reset()
                     stepCount.value = 0
                     walkState.value = WalkingStepDetectorLogic.State.IDLE
                     consecutivePeaks.value = 0
                 },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("리셋 (0부터 다시 세기)", fontSize = 18.sp, modifier = Modifier.padding(8.dp))
-            }
-            Button(
+            )
+            AigoPrimaryButton(
+                text = "🐶 강아지와 산책하기",
                 onClick = {
                     context.startActivity(Intent(context, WalkingChallengeActivity::class.java))
                 },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("🐶 강아지와 산책하기", fontSize = 18.sp, modifier = Modifier.padding(8.dp))
-            }
+            )
             DebugPanel {
                 DebugRow("원시 크기", "%.2f m/s²".format(rawMag.value))
                 DebugRow("필터된 크기 (알고리즘 입력)", "%.2f m/s²".format(filteredMag.value))
@@ -309,15 +306,13 @@ fun ShakeSection() {
             )
             Text("회", fontSize = 22.sp, color = MaterialTheme.colorScheme.secondary)
             Spacer(Modifier.height(8.dp))
-            Button(
+            AigoSecondaryButton(
+                text = "리셋 (0부터 다시 세기)",
                 onClick = {
                     shakeLogic.reset()
                     shakeCount.value = 0
                 },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("리셋 (0부터 다시 세기)", fontSize = 18.sp, modifier = Modifier.padding(8.dp))
-            }
+            )
             DebugPanel {
                 DebugRow("X축", "%.2f m/s²".format(accelX.value))
                 DebugRow("Y축", "%.2f m/s²".format(accelY.value))

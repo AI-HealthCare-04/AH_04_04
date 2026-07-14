@@ -11,9 +11,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -23,11 +20,15 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aihealthcare.ah0404.network.Mission
+import com.aihealthcare.ah0404.ui.components.AigoCard
+import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
+import com.aihealthcare.ah0404.ui.theme.AigoOnWarningContainer
+import com.aihealthcare.ah0404.ui.theme.AigoWarningContainer
+import com.aihealthcare.ah0404.ui.theme.Dimens
 
 private fun targetUnitLabel(unit: String): String = when (unit) {
     "steps" -> "걸음"
@@ -51,6 +52,9 @@ fun MissionScreen(
             is MissionUiState.Loading -> CircularProgressIndicator()
 
             is MissionUiState.Error -> Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(Dimens.ScreenPadding),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -61,12 +65,10 @@ fun MissionScreen(
                 )
                 Text(
                     text = s.message,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error
                 )
-                Button(onClick = { vm.loadMissions() }) {
-                    Text("다시 시도")
-                }
+                AigoPrimaryButton(text = "다시 시도", onClick = { vm.loadMissions() })
             }
 
             is MissionUiState.Success -> LazyColumn(
@@ -94,54 +96,49 @@ fun MissionScreen(
 
 @Composable
 private fun MissionCard(mission: Mission) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = mission.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f)
-                )
-                if (mission.requiresSafetyNotice) {
-                    SafetyBadge()
-                }
-            }
-
-            Spacer(modifier = Modifier.height(6.dp))
-
+    AigoCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Text(
-                text = mission.description.orEmpty(),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                text = mission.title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
             )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "목표: ${mission.targetValue} ${targetUnitLabel(mission.targetUnit)}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium
-                )
-                Text(
-                    text = "${mission.rewardPoints}pt",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
+            if (mission.requiresSafetyNotice) {
+                SafetyBadge()
             }
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Text(
+            text = mission.description.orEmpty(),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "목표: ${mission.targetValue} ${targetUnitLabel(mission.targetUnit)}",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                text = "${mission.rewardPoints}pt",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
         }
     }
 }
@@ -149,13 +146,13 @@ private fun MissionCard(mission: Mission) {
 @Composable
 private fun SafetyBadge() {
     Surface(
-        color = Color(0xFFFFF3CD),
+        color = AigoWarningContainer,
         shape = MaterialTheme.shapes.small
     ) {
         Text(
             text = "안전 확인 필요",
             style = MaterialTheme.typography.labelSmall,
-            color = Color(0xFF856404),
+            color = AigoOnWarningContainer,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
         )
     }

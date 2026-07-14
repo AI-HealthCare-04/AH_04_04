@@ -1,8 +1,10 @@
 package com.aihealthcare.ah0404.ui.theme
 
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 
 /**
  * Aigo 앱 테마 — 디자인 시스템 문서 §0, §7, §10.
@@ -51,6 +53,11 @@ fun MyApplicationTheme(
         colorScheme = LightColorScheme,
         typography = Typography,
         shapes = AigoShapes,
-        content = content,
-    )
+    ) {
+        // 크기만 지정한 bare Text 도 기본 글꼴이 Noto Sans KR 가 되도록 provide.
+        CompositionLocalProvider(
+            LocalTextStyle provides LocalTextStyle.current.copy(fontFamily = AigoFontFamily),
+            content = content,
+        )
+    }
 }
