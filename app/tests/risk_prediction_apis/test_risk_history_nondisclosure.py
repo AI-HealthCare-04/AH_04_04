@@ -20,7 +20,6 @@ def test_history_item_shape_is_display_safe() -> None:
         "prediction_id",
         "created_at",
         "care_stage",
-        "model_variant",
     }
 
 

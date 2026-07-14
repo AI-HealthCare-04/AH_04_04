@@ -168,7 +168,6 @@ class RiskPredictionService:
             prediction_id=prediction.prediction_id,
             created_at=prediction.created_at,
             care_stage=RiskPredictionService._care_stage_from_risk_level(prediction.internal_risk_level),
-            model_variant=prediction.model_variant,
         )
 
     @staticmethod

@@ -157,10 +157,10 @@ def test_history_item_is_display_safe() -> None:
     assert item.prediction_id == 11
     assert item.created_at == datetime(2026, 7, 10, 12, 0, 0)
     assert item.care_stage == CareStage.MAINTAIN
-    assert item.model_variant == ModelVariant.WITH_WAIST
-    # 비노출(#57): 내부 risk_level/risk_score 는 이력 항목에 없다.
+    # 비노출(#57): 내부 risk_level/risk_score 는 물론 내부 식별자 model_variant 도 이력 항목에 없다.
     assert not hasattr(item, "risk_level")
     assert not hasattr(item, "risk_score")
+    assert not hasattr(item, "model_variant")
 
 
 async def test_get_recent_predictions_returns_history_items_in_repo_order() -> None:
