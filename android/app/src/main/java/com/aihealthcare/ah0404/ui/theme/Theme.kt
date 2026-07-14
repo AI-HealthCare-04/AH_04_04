@@ -1,58 +1,56 @@
 package com.aihealthcare.ah0404.ui.theme
 
-import android.app.Activity
-import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
-)
-
+/**
+ * Aigo 앱 테마 — 디자인 시스템 문서 §0, §7, §10.
+ *
+ *  §0-2  dynamicColor(배경화면 색 따라가기) 제거 — 폰 배경에 따라 색이 바뀌지 않는다.
+ *  §7    라이트 모드 고정 — 시스템 다크 무시(다크는 이번 MVP 범위 아님).
+ *
+ *  → 항상 브랜드 녹색 LightColorScheme 만 사용한다.
+ */
 private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
-
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+    primary = AigoPrimary,
+    onPrimary = AigoOnPrimary,
+    primaryContainer = AigoPrimaryContainer,
+    onPrimaryContainer = AigoOnPrimaryContainer,
+    secondary = AigoSecondary,
+    onSecondary = AigoOnSecondary,
+    secondaryContainer = AigoSecondaryContainer,
+    onSecondaryContainer = AigoOnSecondaryContainer,
+    tertiary = AigoTertiary,
+    onTertiary = AigoOnTertiary,
+    tertiaryContainer = AigoTertiaryContainer,
+    onTertiaryContainer = AigoOnTertiaryContainer,
+    background = AigoBackground,
+    onBackground = AigoOnBackground,
+    surface = AigoSurface,
+    onSurface = AigoOnSurface,
+    surfaceVariant = AigoSurfaceVariant,
+    onSurfaceVariant = AigoOnSurfaceVariant,
+    outline = AigoOutline,
+    outlineVariant = AigoOutlineVariant,
+    error = AigoError,
+    onError = AigoOnError,
+    errorContainer = AigoErrorContainer,
+    onErrorContainer = AigoOnErrorContainer,
+    scrim = AigoScrim,
+    inverseSurface = AigoInverseSurface,
+    inverseOnSurface = AigoInverseOnSurface,
+    inversePrimary = AigoInversePrimary,
 )
 
 @Composable
 fun MyApplicationTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
-    content: @Composable () -> Unit
+    content: @Composable () -> Unit,
 ) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
-    }
-
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = LightColorScheme,
         typography = Typography,
-        content = content
+        shapes = AigoShapes,
+        content = content,
     )
 }

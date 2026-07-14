@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.MyApplication" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- 라이트 고정(§7). 배경/상태바를 브랜드 색으로(보라 잔재 제거, §10-7).
+         Compose 가 enableEdgeToEdge 로 시스템 바를 그리므로 상태바는 밝은 배경 + 어두운 아이콘. -->
+    <style name="Theme.MyApplication" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/aigo_background</item>
+        <item name="android:statusBarColor">@color/aigo_background</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@color/aigo_background</item>
+    </style>
 </resources>
