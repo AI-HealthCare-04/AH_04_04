@@ -1,5 +1,6 @@
 package com.aihealthcare.ah0404.network
 
+import com.aihealthcare.ah0404.BuildConfig
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -31,7 +32,17 @@ private val okHttpClient = OkHttpClient.Builder()
         chain.proceed(request)
     }
     .addInterceptor(
-        HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BODY }
+        // 민감정보 유출 방지(리뷰 #58): 온보딩이 생년월일·성별·키·몸무게·질환 등을 이 클라이언트로
+        // 전송하므로, release 빌드에서는 로깅 OFF, 디버그에서만 BODY. Authorization 토큰은 디버그
+        // 로그에서도 마스킹한다(본문은 디버그 로컬 기기에서만 노출).
+        HttpLoggingInterceptor().apply {
+            redactHeader("Authorization")
+            level = if (BuildConfig.DEBUG) {
+                HttpLoggingInterceptor.Level.BODY
+            } else {
+                HttpLoggingInterceptor.Level.NONE
+            }
+        }
     )
     .build()
 

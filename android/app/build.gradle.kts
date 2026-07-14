@@ -35,6 +35,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true // NetworkClient 에서 BuildConfig.DEBUG 로 민감정보 로깅 게이트
     }
 }
 
