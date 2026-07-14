@@ -156,9 +156,10 @@ def test_history_item_includes_dashboard_trend_fields() -> None:
     assert item.prediction_id == 11
     assert item.created_at == datetime(2026, 7, 10, 12, 0, 0)
     assert item.care_stage == CareStage.MAINTAIN
-    assert item.risk_level == RiskLevel.MEDIUM
-    assert item.risk_score == Decimal("0.427")
     assert item.model_variant == ModelVariant.WITH_WAIST
+    # 비노출(#57): 내부 risk_level/risk_score 는 이력 항목에 없다.
+    assert not hasattr(item, "risk_level")
+    assert not hasattr(item, "risk_score")
 
 
 async def test_get_recent_predictions_returns_history_items_in_repo_order() -> None:
@@ -193,10 +194,9 @@ async def test_get_recent_predictions_returns_history_items_in_repo_order() -> N
 
     assert repo.called_with == (1, 2)
     assert [item.prediction_id for item in response.predictions] == [12, 11]
+    # 순서·내용은 care_stage(표시용)로 검증. 내부 risk_level/risk_score 는 비노출이라 확인 대상 아님.
     assert response.predictions[0].care_stage == CareStage.ACTION_NEEDED
     assert response.predictions[1].care_stage == CareStage.GOOD
-    assert response.predictions[0].risk_level == RiskLevel.HIGH
-    assert response.predictions[1].risk_score == Decimal("0.121")
 
 
 async def test_get_recent_predictions_returns_empty_list_for_non_positive_limit() -> None:
