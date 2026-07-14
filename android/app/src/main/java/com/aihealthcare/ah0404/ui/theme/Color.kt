@@ -33,12 +33,23 @@ val AigoErrorContainer = Color(0xFFFFDAD6)
 val AigoOnErrorContainer = Color(0xFF93000A)
 
 // ── M3 완결용 보정값(문서 미명시, 브랜드 톤 유지) ────────────────
-val AigoTertiary = Color(0xFF3D6373)            // 은은한 청록 포인트
+// tertiary = 성취/보상 강조 골드. 초록 단색 팔레트에 따뜻한 포인트를 더해
+// "성공 경험을 주는" 순간(포인트 적립·미션 완료·배지)에 쓴다(안전배지 앰버와 톤 일관).
+val AigoTertiary = Color(0xFF8A6A00)            // 리치 골드(성취 강조 텍스트/아이콘)
 val AigoOnTertiary = Color(0xFFFFFFFF)
-val AigoTertiaryContainer = Color(0xFFC1E9FB)
-val AigoOnTertiaryContainer = Color(0xFF001F29)
+val AigoTertiaryContainer = Color(0xFFFFE49B)   // 밝은 골드 면(보상 배지 배경)
+val AigoOnTertiaryContainer = Color(0xFF2B2000)
 val AigoSurfaceVariant = Color(0xFFDDE5DB)      // 연한 중립 녹색 면
 val AigoOnSurfaceVariant = Color(0xFF414942)
+// surfaceContainer 계열(M3 신규) — NavigationBar·시트 등이 사용. 미정의 시 기본 보라틴트가 새어
+// 나오므로 초록틴트 중립색으로 명시(스크린샷에서 발견한 보라 네비바 수정).
+val AigoSurfaceContainerLowest = Color(0xFFFFFFFF)
+val AigoSurfaceContainerLow = Color(0xFFF3F5F0)
+val AigoSurfaceContainer = Color(0xFFEDF0EA)
+val AigoSurfaceContainerHigh = Color(0xFFE7EAE4)
+val AigoSurfaceContainerHighest = Color(0xFFE1E5DE)
+val AigoSurfaceBright = Color(0xFFF9FAF5)
+val AigoSurfaceDim = Color(0xFFDADED7)
 // 주의(경고) 배지 — M3 표준 슬롯에 없는 의미색. 화면에서 raw hex 대신 이 토큰 참조(§0-1, §11).
 val AigoWarningContainer = Color(0xFFFFF3CD)    // 연한 앰버 배경(안전 확인 등)
 val AigoOnWarningContainer = Color(0xFF856404)  // 앰버 배경 위 글자
