@@ -123,6 +123,14 @@ async def test_onboarding_happy_path_guest_to_completed(db_client: AsyncClient) 
     assert risk_body["onboarding_status"] == "completed"
     assert risk_body["care_stage"] in _CARE_STAGES
     assert risk_body["display_message"]
+    # 결과 화면 고지: 참고용·비진단 disclaimer 노출(#56/#57 정렬 계약)
+    assert risk_body["disclaimer"]
+    # 내부 원점수·확률 비노출(#57 test_display_message_does_not_expose_internal_score의 관통 레벨 짝)
+    risk_text = risk.text
+    assert "score" not in risk_text.lower()
+    assert "probability" not in risk_text.lower()
+    assert "점수" not in risk_text
+    assert "확률" not in risk_text
 
     # 8) 홈 → latest_prediction 노출(온보딩 성공 판정)
     home = await db_client.get("/api/v1/home", headers=auth)
