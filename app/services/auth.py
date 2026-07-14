@@ -65,15 +65,22 @@ class AuthService:
 
     async def _social_login(self, provider: AuthProvider, profile: OAuthProfile) -> LoginResult:
         # (provider, social_id)로 기존 사용자를 찾고, 없으면 생성한다(신규=is_new_user True).
-        #   탈퇴자는 get_by_provider_social_id가 deleted_at 필터로 제외 → 재로그인 시 신규 생성.
         user = await self.user_repo.get_by_provider_social_id(provider, profile.social_id)
-        is_new_user = user is None
-        if user is None:
-            user = await self.user_repo.create_social_user(
-                provider, profile.social_id, profile.nickname or generate_nickname()
-            )
-        else:
+        if user is not None:
             await self.user_repo.update_last_login(user)
+            is_new_user = False
+        else:
+            # 탈퇴(soft-delete)한 동일 소셜 계정이 있으면 신규 생성 대신 복구한다.
+            #   (provider, social_id) 유니크 제약 때문에 그냥 create하면 IntegrityError(500)가 난다.
+            deleted = await self.user_repo.get_deleted_by_provider_social_id(provider, profile.social_id)
+            if deleted is not None:
+                user = await self.user_repo.restore(deleted)
+                is_new_user = False
+            else:
+                user = await self.user_repo.create_social_user(
+                    provider, profile.social_id, profile.nickname or generate_nickname()
+                )
+                is_new_user = True
         await self.session.commit()
         await self.session.refresh(user)
         access_token = str(self.jwt_service.create_access_token(user))

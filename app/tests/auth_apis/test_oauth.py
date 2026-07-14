@@ -107,3 +107,33 @@ async def test_google_login_creates_then_reuses_user(
     second = await db_client.post("/api/v1/auth/login/google", json={"authorization_code": "y"})
     assert second.json()["is_new_user"] is False
     assert second.json()["user"]["user_id"] == user_id
+
+
+async def test_google_login_restores_withdrawn_account(
+    db_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 탈퇴(soft-delete)한 소셜 계정이 재로그인하면, 유니크 제약(provider, social_id)으로 500이 나지 않고
+    # 기존 계정이 복구되어야 한다(동일 user_id, is_new_user False).
+    _configure_google(monkeypatch)
+
+    async def fake_fetch(code: str, client: httpx.AsyncClient) -> OAuthProfile:
+        return OAuthProfile(social_id="g-withdraw", nickname="구글이")
+
+    monkeypatch.setattr(auth_module, "fetch_google_profile", fake_fetch)
+
+    first = await db_client.post("/api/v1/auth/login/google", json={"authorization_code": "x"})
+    assert first.status_code == status.HTTP_200_OK
+    user_id = first.json()["user"]["user_id"]
+    token = first.json()["access_token"]
+
+    # 탈퇴(soft-delete)
+    withdrawn = await db_client.request(
+        "DELETE", "/api/v1/users/me", json={"confirm": True}, headers={"Authorization": f"Bearer {token}"}
+    )
+    assert withdrawn.status_code == status.HTTP_204_NO_CONTENT
+
+    # 같은 소셜 계정 재로그인 → 500이 아니라 복구(동일 user_id, is_new_user False)
+    again = await db_client.post("/api/v1/auth/login/google", json={"authorization_code": "z"})
+    assert again.status_code == status.HTTP_200_OK
+    assert again.json()["is_new_user"] is False
+    assert again.json()["user"]["user_id"] == user_id
