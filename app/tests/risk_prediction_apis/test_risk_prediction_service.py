@@ -71,15 +71,15 @@ def test_display_message_does_not_expose_internal_score() -> None:
 def test_display_messages_use_readable_korean_copy() -> None:
     assert (
         RiskPredictionService._display_message(CareStage.GOOD)
-        == "현재 입력값 기준으로 위험도는 낮은 편이에요. 지금처럼 생활습관 미션을 이어가 보세요."
+        == "지금 컨디션이 좋아요. 지금처럼 생활습관 미션을 이어가면 근력을 잘 지킬 수 있어요."
     )
     assert (
         RiskPredictionService._display_message(CareStage.MAINTAIN)
-        == "생활습관 관리가 필요한 상태예요. 걷기와 근력 운동을 꾸준히 이어가 보세요."
+        == "조금만 더 챙기면 좋은 단계예요. 걷기와 근력 운동을 꾸준히 이어가 봐요."
     )
     assert (
         RiskPredictionService._display_message(CareStage.ACTION_NEEDED)
-        == "근감소 위험 신호가 있어요. 무리하지 않는 범위에서 맞춤 운동 미션을 시작해 보세요."
+        == "근력과 활동량을 더 챙기면 좋은 시점이에요. 무리하지 않는 범위에서 맞춤 운동을 천천히 시작해 봐요."
     )
 
 
