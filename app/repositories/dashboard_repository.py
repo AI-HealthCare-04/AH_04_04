@@ -1,7 +1,8 @@
 # =====================================================================================
 # Dashboard 도메인 Repository — 대시보드 화면용 읽기 전용 집계.
-# 사용하는 테이블: point_balances, daily_activity_summaries (dashboard 도메인 모델),
-#   physical_activity_logs (미션 도메인 모델을 읽기 전용으로 소비 — 활동량 환산 원천).
+# 사용하는 테이블: daily_activity_summaries (dashboard 도메인 모델),
+#   mission_logs·physical_activity_logs (미션 도메인 모델을 읽기 전용으로 소비 —
+#   포인트 잔액·적립이력은 mission_logs.earned_points에서 파생, 활동량은 physical_activity_logs).
 # 다른 도메인 데이터(미션/예측)는 읽기만 하고 그 도메인 파일은 수정하지 않는다.
 # =====================================================================================
 from datetime import date
@@ -9,7 +10,7 @@ from datetime import date
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.dashboard import DailyActivitySummary, PointBalance
+from app.models.dashboard import DailyActivitySummary
 from app.models.missions import MissionLog, PhysicalActivityLog
 
 
@@ -18,9 +19,19 @@ class DashboardRepository:
         self.session = session
 
     async def get_current_points(self, user_id: int) -> int:
-        """포인트 잔액(point_balances). 행이 없으면 0."""
-        stmt = select(PointBalance.current_points).where(PointBalance.user_id == user_id)
+        """포인트 잔액 = 적립 총합. v6.0에서 포인트는 순증가(사용 이력 제거)라
+        mission_logs.earned_points 합계가 곧 현재 잔액이다(별도 잔액 테이블 유지 불필요)."""
+        stmt = select(func.coalesce(func.sum(MissionLog.earned_points), 0)).where(MissionLog.user_id == user_id)
         return int(await self.session.scalar(stmt) or 0)
+
+    async def get_earn_logs(self, user_id: int) -> list[MissionLog]:
+        """적립 이력 = 포인트가 지급된 미션 로그(earned_points>0), 최신순."""
+        stmt = (
+            select(MissionLog)
+            .where(MissionLog.user_id == user_id, MissionLog.earned_points > 0)
+            .order_by(MissionLog.created_at.desc())
+        )
+        return list((await self.session.scalars(stmt)).all())
 
     async def get_today_summary(self, user_id: int) -> DailyActivitySummary | None:
         """오늘자(서버 current_date) 활동 요약. 미션 도메인이 upsert한 값을 읽기만 한다."""
