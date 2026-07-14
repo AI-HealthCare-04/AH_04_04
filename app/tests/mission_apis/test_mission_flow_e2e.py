@@ -203,6 +203,7 @@ async def test_exercise_start_then_complete_awards_points(
     assert done_body["daily_result"] == "success"
     assert done_body["sync_status"] == "synced"
     assert done_body["daily_total_min"] is None  # 걷기 전용 필드 → 운동은 None
+    assert done_body["daily_total_steps"] is None  # 걷기 전용 필드 → 운동은 None
 
     home = (await db_client.get(f"{API}/home", headers=auth)).json()
     assert home["point_balance"]["current_points"] == 15
@@ -220,7 +221,7 @@ async def test_walking_completions_sum_daily_total_min(
         db_sessionmaker, mission_type=MissionType.WALKING, reward_points=5, target_unit=TargetUnit.MINUTES
     )
 
-    async def _walk(minutes: float) -> dict:
+    async def _walk(minutes: float, steps: int) -> dict:
         start = await db_client.post(
             f"{API}/mission-logs",
             json={"mission_template_id": template_id, "mission_type": "walking", "status": "in_progress"},
@@ -229,17 +230,23 @@ async def test_walking_completions_sum_daily_total_min(
         log_id = start.json()["mission_log_id"]
         done = await db_client.patch(
             f"{API}/mission-logs/{log_id}",
-            json={"status": "completed", "success": True, "walking_detail": {"duration_min": minutes}},
+            json={
+                "status": "completed",
+                "success": True,
+                "walking_detail": {"duration_min": minutes, "steps": steps},
+            },
             headers=auth,
         )
         assert done.status_code == status.HTTP_200_OK
         return done.json()
 
-    first = await _walk(10)
+    first = await _walk(10, 1200)
     assert first["daily_total_min"] == 10
+    assert first["daily_total_steps"] == 1200  # 걷기 표시전용 누적 걸음
 
-    second = await _walk(15)
-    assert second["daily_total_min"] == 25  # 같은 날 합산
+    second = await _walk(15, 1500)
+    assert second["daily_total_min"] == 25  # 같은 날 합산(시간)
+    assert second["daily_total_steps"] == 2700  # 같은 날 합산(걸음)
 
     # 걷기는 한도 없음 → 2건 모두 카운트
     home = (await db_client.get(f"{API}/home", headers=auth)).json()

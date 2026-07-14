@@ -290,6 +290,7 @@ class MissionService:
         log.earned_points = compute_earned_points(counted_for_daily, reward_points)
 
         daily_total_min: float | None = None
+        daily_total_steps: int | None = None
 
         # 걷기 종료: physical_activity_logs 저장 + 같은 날 합산
         if data.walking_detail is not None:
@@ -307,6 +308,7 @@ class MissionService:
                 )
             )
             daily_total_min = await self.repo.sum_walking_minutes_today(user.user_id)
+            daily_total_steps = await self.repo.sum_walking_steps_today(user.user_id)
 
         # 운동 완료: physical_activity_logs 저장
         elif data.exercise_detail is not None:
@@ -332,6 +334,7 @@ class MissionService:
             mission_log_id=log.mission_log_id,
             status=log.status.value,
             daily_total_min=daily_total_min,
+            daily_total_steps=daily_total_steps,
             success=success,
             counted_for_daily=counted_for_daily,
             daily_result=daily_result.value,

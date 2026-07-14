@@ -139,7 +139,8 @@ class MissionLogUpdateRequest(BaseModel):
 class MissionLogUpdateResponse(BaseModel):
     mission_log_id: int
     status: str
-    daily_total_min: float | None = None  # 걷기: 같은 날 자동 합산값
+    daily_total_min: float | None = None  # 걷기: 같은 날 자동 합산 시간(달성 판정 기준)
+    daily_total_steps: int | None = None  # 걷기: 같은 날 자동 합산 걸음수(표시 전용)
     success: bool
     counted_for_daily: bool
     daily_result: str

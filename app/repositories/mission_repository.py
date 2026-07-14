@@ -152,6 +152,20 @@ class MissionRepository:
         )
         return float(await self.session.scalar(stmt) or 0)
 
+    async def sum_walking_steps_today(self, user_id: int) -> int:
+        """오늘 걷기 총 걸음수 — 표시 전용(daily_total_steps). mission_logs와 조인."""
+        stmt = (
+            select(func.coalesce(func.sum(PhysicalActivityLog.steps), 0))
+            .select_from(PhysicalActivityLog)
+            .join(MissionLog, MissionLog.mission_log_id == PhysicalActivityLog.mission_log_id)
+            .where(
+                MissionLog.user_id == user_id,
+                PhysicalActivityLog.activity_type == ActivityType.WALKING,
+                PhysicalActivityLog.activity_date == func.current_date(),
+            )
+        )
+        return int(await self.session.scalar(stmt) or 0)
+
     # ---------------- daily_activity_summaries upsert ----------------
 
     async def upsert_daily_summary(
