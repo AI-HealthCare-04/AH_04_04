@@ -79,7 +79,7 @@ def test_display_messages_use_readable_korean_copy() -> None:
     )
     assert (
         RiskPredictionService._display_message(CareStage.ACTION_NEEDED)
-        == "요즘 근력이 조금 떨어져 있을 수 있어요. 무리 없는 맞춤 운동으로 천천히 채워 봐요."
+        == "근력과 활동량을 더 챙기면 좋은 시점이에요. 무리하지 않는 범위에서 맞춤 운동을 천천히 시작해 봐요."
     )
 
 
