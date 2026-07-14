@@ -1,11 +1,10 @@
-from decimal import Decimal
 from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel
 
 from app.dtos.base import KstDatetime
-from app.models.enums import ActivityInputSource, ModelVariant, RiskLevel
+from app.models.enums import ActivityInputSource
 
 
 class RiskPredictionCreateRequest(BaseModel):
@@ -45,12 +44,12 @@ class RiskPredictionReassessResponse(BaseModel):
 
 
 class RiskPredictionHistoryItem(BaseModel):
+    # ⚠️ 비노출 계약(#57): 내부 risk_level·risk_score 는 이력 응답에 절대 넣지 않는다.
+    #    `_13 나의 기록`은 care_stage(순화 등급)만 표시용으로 노출한다.
+    #    내부 식별자 model_variant 도 표시용엔 불필요해 제거(지영 사인오프).
     prediction_id: int
     created_at: KstDatetime
     care_stage: CareStage
-    risk_level: RiskLevel
-    risk_score: Decimal
-    model_variant: ModelVariant
 
 
 class RiskPredictionHistoryResponse(BaseModel):

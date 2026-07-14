@@ -163,13 +163,11 @@ class RiskPredictionService:
 
     @staticmethod
     def _to_history_item(prediction: RiskPrediction) -> RiskPredictionHistoryItem:
+        # 비노출: internal_risk_level/score 는 care_stage 로만 변환해 노출(원값은 응답에 넣지 않는다).
         return RiskPredictionHistoryItem(
             prediction_id=prediction.prediction_id,
             created_at=prediction.created_at,
             care_stage=RiskPredictionService._care_stage_from_risk_level(prediction.internal_risk_level),
-            risk_level=prediction.internal_risk_level,
-            risk_score=prediction.internal_risk_score,
-            model_variant=prediction.model_variant,
         )
 
     @staticmethod
