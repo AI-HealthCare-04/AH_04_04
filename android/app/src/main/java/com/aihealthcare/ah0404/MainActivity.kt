@@ -28,6 +28,8 @@ import com.aihealthcare.ah0404.mission.MissionScreen
 import com.aihealthcare.ah0404.network.SessionStore
 import com.aihealthcare.ah0404.onboarding.OnboardingScreen
 import com.aihealthcare.ah0404.sensor.SensorScreen
+import com.aihealthcare.ah0404.settings.SettingsScreen
+import com.aihealthcare.ah0404.settings.SupportScreen
 import com.aihealthcare.ah0404.voice.VoiceProbeScreen
 import com.aihealthcare.ah0404.ui.theme.MyApplicationTheme
 
@@ -48,6 +50,22 @@ class MainActivity : ComponentActivity() {
                         onboarded = true
                     })
                     return@MyApplicationTheme
+                }
+
+                // 탭 위에 얹히는 서브 화면(설정/고객센터). null = 탭 화면.
+                var subScreen by remember { mutableStateOf<String?>(null) }
+                when (subScreen) {
+                    "settings" -> {
+                        SettingsScreen(
+                            onBack = { subScreen = null },
+                            onOpenSupport = { subScreen = "support" },
+                        )
+                        return@MyApplicationTheme
+                    }
+                    "support" -> {
+                        SupportScreen(onBack = { subScreen = "settings" })
+                        return@MyApplicationTheme
+                    }
                 }
 
                 var selectedTab by remember { mutableIntStateOf(0) }
@@ -86,6 +104,7 @@ class MainActivity : ComponentActivity() {
                     when (selectedTab) {
                         0 -> HomeScreen(
                             onGoMissions = { selectedTab = 1 },
+                            onOpenSettings = { subScreen = "settings" },
                             modifier = Modifier.padding(innerPadding),
                         )
                         1 -> MissionScreen(modifier = Modifier.padding(innerPadding))

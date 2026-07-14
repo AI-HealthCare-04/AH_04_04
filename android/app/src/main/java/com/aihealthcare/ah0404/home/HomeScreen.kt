@@ -10,6 +10,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -67,6 +71,7 @@ fun mockHome() = HomeUi(
 @Composable
 fun HomeScreen(
     onGoMissions: () -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
     ui: HomeUi = mockHome(),
 ) {
@@ -91,6 +96,9 @@ fun HomeScreen(
                 modifier = Modifier.weight(1f),
             )
             PointsChip(ui.points)
+            IconButton(onClick = onOpenSettings) {
+                Icon(Icons.Default.Settings, contentDescription = "설정")
+            }
         }
 
         Text(
