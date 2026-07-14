@@ -17,10 +17,12 @@ import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.aihealthcare.ah0404.mission.MissionScreen
+import com.aihealthcare.ah0404.onboarding.OnboardingScreen
 import com.aihealthcare.ah0404.sensor.SensorScreen
 import com.aihealthcare.ah0404.voice.VoiceProbeScreen
 import com.aihealthcare.ah0404.ui.theme.MyApplicationTheme
@@ -31,6 +33,13 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {
+                // 온보딩 완료 전까지 온보딩 흐름을 먼저 보여준다(역할분담 §4-②).
+                var onboarded by remember { mutableStateOf(false) }
+                if (!onboarded) {
+                    OnboardingScreen(onComplete = { onboarded = true })
+                    return@MyApplicationTheme
+                }
+
                 var selectedTab by remember { mutableIntStateOf(0) }
 
                 Scaffold(
