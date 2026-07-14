@@ -1,5 +1,6 @@
 package com.aihealthcare.ah0404.network
 
+import com.aihealthcare.ah0404.BuildConfig
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -7,9 +8,10 @@ import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 
-// 에뮬레이터 → 호스트 로컬 백엔드(8001). 실기기 테스트 시에는 Mac 의 Wi-Fi LAN IP 로
-// 임시 교체(`ipconfig getifaddr en0`)하되, 커밋에는 10.0.2.2 를 유지한다.
-private const val BASE_URL = "http://10.0.2.2:8001/api/v1/"
+// 온보딩 = 별도 실행 중인 dev 백엔드(Python-only 정본)에 HTTP 호출. (BACKEND_ONBOARDING_CONTRACT §0,§5)
+// 에뮬레이터 → 호스트 로컬 dev 백엔드 = 10.0.2.2:8000 (10.0.2.2 = 호스트 localhost).
+// 실기기 테스트 시에는 Mac 의 Wi-Fi LAN IP 로 임시 교체(`ipconfig getifaddr en0`), 커밋엔 10.0.2.2 유지.
+private const val BASE_URL = "http://10.0.2.2:8000/api/v1/"
 
 object TokenHolder {
     var token: String = ""
@@ -30,7 +32,17 @@ private val okHttpClient = OkHttpClient.Builder()
         chain.proceed(request)
     }
     .addInterceptor(
-        HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BODY }
+        // 민감정보 유출 방지(리뷰 #58): 온보딩이 생년월일·성별·키·몸무게·질환 등을 이 클라이언트로
+        // 전송하므로, release 빌드에서는 로깅 OFF, 디버그에서만 BODY. Authorization 토큰은 디버그
+        // 로그에서도 마스킹한다(본문은 디버그 로컬 기기에서만 노출).
+        HttpLoggingInterceptor().apply {
+            redactHeader("Authorization")
+            level = if (BuildConfig.DEBUG) {
+                HttpLoggingInterceptor.Level.BODY
+            } else {
+                HttpLoggingInterceptor.Level.NONE
+            }
+        }
     )
     .build()
 
