@@ -14,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -21,6 +22,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import com.aihealthcare.ah0404.home.HomeScreen
 import com.aihealthcare.ah0404.mission.MissionScreen
 import com.aihealthcare.ah0404.onboarding.OnboardingScreen
 import com.aihealthcare.ah0404.sensor.SensorScreen
@@ -49,18 +51,24 @@ class MainActivity : ComponentActivity() {
                             NavigationBarItem(
                                 selected = selectedTab == 0,
                                 onClick = { selectedTab = 0 },
-                                icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
-                                label = { Text("미션") }
+                                icon = { Icon(Icons.Default.Home, contentDescription = null) },
+                                label = { Text("홈") }
                             )
                             NavigationBarItem(
                                 selected = selectedTab == 1,
                                 onClick = { selectedTab = 1 },
-                                icon = { Icon(Icons.Default.FitnessCenter, contentDescription = null) },
-                                label = { Text("센서") }
+                                icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
+                                label = { Text("미션") }
                             )
                             NavigationBarItem(
                                 selected = selectedTab == 2,
                                 onClick = { selectedTab = 2 },
+                                icon = { Icon(Icons.Default.FitnessCenter, contentDescription = null) },
+                                label = { Text("센서") }
+                            )
+                            NavigationBarItem(
+                                selected = selectedTab == 3,
+                                onClick = { selectedTab = 3 },
                                 icon = { Icon(Icons.Default.Mic, contentDescription = null) },
                                 label = { Text("음성") }
                             )
@@ -68,9 +76,13 @@ class MainActivity : ComponentActivity() {
                     }
                 ) { innerPadding ->
                     when (selectedTab) {
-                        0 -> MissionScreen(modifier = Modifier.padding(innerPadding))
-                        1 -> SensorScreen(modifier = Modifier.padding(innerPadding))
-                        2 -> VoiceProbeScreen(modifier = Modifier.padding(innerPadding))
+                        0 -> HomeScreen(
+                            onGoMissions = { selectedTab = 1 },
+                            modifier = Modifier.padding(innerPadding),
+                        )
+                        1 -> MissionScreen(modifier = Modifier.padding(innerPadding))
+                        2 -> SensorScreen(modifier = Modifier.padding(innerPadding))
+                        3 -> VoiceProbeScreen(modifier = Modifier.padding(innerPadding))
                     }
                 }
             }
