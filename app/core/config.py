@@ -35,6 +35,12 @@ class Config(BaseSettings):
     # 고객센터 문의 이메일(명세 §12). 실제 값은 배포 환경변수 SUPPORT_EMAIL로 주입한다.
     SUPPORT_EMAIL: str = "support@example.com"
 
+    # 약관 전문 링크(GET /terms). 실제 문서 확정 시 배포 환경변수로 교체한다(현재는 placeholder).
+    TERMS_SERVICE_URL: str = "https://example.com/terms/service-1.0"
+    TERMS_PRIVACY_URL: str = "https://example.com/terms/privacy-1.0"
+    TERMS_SENSITIVE_HEALTH_URL: str = "https://example.com/terms/sensitive-health-1.0"
+    TERMS_MARKETING_URL: str = "https://example.com/terms/marketing-1.0"
+
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_MINUTES: int = 14 * 24 * 60

@@ -7,7 +7,9 @@ from app.dtos.users import (
     UserUpdateRequest,
     UserWithdrawRequest,
 )
+from app.models.settings import PersonalizedSetting
 from app.models.users import User
+from app.repositories.settings_repository import PersonalizedSettingRepository
 from app.repositories.user_repository import UserRepository
 
 
@@ -36,10 +38,35 @@ class UserManageService:
 
 
 class UserSettingsService:
-    async def update_settings(self, data: UserSettingsUpdateRequest) -> UserSettingsResponse:
-        # 명세 §10: PATCH 응답은 '보낸 필드만'이 아니라 '전체 설정'(조회와 동일)을 반환한다.
-        # 영속화(personalized_settings 연결)는 후속 백로그이므로, 지금은 기본값 위에
-        # 클라이언트가 실제로 보낸 필드만 덮어써 전체 설정 형태로 돌려준다.
-        # exclude_none: 명시적 null({"font_size": null})은 '변경 안 함'으로 무시 → 응답 필드가
-        # non-null이라 null이 섞이면 응답 검증 500이 나므로 방지한다.
-        return UserSettingsResponse().model_copy(update=data.model_dump(exclude_unset=True, exclude_none=True))
+    def __init__(self, session: AsyncSession):
+        self.session = session
+        self.repo = PersonalizedSettingRepository(session)
+
+    async def get_settings(self, user: User) -> UserSettingsResponse:
+        # 설정을 아직 한 번도 저장한 적 없으면 기본값을 반환한다(조회는 행을 만들지 않음 — 부작용 없음).
+        setting = await self.repo.get_by_user_id(user.user_id)
+        if setting is None:
+            return UserSettingsResponse()
+        return self._to_response(setting)
+
+    async def update_settings(self, user: User, data: UserSettingsUpdateRequest) -> UserSettingsResponse:
+        # PATCH 응답은 '보낸 필드만'이 아니라 '전체 설정'(조회와 동일)을 반환한다.
+        #   보낸 필드만 반영한다. 명시적 null/미전송은 '변경 안 함'(exclude_unset·exclude_none).
+        #   첫 변경이면 기본값 행을 만들어 그 위에 반영한다(personalized_settings에 영속).
+        setting = await self.repo.get_by_user_id(user.user_id)
+        if setting is None:
+            setting = await self.repo.add(PersonalizedSetting(user_id=user.user_id))
+        for field, value in data.model_dump(exclude_unset=True, exclude_none=True).items():
+            setattr(setting, field, value)
+        await self.session.commit()
+        await self.session.refresh(setting)
+        return self._to_response(setting)
+
+    @staticmethod
+    def _to_response(setting: PersonalizedSetting) -> UserSettingsResponse:
+        return UserSettingsResponse(
+            font_size=setting.font_size,
+            sound_size=setting.sound_size,
+            pet_type=setting.pet_type,
+            music_enabled=setting.music_enabled,
+        )

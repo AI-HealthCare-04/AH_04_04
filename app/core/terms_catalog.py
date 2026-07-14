@@ -14,6 +14,8 @@
 # frozen=True dataclass: 한 번 만들면 값을 못 바꾸는(불변) 데이터 묶음. 상수 카탈로그에 적합합니다.
 from dataclasses import dataclass
 
+from app.core import config
+
 # 약관 종류 열거형. DB enum(terms_type_enum)과 동일한 값을 사용합니다. (핵심 모델과 값 공유)
 from app.models.enums import TermsType
 
@@ -30,34 +32,35 @@ class TermSpec:
 
 
 # 현재 유효한 약관 목록입니다. GET /terms는 이 순서대로 응답합니다.
-# TODO(팀): title/url/version은 임시 placeholder입니다. 실제 약관 문서가 확정되면 교체해 주세요.
+# url은 config(환경변수 TERMS_*_URL)에서 주입합니다 — 실제 약관 문서 확정 시 배포 설정만 바꾸면 됩니다.
+#   (현재 기본값은 example.com placeholder. title/version은 문서 확정 시 이 파일에서 교체.)
 TERMS_CATALOG: tuple[TermSpec, ...] = (
     TermSpec(
         terms_type=TermsType.SERVICE,
         version="1.0",
         title="서비스 이용약관",
-        url="https://example.com/terms/service-1.0",  # TODO: 실제 링크로 교체
+        url=config.TERMS_SERVICE_URL,
         is_required=True,
     ),
     TermSpec(
         terms_type=TermsType.PRIVACY,
         version="1.0",
         title="개인정보 처리방침",
-        url="https://example.com/terms/privacy-1.0",  # TODO: 실제 링크로 교체
+        url=config.TERMS_PRIVACY_URL,
         is_required=True,
     ),
     TermSpec(
         terms_type=TermsType.SENSITIVE_HEALTH,
         version="1.0",
         title="민감정보(건강정보) 수집·이용 동의",
-        url="https://example.com/terms/sensitive-health-1.0",  # TODO: 실제 링크로 교체
+        url=config.TERMS_SENSITIVE_HEALTH_URL,
         is_required=True,
     ),
     TermSpec(
         terms_type=TermsType.MARKETING,
         version="1.0",
         title="마케팅 정보 수신 동의",
-        url="https://example.com/terms/marketing-1.0",  # TODO: 실제 링크로 교체
+        url=config.TERMS_MARKETING_URL,
         is_required=False,  # 선택 약관
     ),
 )
