@@ -25,6 +25,23 @@ class UserRepository:
         )
         return await self.session.scalar(stmt)
 
+    async def get_deleted_by_provider_social_id(self, provider: AuthProvider, social_id: str) -> User | None:
+        # 탈퇴(soft-delete)한 동일 소셜 계정 조회. 재로그인 시 신규 생성 대신 복구하기 위함.
+        #   (provider, social_id) 유니크 제약이 있어, 삭제행을 두고 그대로 create하면 IntegrityError가 난다.
+        stmt = select(User).where(
+            User.provider == provider,
+            User.social_id == social_id,
+            User.deleted_at.is_not(None),
+        )
+        return await self.session.scalar(stmt)
+
+    async def restore(self, user: User) -> User:
+        # 탈퇴 계정 복구: deleted_at 해제 + 마지막 로그인 갱신.
+        user.deleted_at = None
+        user.last_login_at = datetime.now(config.TIMEZONE)
+        await self.session.flush()
+        return user
+
     # 소셜 로그인(google/kakao) 사용자 생성. provider만 다르고 흐름은 동일하므로 공통 메서드로 둡니다.
     async def create_social_user(self, provider: AuthProvider, social_id: str, nickname: str) -> User:
         user = User(
