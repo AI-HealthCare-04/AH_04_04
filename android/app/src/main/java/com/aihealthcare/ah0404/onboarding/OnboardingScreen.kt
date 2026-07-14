@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.aihealthcare.ah0404.BuildConfig
 import com.aihealthcare.ah0404.ui.components.AigoCheckboxRow
 import com.aihealthcare.ah0404.ui.components.AigoDialog
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
@@ -129,10 +130,12 @@ private fun WelcomeStep(vm: OnboardingViewModel, onSkipToDemo: () -> Unit) {
         )
         Spacer(Modifier.height(Dimens.Space32))
         AigoPrimaryButton(text = "시작하기", onClick = vm::start)
-        Spacer(Modifier.height(Dimens.Space12))
-        // 개발/데모용: 온보딩을 건너뛰고 기존 데모 탭으로. (실서비스에서는 제거)
-        TextButton(onClick = onSkipToDemo) {
-            Text("둘러보기 (데모 화면)", style = MaterialTheme.typography.labelMedium)
+        // 개발/데모 전용: debug 빌드에서만 노출(리뷰 #63 P1-1 — 목업/우회 진입은 debug 로 제한).
+        if (BuildConfig.DEBUG) {
+            Spacer(Modifier.height(Dimens.Space12))
+            TextButton(onClick = onSkipToDemo) {
+                Text("둘러보기 (데모 화면, 개발용)", style = MaterialTheme.typography.labelMedium)
+            }
         }
     }
 }

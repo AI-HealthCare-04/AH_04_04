@@ -24,9 +24,10 @@ enum class OnbStep { WELCOME, TERMS, PROFILE, ASSESSMENT, RESULT }
 /**
  * 온보딩 흐름 상태머신 + 백엔드 배선.
  *
- *  실제 OnboardingApi(#58) 를 호출하되, 백엔드가 없을 때는 목업 값으로 폴백해 화면 흐름을
- *  항상 검증할 수 있게 한다(역할분담 문서 §3-정인: "동적은 mock 바인딩, 실제 API 는 스위치만").
- *  폴백이 일어나면 mockMode=true 로 표시.
+ *  ⚠️ 리뷰 #63(지영 P1-1) 반영: **API 실패를 목업 완료로 처리하지 않는다.**
+ *     각 단계는 실제 OnboardingApi(#58)를 호출하고, 실패 시 예외가 launchStep 에서 잡혀
+ *     에러 안내 + 재시도가 되며 **다음 단계로 진행하지 않는다**(서버 미저장 상태로 완료되는 것 방지).
+ *     오프라인 화면 확인은 Welcome 의 debug 전용 "둘러보기(데모)"로 대체한다.
  */
 class OnboardingViewModel(
     private val api: OnboardingApi = retrofit.create(OnboardingApi::class.java),
@@ -35,7 +36,6 @@ class OnboardingViewModel(
     var step by mutableStateOf(OnbStep.WELCOME); private set
     var loading by mutableStateOf(false); private set
     var error by mutableStateOf<String?>(null); private set
-    var mockMode by mutableStateOf(false); private set
 
     // 약관
     var terms by mutableStateOf<List<Term>>(emptyList()); private set
@@ -64,15 +64,8 @@ class OnboardingViewModel(
 
     /** S0 → 게스트 로그인 후 약관 목록 로드. */
     fun start() = launchStep("시작") {
-        val auth = runCatching { api.guestLogin() }.getOrNull()
-        if (auth != null) {
-            TokenHolder.token = auth.accessToken
-        } else {
-            enterMock()
-        }
-        terms = runCatching { api.getTerms().terms }.getOrNull() ?: run {
-            enterMock(); defaultTerms()
-        }
+        TokenHolder.token = api.guestLogin().accessToken
+        terms = api.getTerms().terms
         step = OnbStep.TERMS
     }
 
@@ -96,8 +89,8 @@ class OnboardingViewModel(
         val body = AgreementsRequest(
             terms.map { Agreement(it.termsType, it.version, agreed.contains(it.termsType)) },
         )
-        runCatching { api.agreeTerms(body) }.onFailure { enterMock() }
-        sessionId = runCatching { api.createSession().sessionId }.getOrNull() ?: run { enterMock(); null }
+        api.agreeTerms(body)
+        sessionId = api.createSession().sessionId
         step = OnbStep.PROFILE
     }
 
@@ -123,20 +116,15 @@ class OnboardingViewModel(
             kidneyStatus = kidneyStatus,
             proteinRestrictionStatus = proteinStatus,
         )
-        val resp = runCatching { api.createHealthProfile(body) }.getOrNull()
-        if (resp != null) {
-            profileId = resp.profileId
-            bmi = resp.bmi
-        } else {
-            enterMock()
-            bmi = if (h > 0) w / ((h / 100) * (h / 100)) else null
-        }
+        val resp = api.createHealthProfile(body)
+        profileId = resp.profileId
+        bmi = resp.bmi
         step = OnbStep.ASSESSMENT
     }
 
     /** S4 → 체력검사 건너뛰고 결과로. */
     fun skipAssessment() = launchStep("체력검사 건너뛰기") {
-        sessionId?.let { sid -> runCatching { api.skipHealthCheck(sid) } }
+        sessionId?.let { sid -> api.skipHealthCheck(sid) }
         predictAndFinish()
     }
 
@@ -149,23 +137,21 @@ class OnboardingViewModel(
             walk6mTimeSec = walk6mSec,
             sessionId = sessionId,
         )
-        runCatching { api.createPhysicalAssessment(body) }.onFailure { enterMock() }
+        api.createPhysicalAssessment(body)
         predictAndFinish()
     }
 
+    /** 위험도 예측 → 결과. profileId 가 없으면(비정상) 예외로 에러 처리. */
     private suspend fun predictAndFinish() {
-        val pid = profileId
-        result = if (pid != null) {
-            runCatching { api.createRiskPrediction(RiskPredictionRequest(pid)) }.getOrNull()
-        } else {
-            null
-        } ?: run { enterMock(); mockResult() }
+        val pid = profileId ?: throw IllegalStateException("프로필 정보가 없습니다. 프로필부터 다시 진행해 주세요.")
+        result = api.createRiskPrediction(RiskPredictionRequest(pid))
         step = OnbStep.RESULT
     }
 
     fun dismissError() { error = null }
 
     // ── 내부 유틸 ──────────────────────────────────────────────
+    // 실패 시 error 를 설정하고 step 은 그대로 둔다(재시도는 사용자가 같은 버튼을 다시 눌러 수행).
     private fun launchStep(label: String, block: suspend () -> Unit) {
         viewModelScope.launch {
             loading = true
@@ -173,13 +159,11 @@ class OnboardingViewModel(
             runCatching { block() }
                 .onFailure {
                     Log.w(TAG, "$label 실패: ${it.message}")
-                    error = "$label 중 문제가 발생했어요. 잠시 후 다시 시도해 주세요."
+                    error = "$label 중 문제가 발생했어요. 네트워크를 확인하고 다시 시도해 주세요."
                 }
             loading = false
         }
     }
-
-    private fun enterMock() { mockMode = true }
 
     private fun composeBirthDate(): String? {
         val y = birthYear.toIntOrNull() ?: return null
@@ -188,21 +172,6 @@ class OnboardingViewModel(
         if (y !in 1900..2025 || m !in 1..12 || d !in 1..31) return null
         return "%04d-%02d-%02d".format(y, m, d)
     }
-
-    private fun defaultTerms(): List<Term> = listOf(
-        Term("service", "1.0", isRequired = true, title = "서비스 이용약관"),
-        Term("privacy", "1.0", isRequired = true, title = "개인정보 처리방침"),
-        Term("sensitive_health", "1.0", isRequired = true, title = "민감정보(건강) 수집·이용 동의"),
-        Term("marketing", "1.0", isRequired = false, title = "마케팅 정보 수신 동의(선택)"),
-    ).also { terms = it }
-
-    private fun mockResult() = RiskPredictionResponse(
-        predictionId = 0,
-        careStage = "maintain",
-        displayMessage = "지금처럼 꾸준히 이어가면 좋아요. 오늘도 가볍게 걷기부터 시작해 볼까요?",
-        disclaimer = null,
-        onboardingStatus = "completed",
-    )
 
     companion object {
         const val TAG = "Onboarding"
