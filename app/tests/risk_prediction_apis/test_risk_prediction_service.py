@@ -142,7 +142,8 @@ def test_reassess_response_uses_v73_contract_without_model_variant() -> None:
     assert "model_variant" not in dumped
 
 
-def test_history_item_includes_dashboard_trend_fields() -> None:
+def test_history_item_is_display_safe() -> None:
+    # 표시용 필드(care_stage/model_variant)는 있고, 내부값(risk_level/risk_score)은 없어야 한다.
     prediction = SimpleNamespace(
         prediction_id=11,
         created_at=datetime(2026, 7, 10, 12, 0, 0),
