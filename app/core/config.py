@@ -36,3 +36,11 @@ class Config(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_MINUTES: int = 14 * 24 * 60
     JWT_LEEWAY: int = 5
+
+    # STT 음성 파서의 LLM 백엔드 검증용(멘토링 요청: OpenAI로 구동 가능한지 확인).
+    # 규칙기반 파서와 동일한 응답 계약을 유지하므로 앱 수정 없이 서버 파서만 교체 가능하다.
+    # .env 에 OPENAI_API_KEY 를 넣으면 활성화되고, 비어 있으면 OpenAI 파서는 사용하지 않는다.
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-4o-mini"
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
+    OPENAI_TIMEOUT: float = 20.0

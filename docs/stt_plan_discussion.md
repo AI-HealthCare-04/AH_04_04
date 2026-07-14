@@ -32,9 +32,9 @@ STT를 제대로 하려면 **"음성 텍스트에서 `field=value`를 누가 파
 예시 입력: `"내 키는 160센티미터야"` → 뽑아야 할 결과: `height_cm = 160.0`
 수집 대상 필드: `height_cm, weight_kg, waist_cm, birth_date, sex, walking_practice(bool), strength_exercise(bool), kidney_status, protein_restriction_status`
 
-| | A. 백엔드 규칙기반(regex) | B. 백엔드 LLM(Claude) | C. 앱에서 파싱 |
+| | A. 백엔드 규칙기반(regex) | B. 백엔드 LLM(OpenAI) | C. 앱에서 파싱 |
 |---|---|---|---|
-| **동작** | 서버가 정규식/한국어 숫자 파싱 → field/value + 확인문구 반환 | 서버가 Claude로 추출 + 자연스러운 확인문구 생성 | 앱이 Kotlin에서 파싱 → 구조화해 `health-profiles`로 바로 전송 |
+| **동작** | 서버가 정규식/한국어 숫자 파싱 → field/value + 확인문구 반환 | 서버가 OpenAI로 추출 + 자연스러운 확인문구 생성 | 앱이 Kotlin에서 파싱 → 구조화해 `health-profiles`로 바로 전송 |
 | **명세 R19 정합** | ✅ 정확히 일치 | ✅ 일치(+품질↑) | ❌ `/voice`는 로그용으로만 남음 |
 | **자연발화 강건성** | 🔸 약함 ("백육십", "일미터육십" 등 취약) | ✅ 강함 (노인 자연발화에 유리) | 🔸 약함 (A와 동일 한계) |
 | **작업량** | 백엔드 중(中): 파싱 로직 + 다중턴 세션 + confirm 루프 | 백엔드 중(中)~소: 프롬프트 + 호출 래핑 | 앱 중(中): Kotlin 파서 / 백엔드 변경 거의 없음 |
@@ -55,7 +55,7 @@ STT를 제대로 하려면 **"음성 텍스트에서 `field=value`를 누가 파
 - 백엔드:
   - `/voice` 응답 계약을 R19로 변경: `{ recognized:{field,value}, confirm_prompt, needs_confirmation }`
   - 세션을 **첫 발화에 종료하지 않도록** 수정(다중 필드 수집 지원). 확인(confirm) 시에만 값 확정.
-  - 파싱기(A: regex+한국어 숫자 / B: Claude 호출) 구현.
+  - 파싱기(A: regex+한국어 숫자 / B: OpenAI 호출) 구현.
 - 앱:
   - `RECORD_AUDIO` 권한 + `SpeechRecognizer(ko-KR)`
   - "말하기 → 서버 확인문구 표시 → 예/아니오 → 다음 필드" 루프 UI
