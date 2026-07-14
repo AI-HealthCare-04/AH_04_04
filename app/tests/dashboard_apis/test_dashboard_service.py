@@ -9,6 +9,7 @@ from fastapi import HTTPException, status
 
 from app.core.utils.clock import today_kst
 from app.dtos.dashboard import HomeAvailableMissionSummary, HomeLatestPrediction
+from app.models.dashboard import DailyActivitySummary
 from app.models.enums import ActivityLevel, ActivityType, MissionType
 from app.models.users import User
 from app.services.dashboard import DashboardService
@@ -22,8 +23,9 @@ _HOME_USER = cast(User, SimpleNamespace(user_id=1, nickname="테스터"))
 
 
 class _FakeMission:
-    def __init__(self, mission_type: str) -> None:
+    def __init__(self, mission_type: str, daily_count_limit: int | None = None) -> None:
         self.mission_type = mission_type
+        self.daily_count_limit = daily_count_limit
 
 
 class _FakePrediction:
@@ -74,6 +76,26 @@ def test_available_mission_summary_empty() -> None:
     result = asyncio.run(service._available_mission_summary(_USER, ActivityLevel.EASY))
 
     assert result == HomeAvailableMissionSummary(meal=0, exercise=0, walking=0, game=0)
+
+
+def test_available_mission_summary_excludes_daily_limited_when_done_today() -> None:
+    # 식사(daily_count_limit=1)를 오늘 이미 카운트했으면 '가능한 미션'에서 제외된다(반복형 걷기는 유지).
+    service = _service_with_missions([_FakeMission("meal", daily_count_limit=1), _FakeMission("walking")])
+    today = cast(DailyActivitySummary, SimpleNamespace(meal_counted=True, exercise_count=0, walking_count=0, game_count=0))
+
+    result = asyncio.run(service._available_mission_summary(_USER, ActivityLevel.EASY, today))
+
+    assert result == HomeAvailableMissionSummary(meal=0, exercise=0, walking=1, game=0)
+
+
+def test_available_mission_summary_keeps_daily_limited_when_not_done_today() -> None:
+    # 오늘 식사를 아직 안 했으면 그대로 수행 가능.
+    service = _service_with_missions([_FakeMission("meal", daily_count_limit=1)])
+    today = cast(DailyActivitySummary, SimpleNamespace(meal_counted=False, exercise_count=0, walking_count=0, game_count=0))
+
+    result = asyncio.run(service._available_mission_summary(_USER, ActivityLevel.EASY, today))
+
+    assert result == HomeAvailableMissionSummary(meal=1, exercise=0, walking=0, game=0)
 
 
 def test_available_mission_summary_forwards_level_to_get_missions() -> None:
