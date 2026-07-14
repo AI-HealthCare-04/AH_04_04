@@ -1,15 +1,27 @@
+from datetime import date
+
 from pydantic import BaseModel, Field
 
 from app.dtos.base import BaseSerializerModel, KstDatetime
-from app.models.enums import FontSize, SoundSize
+from app.models.enums import ActivityLevel, FontSize, SoundSize
 
 
+# [응답] 내 정보 (GET/PATCH /users/me) — 화면 `_14 내 정보`용 통합 응답.
+#   기존 계정 정보(user_id·provider·nickname·onboarding_status·가입일)에 더해,
+#   그동안 분산돼 있던 birth_date·성별·보유포인트·운동강도 단계를 한 응답으로 모은다(GAP #5).
+#     - birth_date/sex : 최신 건강프로필(사용자 입력분)에서. 아직 건강체크 전이면 null.
+#     - current_points : 미션 적립 합계(보유 포인트).
+#     - activity_level : 운동 강도 단계(easy/normal/hard). 프로필이 없으면 easy(홈 표시와 동일 기본값).
 class UserInfoResponse(BaseSerializerModel):
     user_id: int
     provider: str
     nickname: str
     onboarding_status: str
     created_at: KstDatetime
+    birth_date: date | None = None  # 생년월일(YYYY-MM-DD). 건강프로필 없으면 null
+    sex: str | None = None  # 성별("male"/"female"). 건강프로필 없으면 null
+    current_points: int = 0  # 보유 포인트(미션 적립 합)
+    activity_level: ActivityLevel = ActivityLevel.EASY  # 운동 강도 단계(프로필 없으면 easy)
 
 
 class UserUpdateRequest(BaseModel):

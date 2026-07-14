@@ -21,8 +21,10 @@ user_router = APIRouter(prefix="/users", tags=["users"])
 @user_router.get("/me", response_model=UserInfoResponse, status_code=status.HTTP_200_OK)
 async def user_me_info(
     user: Annotated[User, Depends(get_request_user)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> UserInfoResponse:
-    return UserInfoResponse.model_validate(user)
+    # `_14 내 정보`용 통합 응답(계정 정보 + birth_date·성별·보유포인트·운동강도). GAP #5.
+    return await UserManageService(session).get_user_info(user)
 
 
 @user_router.patch("/me", response_model=UserInfoResponse, status_code=status.HTTP_200_OK)
@@ -31,8 +33,10 @@ async def update_user_me_info(
     user: Annotated[User, Depends(get_request_user)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> UserInfoResponse:
-    updated_user = await UserManageService(session).update_user(user=user, data=update_data)
-    return UserInfoResponse.model_validate(updated_user)
+    # 닉네임 등 변경 후, GET과 동일한 통합 응답 형태로 최신 내 정보를 돌려준다.
+    service = UserManageService(session)
+    await service.update_user(user=user, data=update_data)
+    return await service.get_user_info(user)
 
 
 @user_router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
