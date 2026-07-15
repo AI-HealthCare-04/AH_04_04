@@ -109,26 +109,30 @@ class SettingsViewModel(
         pending++
         saving = true
         saveError = null
-        val ok = gate.withLock {
-            safeCall { api.updateSettings(body) }
-                .onSuccess { applyResponse(it) }
-                .onFailure {
-                    saveError = "설정을 저장하지 못했어요. 잠시 후 다시 시도해 주세요."
-                    Log.w(TAG, "설정 저장 실패: ${it.message}")
-                }
-                .isSuccess
-        }
-        pending--
-        if (pending == 0) {
-            // 큐가 비면 서버 상태로 수렴(실패/경쟁/순서 뒤섞임 모든 조합에서 화면=서버). saveError 는 유지.
-            val resynced = gate.withLock {
-                safeCall { api.getSettings() }.onSuccess { applyResponse(it) }.isSuccess
+        try {
+            val ok = gate.withLock {
+                safeCall { api.updateSettings(body) }
+                    .onSuccess { applyResponse(it) }
+                    .onFailure {
+                        saveError = "설정을 저장하지 못했어요. 잠시 후 다시 시도해 주세요."
+                        Log.w(TAG, "설정 저장 실패: ${it.message}")
+                    }
+                    .isSuccess
             }
-            // 수렴 GET 마저 실패(오프라인 등) → 마지막 서버 확인값으로 복구해 미저장 낙관값 잔류 방지.
-            if (!resynced) revertToConfirmed()
-            saving = false
+            // 이 저장이 큐의 마지막이면 서버 상태로 수렴(실패/경쟁/순서 뒤섞임 모든 조합에서 화면=서버).
+            if (pending == 1) {
+                val resynced = gate.withLock {
+                    safeCall { api.getSettings() }.onSuccess { applyResponse(it) }.isSuccess
+                }
+                // 수렴 GET 마저 실패(오프라인 등) → 마지막 서버 확인값으로 복구해 미저장 낙관값 잔류 방지.
+                if (!resynced) revertToConfirmed()
+            }
+            return ok
+        } finally {
+            // 취소 예외로 빠져나가도 진행 카운트/저장 표시가 stuck 되지 않게 정리(리뷰 #73 후속).
+            pending--
+            if (pending == 0) saving = false
         }
-        return ok
     }
 
     private suspend fun <T> safeCall(block: suspend () -> T): Result<T> =
