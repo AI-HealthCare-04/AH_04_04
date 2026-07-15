@@ -44,6 +44,7 @@ import com.aihealthcare.ah0404.ui.theme.Dimens
 fun SettingsScreen(
     onBack: () -> Unit,
     onOpenSupport: () -> Unit,
+    onOpenProfile: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // TODO: 백엔드 연결 — GET /users/me/settings 로 초기값 로드, 변경 시 PATCH.
@@ -70,6 +71,11 @@ fun SettingsScreen(
             Modifier.padding(Dimens.ScreenPadding),
             verticalArrangement = Arrangement.spacedBy(Dimens.ElementGap),
         ) {
+            // 내 정보(_14) 진입 — 계정·프로필 정보
+            com.aihealthcare.ah0404.ui.components.AigoSecondaryButton(
+                text = "내 정보",
+                onClick = onOpenProfile,
+            )
             AigoCard {
                 Text("글자 크기", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(Dimens.Space8))
