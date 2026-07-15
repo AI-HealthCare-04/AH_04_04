@@ -27,6 +27,7 @@ import com.aihealthcare.ah0404.home.HomeScreen
 import com.aihealthcare.ah0404.mission.MissionScreen
 import com.aihealthcare.ah0404.network.SessionStore
 import com.aihealthcare.ah0404.onboarding.OnboardingScreen
+import com.aihealthcare.ah0404.profile.ProfileScreen
 import com.aihealthcare.ah0404.record.RecordScreen
 import com.aihealthcare.ah0404.sensor.SensorScreen
 import com.aihealthcare.ah0404.settings.SettingsScreen
@@ -60,7 +61,12 @@ class MainActivity : ComponentActivity() {
                         SettingsScreen(
                             onBack = { subScreen = null },
                             onOpenSupport = { subScreen = "support" },
+                            onOpenProfile = { subScreen = "profile" },
                         )
+                        return@MyApplicationTheme
+                    }
+                    "profile" -> {
+                        ProfileScreen(onBack = { subScreen = "settings" })
                         return@MyApplicationTheme
                     }
                     "support" -> {
