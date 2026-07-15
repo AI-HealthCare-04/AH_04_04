@@ -112,9 +112,11 @@ class ExerciseDetail(BaseModel):
 
 
 class WalkingDetail(BaseModel):
-    duration_min: float
-    distance_km: float | None = None
-    steps: int | None = None
+    # 경계 입력 방어(지영 #65 재리뷰): 음수 시간으로 당일 누적을 되돌려 '하루 1회' 적립을
+    #   우회하는 것을 차단한다. 걷기 구간은 양수 시간이어야 하고, 걸음·거리는 음수 불가.
+    duration_min: float = Field(gt=0)
+    distance_km: float | None = Field(default=None, ge=0)
+    steps: int | None = Field(default=None, ge=0)
 
 
 class MissionLogUpdateRequest(BaseModel):

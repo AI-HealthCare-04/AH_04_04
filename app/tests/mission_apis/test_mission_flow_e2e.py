@@ -12,7 +12,7 @@
 #   - daily_result: 카운트 1개 이상=success, 3개 이상=great_success
 #   - 완료된 로그 재완료는 409 (포인트 이중 적립 없음)
 # =====================================================================================
-from httpx import AsyncClient
+from httpx import AsyncClient, Response
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette import status
 
@@ -309,6 +309,50 @@ async def test_walking_success_judged_by_server_against_target(
     home = (await db_client.get(f"{API}/home", headers=auth)).json()
     assert home["today_summary"]["counted_mission_count"] == 1  # 걷기 목표 1회 달성
     assert home["point_balance"]["current_points"] == 7  # 1회만 적립
+
+
+# -------------------------------------------------------------------------------------
+# 5-c. 음수/0 걷기 시간은 422 거절 → 누적을 되돌려 '하루 1회' 적립을 우회 못 함 (지영 #65 재리뷰)
+# -------------------------------------------------------------------------------------
+async def test_walking_rejects_non_positive_duration_no_reward_bypass(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    auth, _ = await _guest(db_client)
+    template_id = await _seed_template(
+        db_sessionmaker,
+        mission_type=MissionType.WALKING,
+        reward_points=7,
+        target_unit=TargetUnit.MINUTES,
+        default_target_value=30,
+    )
+
+    async def _complete_walk(minutes: float) -> Response:
+        start = await db_client.post(
+            f"{API}/mission-logs",
+            json={"mission_template_id": template_id, "mission_type": "walking", "status": "in_progress"},
+            headers=auth,
+        )
+        log_id = start.json()["mission_log_id"]
+        return await db_client.patch(
+            f"{API}/mission-logs/{log_id}",
+            json={"status": "completed", "success": True, "walking_detail": {"duration_min": minutes}},
+            headers=auth,
+        )
+
+    # 30분 달성 → 성공·7pt·1회 카운트
+    done = await _complete_walk(30)
+    assert done.status_code == status.HTTP_200_OK
+    assert done.json()["counted_for_daily"] is True
+
+    # 음수 시간 → 422 거절 (누적을 10분으로 되돌려 재적립하려는 우회 시도 차단)
+    assert (await _complete_walk(-20)).status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    # 0분도 거절
+    assert (await _complete_walk(0)).status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    # 보상·카운트 불변 (음수 우회로 7→14, 1→2 되지 않음)
+    home = (await db_client.get(f"{API}/home", headers=auth)).json()
+    assert home["point_balance"]["current_points"] == 7
+    assert home["today_summary"]["counted_mission_count"] == 1
 
 
 # -------------------------------------------------------------------------------------
