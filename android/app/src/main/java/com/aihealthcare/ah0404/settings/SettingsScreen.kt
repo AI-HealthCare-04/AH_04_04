@@ -38,7 +38,8 @@ import com.aihealthcare.ah0404.ui.theme.Dimens
  *   { font_size, sound_size, pet_type, music_enabled }
  *
  *  SettingsViewModel 로 서버 값 로드 + 변경 시 PATCH 영속화(낙관적 적용 → 실패 시 롤백).
- *  🟡 계약 GAP: 알림 on/off·자동로그인 on/off 필드 없음 → "준비 중"으로 비활성 표시.
+ *  ⛔ 알림·자동로그인은 백엔드 결정상 '미구현'(자동로그인=구현 안 함 / 알림=불필요로 API 제외, 재란 확정)
+ *     → "미지원"으로 비활성 표시(후속 없음).
  *  앱 버전은 서버가 아니라 클라 BuildConfig.
  */
 @Composable
@@ -104,9 +105,9 @@ fun SettingsScreen(
             }
             AigoCard {
                 ToggleRow("배경 음악", vm.musicEnabled, vm::changeMusicEnabled)
-                // 🟡 GAP(계약 필드 없음) — 준비 중으로 비활성.
-                ToggleRow("알림 받기 (준비 중)", checked = false, onChange = {}, enabled = false)
-                ToggleRow("자동 로그인 (준비 중)", checked = false, onChange = {}, enabled = false)
+                // ⛔ 백엔드 결정상 미구현(후속 없음) — "미지원"으로 비활성.
+                ToggleRow("알림 받기 (미지원)", checked = false, onChange = {}, enabled = false)
+                ToggleRow("자동 로그인 (미지원)", checked = false, onChange = {}, enabled = false)
             }
             AigoCard {
                 Row(
