@@ -37,6 +37,10 @@ android {
         compose = true
         buildConfig = true // NetworkClient 에서 BuildConfig.DEBUG 로 민감정보 로깅 게이트
     }
+    testOptions {
+        // 유닛테스트에서 android.util.Log 등 프레임워크 스텁이 예외 대신 기본값을 반환하도록.
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {

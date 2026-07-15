@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
+import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
 import com.aihealthcare.ah0404.ui.components.MEDICAL_DISCLAIMER_DEFAULT
 import com.aihealthcare.ah0404.ui.components.MedicalDisclaimer
 import com.aihealthcare.ah0404.ui.theme.Dimens
@@ -72,6 +73,7 @@ fun mockHome() = HomeUi(
 fun HomeScreen(
     onGoMissions: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenRecords: () -> Unit,
     modifier: Modifier = Modifier,
     ui: HomeUi = mockHome(),
 ) {
@@ -144,6 +146,9 @@ fun HomeScreen(
                 onClick = onGoMissions,
             )
         }
+
+        // 나의 기록(_13) 진입 — care_stage 추이 + 활동 요약
+        AigoSecondaryButton(text = "나의 기록 보기", onClick = onOpenRecords)
 
         // TODO: 백엔드 연결 — 주간 리포트·걸음 목표/비교(계약 GAP: /home 확장 대기)
         Spacer(Modifier.height(Dimens.Space8))
