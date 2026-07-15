@@ -22,6 +22,19 @@ import kotlinx.coroutines.launch
 enum class OnbStep { WELCOME, TERMS, PROFILE, ASSESSMENT, RESULT }
 
 /**
+ * 키·몸무게 '모름' 시 성별·연령대 추정치 (cm, kg). 상수 표 — 나중에 교체 가능.
+ *   남 65–74: 166/65 · 75+: 163/62   /   여 65–74: 153/56 · 75+: 150/53
+ * 성별 미선택/미상은 남성 기준으로 폴백(성별 선택 후 다시 '모름' 누르면 갱신).
+ */
+internal fun estimateBody(sex: String?, age: Int?): Pair<Int, Int> {
+    val is75plus = age != null && age >= 75
+    return when (sex) {
+        "female" -> if (is75plus) 150 to 53 else 153 to 56
+        else -> if (is75plus) 163 to 62 else 166 to 65
+    }
+}
+
+/**
  * 온보딩 흐름 상태머신 + 백엔드 배선.
  *
  *  ⚠️ 리뷰 #63(지영 P1-1) 반영: **API 실패를 목업 완료로 처리하지 않는다.**
@@ -31,6 +44,10 @@ enum class OnbStep { WELCOME, TERMS, PROFILE, ASSESSMENT, RESULT }
  */
 class OnboardingViewModel(
     private val api: OnboardingApi = retrofit.create(OnboardingApi::class.java),
+    // '모름' 추정치의 만 나이 판정용 오늘 날짜(테스트에서 고정 주입). Calendar.MONTH 는 0-based → +1.
+    private val todayYear: Int = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR),
+    private val todayMonth: Int = java.util.Calendar.getInstance().get(java.util.Calendar.MONTH) + 1,
+    private val todayDay: Int = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_MONTH),
 ) : ViewModel() {
 
     var step by mutableStateOf(OnbStep.WELCOME); private set
@@ -46,9 +63,47 @@ class OnboardingViewModel(
     var birthMonth by mutableStateOf("")
     var birthDay by mutableStateOf("")
     var sex by mutableStateOf<String?>(null)
-    var heightCm by mutableStateOf("")
-    var weightKg by mutableStateOf("")
+    // 키·몸무게: 실제 입력값은 heightCm/weightKg(수동), '모름'이면 플래그만 세우고 값은 표시/제출 시점에
+    //   최종 성별·생년월일로 매번 재계산한다(리뷰 #75-2 입력 순서 의존성 제거).
+    var heightCm by mutableStateOf(""); private set
+    var weightKg by mutableStateOf(""); private set
     var waistCm by mutableStateOf("")
+    var heightEstimated by mutableStateOf(false); private set
+    var weightEstimated by mutableStateOf(false); private set
+
+    /** 키·몸무게 중 하나라도 '모름'(추정)이면 true → has_estimated_value 로 전송. */
+    val hasEstimatedValue: Boolean get() = heightEstimated || weightEstimated
+
+    /**
+     * '모름'은 유효한 성별·생년월일 + **만 65세 이상**일 때만 허용(리뷰 #75-2·#75-4).
+     * 추정표·위험도 모델 모두 65세 이상 대상이라, 64세 이하엔 고령 추정치를 넣지 않는다.
+     */
+    val canEstimate: Boolean get() = sex != null && (ageYears() ?: 0) >= MIN_SUPPORTED_AGE
+
+    /** 화면 표시값: 추정이면 현재 성별·나이로 라이브 계산(성별/생일 바꾸면 즉시 갱신), 아니면 수동 입력값. */
+    val heightInput: String get() = if (heightEstimated) estimateBody(sex, ageYears()).first.toString() else heightCm
+    val weightInput: String get() = if (weightEstimated) estimateBody(sex, ageYears()).second.toString() else weightKg
+
+    /** 사용자가 직접 입력 → 실제값이므로 추정 플래그 해제. */
+    fun setHeight(value: String) { heightCm = value; heightEstimated = false }
+    fun setWeight(value: String) { weightKg = value; weightEstimated = false }
+
+    /** '모름' → 추정 플래그만 세운다(값은 표시/제출 시 최종 인구통계로 재계산). 유효 성별·생일 없으면 무시. */
+    fun markHeightUnknown() { if (canEstimate) { heightEstimated = true; heightCm = "" } }
+    fun markWeightUnknown() { if (canEstimate) { weightEstimated = true; weightKg = "" } }
+
+    /** 허리둘레 '모름' → 비워서 요청 body 에서 생략(백엔드 선택 처리). */
+    fun markWaistUnknown() { waistCm = "" }
+
+    /** 만 나이(월/일 반영): 올해 생일이 아직 안 지났으면 -1(리뷰 #75-3 경계 오차 제거). */
+    private fun ageYears(): Int? {
+        val y = birthYear.toIntOrNull() ?: return null
+        val m = birthMonth.toIntOrNull() ?: return null
+        val d = birthDay.toIntOrNull() ?: return null
+        var age = todayYear - y
+        if (todayMonth < m || (todayMonth == m && todayDay < d)) age -= 1
+        return age
+    }
     var walkingPractice by mutableStateOf<Boolean?>(null)
     var strengthExercise by mutableStateOf<Boolean?>(null)
     var kidneyStatus by mutableStateOf("unknown")
@@ -99,10 +154,21 @@ class OnboardingViewModel(
         val birth = composeBirthDate() ?: run {
             error = "생년월일을 정확히 입력해 주세요."; return@launchStep
         }
-        val h = heightCm.toDoubleOrNull()
-        val w = weightKg.toDoubleOrNull()
+        // 지원 대상: 만 65세 이상(추정표·위험도 모델 모두 65+ 기준, 리뷰 #75-4).
+        val age = ageYears()
+        if (age == null || age < MIN_SUPPORTED_AGE) {
+            error = "이 서비스는 만 65세 이상 어르신을 위한 것이에요. 생년월일을 확인해 주세요."; return@launchStep
+        }
+        // 추정('모름')이면 제출 시점의 최종 성별·나이로 계산(버튼 누른 시점 아님, 리뷰 #75-2).
+        val estimate = if (hasEstimatedValue) estimateBody(sex, ageYears()) else null
+        val h = if (heightEstimated) estimate!!.first.toDouble() else heightCm.toDoubleOrNull()
+        val w = if (weightEstimated) estimate!!.second.toDouble() else weightKg.toDoubleOrNull()
         if (sex == null || h == null || w == null || walkingPractice == null || strengthExercise == null) {
             error = "키·몸무게·성별·운동 여부를 모두 입력해 주세요."; return@launchStep
+        }
+        // 양수 가드(재란 #75 nit): "0"/음수 수동 입력이 백엔드 gt=0 에서 422 나기 전에 막는다.
+        if (h <= 0 || w <= 0) {
+            error = "키·몸무게는 0보다 큰 값으로 입력해 주세요."; return@launchStep
         }
         val body = HealthProfileRequest(
             birthDate = birth,
@@ -112,9 +178,12 @@ class OnboardingViewModel(
             walkingPractice = walkingPractice!!,
             strengthExercise = strengthExercise!!,
             sessionId = sessionId,
-            waistCm = waistCm.toDoubleOrNull(),
+            // 허리둘레는 양수일 때만 전송, 그 외(빈값·0·음수)는 생략(선택 필드).
+            waistCm = waistCm.toDoubleOrNull()?.takeIf { it > 0 },
             kidneyStatus = kidneyStatus,
             proteinRestrictionStatus = proteinStatus,
+            // 키·몸무게 중 하나라도 '모름' 추정치면 true(둘 다 실제 입력이면 false).
+            hasEstimatedValue = hasEstimatedValue,
         )
         val resp = api.createHealthProfile(body)
         profileId = resp.profileId
@@ -175,5 +244,8 @@ class OnboardingViewModel(
 
     companion object {
         const val TAG = "Onboarding"
+
+        /** 지원 최소 연령(만). 추정표·위험도 모델 모두 65세 이상 대상(리뷰 #75-4). */
+        const val MIN_SUPPORTED_AGE = 65
     }
 }
