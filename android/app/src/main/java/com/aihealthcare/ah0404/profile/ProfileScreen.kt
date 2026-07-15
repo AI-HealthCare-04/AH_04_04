@@ -66,7 +66,11 @@ fun ProfileScreen(
             when {
                 vm.error && info == null -> ErrorCard(onRetry = vm::load)
                 info == null -> LoadingCard()
-                else -> ProfileContent(vm, info)
+                else -> {
+                    // 재진입 조회 실패가 캐시된 info 뒤에 숨지 않도록 배너+재시도 노출(리뷰 #70 지적 2).
+                    if (vm.error) RefreshErrorBanner(onRetry = vm::load)
+                    ProfileContent(vm, info)
+                }
             }
         }
     }
@@ -159,6 +163,20 @@ private fun LoadingCard() {
         Box(Modifier.fillMaxWidth().padding(Dimens.Space16), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
         }
+    }
+}
+
+/** 캐시된 정보가 있는 상태에서 재조회가 실패했을 때, 낡은 값 위에 얹는 오류 안내 배너. */
+@Composable
+private fun RefreshErrorBanner(onRetry: () -> Unit) {
+    AigoCard {
+        Text(
+            "최신 정보를 불러오지 못했어요. 아래 값은 이전에 불러온 정보일 수 있어요.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(Dimens.Space4))
+        TextButton(onClick = onRetry) { Text("다시 시도") }
     }
 }
 
