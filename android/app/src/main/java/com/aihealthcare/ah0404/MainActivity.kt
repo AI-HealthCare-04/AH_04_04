@@ -27,6 +27,7 @@ import com.aihealthcare.ah0404.home.HomeScreen
 import com.aihealthcare.ah0404.mission.MissionScreen
 import com.aihealthcare.ah0404.network.SessionStore
 import com.aihealthcare.ah0404.onboarding.OnboardingScreen
+import com.aihealthcare.ah0404.record.RecordScreen
 import com.aihealthcare.ah0404.sensor.SensorScreen
 import com.aihealthcare.ah0404.settings.SettingsScreen
 import com.aihealthcare.ah0404.settings.SupportScreen
@@ -64,6 +65,10 @@ class MainActivity : ComponentActivity() {
                     }
                     "support" -> {
                         SupportScreen(onBack = { subScreen = "settings" })
+                        return@MyApplicationTheme
+                    }
+                    "records" -> {
+                        RecordScreen(onBack = { subScreen = null })
                         return@MyApplicationTheme
                     }
                 }
@@ -105,6 +110,7 @@ class MainActivity : ComponentActivity() {
                         0 -> HomeScreen(
                             onGoMissions = { selectedTab = 1 },
                             onOpenSettings = { subScreen = "settings" },
+                            onOpenRecords = { subScreen = "records" },
                             modifier = Modifier.padding(innerPadding),
                         )
                         1 -> MissionScreen(modifier = Modifier.padding(innerPadding))
