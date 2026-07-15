@@ -305,8 +305,8 @@ class MissionService:
                     sync_status=SyncStatus.SYNCED,
                 )
             )
-            daily_total_min = await self.repo.sum_walking_minutes_today(user.user_id)
-            daily_total_steps = await self.repo.sum_walking_steps_today(user.user_id)
+            # 분·걸음을 한 SELECT로 함께 읽어 시점이 어긋난 쌍을 방지(동일 statement snapshot).
+            daily_total_min, daily_total_steps = await self.repo.sum_walking_totals_today(user.user_id)
             # 걷기 성공은 서버가 판정: 당일 누적 시간(daily_total_min) >= 난이도 목표(분).
             #   클라이언트 success는 신뢰하지 않는다(1분만 걷고 success=true 우회 차단).
             #   포인트·카운트는 하루 1회만: 목표를 '이번 세션에서 처음 넘긴' 로그에만 지급하고,
@@ -367,11 +367,9 @@ class MissionService:
         return await self.repo.list_mission_logs(user.user_id, on_date)
 
     async def get_today_walking_totals(self, user: User) -> tuple[float, int]:
-        # 홈 '오늘 걷기' 위젯용 당일 누적 실적(분·걸음). 걷기 완료 응답과 같은 원천(#65)을 재사용해
-        #   홈과 완료 화면이 동일한 당일 누적값을 보게 한다(KST 오늘 기준). 걷기 없으면 (0.0, 0).
-        total_min = await self.repo.sum_walking_minutes_today(user.user_id)
-        total_steps = await self.repo.sum_walking_steps_today(user.user_id)
-        return total_min, total_steps
+        # 홈 '오늘 걷기' 위젯용 당일 누적 실적(분·걸음). 걷기 완료 응답과 같은 원천·같은 단일 SELECT를
+        #   재사용해 홈·완료가 동일 스냅샷의 일관된 쌍을 본다(분·걸음 torn-read 방지, KST 오늘). 없으면 (0.0, 0).
+        return await self.repo.sum_walking_totals_today(user.user_id)
 
     # ---------------- 공통: 오늘자 요약 재계산 ----------------
 
