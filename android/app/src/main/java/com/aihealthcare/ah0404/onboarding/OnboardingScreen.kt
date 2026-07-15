@@ -182,6 +182,7 @@ private fun FieldWithUnknown(
     label: String,
     onUnknown: () -> Unit,
     estimated: Boolean,
+    unknownEnabled: Boolean,
 ) {
     Row(
         Modifier.fillMaxWidth(),
@@ -191,6 +192,7 @@ private fun FieldWithUnknown(
         AigoTextField(value, onValueChange, label, Modifier.weight(1f), keyboardType = KeyboardType.Number)
         OutlinedButton(
             onClick = onUnknown,
+            enabled = unknownEnabled,
             modifier = Modifier.height(Dimens.ButtonHeight),
         ) {
             Text("모름", style = MaterialTheme.typography.bodyLarge)
@@ -227,20 +229,23 @@ private fun ProfileStep(vm: OnboardingViewModel) {
                 horizontal = true,
             )
 
-            // 키·몸무게: 정확히 모르면 '모름' → 성별·연령대 추정치로 채움(has_estimated_value=true 로 전송).
+            // 키·몸무게: 정확히 모르면 '모름' → 성별·연령대 추정치(제출 시 최종값으로 계산, has_estimated_value=true).
+            //   '모름'은 성별·생년월일 입력 후에만 활성(그 값으로 추정하므로).
             FieldWithUnknown(
-                value = vm.heightCm,
+                value = vm.heightInput,
                 onValueChange = vm::setHeight,
                 label = "키 (cm)",
                 onUnknown = vm::markHeightUnknown,
                 estimated = vm.heightEstimated,
+                unknownEnabled = vm.canEstimate,
             )
             FieldWithUnknown(
-                value = vm.weightKg,
+                value = vm.weightInput,
                 onValueChange = vm::setWeight,
                 label = "몸무게 (kg)",
                 onUnknown = vm::markWeightUnknown,
                 estimated = vm.weightEstimated,
+                unknownEnabled = vm.canEstimate,
             )
             FieldWithUnknown(
                 value = vm.waistCm,
@@ -248,6 +253,7 @@ private fun ProfileStep(vm: OnboardingViewModel) {
                 label = "허리둘레 (cm, 선택)",
                 onUnknown = vm::markWaistUnknown,
                 estimated = false,
+                unknownEnabled = true,
             )
 
             Text("최근 걷기 운동을 하고 있나요?", style = MaterialTheme.typography.titleMedium)

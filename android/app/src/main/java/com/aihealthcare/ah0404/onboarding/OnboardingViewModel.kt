@@ -44,8 +44,10 @@ internal fun estimateBody(sex: String?, age: Int?): Pair<Int, Int> {
  */
 class OnboardingViewModel(
     private val api: OnboardingApi = retrofit.create(OnboardingApi::class.java),
-    // 키·몸무게 '모름' 추정치의 연령대 판정용(테스트에서 고정 주입 가능).
-    private val currentYear: Int = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR),
+    // '모름' 추정치의 만 나이 판정용 오늘 날짜(테스트에서 고정 주입). Calendar.MONTH 는 0-based → +1.
+    private val todayYear: Int = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR),
+    private val todayMonth: Int = java.util.Calendar.getInstance().get(java.util.Calendar.MONTH) + 1,
+    private val todayDay: Int = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_MONTH),
 ) : ViewModel() {
 
     var step by mutableStateOf(OnbStep.WELCOME); private set
@@ -61,32 +63,44 @@ class OnboardingViewModel(
     var birthMonth by mutableStateOf("")
     var birthDay by mutableStateOf("")
     var sex by mutableStateOf<String?>(null)
-    // 키·몸무게는 '모름' 추정치 여부를 추적하므로 전용 세터로만 변경한다(수동 입력 시 추정 플래그 해제).
+    // 키·몸무게: 실제 입력값은 heightCm/weightKg(수동), '모름'이면 플래그만 세우고 값은 표시/제출 시점에
+    //   최종 성별·생년월일로 매번 재계산한다(리뷰 #75-2 입력 순서 의존성 제거).
     var heightCm by mutableStateOf(""); private set
     var weightKg by mutableStateOf(""); private set
     var waistCm by mutableStateOf("")
     var heightEstimated by mutableStateOf(false); private set
     var weightEstimated by mutableStateOf(false); private set
 
-    /** 키·몸무게 중 하나라도 추정치로 채워졌으면 true → has_estimated_value 로 전송(백엔드 무변경). */
+    /** 키·몸무게 중 하나라도 '모름'(추정)이면 true → has_estimated_value 로 전송. */
     val hasEstimatedValue: Boolean get() = heightEstimated || weightEstimated
+
+    /** '모름'은 유효한 성별·생년월일이 있어야 의미 있는 추정이 되므로 그때만 허용(리뷰 #75-2). */
+    val canEstimate: Boolean get() = sex != null && composeBirthDate() != null
+
+    /** 화면 표시값: 추정이면 현재 성별·나이로 라이브 계산(성별/생일 바꾸면 즉시 갱신), 아니면 수동 입력값. */
+    val heightInput: String get() = if (heightEstimated) estimateBody(sex, ageYears()).first.toString() else heightCm
+    val weightInput: String get() = if (weightEstimated) estimateBody(sex, ageYears()).second.toString() else weightKg
 
     /** 사용자가 직접 입력 → 실제값이므로 추정 플래그 해제. */
     fun setHeight(value: String) { heightCm = value; heightEstimated = false }
     fun setWeight(value: String) { weightKg = value; weightEstimated = false }
 
-    /** '모름' → 성별·연령대 추정치로 채우고 추정 플래그 설정. */
-    fun markHeightUnknown() {
-        heightCm = estimateBody(sex, estimatedAge()).first.toString(); heightEstimated = true
-    }
-    fun markWeightUnknown() {
-        weightKg = estimateBody(sex, estimatedAge()).second.toString(); weightEstimated = true
-    }
+    /** '모름' → 추정 플래그만 세운다(값은 표시/제출 시 최종 인구통계로 재계산). 유효 성별·생일 없으면 무시. */
+    fun markHeightUnknown() { if (canEstimate) { heightEstimated = true; heightCm = "" } }
+    fun markWeightUnknown() { if (canEstimate) { weightEstimated = true; weightKg = "" } }
 
     /** 허리둘레 '모름' → 비워서 요청 body 에서 생략(백엔드 선택 처리). */
     fun markWaistUnknown() { waistCm = "" }
 
-    private fun estimatedAge(): Int? = birthYear.toIntOrNull()?.let { currentYear - it }
+    /** 만 나이(월/일 반영): 올해 생일이 아직 안 지났으면 -1(리뷰 #75-3 경계 오차 제거). */
+    private fun ageYears(): Int? {
+        val y = birthYear.toIntOrNull() ?: return null
+        val m = birthMonth.toIntOrNull() ?: return null
+        val d = birthDay.toIntOrNull() ?: return null
+        var age = todayYear - y
+        if (todayMonth < m || (todayMonth == m && todayDay < d)) age -= 1
+        return age
+    }
     var walkingPractice by mutableStateOf<Boolean?>(null)
     var strengthExercise by mutableStateOf<Boolean?>(null)
     var kidneyStatus by mutableStateOf("unknown")
@@ -137,8 +151,10 @@ class OnboardingViewModel(
         val birth = composeBirthDate() ?: run {
             error = "생년월일을 정확히 입력해 주세요."; return@launchStep
         }
-        val h = heightCm.toDoubleOrNull()
-        val w = weightKg.toDoubleOrNull()
+        // 추정('모름')이면 제출 시점의 최종 성별·나이로 계산(버튼 누른 시점 아님, 리뷰 #75-2).
+        val estimate = if (hasEstimatedValue) estimateBody(sex, ageYears()) else null
+        val h = if (heightEstimated) estimate!!.first.toDouble() else heightCm.toDoubleOrNull()
+        val w = if (weightEstimated) estimate!!.second.toDouble() else weightKg.toDoubleOrNull()
         if (sex == null || h == null || w == null || walkingPractice == null || strengthExercise == null) {
             error = "키·몸무게·성별·운동 여부를 모두 입력해 주세요."; return@launchStep
         }
