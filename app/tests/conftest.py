@@ -69,7 +69,8 @@ async def _mysql_engine() -> AsyncGenerator[AsyncEngine]:
         await admin.dispose()
 
     # NullPool: 연결을 캐싱하지 않아 pytest-asyncio의 함수별 이벤트 루프와 충돌하지 않는다.
-    engine = create_async_engine(_mysql_url(_TEST_DB_NAME), poolclass=NullPool)
+    # 운영과 동일하게 READ COMMITTED로 통합 테스트(동시 완료 직렬화·재집계 정합 검증)를 돌린다.
+    engine = create_async_engine(_mysql_url(_TEST_DB_NAME), poolclass=NullPool, isolation_level="READ COMMITTED")
 
     @event.listens_for(engine.sync_engine, "connect")
     def _set_session_timezone(dbapi_connection: Any, connection_record: Any) -> None:
