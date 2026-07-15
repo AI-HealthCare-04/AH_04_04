@@ -18,16 +18,17 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aihealthcare.ah0404.BuildConfig
 import com.aihealthcare.ah0404.ui.components.AigoCard
+import com.aihealthcare.ah0404.ui.components.AigoDialog
+import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
 import com.aihealthcare.ah0404.ui.components.AigoSegmentedSelector
 import com.aihealthcare.ah0404.ui.components.SegmentOption
 import com.aihealthcare.ah0404.ui.theme.Dimens
@@ -36,8 +37,9 @@ import com.aihealthcare.ah0404.ui.theme.Dimens
  * 설정(_15) — 화면 API 계약: GET/PATCH /users/me/settings
  *   { font_size, sound_size, pet_type, music_enabled }
  *
- *  지금은 mock 로컬 상태로 바인딩하고, 변경 시 PATCH 는 나중에 스위치(// TODO).
- *  🟡 계약 GAP: 알림 on/off·자동로그인 on/off 필드 없음 → "준비 중"으로 비활성 표시.
+ *  SettingsViewModel 로 서버 값 로드 + 변경 시 PATCH 영속화(낙관적 적용 → 실패 시 롤백).
+ *  ⛔ 알림·자동로그인은 백엔드 결정상 '미구현'(자동로그인=구현 안 함 / 알림=불필요로 API 제외, 재란 확정)
+ *     → "미지원"으로 비활성 표시(후속 없음).
  *  앱 버전은 서버가 아니라 클라 BuildConfig.
  */
 @Composable
@@ -46,12 +48,10 @@ fun SettingsScreen(
     onOpenSupport: () -> Unit,
     onOpenProfile: () -> Unit,
     modifier: Modifier = Modifier,
+    vm: SettingsViewModel = viewModel(),
 ) {
-    // TODO: 백엔드 연결 — GET /users/me/settings 로 초기값 로드, 변경 시 PATCH.
-    var fontSize by remember { mutableStateOf("medium") }
-    var soundSize by remember { mutableStateOf("medium") }
-    var petType by remember { mutableStateOf("dog") }
-    var musicEnabled by remember { mutableStateOf(true) }
+    // 진입마다 서버 설정 재조회(리뷰 #68 교훈).
+    LaunchedEffect(Unit) { vm.load() }
 
     val sizeOptions = listOf(
         SegmentOption("small", "작게"),
@@ -72,33 +72,42 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(Dimens.ElementGap),
         ) {
             // 내 정보(_14) 진입 — 계정·프로필 정보
-            com.aihealthcare.ah0404.ui.components.AigoSecondaryButton(
-                text = "내 정보",
-                onClick = onOpenProfile,
-            )
+            AigoSecondaryButton(text = "내 정보", onClick = onOpenProfile)
+
+            if (vm.loadError) {
+                AigoCard {
+                    Text(
+                        "설정을 불러오지 못했어요. 기본값이 표시됩니다.",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(Dimens.Space4))
+                    TextButton(onClick = vm::load) { Text("다시 시도") }
+                }
+            }
             AigoCard {
                 Text("글자 크기", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(Dimens.Space8))
-                AigoSegmentedSelector(sizeOptions, fontSize, { fontSize = it }, horizontal = true)
+                AigoSegmentedSelector(sizeOptions, vm.fontSize, vm::changeFontSize, horizontal = true)
             }
             AigoCard {
                 Text("소리 크기", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(Dimens.Space8))
-                AigoSegmentedSelector(sizeOptions, soundSize, { soundSize = it }, horizontal = true)
+                AigoSegmentedSelector(sizeOptions, vm.soundSize, vm::changeSoundSize, horizontal = true)
             }
             AigoCard {
                 Text("펫 종류", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(Dimens.Space8))
                 AigoSegmentedSelector(
                     listOf(SegmentOption("dog", "강아지"), SegmentOption("cat", "고양이")),
-                    petType, { petType = it }, horizontal = true,
+                    vm.petType, vm::changePetType, horizontal = true,
                 )
             }
             AigoCard {
-                ToggleRow("배경 음악", musicEnabled, { musicEnabled = it })
-                // 🟡 GAP(계약 필드 없음) — 준비 중으로 비활성.
-                ToggleRow("알림 받기 (준비 중)", checked = false, onChange = {}, enabled = false)
-                ToggleRow("자동 로그인 (준비 중)", checked = false, onChange = {}, enabled = false)
+                ToggleRow("배경 음악", vm.musicEnabled, vm::changeMusicEnabled)
+                // ⛔ 백엔드 결정상 미구현(후속 없음) — "미지원"으로 비활성.
+                ToggleRow("알림 받기 (미지원)", checked = false, onChange = {}, enabled = false)
+                ToggleRow("자동 로그인 (미지원)", checked = false, onChange = {}, enabled = false)
             }
             AigoCard {
                 Row(
@@ -115,11 +124,21 @@ fun SettingsScreen(
                 }
             }
             Spacer(Modifier.height(Dimens.Space4))
-            com.aihealthcare.ah0404.ui.components.AigoSecondaryButton(
+            AigoSecondaryButton(
                 text = "고객센터 · 자주 묻는 질문",
                 onClick = onOpenSupport,
             )
         }
+    }
+
+    vm.saveError?.let { msg ->
+        AigoDialog(
+            title = "알림",
+            message = msg,
+            confirmText = "확인",
+            onConfirm = vm::dismissSaveError,
+            onDismissRequest = vm::dismissSaveError,
+        )
     }
 }
 
