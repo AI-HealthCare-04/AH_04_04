@@ -23,6 +23,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import com.aihealthcare.ah0404.exercise.ExerciseVideosScreen
 import com.aihealthcare.ah0404.home.HomeScreen
 import com.aihealthcare.ah0404.mission.MissionScreen
 import com.aihealthcare.ah0404.network.SessionStore
@@ -36,6 +37,7 @@ import com.aihealthcare.ah0404.voice.VoiceProbeScreen
 import com.aihealthcare.ah0404.ui.theme.MyApplicationTheme
 
 class MainActivity : ComponentActivity() {
+    @androidx.media3.common.util.UnstableApi
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // 저장된 토큰 복원(리뷰 #63 P1-2). 완료 사용자는 온보딩을 건너뛴다.
@@ -75,6 +77,10 @@ class MainActivity : ComponentActivity() {
                     }
                     "records" -> {
                         RecordScreen(onBack = { subScreen = null })
+                        return@MyApplicationTheme
+                    }
+                    "exercise" -> {
+                        ExerciseVideosScreen(onBack = { subScreen = null })
                         return@MyApplicationTheme
                     }
                 }
@@ -117,6 +123,7 @@ class MainActivity : ComponentActivity() {
                             onGoMissions = { selectedTab = 1 },
                             onOpenSettings = { subScreen = "settings" },
                             onOpenRecords = { subScreen = "records" },
+                            onOpenExercise = { subScreen = "exercise" },
                             modifier = Modifier.padding(innerPadding),
                         )
                         1 -> MissionScreen(modifier = Modifier.padding(innerPadding))
