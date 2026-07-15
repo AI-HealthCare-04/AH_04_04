@@ -14,6 +14,7 @@ from app.dtos.dashboard import (
     HomeLatestPrediction,
     HomeResponse,
     HomeTodaySummary,
+    HomeTodayWalking,
     HomeUser,
     LifestyleRecords,
     PointBalanceResponse,
@@ -52,6 +53,9 @@ class DashboardService:
         effective_level = profile.current_level if profile else ActivityLevel.EASY
         available = await self._available_mission_summary(user, effective_level, summary)
         latest_prediction = await self._latest_prediction(user)
+        # 오늘 걷기 누적 실적(분·걸음). 걷기 완료 응답과 같은 원천(#65)을 재사용 → 홈·완료 화면 값 일치.
+        #   목표(분)는 여기 넣지 않는다(GET /missions가 단일 원천). 걷기 없으면 (0.0, 0).
+        total_walking_min, total_walking_steps = await self.mission_service.get_today_walking_totals(user)
         return HomeResponse(
             user=HomeUser(nickname=user.nickname),
             point_balance=PointBalanceResponse(current_points=current_points),
@@ -62,6 +66,10 @@ class DashboardService:
                 daily_result=summary.daily_result if summary else DailyResult.NONE,
             ),
             available_mission_summary=available,
+            today_walking=HomeTodayWalking(
+                daily_total_min=total_walking_min,
+                daily_total_steps=total_walking_steps,
+            ),
         )
 
     async def _latest_prediction(self, user: User) -> HomeLatestPrediction | None:
@@ -127,8 +135,7 @@ class DashboardService:
         #   care_stage는 예측 도메인이 계산한 값을 그대로 쓴다(매핑 단일 출처).
         history = await self.risk_service.get_recent_predictions(user, limit=self._RISK_CHANGE_LIMIT)
         return [
-            RiskChangePoint(at=item.created_at, care_stage=item.care_stage)
-            for item in reversed(history.predictions)
+            RiskChangePoint(at=item.created_at, care_stage=item.care_stage) for item in reversed(history.predictions)
         ]
 
     async def get_points(self, user: User) -> PointsResponse:
@@ -191,9 +198,7 @@ class DashboardService:
         #     오늘 카운트는 daily_activity_summaries(get_home이 이미 조회한 today_summary)에서 읽는다.
         missions = await self.mission_service.get_missions(user, mission_type=None, level=level)
         counted_today = self._counted_today_by_type(today_summary)
-        counts = dict.fromkeys(
-            (MissionType.MEAL, MissionType.EXERCISE, MissionType.WALKING, MissionType.GAME), 0
-        )
+        counts = dict.fromkeys((MissionType.MEAL, MissionType.EXERCISE, MissionType.WALKING, MissionType.GAME), 0)
         for mission in missions:
             try:
                 mission_type = MissionType(mission.mission_type)

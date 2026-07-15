@@ -366,6 +366,13 @@ class MissionService:
     async def list_mission_logs(self, user: User, on_date: date | None) -> list[MissionLog]:
         return await self.repo.list_mission_logs(user.user_id, on_date)
 
+    async def get_today_walking_totals(self, user: User) -> tuple[float, int]:
+        # 홈 '오늘 걷기' 위젯용 당일 누적 실적(분·걸음). 걷기 완료 응답과 같은 원천(#65)을 재사용해
+        #   홈과 완료 화면이 동일한 당일 누적값을 보게 한다(KST 오늘 기준). 걷기 없으면 (0.0, 0).
+        total_min = await self.repo.sum_walking_minutes_today(user.user_id)
+        total_steps = await self.repo.sum_walking_steps_today(user.user_id)
+        return total_min, total_steps
+
     # ---------------- 공통: 오늘자 요약 재계산 ----------------
 
     async def _refresh_daily_summary(self, user_id: int) -> DailyResult:
