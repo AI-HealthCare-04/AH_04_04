@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.apis.v1.activity_profile_routers import activity_profile_router
 from app.apis.v1.auth_routers import auth_router
+from app.apis.v1.daily_tip_routers import daily_tip_router
 from app.apis.v1.dashboard_routers import dashboard_router
 from app.apis.v1.health_check_routers import health_check_router
 from app.apis.v1.health_profile_routers import health_profile_router
@@ -28,3 +29,4 @@ v1_routers.include_router(mission_log_router)
 v1_routers.include_router(sensor_router)
 v1_routers.include_router(dashboard_router)
 v1_routers.include_router(support_router)
+v1_routers.include_router(daily_tip_router)
