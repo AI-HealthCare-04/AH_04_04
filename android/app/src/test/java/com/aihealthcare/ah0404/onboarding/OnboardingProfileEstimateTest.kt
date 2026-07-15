@@ -8,9 +8,19 @@ import com.aihealthcare.ah0404.network.RiskPredictionRequest
 import com.aihealthcare.ah0404.network.SessionCreateRequest
 import com.aihealthcare.ah0404.network.SocialLoginRequest
 import com.aihealthcare.ah0404.network.VoiceParseRequest
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 /**
@@ -18,7 +28,12 @@ import org.junit.Test
  *  - estimateBody: 성별·연령대 추정표 정확성.
  *  - VM: '모름' → 추정치 채움 + has_estimated_value, 수동 입력 → 플래그 해제.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class OnboardingProfileEstimateTest {
+
+    private val dispatcher = StandardTestDispatcher()
+    @Before fun setUp() = Dispatchers.setMain(dispatcher)
+    @After fun tearDown() = Dispatchers.resetMain()
 
     // 추정 로직만 검증하므로 api 는 호출되지 않는다(모든 메서드 미구현 fake).
     private class FakeApi : OnboardingApi {
@@ -86,5 +101,19 @@ class OnboardingProfileEstimateTest {
         val vm = vm(2026).apply { waistCm = "88" }
         vm.markWaistUnknown()
         assertEquals("", vm.waistCm)
+    }
+
+    /** 재란 #75 nit: 수동 "0"/음수 키·몸무게는 백엔드 gt=0 전에 앱에서 막고 단계 진행 안 함. */
+    @Test
+    fun submit_rejects_nonpositive_height() = runTest {
+        val vm = vm(2026).apply {
+            birthYear = "1958"; birthMonth = "3"; birthDay = "1"
+            sex = "male"; walkingPractice = true; strengthExercise = false
+            setWeight("60"); setHeight("0")
+        }
+        vm.submitProfile(); advanceUntilIdle()
+        // 양수 가드 메시지가 떠야 하고(=API 경로로 안 넘어감), 다음 단계로 진행하지 않는다.
+        assertTrue(vm.error?.contains("0보다 큰") == true)
+        assertFalse(vm.step == OnbStep.ASSESSMENT)
     }
 }

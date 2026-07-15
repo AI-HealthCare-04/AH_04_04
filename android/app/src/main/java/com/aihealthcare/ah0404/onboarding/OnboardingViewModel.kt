@@ -142,6 +142,10 @@ class OnboardingViewModel(
         if (sex == null || h == null || w == null || walkingPractice == null || strengthExercise == null) {
             error = "키·몸무게·성별·운동 여부를 모두 입력해 주세요."; return@launchStep
         }
+        // 양수 가드(재란 #75 nit): "0"/음수 수동 입력이 백엔드 gt=0 에서 422 나기 전에 막는다.
+        if (h <= 0 || w <= 0) {
+            error = "키·몸무게는 0보다 큰 값으로 입력해 주세요."; return@launchStep
+        }
         val body = HealthProfileRequest(
             birthDate = birth,
             sex = sex!!,
@@ -150,7 +154,8 @@ class OnboardingViewModel(
             walkingPractice = walkingPractice!!,
             strengthExercise = strengthExercise!!,
             sessionId = sessionId,
-            waistCm = waistCm.toDoubleOrNull(),
+            // 허리둘레는 양수일 때만 전송, 그 외(빈값·0·음수)는 생략(선택 필드).
+            waistCm = waistCm.toDoubleOrNull()?.takeIf { it > 0 },
             kidneyStatus = kidneyStatus,
             proteinRestrictionStatus = proteinStatus,
             // 키·몸무게 중 하나라도 '모름' 추정치면 true(둘 다 실제 입력이면 false).
