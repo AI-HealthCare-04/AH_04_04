@@ -18,17 +18,13 @@ import kotlinx.coroutines.sync.withLock
 /**
  * 설정(_15) 상태 + 백엔드 영속화(GET/PATCH /users/me/settings).
  *
- *  진입 시 서버 값 로드. 변경은 낙관적 적용 후 PATCH — 실패하면 이전 값으로 롤백 + 안내.
- *  성공 시 응답(권위값)으로 재동기화(서버 정규화와 어긋나지 않게).
- *
- *  ⚠️ 리뷰 #71 반영:
- *   1) 읽기·쓰기 공용 `version` — refresh(GET)/변경(PATCH) 모두 시작 시 version 을 올리고, 자기
- *      version 이 최신일 때만 상태를 commit. 진입 GET 이 저장 성공값을 이전 값으로 덮지 못한다.
- *   2) 저장 **직렬화(Mutex)** — 빠른 연속 변경도 사용자 입력 순서대로 PATCH. 마지막 저장의 응답만
- *      재동기화되어 오래된 응답/롤백이 최신 값을 덮지 않는다.
- *   3) pet_type 정규화 — 서버 기본 "default" 등 dog/cat 이외 값은 "dog"(제품 기본 펫)로 매핑해
- *      세그먼트가 항상 하나를 선택하도록 한다.
- *   4) safeCall — CancellationException 은 삼키지 않고 재전파(구조적 동시성 보존).
+ *  ⚠️ 동시성 정책(리뷰 #71·#73) — **읽기·쓰기 모두 하나의 Mutex 로 전면 직렬화**하고, **저장 큐가 비면
+ *     서버 권위값으로 재동기화(GET)** 한다. 이 두 규칙만으로 모든 경쟁/실패/순서 조합에서 화면이 서버
+ *     상태로 **수렴**한다(version 같은 별도 토큰 불필요):
+ *      - GET·PATCH 가 총순서로 실행되어 오래된 GET 이 최신 PATCH 를 앞지르지 못한다.
+ *      - 저장이 몇 건 실패하든, 큐가 비는 순간 GET 으로 서버값을 다시 반영해 낙관적 변경이 잔류하지 않는다.
+ *  변경은 낙관적으로 즉시 반영(고령 사용자 즉시 피드백)하되, 최종 수렴이 정합을 보장한다.
+ *  CancellationException 은 safeCall 로 재전파(구조적 동시성 보존).
  */
 class SettingsViewModel(
     private val api: SettingsApi = retrofit.create(SettingsApi::class.java),
@@ -46,29 +42,24 @@ class SettingsViewModel(
     var saving by mutableStateOf(false); private set
     var saveError by mutableStateOf<String?>(null); private set
 
-    // 읽기(GET)·쓰기(PATCH)가 공유하는 요청 버전. 상태를 commit 하는 모든 연산이 시작 시 올린다.
-    private var version = 0
-
-    // 저장을 사용자 입력 순서대로 직렬화(응답/롤백 순서 뒤섞임 방지).
-    private val saveMutex = Mutex()
-    private var pendingSaves = 0
+    // 읽기·쓰기 전면 직렬화(총순서 보장). 진행 중 저장 건수(0이 되면 서버로 수렴).
+    private val gate = Mutex()
+    private var pending = 0
 
     fun load() {
         viewModelScope.launch { refresh() }
     }
 
-    /** GET /users/me/settings. 자기 version 이 최신일 때만 상태 commit. loading 은 이 조회가 정리. */
+    /** GET /users/me/settings — 직렬 큐를 통해 실행. */
     suspend fun refresh() {
-        val myVersion = ++version
         loading = true
         loadError = false
-        val result = safeCall { api.getSettings() }
-        if (myVersion == version) {
-            result
+        gate.withLock {
+            safeCall { api.getSettings() }
                 .onSuccess { applyResponse(it) }
                 .onFailure { loadError = true; Log.w(TAG, "설정 조회 실패: ${it.message}") }
-            loaded = true
         }
+        loaded = true
         loading = false
     }
 
@@ -82,58 +73,44 @@ class SettingsViewModel(
     /** dog/cat 이외(서버 기본 "default" 포함)는 제품 기본 펫 "dog"로 매핑 → 세그먼트가 항상 선택 표시. */
     private fun normalizePet(pet: String): String = if (pet == "dog" || pet == "cat") pet else "dog"
 
-    // ── 개별 변경(낙관적 적용 → 직렬 PATCH, 실패 시 롤백) ────────────────────────
-    fun changeFontSize(value: String) {
-        val prev = fontSize; fontSize = value
-        save(UserSettingsUpdateRequest(fontSize = value)) { fontSize = prev }
-    }
-
-    fun changeSoundSize(value: String) {
-        val prev = soundSize; soundSize = value
-        save(UserSettingsUpdateRequest(soundSize = value)) { soundSize = prev }
-    }
-
-    fun changePetType(value: String) {
-        val prev = petType; petType = value
-        save(UserSettingsUpdateRequest(petType = value)) { petType = prev }
-    }
-
-    fun changeMusicEnabled(value: Boolean) {
-        val prev = musicEnabled; musicEnabled = value
-        save(UserSettingsUpdateRequest(musicEnabled = value)) { musicEnabled = prev }
-    }
+    // ── 개별 변경(낙관적 즉시 반영 → 직렬 PATCH → 큐 비면 서버 수렴) ───────────────
+    fun changeFontSize(value: String) { fontSize = value; enqueueSave(UserSettingsUpdateRequest(fontSize = value)) }
+    fun changeSoundSize(value: String) { soundSize = value; enqueueSave(UserSettingsUpdateRequest(soundSize = value)) }
+    fun changePetType(value: String) { petType = value; enqueueSave(UserSettingsUpdateRequest(petType = value)) }
+    fun changeMusicEnabled(value: Boolean) { musicEnabled = value; enqueueSave(UserSettingsUpdateRequest(musicEnabled = value)) }
 
     fun dismissSaveError() { saveError = null }
 
-    private fun save(body: UserSettingsUpdateRequest, rollback: () -> Unit) {
-        viewModelScope.launch { commitSave(body, rollback) }
+    private fun enqueueSave(body: UserSettingsUpdateRequest) {
+        viewModelScope.launch { save(body) }
     }
 
     /**
-     * PATCH 코어(테스트 진입점). 시작 시 version 을 올려 진행 중 refresh 를 무효화하고,
-     * Mutex 로 저장을 직렬화한다. 성공하면 최신 version 일 때만 응답(권위값)으로 재동기화,
-     * 실패하면 최신 version 일 때만 rollback + saveError. 오래된 응답/롤백은 버린다.
+     * PATCH(직렬화) + 큐가 비면 서버 권위값으로 수렴. 테스트 진입점.
+     * 성공하면 응답 반영, 실패하면 saveError. 어느 경우든 큐가 비는 순간 GET 으로 서버 상태에 정렬한다.
      */
-    suspend fun commitSave(body: UserSettingsUpdateRequest, rollback: () -> Unit): Boolean {
-        val myVersion = ++version
-        pendingSaves++
+    suspend fun save(body: UserSettingsUpdateRequest): Boolean {
+        pending++
         saving = true
         saveError = null
-        try {
-            return saveMutex.withLock {
-                safeCall { api.updateSettings(body) }
-                    .onSuccess { if (myVersion == version) applyResponse(it) }
-                    .onFailure {
-                        if (myVersion == version) rollback()
-                        saveError = "설정을 저장하지 못했어요. 잠시 후 다시 시도해 주세요."
-                        Log.w(TAG, "설정 저장 실패: ${it.message}")
-                    }
-                    .isSuccess
-            }
-        } finally {
-            pendingSaves--
-            if (pendingSaves == 0) saving = false
+        val ok = gate.withLock {
+            safeCall { api.updateSettings(body) }
+                .onSuccess { applyResponse(it) }
+                .onFailure {
+                    saveError = "설정을 저장하지 못했어요. 잠시 후 다시 시도해 주세요."
+                    Log.w(TAG, "설정 저장 실패: ${it.message}")
+                }
+                .isSuccess
         }
+        pending--
+        if (pending == 0) {
+            // 큐가 비면 서버 상태로 수렴(실패/경쟁/순서 뒤섞임 모든 조합에서 화면=서버). saveError 는 유지.
+            gate.withLock {
+                safeCall { api.getSettings() }.onSuccess { applyResponse(it) }
+            }
+            saving = false
+        }
+        return ok
     }
 
     private suspend fun <T> safeCall(block: suspend () -> T): Result<T> =

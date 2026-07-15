@@ -4,49 +4,50 @@ import com.aihealthcare.ah0404.network.SettingsApi
 import com.aihealthcare.ah0404.network.UserSettingsResponse
 import com.aihealthcare.ah0404.network.UserSettingsUpdateRequest
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.yield
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 /**
- * SettingsViewModel 단위 테스트 — GET/PATCH /users/me/settings 배선(리뷰 #71 반영).
- *  로드 매핑 / PATCH 성공 재동기화·부분바디 / 실패 롤백 / GET-저장 경쟁 / 저장 직렬화 / pet 기본값 정규화.
- *  suspend refresh()/commitSave() 를 직접 호출해 Main 디스패처 없이 검증.
+ * SettingsViewModel 단위 테스트 — GET/PATCH /users/me/settings(리뷰 #71·#73 수렴 정책).
+ *  전면 직렬화 + 큐 비면 서버 수렴이 모든 경쟁/실패 조합에서 화면=서버 로 수렴함을 공개 API 로 검증.
+ *  StandardTestDispatcher 로 viewModelScope(Main) 를 제어하고, gate 로 진행 순서를 고정한다.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class SettingsViewModelTest {
 
-    private class FakeSettingsApi(
-        var get: () -> UserSettingsResponse,
-        var patch: (UserSettingsUpdateRequest) -> UserSettingsResponse = { throw IllegalStateException("stub") },
-    ) : SettingsApi {
-        var lastPatch: UserSettingsUpdateRequest? = null
-        override suspend fun getSettings(): UserSettingsResponse = get()
-        override suspend fun updateSettings(body: UserSettingsUpdateRequest): UserSettingsResponse {
-            lastPatch = body; return patch(body)
-        }
-    }
+    private val dispatcher = StandardTestDispatcher()
 
-    /** 서버 상태를 들고 부분 PATCH 를 반영해 전체를 돌려주는 fake(직렬화·경쟁 검증용). */
+    @Before fun setUp() = Dispatchers.setMain(dispatcher)
+    @After fun tearDown() = Dispatchers.resetMain()
+
+    /** 서버 상태를 들고 부분 PATCH 를 반영해 전체를 돌려주는 fake. 첫 PATCH 를 gate 로 지연할 수 있다. */
     private class ServerFake(
-        private val getGate: CompletableDeferred<Unit>? = null,
         private val firstPatchGate: CompletableDeferred<Unit>? = null,
+        private val failPatch: Boolean = false,
     ) : SettingsApi {
         var font = "medium"; var sound = "medium"; var pet = "default"; var music = true
         var getCalls = 0; var patchCalls = 0
         override suspend fun getSettings(): UserSettingsResponse {
             getCalls++
-            if (getCalls >= 2) getGate?.await() // 두 번째 GET(느린 재진입)만 대기
             return UserSettingsResponse(font, sound, pet, music)
         }
         override suspend fun updateSettings(body: UserSettingsUpdateRequest): UserSettingsResponse {
             patchCalls++
-            if (patchCalls == 1) firstPatchGate?.await() // 첫 PATCH 지연
+            if (patchCalls == 1) firstPatchGate?.await()
+            if (failPatch) throw RuntimeException("boom")
             body.fontSize?.let { font = it }
             body.soundSize?.let { sound = it }
             body.petType?.let { pet = it }
@@ -55,10 +56,17 @@ class SettingsViewModelTest {
         }
     }
 
+    private class SimpleFake(
+        var get: () -> UserSettingsResponse,
+    ) : SettingsApi {
+        override suspend fun getSettings() = get()
+        override suspend fun updateSettings(body: UserSettingsUpdateRequest) = get()
+    }
+
     @Test
-    fun loads_settings_from_server() = runBlocking {
-        val vm = SettingsViewModel(FakeSettingsApi(get = { UserSettingsResponse("large", "small", "cat", false) }))
-        vm.refresh()
+    fun loads_settings_from_server() = runTest {
+        val vm = SettingsViewModel(SimpleFake(get = { UserSettingsResponse("large", "small", "cat", false) }))
+        vm.load(); advanceUntilIdle()
         assertEquals("large", vm.fontSize)
         assertEquals("small", vm.soundSize)
         assertEquals("cat", vm.petType)
@@ -68,95 +76,75 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun load_failure_sets_error_and_keeps_defaults() = runBlocking {
-        val vm = SettingsViewModel(FakeSettingsApi(get = { throw RuntimeException("boom") }))
-        vm.refresh()
+    fun load_failure_sets_error() = runTest {
+        val vm = SettingsViewModel(SimpleFake(get = { throw RuntimeException("boom") }))
+        vm.load(); advanceUntilIdle()
         assertTrue(vm.loadError)
-        assertEquals("medium", vm.fontSize)
         assertTrue(vm.loaded)
     }
 
     @Test
-    fun save_success_syncs_state_and_sends_partial_body() = runBlocking {
-        val api = FakeSettingsApi(
-            get = { UserSettingsResponse() },
-            patch = { UserSettingsResponse(fontSize = "large") },
-        )
+    fun default_pet_type_is_normalized_to_dog() = runTest {
+        val vm = SettingsViewModel(SimpleFake(get = { UserSettingsResponse(petType = "default") }))
+        vm.load(); advanceUntilIdle()
+        assertEquals("dog", vm.petType)
+    }
+
+    @Test
+    fun change_syncs_to_server() = runTest {
+        val api = ServerFake()
         val vm = SettingsViewModel(api)
-
-        val ok = vm.commitSave(UserSettingsUpdateRequest(fontSize = "large")) { /* no rollback */ }
-
-        assertTrue(ok)
+        vm.changeFontSize("large"); advanceUntilIdle()
         assertEquals("large", vm.fontSize)
-        assertEquals("large", api.lastPatch?.fontSize)
-        assertNull(api.lastPatch?.soundSize) // 변경 필드만 전송(부분)
-        assertNull(vm.saveError)
+        assertEquals("large", api.font) // 서버 반영
         assertFalse(vm.saving)
     }
 
     @Test
-    fun save_failure_rolls_back_and_sets_error() = runBlocking {
-        val api = FakeSettingsApi(get = { UserSettingsResponse() }, patch = { throw RuntimeException("boom") })
+    fun save_failure_converges_to_server_and_shows_error() = runTest {
+        // PATCH 실패, GET 은 서버 medium 반환 → 낙관적 large 가 medium 으로 수렴.
+        val api = ServerFake(failPatch = true)
         val vm = SettingsViewModel(api)
-
-        var rolledBack = false
-        val ok = vm.commitSave(UserSettingsUpdateRequest(fontSize = "large")) { rolledBack = true }
-
-        assertFalse(ok)
-        assertTrue(rolledBack)
+        vm.changeFontSize("large"); advanceUntilIdle()
+        assertEquals("medium", vm.fontSize) // 서버 권위값으로 수렴(낙관적 large 잔류 안 함)
         assertNotNull(vm.saveError)
         assertFalse(vm.saving)
     }
 
-    /** 리뷰 #71-1: 진입(느린 GET) 도중 저장이 성공하면, 늦은 GET 이 저장값을 이전 값으로 덮지 않는다. */
+    /** 리뷰 #73-1: 저장 큐 도중 재조회가 껴도, 최종적으로 성공한 PATCH 결과(서버)로 수렴한다. */
     @Test
-    fun save_wins_over_late_reentry_get() = runBlocking {
-        val getGate = CompletableDeferred<Unit>()
-        val api = ServerFake(getGate = getGate)
+    fun reentry_get_during_save_queue_converges_to_saved_values() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val api = ServerFake(firstPatchGate = gate)
         val vm = SettingsViewModel(api)
 
-        vm.refresh() // 1차 로드: medium
-        assertEquals("medium", vm.fontSize)
+        vm.changeFontSize("large"); runCurrent()  // 첫 PATCH 진입(gate 대기, 큐 점유)
+        vm.changeSoundSize("large"); runCurrent()  // 둘째 PATCH 큐잉
+        vm.load(); runCurrent()                    // 재조회 큐잉(직렬화되어 저장 뒤로)
 
-        val reentry = launch { vm.refresh() } // 2차(느린) GET → gate 대기
-        while (api.getCalls < 2) yield()
-
-        val ok = vm.commitSave(UserSettingsUpdateRequest(fontSize = "large")) { }
-        assertTrue(ok)
-        assertEquals("large", vm.fontSize)
-
-        getGate.complete(Unit) // 느린 GET 완료(이전 medium) → 낡은 version 이라 반영 안 됨
-        reentry.join()
+        gate.complete(Unit); advanceUntilIdle()
 
         assertEquals("large", vm.fontSize)
+        assertEquals("large", vm.soundSize)
+        assertEquals("large", api.font)
+        assertEquals("large", api.sound)
     }
 
-    /** 리뷰 #71-2: 느린 첫 PATCH + 빠른 두 번째 PATCH 가 겹쳐도 직렬화로 최신 값이 유지된다. */
+    /** 리뷰 #73-2: 직렬 저장 두 건이 모두 실패해도, 큐가 비면 서버값으로 수렴해 두 필드 모두 복구된다. */
     @Test
-    fun serialized_saves_keep_latest_values() = runBlocking {
-        val patchGate = CompletableDeferred<Unit>()
-        val api = ServerFake(firstPatchGate = patchGate)
+    fun both_saves_failing_converge_all_fields_to_server() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val api = ServerFake(firstPatchGate = gate, failPatch = true)
         val vm = SettingsViewModel(api)
 
-        val s1 = launch { vm.commitSave(UserSettingsUpdateRequest(fontSize = "large")) { } }
-        while (api.patchCalls < 1) yield() // s1 이 첫 PATCH 진입(뮤텍스 점유 + gate 대기)
+        vm.changeFontSize("large"); runCurrent()  // 낙관적 large, 첫 PATCH gate 대기(실패 예정)
+        vm.changeSoundSize("large"); runCurrent()  // 낙관적 large, 둘째 PATCH 큐잉(실패 예정)
 
-        val s2 = launch { vm.commitSave(UserSettingsUpdateRequest(soundSize = "large")) { } }
-        yield() // s2 시작(version 증가, 뮤텍스 대기)
+        gate.complete(Unit); advanceUntilIdle()
 
-        patchGate.complete(Unit) // s1 PATCH 완료 → 낡은 version 이라 재동기화 skip, 뮤텍스 해제 → s2 진행
-        s1.join(); s2.join()
-
-        assertEquals("large", vm.fontSize)  // s1 변경 보존
-        assertEquals("large", vm.soundSize) // s2 최신값 보존(이전 medium 으로 안 돌아감)
+        assertEquals("medium", vm.fontSize) // 첫 낙관적 변경도 복구
+        assertEquals("medium", vm.soundSize)
+        assertNotNull(vm.saveError)
         assertFalse(vm.saving)
-    }
-
-    /** 리뷰 #71-3: 서버 기본 pet_type="default"는 세그먼트가 표현 못 하므로 "dog"로 정규화한다. */
-    @Test
-    fun default_pet_type_is_normalized_to_dog() = runBlocking {
-        val vm = SettingsViewModel(FakeSettingsApi(get = { UserSettingsResponse(petType = "default") }))
-        vm.refresh()
-        assertEquals("dog", vm.petType)
     }
 }
