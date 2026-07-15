@@ -26,6 +26,10 @@ engine = create_async_engine(
     build_database_url(),
     pool_pre_ping=True,
     pool_recycle=3600,
+    # READ COMMITTED: 요청 트랜잭션 내 읽기가 최신 커밋을 보게 한다. (MySQL 기본 REPEATABLE READ는
+    #   요청 첫 읽기(인증)에 스냅샷을 고정해, 완료 직렬화 잠금 이후에도 동시 커밋을 못 봐서 걷기 하루
+    #   1회 판정·요약 재집계가 어긋난다. 잠금(FOR UPDATE)과 결합해 동시 완료를 정확히 처리한다.)
+    isolation_level="READ COMMITTED",
 )
 
 

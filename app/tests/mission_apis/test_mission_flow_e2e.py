@@ -12,6 +12,8 @@
 #   - daily_result: 카운트 1개 이상=success, 3개 이상=great_success
 #   - 완료된 로그 재완료는 409 (포인트 이중 적립 없음)
 # =====================================================================================
+import asyncio
+
 from httpx import AsyncClient, Response
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette import status
@@ -352,6 +354,55 @@ async def test_walking_rejects_non_positive_duration_no_reward_bypass(
     # 보상·카운트 불변 (음수 우회로 7→14, 1→2 되지 않음)
     home = (await db_client.get(f"{API}/home", headers=auth)).json()
     assert home["point_balance"]["current_points"] == 7
+    assert home["today_summary"]["counted_mission_count"] == 1
+
+
+# -------------------------------------------------------------------------------------
+# 5-d. 동시 걷기 완료에서도 하루 1회 보상은 원자적 (지영 #65 재리뷰: race → 이중 적립 차단)
+# -------------------------------------------------------------------------------------
+async def test_walking_reward_claim_is_atomic_under_concurrency(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    auth, _ = await _guest(db_client)
+    template_id = await _seed_template(
+        db_sessionmaker,
+        mission_type=MissionType.WALKING,
+        reward_points=7,
+        target_unit=TargetUnit.MINUTES,
+        default_target_value=30,
+    )
+
+    async def _start() -> int:
+        r = await db_client.post(
+            f"{API}/mission-logs",
+            json={"mission_template_id": template_id, "mission_type": "walking", "status": "in_progress"},
+            headers=auth,
+        )
+        return int(r.json()["mission_log_id"])
+
+    async def _complete(log_id: int, minutes: float) -> dict:
+        r = await db_client.patch(
+            f"{API}/mission-logs/{log_id}",
+            json={"status": "completed", "success": True, "walking_detail": {"duration_min": minutes}},
+            headers=auth,
+        )
+        assert r.status_code == status.HTTP_200_OK
+        return r.json()
+
+    # 사전 20분 (목표 30 미달 → 미적립). daily_activity_summaries 행도 생성돼 이후 claim은 조건부 UPDATE만 경쟁.
+    pre = await _complete(await _start(), 20)
+    assert pre["counted_for_daily"] is False
+
+    # 서로 다른 10분 걷기 2건을 동시에 완료 (누적 40, 목표 첫 달성이지만 보상은 1회여야 함).
+    id_a, id_b = await _start(), await _start()
+    res_a, res_b = await asyncio.gather(_complete(id_a, 10), _complete(id_b, 10))
+
+    # 두 요청 모두 목표 달성(success)이나 counted·적립은 정확히 1건만.
+    assert res_a["success"] is True and res_b["success"] is True
+    assert [res_a["counted_for_daily"], res_b["counted_for_daily"]].count(True) == 1
+
+    home = (await db_client.get(f"{API}/home", headers=auth)).json()
+    assert home["point_balance"]["current_points"] == 7  # 이중 적립(14) 없음
     assert home["today_summary"]["counted_mission_count"] == 1
 
 

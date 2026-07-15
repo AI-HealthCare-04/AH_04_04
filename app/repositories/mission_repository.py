@@ -24,6 +24,7 @@ from app.models.missions import (
     MissionTemplate,
     PhysicalActivityLog,
 )
+from app.models.users import User
 
 
 class MissionRepository:
@@ -165,6 +166,15 @@ class MissionRepository:
             )
         )
         return int(await self.session.scalar(stmt) or 0)
+
+    async def lock_user_for_completion(self, user_id: int) -> None:
+        """미션 완료 트랜잭션을 사용자 단위로 직렬화한다(동시 요청 race 방지).
+
+        users 행을 FOR UPDATE로 잠근다. 이걸 트랜잭션의 첫 읽기로 두면 ①같은 사용자의 동시
+        완료가 직렬화되고 ②locking read 이후 첫 consistent read가 잠금 획득(=선행 트랜잭션
+        커밋) 이후에 스냅샷을 잡아, 걷기 누적 판정·요약 재집계가 커밋된 최신값을 본다.
+        """
+        await self.session.execute(select(User.user_id).where(User.user_id == user_id).with_for_update())
 
     # ---------------- daily_activity_summaries upsert ----------------
 

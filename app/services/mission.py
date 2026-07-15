@@ -256,6 +256,10 @@ class MissionService:
     async def update_mission_log(
         self, user: User, mission_log_id: int, data: MissionLogUpdateRequest
     ) -> MissionLogUpdateResponse:
+        # 완료를 사용자 단위로 직렬화한다(트랜잭션 첫 읽기 = users 행 FOR UPDATE).
+        #   동시 걷기 완료가 같은 스냅샷에서 둘 다 '최초 목표 달성'으로 판정해 이중 적립되던 race를 막고,
+        #   locking read 이후 첫 consistent read가 잠금 획득(선행 커밋) 뒤에 스냅샷을 잡아 재집계도 정확해진다.
+        await self.repo.lock_user_for_completion(user.user_id)
         log = await self.repo.get_mission_log(mission_log_id, user.user_id)
         if log is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="미션 로그를 찾을 수 없습니다.")
@@ -307,6 +311,7 @@ class MissionService:
             #   클라이언트 success는 신뢰하지 않는다(1분만 걷고 success=true 우회 차단).
             #   포인트·카운트는 하루 1회만: 목표를 '이번 세션에서 처음 넘긴' 로그에만 지급하고,
             #   이미 목표를 넘어선 뒤의 추가 걷기는 success=true지만 미카운트·미적립(중복 방지).
+            #   동시 요청 race는 update_mission_log 첫머리의 사용자 행 잠금으로 직렬화되어 안전하다.
             target_min = float(template.default_target_value) if template else 0.0
             prior_min = daily_total_min - float(wd.duration_min)
             success = daily_total_min >= target_min
