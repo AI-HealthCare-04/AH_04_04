@@ -5,7 +5,10 @@ import com.aihealthcare.ah0404.network.MissionLogListResponse
 import com.aihealthcare.ah0404.network.RecordApi
 import com.aihealthcare.ah0404.network.RiskHistoryItem
 import com.aihealthcare.ah0404.network.RiskHistoryResponse
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -100,6 +103,57 @@ class RecordViewModelTest {
         assertEquals(1, vm.completedMissions) // mission-logs 는 정상 반영
         assertEquals(7, vm.totalPoints)
         assertEquals(1, api.logsCalls)        // 이력 실패가 로그 호출을 막지 않음
+    }
+
+    /**
+     * 겹친 재조회 경쟁(리뷰 #68 지적 3): 느린 첫 조회가 진행 중일 때 두 번째(즉시) 조회가 겹쳐도,
+     * 최종 상태는 가장 최근(두 번째) 응답으로 유지되어야 한다. 늦게 끝난 첫 응답이 덮지 않는다.
+     * gate 로 첫 조회를 잡아 결정적으로 재현(타이밍 의존 없음).
+     */
+    private class GatedFake(private val gate: CompletableDeferred<Unit>) : RecordApi {
+        var historyCalls = 0
+        var logsCalls = 0
+        override suspend fun getRiskHistory(limit: Int): RiskHistoryResponse {
+            historyCalls++
+            return if (historyCalls == 1) {
+                gate.await(); RiskHistoryResponse(listOf(RiskHistoryItem("2026-07-14T09:00:00+09:00", "good")))
+            } else {
+                RiskHistoryResponse(listOf(RiskHistoryItem("2026-07-15T09:00:00+09:00", "action_needed")))
+            }
+        }
+        override suspend fun getMissionLogs(date: String?): MissionLogListResponse {
+            logsCalls++
+            return if (logsCalls == 1) {
+                gate.await(); MissionLogListResponse(listOf(MissionLogItem(1, "walking", true, true, 7)))
+            } else {
+                MissionLogListResponse(listOf(MissionLogItem(1, "walking", true, true, 14)))
+            }
+        }
+    }
+
+    @Test
+    fun overlapping_refresh_keeps_latest_response() = runBlocking {
+        val gate = CompletableDeferred<Unit>()
+        val fake = GatedFake(gate)
+        val vm = RecordViewModel(fake)
+
+        // 첫 refresh(느림) 시작 → 두 API 모두 gate 에서 대기하도록 진행시킨다.
+        val first = launch { vm.refresh() }
+        while (fake.historyCalls < 1 || fake.logsCalls < 1) yield()
+
+        // 겹쳐서 두 번째 refresh(즉시) 실행 → 최신 값(action_needed/14P) commit.
+        vm.refresh()
+        assertEquals("action_needed", vm.history.single().careStage)
+        assertEquals(14, vm.totalPoints)
+
+        // 이제 느린 첫 조회를 완료시킨다 → 낡은 세대라 상태를 덮지 않아야 한다.
+        gate.complete(Unit)
+        first.join()
+
+        assertEquals("action_needed", vm.history.single().careStage)
+        assertEquals(1, vm.completedMissions)
+        assertEquals(14, vm.totalPoints)
+        assertFalse(vm.loading)
     }
 
     @Test
