@@ -29,7 +29,7 @@ def test_faq_catalog_shape() -> None:
 
 # 비노출(#57): FAQ 답변에 위험도 점수·등급이 새면 안 된다.
 def test_faq_answers_are_non_disclosure_safe() -> None:
-    banned = ("점수", "등급", "risk", "score")
+    banned = ("점수", "등급", "위험도", "확률", "risk", "score")
     for spec in FAQ_CATALOG:
         text = f"{spec.question} {spec.answer}".lower()
         for word in banned:
