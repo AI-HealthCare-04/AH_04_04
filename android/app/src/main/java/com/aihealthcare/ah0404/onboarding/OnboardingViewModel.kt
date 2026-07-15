@@ -22,6 +22,19 @@ import kotlinx.coroutines.launch
 enum class OnbStep { WELCOME, TERMS, PROFILE, ASSESSMENT, RESULT }
 
 /**
+ * 키·몸무게 '모름' 시 성별·연령대 추정치 (cm, kg). 상수 표 — 나중에 교체 가능.
+ *   남 65–74: 166/65 · 75+: 163/62   /   여 65–74: 153/56 · 75+: 150/53
+ * 성별 미선택/미상은 남성 기준으로 폴백(성별 선택 후 다시 '모름' 누르면 갱신).
+ */
+internal fun estimateBody(sex: String?, age: Int?): Pair<Int, Int> {
+    val is75plus = age != null && age >= 75
+    return when (sex) {
+        "female" -> if (is75plus) 150 to 53 else 153 to 56
+        else -> if (is75plus) 163 to 62 else 166 to 65
+    }
+}
+
+/**
  * 온보딩 흐름 상태머신 + 백엔드 배선.
  *
  *  ⚠️ 리뷰 #63(지영 P1-1) 반영: **API 실패를 목업 완료로 처리하지 않는다.**
@@ -31,6 +44,8 @@ enum class OnbStep { WELCOME, TERMS, PROFILE, ASSESSMENT, RESULT }
  */
 class OnboardingViewModel(
     private val api: OnboardingApi = retrofit.create(OnboardingApi::class.java),
+    // 키·몸무게 '모름' 추정치의 연령대 판정용(테스트에서 고정 주입 가능).
+    private val currentYear: Int = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR),
 ) : ViewModel() {
 
     var step by mutableStateOf(OnbStep.WELCOME); private set
@@ -46,9 +61,32 @@ class OnboardingViewModel(
     var birthMonth by mutableStateOf("")
     var birthDay by mutableStateOf("")
     var sex by mutableStateOf<String?>(null)
-    var heightCm by mutableStateOf("")
-    var weightKg by mutableStateOf("")
+    // 키·몸무게는 '모름' 추정치 여부를 추적하므로 전용 세터로만 변경한다(수동 입력 시 추정 플래그 해제).
+    var heightCm by mutableStateOf(""); private set
+    var weightKg by mutableStateOf(""); private set
     var waistCm by mutableStateOf("")
+    var heightEstimated by mutableStateOf(false); private set
+    var weightEstimated by mutableStateOf(false); private set
+
+    /** 키·몸무게 중 하나라도 추정치로 채워졌으면 true → has_estimated_value 로 전송(백엔드 무변경). */
+    val hasEstimatedValue: Boolean get() = heightEstimated || weightEstimated
+
+    /** 사용자가 직접 입력 → 실제값이므로 추정 플래그 해제. */
+    fun setHeight(value: String) { heightCm = value; heightEstimated = false }
+    fun setWeight(value: String) { weightKg = value; weightEstimated = false }
+
+    /** '모름' → 성별·연령대 추정치로 채우고 추정 플래그 설정. */
+    fun markHeightUnknown() {
+        heightCm = estimateBody(sex, estimatedAge()).first.toString(); heightEstimated = true
+    }
+    fun markWeightUnknown() {
+        weightKg = estimateBody(sex, estimatedAge()).second.toString(); weightEstimated = true
+    }
+
+    /** 허리둘레 '모름' → 비워서 요청 body 에서 생략(백엔드 선택 처리). */
+    fun markWaistUnknown() { waistCm = "" }
+
+    private fun estimatedAge(): Int? = birthYear.toIntOrNull()?.let { currentYear - it }
     var walkingPractice by mutableStateOf<Boolean?>(null)
     var strengthExercise by mutableStateOf<Boolean?>(null)
     var kidneyStatus by mutableStateOf("unknown")
@@ -115,6 +153,8 @@ class OnboardingViewModel(
             waistCm = waistCm.toDoubleOrNull(),
             kidneyStatus = kidneyStatus,
             proteinRestrictionStatus = proteinStatus,
+            // 키·몸무게 중 하나라도 '모름' 추정치면 true(둘 다 실제 입력이면 false).
+            hasEstimatedValue = hasEstimatedValue,
         )
         val resp = api.createHealthProfile(body)
         profileId = resp.profileId

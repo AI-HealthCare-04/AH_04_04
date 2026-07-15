@@ -14,6 +14,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -173,6 +174,37 @@ private fun TermsStep(vm: OnboardingViewModel) {
     )
 }
 
+/** 숫자 입력 + 오른쪽 '모름' 버튼. '모름' 누르면 추정치로 채워지고, 채워졌으면 안내 문구를 보여준다. */
+@Composable
+private fun FieldWithUnknown(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    onUnknown: () -> Unit,
+    estimated: Boolean,
+) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(Dimens.Space8),
+        verticalAlignment = Alignment.Top,
+    ) {
+        AigoTextField(value, onValueChange, label, Modifier.weight(1f), keyboardType = KeyboardType.Number)
+        OutlinedButton(
+            onClick = onUnknown,
+            modifier = Modifier.height(Dimens.ButtonHeight),
+        ) {
+            Text("모름", style = MaterialTheme.typography.bodyLarge)
+        }
+    }
+    if (estimated) {
+        Text(
+            "추정치로 입력했어요. 정확한 값을 아시면 직접 입력해 주세요.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
 @Composable
 private fun ProfileStep(vm: OnboardingViewModel) {
     val yesNo = listOf(SegmentOption(true, "예"), SegmentOption(false, "아니요"))
@@ -195,9 +227,28 @@ private fun ProfileStep(vm: OnboardingViewModel) {
                 horizontal = true,
             )
 
-            AigoTextField(vm.heightCm, { vm.heightCm = it }, "키 (cm)", keyboardType = KeyboardType.Number)
-            AigoTextField(vm.weightKg, { vm.weightKg = it }, "몸무게 (kg)", keyboardType = KeyboardType.Number)
-            AigoTextField(vm.waistCm, { vm.waistCm = it }, "허리둘레 (cm, 선택)", keyboardType = KeyboardType.Number)
+            // 키·몸무게: 정확히 모르면 '모름' → 성별·연령대 추정치로 채움(has_estimated_value=true 로 전송).
+            FieldWithUnknown(
+                value = vm.heightCm,
+                onValueChange = vm::setHeight,
+                label = "키 (cm)",
+                onUnknown = vm::markHeightUnknown,
+                estimated = vm.heightEstimated,
+            )
+            FieldWithUnknown(
+                value = vm.weightKg,
+                onValueChange = vm::setWeight,
+                label = "몸무게 (kg)",
+                onUnknown = vm::markWeightUnknown,
+                estimated = vm.weightEstimated,
+            )
+            FieldWithUnknown(
+                value = vm.waistCm,
+                onValueChange = { vm.waistCm = it },
+                label = "허리둘레 (cm, 선택)",
+                onUnknown = vm::markWaistUnknown,
+                estimated = false,
+            )
 
             Text("최근 걷기 운동을 하고 있나요?", style = MaterialTheme.typography.titleMedium)
             AigoSegmentedSelector(yesNo, vm.walkingPractice, { vm.walkingPractice = it }, horizontal = true)
