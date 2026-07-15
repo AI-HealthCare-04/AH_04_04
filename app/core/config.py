@@ -41,6 +41,10 @@ class Config(BaseSettings):
     TERMS_SENSITIVE_HEALTH_URL: str = "https://example.com/terms/sensitive-health-1.0"
     TERMS_MARKETING_URL: str = "https://example.com/terms/marketing-1.0"
 
+    # 운동 영상(GET /exercise-videos) 정적 호스트(EC2 nginx) 루트. 실제 배포 시 환경변수로 교체.
+    #   video_url = f"{EXERCISE_VIDEO_BASE_URL}/videos/{파일명}" 로 조립(현재는 placeholder).
+    EXERCISE_VIDEO_BASE_URL: str = "https://videos.example.com"
+
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_MINUTES: int = 14 * 24 * 60
