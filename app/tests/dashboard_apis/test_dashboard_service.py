@@ -81,7 +81,9 @@ def test_available_mission_summary_empty() -> None:
 def test_available_mission_summary_excludes_daily_limited_when_done_today() -> None:
     # 식사(daily_count_limit=1)를 오늘 이미 카운트했으면 '가능한 미션'에서 제외된다(반복형 걷기는 유지).
     service = _service_with_missions([_FakeMission("meal", daily_count_limit=1), _FakeMission("walking")])
-    today = cast(DailyActivitySummary, SimpleNamespace(meal_counted=True, exercise_count=0, walking_count=0, game_count=0))
+    today = cast(
+        DailyActivitySummary, SimpleNamespace(meal_counted=True, exercise_count=0, walking_count=0, game_count=0)
+    )
 
     result = asyncio.run(service._available_mission_summary(_USER, ActivityLevel.EASY, today))
 
@@ -91,7 +93,9 @@ def test_available_mission_summary_excludes_daily_limited_when_done_today() -> N
 def test_available_mission_summary_keeps_daily_limited_when_not_done_today() -> None:
     # 오늘 식사를 아직 안 했으면 그대로 수행 가능.
     service = _service_with_missions([_FakeMission("meal", daily_count_limit=1)])
-    today = cast(DailyActivitySummary, SimpleNamespace(meal_counted=False, exercise_count=0, walking_count=0, game_count=0))
+    today = cast(
+        DailyActivitySummary, SimpleNamespace(meal_counted=False, exercise_count=0, walking_count=0, game_count=0)
+    )
 
     result = asyncio.run(service._available_mission_summary(_USER, ActivityLevel.EASY, today))
 
@@ -173,10 +177,12 @@ def test_get_summary_aggregates_trend_total_and_lifestyle() -> None:
     today = today_kst()
     # 오늘 걷기 10분(=10) + 20분(=20) → 오늘 합 30. 구간은 0으로 채워진다.
     logs = [
-        SimpleNamespace(activity_date=today, activity_type=ActivityType.WALKING, intensity=None,
-                        duration_min=10, met_value=None),
-        SimpleNamespace(activity_date=today, activity_type=ActivityType.WALKING, intensity=None,
-                        duration_min=20, met_value=None),
+        SimpleNamespace(
+            activity_date=today, activity_type=ActivityType.WALKING, intensity=None, duration_min=10, met_value=None
+        ),
+        SimpleNamespace(
+            activity_date=today, activity_type=ActivityType.WALKING, intensity=None, duration_min=20, met_value=None
+        ),
     ]
     summaries = [
         SimpleNamespace(meal_counted=True, game_count=2),
@@ -271,10 +277,14 @@ def _service_for_home(*, profile: object | None) -> tuple[DashboardService, dict
     async def fake_get_latest(user: object) -> object:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="none")
 
+    async def fake_today_walking(user: object) -> tuple[float, int]:
+        return captured.get("walking", (0.0, 0))  # type: ignore[return-value]
+
     service.repo.get_current_points = fake_get_current_points  # type: ignore[assignment]
     service.repo.get_today_summary = fake_get_today_summary  # type: ignore[assignment]
     service.activity_repo.get_by_user_id = fake_get_by_user_id  # type: ignore[assignment]
     service.mission_service.get_missions = fake_get_missions  # type: ignore[assignment]
+    service.mission_service.get_today_walking_totals = fake_today_walking  # type: ignore[assignment]
     service.risk_service.get_latest_prediction = fake_get_latest  # type: ignore[assignment]
     return service, captured
 
@@ -297,6 +307,27 @@ def test_get_home_defaults_easy_when_no_profile() -> None:
 
     assert result.activity_profile.current_level == ActivityLevel.EASY
     assert captured["mission_level"] == ActivityLevel.EASY
+
+
+def test_get_home_includes_today_walking_totals() -> None:
+    # 홈 '오늘 걷기' 위젯: 당일 누적 실적(분·걸음)을 미션 도메인 원천에서 그대로 담는다.
+    service, captured = _service_for_home(profile=None)
+    captured["walking"] = (22.0, 2350)
+
+    result = asyncio.run(service.get_home(_HOME_USER))
+
+    assert result.today_walking.daily_total_min == 22.0
+    assert result.today_walking.daily_total_steps == 2350
+
+
+def test_get_home_today_walking_defaults_to_zero_when_no_walking() -> None:
+    # 걷기 안 한 날도 null 아니라 {0, 0}으로 내려 앱 바인딩을 단순화한다.
+    service, _ = _service_for_home(profile=None)
+
+    result = asyncio.run(service.get_home(_HOME_USER))
+
+    assert result.today_walking.daily_total_min == 0.0
+    assert result.today_walking.daily_total_steps == 0
 
 
 def test_month_range_returns_first_and_last_day() -> None:

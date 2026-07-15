@@ -197,3 +197,24 @@ def test_create_mission_log_allows_non_kidney_mission_for_restricted_user() -> N
     asyncio.run(service.create_mission_log(_USER, _meal_request()))
 
     assert flags["log_created"] is True
+
+
+# ---------------- get_today_walking_totals (홈 '오늘 걷기' 위젯 원천) ----------------
+
+
+def test_get_today_walking_totals_reads_pair_in_single_query() -> None:
+    # 당일 누적 (분, 걸음)을 repo의 '단일 SELECT' 메서드로 한 번에 읽어 그대로 돌려준다.
+    #   분·걸음을 각각 조회하지 않는다(torn-read 방지 — 지영 리뷰 #69).
+    calls: dict[str, int] = {}
+
+    async def fake_totals(user_id: int) -> tuple[float, int]:
+        calls["uid"] = user_id
+        return 22.0, 2350
+
+    service = MissionService(session=cast("object", None))  # type: ignore[arg-type]
+    service.repo = cast("object", SimpleNamespace(sum_walking_totals_today=fake_totals))  # type: ignore[assignment]
+
+    total_min, total_steps = asyncio.run(service.get_today_walking_totals(_USER))
+
+    assert (total_min, total_steps) == (22.0, 2350)
+    assert calls == {"uid": 1}  # 분·걸음을 한 번의(단일 스냅샷) 조회로만 가져온다

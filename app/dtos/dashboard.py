@@ -50,6 +50,17 @@ class HomeAvailableMissionSummary(BaseModel):
     game: int
 
 
+# [응답] 홈 "오늘 걷기" 위젯 — 당일 누적 실적(권위값은 서버).
+#   daily_total_min  : 오늘 누적 걷기 시간(분). 달성 판정 기준(≥ 목표 분).
+#   daily_total_steps: 오늘 누적 걸음. 표시 전용(판정에는 안 씀).
+#   걷기 안 한 날도 {0, 0}로 내려 앱 바인딩을 단순화한다(null 아님).
+#   ⚠️ 목표(분)는 여기 넣지 않는다 — 목표는 GET /missions(걷기 target_value)만이 단일 원천.
+#      (/home·/missions 두 곳에 목표를 두면 값이 어긋날 위험 → 실적은 /home, 목표는 /missions로 역할 분리.)
+class HomeTodayWalking(BaseModel):
+    daily_total_min: float
+    daily_total_steps: int
+
+
 # [응답] 홈 통합 조회 (명세 §29). 홈 화면에 필요한 정보를 한 번에 반환한다.
 # latest_prediction은 nullable(건강체크 건너뛰면 null).
 class HomeResponse(BaseModel):
@@ -59,6 +70,7 @@ class HomeResponse(BaseModel):
     latest_prediction: HomeLatestPrediction | None
     today_summary: HomeTodaySummary
     available_mission_summary: HomeAvailableMissionSummary
+    today_walking: HomeTodayWalking
 
 
 # [응답] 월별 스탬프 요약 (명세 §30). 조회 월의 일자별 성취(daily_activity_summaries)를 반환한다.

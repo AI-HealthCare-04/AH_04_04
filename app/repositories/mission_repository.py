@@ -139,24 +139,20 @@ class MissionRepository:
         )
         return int(await self.session.scalar(stmt) or 0)
 
-    async def sum_walking_minutes_today(self, user_id: int) -> float:
-        """오늘 걷기 총 시간(분) — '같은 날 자동 합산'용. mission_logs와 조인."""
-        stmt = (
-            select(func.coalesce(func.sum(PhysicalActivityLog.duration_min), 0))
-            .select_from(PhysicalActivityLog)
-            .join(MissionLog, MissionLog.mission_log_id == PhysicalActivityLog.mission_log_id)
-            .where(
-                MissionLog.user_id == user_id,
-                PhysicalActivityLog.activity_type == ActivityType.WALKING,
-                PhysicalActivityLog.activity_date == func.current_date(),
-            )
-        )
-        return float(await self.session.scalar(stmt) or 0)
+    async def sum_walking_totals_today(self, user_id: int) -> tuple[float, int]:
+        """오늘 걷기 누적 (분, 걸음)을 한 SELECT로 함께 반환한다. mission_logs와 조인.
 
-    async def sum_walking_steps_today(self, user_id: int) -> int:
-        """오늘 걷기 총 걸음수 — 표시 전용(daily_total_steps). mission_logs와 조인."""
+        분(daily_total_min·달성 판정)과 걸음(daily_total_steps·표시)을 각각 별도 쿼리로 읽으면,
+        엔진이 READ COMMITTED라 두 쿼리 사이에 걷기 완료가 커밋될 때 각 SELECT가 서로 다른
+        최신 커밋을 봐서 시점이 어긋난 쌍(예: 이전 분 + 최신 걸음)이 나올 수 있다.
+        한 문장(동일 statement snapshot)에서 함께 집계해, 응답이 항상 '이전 쌍' 또는
+        '최신 쌍' 중 하나로만 나오게 한다(홈·걷기완료가 같은 일관된 쌍을 보장 — 지영 리뷰 #69).
+        """
         stmt = (
-            select(func.coalesce(func.sum(PhysicalActivityLog.steps), 0))
+            select(
+                func.coalesce(func.sum(PhysicalActivityLog.duration_min), 0),
+                func.coalesce(func.sum(PhysicalActivityLog.steps), 0),
+            )
             .select_from(PhysicalActivityLog)
             .join(MissionLog, MissionLog.mission_log_id == PhysicalActivityLog.mission_log_id)
             .where(
@@ -165,7 +161,8 @@ class MissionRepository:
                 PhysicalActivityLog.activity_date == func.current_date(),
             )
         )
-        return int(await self.session.scalar(stmt) or 0)
+        total_min, total_steps = (await self.session.execute(stmt)).one()
+        return float(total_min or 0), int(total_steps or 0)
 
     async def lock_user_for_completion(self, user_id: int) -> None:
         """미션 완료 트랜잭션을 사용자 단위로 직렬화한다(동시 요청 race 방지).
