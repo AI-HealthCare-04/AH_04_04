@@ -74,8 +74,11 @@ class OnboardingViewModel(
     /** 키·몸무게 중 하나라도 '모름'(추정)이면 true → has_estimated_value 로 전송. */
     val hasEstimatedValue: Boolean get() = heightEstimated || weightEstimated
 
-    /** '모름'은 유효한 성별·생년월일이 있어야 의미 있는 추정이 되므로 그때만 허용(리뷰 #75-2). */
-    val canEstimate: Boolean get() = sex != null && composeBirthDate() != null
+    /**
+     * '모름'은 유효한 성별·생년월일 + **만 65세 이상**일 때만 허용(리뷰 #75-2·#75-4).
+     * 추정표·위험도 모델 모두 65세 이상 대상이라, 64세 이하엔 고령 추정치를 넣지 않는다.
+     */
+    val canEstimate: Boolean get() = sex != null && (ageYears() ?: 0) >= MIN_SUPPORTED_AGE
 
     /** 화면 표시값: 추정이면 현재 성별·나이로 라이브 계산(성별/생일 바꾸면 즉시 갱신), 아니면 수동 입력값. */
     val heightInput: String get() = if (heightEstimated) estimateBody(sex, ageYears()).first.toString() else heightCm
@@ -150,6 +153,11 @@ class OnboardingViewModel(
     fun submitProfile() = launchStep("프로필 저장") {
         val birth = composeBirthDate() ?: run {
             error = "생년월일을 정확히 입력해 주세요."; return@launchStep
+        }
+        // 지원 대상: 만 65세 이상(추정표·위험도 모델 모두 65+ 기준, 리뷰 #75-4).
+        val age = ageYears()
+        if (age == null || age < MIN_SUPPORTED_AGE) {
+            error = "이 서비스는 만 65세 이상 어르신을 위한 것이에요. 생년월일을 확인해 주세요."; return@launchStep
         }
         // 추정('모름')이면 제출 시점의 최종 성별·나이로 계산(버튼 누른 시점 아님, 리뷰 #75-2).
         val estimate = if (hasEstimatedValue) estimateBody(sex, ageYears()) else null
@@ -236,5 +244,8 @@ class OnboardingViewModel(
 
     companion object {
         const val TAG = "Onboarding"
+
+        /** 지원 최소 연령(만). 추정표·위험도 모델 모두 65세 이상 대상(리뷰 #75-4). */
+        const val MIN_SUPPORTED_AGE = 65
     }
 }

@@ -121,6 +121,36 @@ class OnboardingProfileEstimateTest {
         assertEquals("163", vm.heightInput)
     }
 
+    // ── #75-4: 만 65세 이상만 지원(추정표·위험도 모델 대상) ──────────────────
+    @Test
+    fun under_65_cannot_estimate() {
+        // 오늘 2026 기준 1990년생 → 36세. 성별·생일 유효해도 '모름' 불가.
+        val vm = vm().apply { sex = "male"; birthYear = "1990"; birthMonth = "1"; birthDay = "1" }
+        assertFalse(vm.canEstimate)
+        vm.markHeightUnknown()
+        assertFalse(vm.heightEstimated) // 무시됨(고령 추정치 안 들어감)
+    }
+
+    @Test
+    fun age_64_is_not_supported_but_65_is() {
+        val at64 = vm(2026, 7, 15).apply { sex = "male"; birthYear = "1961"; birthMonth = "7"; birthDay = "16" } // 64
+        assertFalse(at64.canEstimate)
+        val at65 = vm(2026, 7, 15).apply { sex = "male"; birthYear = "1961"; birthMonth = "7"; birthDay = "15" } // 65
+        assertTrue(at65.canEstimate)
+    }
+
+    @Test
+    fun submit_rejects_under_65() = runTest {
+        val vm = vm(2026, 7, 15).apply {
+            birthYear = "1990"; birthMonth = "1"; birthDay = "1" // 36세
+            sex = "male"; walkingPractice = true; strengthExercise = false
+            setHeight("170"); setWeight("65")
+        }
+        vm.submitProfile(); advanceUntilIdle()
+        assertTrue(vm.error?.contains("65세") == true)
+        assertFalse(vm.step == OnbStep.ASSESSMENT)
+    }
+
     @Test
     fun waist_unknown_clears_field() {
         val vm = vm().apply { waistCm = "88" }
