@@ -63,6 +63,22 @@ class SettingsViewModelTest {
         override suspend fun updateSettings(body: UserSettingsUpdateRequest) = get()
     }
 
+    /** 초기엔 정상, offline=true 이후 GET/PATCH 모두 실패(네트워크 단절 재현). */
+    private class FlakyFake : SettingsApi {
+        var offline = false
+        var font = "medium"; var sound = "medium"; var pet = "default"; var music = true
+        override suspend fun getSettings(): UserSettingsResponse {
+            if (offline) throw RuntimeException("offline")
+            return UserSettingsResponse(font, sound, pet, music)
+        }
+        override suspend fun updateSettings(body: UserSettingsUpdateRequest): UserSettingsResponse {
+            if (offline) throw RuntimeException("offline")
+            body.fontSize?.let { font = it }; body.soundSize?.let { sound = it }
+            body.petType?.let { pet = it }; body.musicEnabled?.let { music = it }
+            return UserSettingsResponse(font, sound, pet, music)
+        }
+    }
+
     @Test
     fun loads_settings_from_server() = runTest {
         val vm = SettingsViewModel(SimpleFake(get = { UserSettingsResponse("large", "small", "cat", false) }))
@@ -128,6 +144,22 @@ class SettingsViewModelTest {
         assertEquals("large", vm.soundSize)
         assertEquals("large", api.font)
         assertEquals("large", api.sound)
+    }
+
+    /** 리뷰 #73(재검): PATCH 와 수렴 GET 이 모두 실패(오프라인)해도, 마지막 서버 확인값으로 복구된다. */
+    @Test
+    fun offline_change_reverts_to_last_confirmed_value() = runTest {
+        val api = FlakyFake()
+        val vm = SettingsViewModel(api)
+        vm.load(); advanceUntilIdle()          // confirmed = medium
+        assertEquals("medium", vm.fontSize)
+
+        api.offline = true                      // 네트워크 단절
+        vm.changeFontSize("large"); advanceUntilIdle() // 낙관 large → PATCH 실패 + 수렴 GET 실패
+
+        assertEquals("medium", vm.fontSize)     // 미저장 large 잔류 안 함(마지막 확인값 복구)
+        assertNotNull(vm.saveError)
+        assertFalse(vm.saving)
     }
 
     /** 리뷰 #73-2: 직렬 저장 두 건이 모두 실패해도, 큐가 비면 서버값으로 수렴해 두 필드 모두 복구된다. */

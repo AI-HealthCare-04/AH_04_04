@@ -46,6 +46,12 @@ class SettingsViewModel(
     private val gate = Mutex()
     private var pending = 0
 
+    // 마지막으로 서버가 확인해 준(성공 응답으로 반영된) 값의 스냅샷. 초기값=UI 기본값.
+    // 수렴 GET 마저 실패하면(오프라인) 낙관적 변경을 이 값으로 되돌려 미저장 값이 잔류하지 않게 한다.
+    private var confirmed = Snapshot("medium", "medium", "dog", true)
+
+    private data class Snapshot(val font: String, val sound: String, val pet: String, val music: Boolean)
+
     fun load() {
         viewModelScope.launch { refresh() }
     }
@@ -68,6 +74,16 @@ class SettingsViewModel(
         soundSize = s.soundSize
         petType = normalizePet(s.petType)
         musicEnabled = s.musicEnabled
+        // 서버가 확인해 준 값 → 스냅샷 갱신(수렴 GET 실패 시 되돌릴 기준).
+        confirmed = Snapshot(fontSize, soundSize, petType, musicEnabled)
+    }
+
+    /** 수렴 GET 마저 실패했을 때, 마지막으로 서버가 확인해 준 값으로 화면을 되돌린다(미저장 낙관값 제거). */
+    private fun revertToConfirmed() {
+        fontSize = confirmed.font
+        soundSize = confirmed.sound
+        petType = confirmed.pet
+        musicEnabled = confirmed.music
     }
 
     /** dog/cat 이외(서버 기본 "default" 포함)는 제품 기본 펫 "dog"로 매핑 → 세그먼트가 항상 선택 표시. */
@@ -105,9 +121,11 @@ class SettingsViewModel(
         pending--
         if (pending == 0) {
             // 큐가 비면 서버 상태로 수렴(실패/경쟁/순서 뒤섞임 모든 조합에서 화면=서버). saveError 는 유지.
-            gate.withLock {
-                safeCall { api.getSettings() }.onSuccess { applyResponse(it) }
+            val resynced = gate.withLock {
+                safeCall { api.getSettings() }.onSuccess { applyResponse(it) }.isSuccess
             }
+            // 수렴 GET 마저 실패(오프라인 등) → 마지막 서버 확인값으로 복구해 미저장 낙관값 잔류 방지.
+            if (!resynced) revertToConfirmed()
             saving = false
         }
         return ok
