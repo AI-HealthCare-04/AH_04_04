@@ -38,6 +38,7 @@ async def _seed_template(
     level: ActivityLevel = ActivityLevel.EASY,
     daily_count_limit: int | None = None,
     target_unit: TargetUnit = TargetUnit.COUNT,
+    default_target_value: int = 1,
     display_order: int = 1,
 ) -> int:
     """미션 템플릿 1건을 시드하고 mission_template_id를 반환한다.
@@ -49,7 +50,7 @@ async def _seed_template(
             title=f"{mission_type.value} 미션",
             level=level,
             display_order=display_order,
-            default_target_value=1,
+            default_target_value=default_target_value,
             target_unit=target_unit,
             reward_points=reward_points,
             daily_count_limit=daily_count_limit,
@@ -243,15 +244,71 @@ async def test_walking_completions_sum_daily_total_min(
     first = await _walk(10, 1200)
     assert first["daily_total_min"] == 10
     assert first["daily_total_steps"] == 1200  # 걷기 표시전용 누적 걸음
+    assert first["success"] is True and first["counted_for_daily"] is True  # 목표 1분 달성
 
     second = await _walk(15, 1500)
     assert second["daily_total_min"] == 25  # 같은 날 합산(시간)
     assert second["daily_total_steps"] == 2700  # 같은 날 합산(걸음)
+    # 목표는 이미 첫 세션에서 달성 → success지만 미카운트·미적립(하루 1회, 중복 방지)
+    assert second["success"] is True and second["counted_for_daily"] is False
 
-    # 걷기는 한도 없음 → 2건 모두 카운트
+    # 걷기 하루 목표는 1회 달성 → 카운트·적립 1회만 (누적은 25분이지만 목표 1분은 첫 세션에 이미 달성)
     home = (await db_client.get(f"{API}/home", headers=auth)).json()
-    assert home["today_summary"]["counted_mission_count"] == 2
-    assert home["point_balance"]["current_points"] == 10
+    assert home["today_summary"]["counted_mission_count"] == 1
+    assert home["point_balance"]["current_points"] == 5
+
+
+# -------------------------------------------------------------------------------------
+# 5-b. 걷기 성공은 서버가 '당일 누적 분 >= 난이도 목표'로 판정 (지영 #65 리뷰: 클라 success 무시)
+# -------------------------------------------------------------------------------------
+async def test_walking_success_judged_by_server_against_target(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    auth, _ = await _guest(db_client)
+    template_id = await _seed_template(
+        db_sessionmaker,
+        mission_type=MissionType.WALKING,
+        reward_points=7,
+        target_unit=TargetUnit.MINUTES,
+        default_target_value=30,  # normal 난이도 목표 30분
+    )
+
+    async def _walk(minutes: float) -> dict:
+        start = await db_client.post(
+            f"{API}/mission-logs",
+            json={"mission_template_id": template_id, "mission_type": "walking", "status": "in_progress"},
+            headers=auth,
+        )
+        log_id = start.json()["mission_log_id"]
+        # 클라이언트는 항상 success=true를 보내지만, 서버가 목표로 판정해야 한다.
+        done = await db_client.patch(
+            f"{API}/mission-logs/{log_id}",
+            json={"status": "completed", "success": True, "walking_detail": {"duration_min": minutes}},
+            headers=auth,
+        )
+        assert done.status_code == status.HTTP_200_OK
+        return done.json()
+
+    # 1) 10분 < 30분 목표 → 클라 success=true여도 서버가 실패 판정, 미적립
+    b1 = await _walk(10)
+    assert b1["daily_total_min"] == 10
+    assert b1["success"] is False
+    assert b1["counted_for_daily"] is False
+
+    # 2) +25분 → 누적 35 >= 30 → 이 세션에서 목표 첫 달성 → 성공·1회 적립
+    b2 = await _walk(25)
+    assert b2["daily_total_min"] == 35
+    assert b2["success"] is True
+    assert b2["counted_for_daily"] is True
+
+    # 3) +5분 → 누적 40, 이미 달성 → success지만 미카운트·미적립(중복 방지)
+    b3 = await _walk(5)
+    assert b3["success"] is True
+    assert b3["counted_for_daily"] is False
+
+    home = (await db_client.get(f"{API}/home", headers=auth)).json()
+    assert home["today_summary"]["counted_mission_count"] == 1  # 걷기 목표 1회 달성
+    assert home["point_balance"]["current_points"] == 7  # 1회만 적립
 
 
 # -------------------------------------------------------------------------------------

@@ -148,7 +148,13 @@ async def seed(session_factory: async_sessionmaker[AsyncSession] = AsyncSessionL
                 MissionTemplate.title == "동네 한 바퀴 걷기",
                 MissionTemplate.target_unit == TargetUnit.STEPS,
             )
-            .values(default_target_value=30, target_unit=TargetUnit.MINUTES, level=ActivityLevel.NORMAL)
+            .values(
+                default_target_value=30,
+                target_unit=TargetUnit.MINUTES,
+                level=ActivityLevel.NORMAL,
+                # description도 신규 easy/hard와 일관되게 '하루 N분' 안내로 갱신(정인 #65 리뷰).
+                description="천천히 동네를 걸어요. 하루 30분을 채우면 완료예요. (여러 번 나눠 걸어도 합산돼요)",
+            )
         )
 
         existing_titles = set((await session.scalars(select(MissionTemplate.title))).all())

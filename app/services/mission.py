@@ -272,22 +272,16 @@ class MissionService:
         template = await self.repo.get_template(log.mission_template_id)
         reward_points = template.reward_points if template else 0
 
-        success = bool(data.success)
-        counted_for_daily = success
-
-        # mission_log 완료 처리
+        # 완료 처리 — success/counted/points는 걷기 서버판정을 위해 상세 반영 후 확정한다.
         log.status = MissionStatus.COMPLETED
         log.actual_value = Decimal(str(data.actual_value)) if data.actual_value is not None else None
         log.target_value = Decimal(str(data.target_value)) if data.target_value is not None else None
         log.target_unit = data.target_unit
-        log.success = success
         log.input_method = data.input_method
         log.manual_override = data.manual_override
         log.perceived_difficulty = data.perceived_difficulty
         log.pain_reported = data.pain_reported
         log.dizziness_reported = data.dizziness_reported
-        log.counted_for_daily = counted_for_daily
-        log.earned_points = compute_earned_points(counted_for_daily, reward_points)
 
         daily_total_min: float | None = None
         daily_total_steps: int | None = None
@@ -309,8 +303,16 @@ class MissionService:
             )
             daily_total_min = await self.repo.sum_walking_minutes_today(user.user_id)
             daily_total_steps = await self.repo.sum_walking_steps_today(user.user_id)
+            # 걷기 성공은 서버가 판정: 당일 누적 시간(daily_total_min) >= 난이도 목표(분).
+            #   클라이언트 success는 신뢰하지 않는다(1분만 걷고 success=true 우회 차단).
+            #   포인트·카운트는 하루 1회만: 목표를 '이번 세션에서 처음 넘긴' 로그에만 지급하고,
+            #   이미 목표를 넘어선 뒤의 추가 걷기는 success=true지만 미카운트·미적립(중복 방지).
+            target_min = float(template.default_target_value) if template else 0.0
+            prior_min = daily_total_min - float(wd.duration_min)
+            success = daily_total_min >= target_min
+            counted_for_daily = prior_min < target_min <= daily_total_min
 
-        # 운동 완료: physical_activity_logs 저장
+        # 운동 완료: physical_activity_logs 저장 (성공 판정은 앱이 계산해 전송 — seed 참고)
         elif data.exercise_detail is not None:
             ed = data.exercise_detail
             await self.repo.add_physical_activity_log(
@@ -327,7 +329,20 @@ class MissionService:
                     sync_status=SyncStatus.SYNCED,
                 )
             )
+            success = bool(data.success)
+            counted_for_daily = success
+        else:
+            success = bool(data.success)
+            counted_for_daily = success
 
+        log.success = success
+        log.counted_for_daily = counted_for_daily
+        log.earned_points = compute_earned_points(counted_for_daily, reward_points)
+
+        # daily_summary 집계 쿼리가 이 로그의 counted_for_daily를 보도록 먼저 flush한다.
+        #   (걷기 서버판정 때문에 상세 반영 후 확정하므로, add_physical_activity_log의 flush 시점엔
+        #    아직 미확정이었다. autoflush=False 환경에서도 정확히 집계되게 명시적으로 flush.)
+        await self.session.flush()
         daily_result = await self._refresh_daily_summary(user.user_id)
         await self.session.commit()
         return MissionLogUpdateResponse(
