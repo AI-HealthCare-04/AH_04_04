@@ -4,13 +4,16 @@ import com.aihealthcare.ah0404.network.FaqItem
 import com.aihealthcare.ah0404.network.FaqListResponse
 import com.aihealthcare.ah0404.network.SupportApi
 import com.aihealthcare.ah0404.network.SupportResponse
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.yield
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -66,6 +69,40 @@ class SupportViewModelTest {
         assertEquals("help@aigo.test", vm.email) // 이메일은 정상 반영
         assertTrue(vm.faqsError)                  // FAQ 만 오류
         assertTrue(vm.faqs.isEmpty())
+    }
+
+    /**
+     * 리뷰 #77: 오래된 refresh 가 최신 요청의 loading 을 끄거나 결과를 덮으면 안 된다.
+     * gen1(느린 FAQ)을 gate 로 잡고 그 사이 gen2(빠름) 완료 → gen1 을 풀어도 gen2 결과·loading 유지.
+     */
+    @Test
+    fun stale_refresh_does_not_override_latest() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        var faqCalls = 0
+        val api = object : SupportApi {
+            override suspend fun getSupport() = SupportResponse("e@e")
+            override suspend fun getFaqs(): FaqListResponse {
+                faqCalls++
+                return if (faqCalls == 1) {
+                    gate.await(); FaqListResponse(emptyList()) // gen1: 느리게 빈 목록
+                } else {
+                    FaqListResponse(listOf(faq(1))) // gen2: 즉시 1건
+                }
+            }
+        }
+        val vm = SupportViewModel(api)
+
+        val first = launch { vm.refresh() } // gen1: FAQ gate 대기
+        while (faqCalls < 1) yield()
+
+        vm.refresh() // gen2: 즉시 완료 → faqs=[1], loading=false
+        assertEquals(1, vm.faqs.size)
+        assertFalse(vm.loading)
+
+        gate.complete(Unit); first.join() // gen1 완료(빈 목록) → 최신 아님 → 덮지 않음
+        assertEquals(1, vm.faqs.size)      // gen2 결과 유지
+        assertFalse(vm.faqsError)
+        assertFalse(vm.loading)            // gen1 이 loading 을 다시 건드리지 않음
     }
 
     @Test

@@ -46,6 +46,8 @@ class SupportViewModel(
             val faqsCall = async { safeCall { api.getFaqs() } }
             val supportRes = supportCall.await()
             val faqsRes = faqsCall.await()
+            // 최신 요청이 아니면 결과·완료 상태 모두 갱신하지 않는다(리뷰 #77: 오래된 refresh 가
+            //   진행 중인 최신 요청의 loading 을 꺼서 빈 상태로 보이던 문제 방지). 최신 refresh 가 정리한다.
             if (gen != generation) return@coroutineScope
             // 이메일 실패 시엔 기본값 유지(문의 수단은 항상 노출).
             supportRes
@@ -54,9 +56,9 @@ class SupportViewModel(
             faqsRes
                 .onSuccess { faqs = it.faqs.sortedBy { f -> f.faqId } }
                 .onFailure { faqsError = true; Log.w(TAG, "FAQ 조회 실패: ${it.message}") }
+            loaded = true
+            loading = false
         }
-        loaded = true
-        loading = false
     }
 
     private suspend fun <T> safeCall(block: suspend () -> T): Result<T> =
