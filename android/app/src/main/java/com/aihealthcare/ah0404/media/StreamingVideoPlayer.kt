@@ -61,13 +61,11 @@ fun StreamingVideoPlayer(
         }
     }
 
+    // factory 는 View 생성 시 1회만 실행되므로, 바뀌는 player 는 update 에서 매 재구성마다 반영한다
+    //   (리뷰 #76: url 변경 시 새 ExoPlayer 로 교체되어야 재생 가능한 다른 탭 영상이 정상 재생됨).
     AndroidView(
         modifier = modifier,
-        factory = { ctx ->
-            PlayerView(ctx).apply {
-                this.player = player
-                useController = true
-            }
-        },
+        factory = { ctx -> PlayerView(ctx).apply { useController = true } },
+        update = { it.player = player },
     )
 }
