@@ -4,12 +4,14 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.view.TextureView
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -250,28 +253,35 @@ fun RoutinePlayerScreen(
             }
         }
 
-        // 컨트롤 — 3개를 weight로 나눠 좁은 폭에도 들어가게(특히 "나가기"가 항상 보여야 함).
+        // 컨트롤 — 3개를 weight로 나눠 좁은 폭에도 들어가게. 어르신용으로 크게(높이 72dp·22sp).
+        //   내부 패딩을 줄여(글자 공간 확보) 좁은 화면에서도 "일시정지"가 안 잘리게 한다.
+        val ctrlPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Button(
                 onClick = { paused = !paused },
-                modifier = Modifier.weight(1f).height(60.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = InkColor),
-            ) { Text(if (paused) "재개" else "일시정지", fontSize = 20.sp) }
+                modifier = Modifier.weight(1f).height(72.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = AccentColor),
+                contentPadding = ctrlPadding,
+            ) { Text(if (paused) "재개" else "일시정지", fontSize = 22.sp, maxLines = 1) }
 
             Button(
                 onClick = { if (stepIndex + 1 < routine.steps.size) stepIndex++ else finished = true },
-                modifier = Modifier.weight(1f).height(60.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = InkColor),
-            ) { Text("건너뛰기", fontSize = 20.sp) }
+                modifier = Modifier.weight(1f).height(72.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = AccentColor),
+                contentPadding = ctrlPadding,
+            ) { Text("건너뛰기", fontSize = 22.sp, maxLines = 1) }
 
-            Button(
+            // 나가기 = 2차 강조(아웃라인 녹색): 브랜드 색 통일 + 실수 이탈 방지로 덜 튀게.
+            OutlinedButton(
                 onClick = { showExit = true },
-                modifier = Modifier.weight(1f).height(60.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF757575)),
-            ) { Text("나가기", fontSize = 20.sp) }
+                modifier = Modifier.weight(1f).height(72.dp),
+                border = BorderStroke(2.dp, AccentColor),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentColor),
+                contentPadding = ctrlPadding,
+            ) { Text("나가기", fontSize = 22.sp, maxLines = 1) }
         }
     }
 
@@ -290,9 +300,9 @@ fun RoutinePlayerScreen(
 /** 원형 카운트다운 게이지 + 가운데 남은 초. 어르신이 숫자만으론 놓치므로 게이지 병행. */
 @Composable
 private fun CircularTimer(progress: Float, centerText: String) {
-    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(108.dp)) {
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(124.dp)) {
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val stroke = 14.dp.toPx()
+            val stroke = 16.dp.toPx()
             drawArc(
                 color = Color(0xFFD8D8E0),
                 startAngle = -90f, sweepAngle = 360f, useCenter = false,
@@ -304,7 +314,7 @@ private fun CircularTimer(progress: Float, centerText: String) {
                 style = Stroke(width = stroke, cap = StrokeCap.Round),
             )
         }
-        Text(centerText, fontSize = 40.sp, fontWeight = FontWeight.Bold, color = InkColor)
+        Text(centerText, fontSize = 48.sp, fontWeight = FontWeight.Bold, color = InkColor)
     }
 }
 
