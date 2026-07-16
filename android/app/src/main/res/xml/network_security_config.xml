@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<network-security-config>
-    <!-- 에뮬레이터에서 로컬 백엔드(10.0.2.2)로의 HTTP cleartext 허용.
-         실기기 테스트 시에는 Mac 의 Wi-Fi LAN IP 도메인을 임시로 추가(커밋 금지). -->
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">10.0.2.2</domain>
-    </domain-config>
-</network-security-config>
