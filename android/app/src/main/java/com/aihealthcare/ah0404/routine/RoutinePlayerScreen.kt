@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -66,7 +67,6 @@ import kotlin.math.min
 // 시니어 접근성: 밝은 회색 배경 + 진한 남색 텍스트 고대비
 private val BgColor = Color(0xFFF0F0F5)
 private val InkColor = Color(0xFF1A2340)
-private val AccentColor = Color(0xFF2E7D32)
 private val SafetyColor = Color(0xFFC62828)
 
 /**
@@ -244,7 +244,7 @@ fun RoutinePlayerScreen(
             StepMode.COUNT -> {
                 val count = step.count ?: 0
                 val cur = if (count > 0) min(count, (progress * count).toInt() + 1) else 0
-                Text("$cur / $count", fontSize = 44.sp, fontWeight = FontWeight.Bold, color = AccentColor)
+                Text("$cur / $count", fontSize = 44.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
             }
             StepMode.NONE -> {
                 if (step.type == StepType.INTRO) {
@@ -263,14 +263,14 @@ fun RoutinePlayerScreen(
             Button(
                 onClick = { paused = !paused },
                 modifier = Modifier.weight(1f).height(72.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = AccentColor),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                 contentPadding = ctrlPadding,
             ) { Text(if (paused) "재개" else "일시정지", fontSize = 22.sp, maxLines = 1) }
 
             Button(
                 onClick = { if (stepIndex + 1 < routine.steps.size) stepIndex++ else finished = true },
                 modifier = Modifier.weight(1f).height(72.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = AccentColor),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                 contentPadding = ctrlPadding,
             ) { Text("건너뛰기", fontSize = 22.sp, maxLines = 1) }
 
@@ -278,8 +278,8 @@ fun RoutinePlayerScreen(
             OutlinedButton(
                 onClick = { showExit = true },
                 modifier = Modifier.weight(1f).height(72.dp),
-                border = BorderStroke(2.dp, AccentColor),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentColor),
+                border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
                 contentPadding = ctrlPadding,
             ) { Text("나가기", fontSize = 22.sp, maxLines = 1) }
         }
@@ -300,6 +300,7 @@ fun RoutinePlayerScreen(
 /** 원형 카운트다운 게이지 + 가운데 남은 초. 어르신이 숫자만으론 놓치므로 게이지 병행. */
 @Composable
 private fun CircularTimer(progress: Float, centerText: String) {
+    val accent = MaterialTheme.colorScheme.primary // 브랜드 테마색(DrawScope 밖에서 읽어 arc에 전달)
     Box(contentAlignment = Alignment.Center, modifier = Modifier.size(124.dp)) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val stroke = 16.dp.toPx()
@@ -309,7 +310,7 @@ private fun CircularTimer(progress: Float, centerText: String) {
                 style = Stroke(width = stroke, cap = StrokeCap.Round),
             )
             drawArc(
-                color = AccentColor,
+                color = accent,
                 startAngle = -90f, sweepAngle = 360f * (1f - progress), useCenter = false,
                 style = Stroke(width = stroke, cap = StrokeCap.Round),
             )
