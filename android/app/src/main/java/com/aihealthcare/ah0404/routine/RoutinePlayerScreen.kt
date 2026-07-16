@@ -186,12 +186,13 @@ fun RoutinePlayerScreen(
     ) {
         if (step == null) return@Column
 
-        Text(step.name, fontSize = 34.sp, fontWeight = FontWeight.Bold, color = InkColor, textAlign = TextAlign.Center)
+        // 명세 시니어 사이즈: 동작명 40sp / 안내 28sp / 안전 24sp. (weight 미디어가 공간 흡수)
+        Text(step.name, fontSize = 40.sp, fontWeight = FontWeight.Bold, color = InkColor, textAlign = TextAlign.Center)
         if (step.guide.isNotEmpty()) {
-            Text(step.guide, fontSize = 22.sp, color = InkColor, textAlign = TextAlign.Center)
+            Text(step.guide, fontSize = 28.sp, color = InkColor, textAlign = TextAlign.Center)
         }
         step.safety?.let {
-            Text("⚠ $it", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = SafetyColor, textAlign = TextAlign.Center)
+            Text("⚠ $it", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = SafetyColor, textAlign = TextAlign.Center)
         }
 
         // 미디어 — weight로 남는 공간 차지. 안쪽에서 9:16 비율 유지하며 가용 높이에 맞춤(잘리지 않게).
@@ -224,7 +225,7 @@ fun RoutinePlayerScreen(
                             Text("[이미지: ${step.asset}]", fontSize = 20.sp, color = Color.Gray)
                         }
                     }
-                    else -> Text(step.name, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = InkColor, textAlign = TextAlign.Center)
+                    else -> Text(step.name, fontSize = 34.sp, fontWeight = FontWeight.Bold, color = InkColor, textAlign = TextAlign.Center)
                 }
             }
         }
@@ -240,7 +241,7 @@ fun RoutinePlayerScreen(
             StepMode.COUNT -> {
                 val count = step.count ?: 0
                 val cur = if (count > 0) min(count, (progress * count).toInt() + 1) else 0
-                Text("$cur / $count", fontSize = 40.sp, fontWeight = FontWeight.Bold, color = AccentColor)
+                Text("$cur / $count", fontSize = 44.sp, fontWeight = FontWeight.Bold, color = AccentColor)
             }
             StepMode.NONE -> {
                 if (step.type == StepType.INTRO) {
@@ -289,9 +290,9 @@ fun RoutinePlayerScreen(
 /** 원형 카운트다운 게이지 + 가운데 남은 초. 어르신이 숫자만으론 놓치므로 게이지 병행. */
 @Composable
 private fun CircularTimer(progress: Float, centerText: String) {
-    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(96.dp)) {
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(108.dp)) {
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val stroke = 12.dp.toPx()
+            val stroke = 14.dp.toPx()
             drawArc(
                 color = Color(0xFFD8D8E0),
                 startAngle = -90f, sweepAngle = 360f, useCenter = false,
@@ -303,7 +304,7 @@ private fun CircularTimer(progress: Float, centerText: String) {
                 style = Stroke(width = stroke, cap = StrokeCap.Round),
             )
         }
-        Text(centerText, fontSize = 36.sp, fontWeight = FontWeight.Bold, color = InkColor)
+        Text(centerText, fontSize = 40.sp, fontWeight = FontWeight.Bold, color = InkColor)
     }
 }
 
