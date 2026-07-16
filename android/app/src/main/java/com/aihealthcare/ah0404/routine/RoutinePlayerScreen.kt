@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -51,7 +52,6 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
-import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.delay
 import kotlin.math.ceil
@@ -69,7 +69,6 @@ private val SafetyColor = Color(0xFFC62828)
  *  - 에셋(res/raw 영상·assets/exercise 이미지)이 없으면 텍스트+타이머로 진행(그레이스풀).
  *  - "운동하기"의 몸풀기 탭에서 진입(ExerciseVideosScreen). 스트리밍(#72)과 별개인 번들 루틴.
  */
-@OptIn(UnstableApi::class)
 @Composable
 fun RoutinePlayerScreen(
     routineFile: String = "warmup_common.json",
