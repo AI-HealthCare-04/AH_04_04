@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -180,7 +180,7 @@ fun RoutinePlayerScreen(
     //   헤더(고정) + 미디어(weight: 남는 세로 공간) + 타이머(고정) + 컨트롤(고정, 항상 보임).
     //   고정 9:16이 폭을 채우면 너무 높아 하단 버튼이 화면 밖으로 밀리므로 미디어를 weight로 둔다(리뷰 #78).
     Column(
-        modifier = Modifier.fillMaxSize().background(BgColor).statusBarsPadding().padding(16.dp),
+        modifier = Modifier.fillMaxSize().background(BgColor).systemBarsPadding().padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
