@@ -230,7 +230,7 @@ private fun HomeContent(
         }
 
         // 나의 기록(_13) 진입 — care_stage 추이 + 활동 요약
-        AigoSecondaryButton(text = "운동하기 (영상 따라하기)", onClick = onOpenExercise)
+        AigoSecondaryButton(text = "영상 따라 운동하기", onClick = onOpenExercise)
         AigoSecondaryButton(text = "나의 기록 보기", onClick = onOpenRecords)
 
         // TODO: 백엔드 연결 — 주간 리포트·걸음 목표/비교(계약 GAP: /home 확장 대기)
