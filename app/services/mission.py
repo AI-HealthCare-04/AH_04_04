@@ -55,8 +55,13 @@ class MissionService:
         mission_type: MissionType | None,
         level: ActivityLevel | None,
     ) -> list[MissionResponse]:
-        # 레벨 우선순위: 쿼리로 명시한 값 > 사용자의 현재 레벨 > (없으면 전체)
-        effective_level = level or await self.repo.get_user_current_level(user.user_id)
+        # 레벨 우선순위: 쿼리로 명시한 값 > 사용자의 현재 레벨 > EASY(기본).
+        #   기본 EASY는 홈(dashboard get_home)과 동일 규칙 — 목록·홈 요약의 걷기 노출을 일치시키고,
+        #   프로필 없는 사용자(온보딩 직후 등)에게 걷기 3종이 전부 보이던 문제를 막는다.
+        #   (레벨 필터는 걷기에만 적용 — repo.get_active_templates 참고)
+        effective_level = (
+            level or await self.repo.get_user_current_level(user.user_id) or ActivityLevel.EASY
+        )
         # 안전 필터: 신장/단백질 제한 사용자에게는 고단백(requires_kidney_check) 미션을 숨긴다.
         latest_profile = await self.health_repo.get_latest_profile(user.user_id)
         exclude_kidney_check = self._should_hide_kidney_missions(latest_profile)

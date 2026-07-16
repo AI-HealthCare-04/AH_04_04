@@ -41,12 +41,14 @@ def test_hide_follows_protein_challenge_allowed(allowed: bool, expected_hide: bo
 # ---------------- get_missions 배선 (필터 플래그 전달) ----------------
 
 
-def _service_capturing_filter(*, profile: object | None) -> tuple[MissionService, dict[str, object]]:
+def _service_capturing_filter(
+    *, profile: object | None, current_level: object | None = None
+) -> tuple[MissionService, dict[str, object]]:
     service = MissionService(session=None)  # type: ignore[arg-type]
     captured: dict[str, object] = {}
 
     async def fake_current_level(user_id: object) -> object:
-        return None
+        return current_level
 
     async def fake_latest_profile(user_id: object) -> object:
         return profile
@@ -55,6 +57,7 @@ def _service_capturing_filter(*, profile: object | None) -> tuple[MissionService
         level: object = None, mission_type: object = None, exclude_kidney_check: bool = False
     ) -> list[object]:
         captured["exclude_kidney_check"] = exclude_kidney_check
+        captured["level"] = level
         return []
 
     service.repo.get_user_current_level = fake_current_level  # type: ignore[assignment]
@@ -85,6 +88,36 @@ def test_get_missions_keeps_all_when_no_profile() -> None:
     asyncio.run(service.get_missions(_USER, mission_type=None, level=ActivityLevel.EASY))
 
     assert captured["exclude_kidney_check"] is False
+
+
+# ---------------- get_missions 레벨 결정 (걷기 1개 노출의 전제) ----------------
+#   레벨 우선순위: 쿼리 명시 > 사용자 현재 레벨 > EASY(기본).
+#   기본 EASY는 홈(dashboard)과 동일 규칙 — 프로필 없는 사용자에게 걷기 3종이
+#   전부 보이던(무필터) 문제를 막고 목록·홈 요약을 일치시킨다.
+
+
+def test_get_missions_defaults_to_easy_when_no_level_and_no_profile() -> None:
+    service, captured = _service_capturing_filter(profile=None, current_level=None)
+
+    asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
+
+    assert captured["level"] is ActivityLevel.EASY
+
+
+def test_get_missions_uses_user_current_level_when_not_specified() -> None:
+    service, captured = _service_capturing_filter(profile=None, current_level=ActivityLevel.HARD)
+
+    asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
+
+    assert captured["level"] is ActivityLevel.HARD
+
+
+def test_get_missions_explicit_level_overrides_user_level() -> None:
+    service, captured = _service_capturing_filter(profile=None, current_level=ActivityLevel.HARD)
+
+    asyncio.run(service.get_missions(_USER, mission_type=None, level=ActivityLevel.NORMAL))
+
+    assert captured["level"] is ActivityLevel.NORMAL
 
 
 # ---------------- create_mission_log 안전 차단 (목록 필터 우회 방지) ----------------
