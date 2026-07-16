@@ -1,6 +1,7 @@
 package com.aihealthcare.ah0404.home
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,12 +13,16 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -50,11 +55,13 @@ data class HomeUi(
     val availableExercise: Int,
     val availableWalking: Int,
     val availableGame: Int,
+    val todayWalkingMin: Double = 0.0,  // today_walking.daily_total_min (#69)
+    val todayWalkingSteps: Int = 0,     // today_walking.daily_total_steps (표시 전용)
 ) {
     val availableTotal: Int get() = availableMeal + availableExercise + availableWalking + availableGame
 }
 
-// TODO: 백엔드 연결 — GET /home 응답을 HomeUi 로 매핑(HomeResponse 중첩 스키마 확정 후).
+/** @Preview·테스트용 목업(런타임 화면은 GET /home 실데이터를 씀). */
 fun mockHome() = HomeUi(
     nickname = "홍길동",
     points = 1250,
@@ -67,8 +74,11 @@ fun mockHome() = HomeUi(
     availableExercise = 3,
     availableWalking = 1,
     availableGame = 1,
+    todayWalkingMin = 22.0,
+    todayWalkingSteps = 2350,
 )
 
+/** 홈 호스트 — GET /home 로드 후 콘텐츠 렌더. 진입마다 재조회. */
 @Composable
 fun HomeScreen(
     onGoMissions: () -> Unit,
@@ -76,7 +86,40 @@ fun HomeScreen(
     onOpenRecords: () -> Unit,
     onOpenExercise: () -> Unit,
     modifier: Modifier = Modifier,
-    ui: HomeUi = mockHome(),
+    vm: HomeViewModel = viewModel(),
+) {
+    LaunchedEffect(Unit) { vm.load() }
+    val ui = vm.ui
+    when {
+        ui != null -> HomeContent(ui, onGoMissions, onOpenSettings, onOpenRecords, onOpenExercise, modifier)
+        vm.error -> HomeError(onRetry = vm::load, modifier = modifier)
+        else -> HomeLoading(modifier)
+    }
+}
+
+@Composable
+private fun HomeLoading(modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+}
+
+@Composable
+private fun HomeError(onRetry: () -> Unit, modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxSize().padding(Dimens.ScreenPadding), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("홈 정보를 불러오지 못했어요.", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+            AigoPrimaryButton(text = "다시 시도", onClick = onRetry)
+        }
+    }
+}
+
+@Composable
+private fun HomeContent(
+    ui: HomeUi,
+    onGoMissions: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenRecords: () -> Unit,
+    onOpenExercise: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier
@@ -129,6 +172,16 @@ fun HomeScreen(
             Spacer(Modifier.height(Dimens.Space8))
             Text(
                 "지금까지 미션 ${ui.completedToday}개를 완료했어요.",
+                style = MaterialTheme.typography.bodyLarge,
+            )
+        }
+
+        // 오늘 걷기(#69 today_walking) — 실적(분·걸음). 목표(분)는 GET /missions 원천이라 후속 배선.
+        AigoCard {
+            Text("오늘 걷기", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(Dimens.Space8))
+            Text(
+                "오늘 ${ui.todayWalkingMin.toInt()}분 걸었어요 · %,d보".format(ui.todayWalkingSteps),
                 style = MaterialTheme.typography.bodyLarge,
             )
         }

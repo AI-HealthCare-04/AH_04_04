@@ -4,7 +4,6 @@ import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.JsonElement
 
 /**
  * ============================================================================
@@ -186,16 +185,7 @@ data class RiskPredictionResponse(
 )
 
 // ── 8) 홈 (온보딩 완료 판정: latest_prediction 노출 확인) ─────────────────────
-// 중첩 스키마는 홈 UI 롤에서 확정 → 여기선 최상위 키만 느슨하게 매핑(배선 검증용).
-@Serializable
-data class HomeResponse(
-    val user: JsonElement? = null,
-    @SerialName("point_balance") val pointBalance: JsonElement? = null,
-    @SerialName("activity_profile") val activityProfile: ActivityProfile? = null,
-    @SerialName("latest_prediction") val latestPrediction: JsonElement? = null,
-    @SerialName("today_summary") val todaySummary: JsonElement? = null,
-    @SerialName("available_mission_summary") val availableMissionSummary: JsonElement? = null,
-)
+// 타입 확정 HomeResponse 는 HomeModels.kt 로 이관(홈 UI 롤에서 확정). getHome() 은 그것을 공유한다.
 
 // ── enum 허용값(요청 문자열은 이것만) — BACKEND_ONBOARDING_CONTRACT.md §3 ──────
 object OnbEnums {
