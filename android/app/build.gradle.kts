@@ -41,6 +41,10 @@ android {
         // 유닛테스트에서 android.util.Log 등 프레임워크 스텁이 예외 대신 기본값을 반환하도록.
         unitTests.isReturnDefaultValues = true
     }
+    lint {
+        // CI 도입 시점의 기존 lint 부채는 baseline으로 고정하고, 이후 새 문제만 실패시킨다.
+        baseline = file("lint-baseline.xml")
+    }
 }
 
 dependencies {
