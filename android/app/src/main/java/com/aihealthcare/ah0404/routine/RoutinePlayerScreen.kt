@@ -1,0 +1,319 @@
+package com.aihealthcare.ah0404.routine
+
+import android.content.Context
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
+import kotlinx.coroutines.delay
+import kotlin.math.ceil
+import kotlin.math.min
+
+// 시니어 접근성: 밝은 회색 배경 + 진한 남색 텍스트 고대비
+private val BgColor = Color(0xFFF0F0F5)
+private val InkColor = Color(0xFF1A2340)
+private val AccentColor = Color(0xFF2E7D32)
+private val SafetyColor = Color(0xFFC62828)
+
+/**
+ * 운동 루틴 플레이어 — 화면 1개 + JSON 루틴으로 data-driven 재생.
+ *  - BGM/클립을 별도 ExoPlayer로 분리(단계 전환 시 음악 리셋 방지).
+ *  - 에셋(res/raw 영상·assets/exercise 이미지)이 없으면 텍스트+타이머로 진행(그레이스풀).
+ *  - "운동하기"의 몸풀기 탭에서 진입(ExerciseVideosScreen). 스트리밍(#72)과 별개인 번들 루틴.
+ */
+@OptIn(UnstableApi::class)
+@Composable
+fun RoutinePlayerScreen(
+    routineFile: String = "warmup_common.json",
+    onExit: () -> Unit = {},
+    onComplete: () -> Unit = {},
+) {
+    val context = LocalContext.current
+    val routine = remember { RoutineLoader.load(context, routineFile) }
+
+    // BGM: 루틴 전체(251초) 동안 끊김 없이 1회 재생. 251초 전용 트랙이라 루프하지 않는다.
+    val bgmPlayer = remember {
+        ExoPlayer.Builder(context).build().apply {
+            rawUri(context, routine.bgm)?.let { uri ->
+                setMediaItem(MediaItem.fromUri(uri))
+                repeatMode = Player.REPEAT_MODE_OFF
+                volume = 0.4f
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(C.USAGE_MEDIA)
+                        .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                        .build(),
+                    /* handleAudioFocus = */ true, // 전화 오면 자동 일시정지
+                )
+                prepare()
+            }
+        }
+    }
+
+    // 동작 클립: 단계마다 교체. 1~3.3초 루프를 sec 동안 반복(REPEAT_MODE_ALL). 오디오 이중 방어(volume 0).
+    val clipPlayer = remember {
+        ExoPlayer.Builder(context).build().apply {
+            repeatMode = Player.REPEAT_MODE_ALL
+            volume = 0f
+        }
+    }
+
+    var stepIndex by remember { mutableStateOf(0) }
+    var paused by remember { mutableStateOf(false) }
+    var elapsedMs by remember { mutableStateOf(0L) }
+    var finished by remember { mutableStateOf(false) }
+    var showExit by remember { mutableStateOf(false) }
+
+    val step = routine.steps.getOrNull(stepIndex)
+
+    // BGM은 루틴 시작과 동시에 1회 play.
+    LaunchedEffect(Unit) { bgmPlayer.playWhenReady = true }
+
+    // 일시정지/재개 — 타이머·클립·BGM 동시 제어(동기 유지).
+    LaunchedEffect(paused) {
+        if (paused) {
+            bgmPlayer.pause(); clipPlayer.pause()
+        } else if (!finished) {
+            bgmPlayer.play()
+            if (routine.steps.getOrNull(stepIndex)?.type == StepType.VIDEO) clipPlayer.play()
+        }
+    }
+
+    // 단계 진입 시 클립 세팅(영상일 때만). 이미지/텍스트 단계는 클립 정지.
+    LaunchedEffect(stepIndex) {
+        val st = routine.steps.getOrNull(stepIndex)
+        if (st?.type == StepType.VIDEO && st.asset != null) {
+            rawUri(context, st.asset)?.let { uri ->
+                clipPlayer.setMediaItem(MediaItem.fromUri(uri))
+                clipPlayer.prepare()
+                clipPlayer.playWhenReady = !paused
+            }
+        } else {
+            clipPlayer.stop()
+        }
+    }
+
+    // 단계 타이머: sec 동안 진행 후 자동으로 다음 step. 일시정지 중엔 시간 안 흐름.
+    LaunchedEffect(stepIndex) {
+        elapsedMs = 0L
+        val st = routine.steps.getOrNull(stepIndex) ?: run { finished = true; return@LaunchedEffect }
+        val totalMs = st.sec * 1000L
+        while (elapsedMs < totalMs) {
+            delay(50)
+            if (!paused) elapsedMs += 50
+        }
+        if (stepIndex + 1 < routine.steps.size) stepIndex++ else finished = true
+    }
+
+    // 생명주기: onPause 시 일시정지. onDispose 시 두 플레이어 release(누수 방지).
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE) paused = true
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            bgmPlayer.release()
+            clipPlayer.release()
+        }
+    }
+
+    LaunchedEffect(finished) {
+        if (finished) {
+            bgmPlayer.pause(); clipPlayer.stop()
+            onComplete()
+        }
+    }
+
+    // ---------------- UI ----------------
+    Column(
+        modifier = Modifier.fillMaxSize().background(BgColor).statusBarsPadding().padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (step == null) return@Column
+
+        Text(step.name, fontSize = 40.sp, fontWeight = FontWeight.Bold, color = InkColor)
+        if (step.guide.isNotEmpty()) {
+            Text(step.guide, fontSize = 28.sp, color = InkColor)
+        }
+        step.safety?.let {
+            Text("⚠ $it", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = SafetyColor)
+        }
+
+        // 9:16 고정 캔버스 — centerInside(잘리지 않게). 영상/이미지/텍스트 단계 분기.
+        Box(
+            modifier = Modifier.fillMaxWidth().aspectRatio(9f / 16f).background(Color.White),
+            contentAlignment = Alignment.Center,
+        ) {
+            val mirror = if (step.mirror) -1f else 1f
+            when (step.type) {
+                StepType.VIDEO -> AndroidView(
+                    factory = {
+                        PlayerView(it).apply {
+                            useController = false
+                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        }
+                    },
+                    update = { it.player = clipPlayer },   // player는 update에서(재구성마다 반영)
+                    modifier = Modifier.fillMaxSize().graphicsLayer(scaleX = mirror),
+                )
+                StepType.IMAGE -> {
+                    val bmp = rememberAssetImage(context, step.asset)
+                    if (bmp != null) {
+                        Image(
+                            bitmap = bmp,
+                            contentDescription = step.name,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize().graphicsLayer(scaleX = mirror),
+                        )
+                    } else {
+                        Text("[이미지: ${step.asset}]", fontSize = 22.sp, color = Color.Gray)
+                    }
+                }
+                else -> Text(step.name, fontSize = 34.sp, fontWeight = FontWeight.Bold, color = InkColor)
+            }
+        }
+
+        // 타이머(원형 게이지) 또는 카운트(횟수)
+        val totalMs = step.sec * 1000f
+        val progress = (elapsedMs / totalMs).coerceIn(0f, 1f)
+        when (step.mode) {
+            StepMode.TIMER -> {
+                val remainSec = ceil((step.sec * 1000L - elapsedMs) / 1000.0).toInt().coerceAtLeast(0)
+                CircularTimer(progress = progress, centerText = "$remainSec")
+            }
+            StepMode.COUNT -> {
+                val count = step.count ?: 0
+                val cur = if (count > 0) min(count, (progress * count).toInt() + 1) else 0
+                Text("$cur / $count", fontSize = 48.sp, fontWeight = FontWeight.Bold, color = AccentColor)
+            }
+            StepMode.NONE -> {
+                if (step.type == StepType.INTRO) {
+                    Text("♪ Music by Suno AI", fontSize = 16.sp, color = Color(0xFFAAAAAA))
+                }
+            }
+        }
+
+        // 컨트롤 — 최소 48dp 이상 큰 버튼
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Button(
+                onClick = { paused = !paused },
+                modifier = Modifier.height(64.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = InkColor),
+            ) { Text(if (paused) "재개" else "일시정지", fontSize = 24.sp) }
+
+            Button(
+                onClick = { if (stepIndex + 1 < routine.steps.size) stepIndex++ else finished = true },
+                modifier = Modifier.height(64.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = InkColor),
+            ) { Text("건너뛰기", fontSize = 24.sp) }
+
+            Button(
+                onClick = { showExit = true },
+                modifier = Modifier.height(64.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF757575)),
+            ) { Text("나가기", fontSize = 24.sp) }
+        }
+    }
+
+    // 나가기 — 실수 이탈 방지 확인 다이얼로그
+    if (showExit) {
+        AlertDialog(
+            onDismissRequest = { showExit = false },
+            confirmButton = { TextButton(onClick = { showExit = false; onExit() }) { Text("나가기", fontSize = 22.sp) } },
+            dismissButton = { TextButton(onClick = { showExit = false }) { Text("계속하기", fontSize = 22.sp) } },
+            title = { Text("운동을 그만할까요?", fontSize = 26.sp, fontWeight = FontWeight.Bold) },
+            text = { Text("지금 나가면 진행 상황이 저장되지 않아요.", fontSize = 22.sp) },
+        )
+    }
+}
+
+/** 원형 카운트다운 게이지 + 가운데 남은 초. 어르신이 숫자만으론 놓치므로 게이지 병행. */
+@Composable
+private fun CircularTimer(progress: Float, centerText: String) {
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(120.dp)) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val stroke = 14.dp.toPx()
+            drawArc(
+                color = Color(0xFFD8D8E0),
+                startAngle = -90f, sweepAngle = 360f, useCenter = false,
+                style = Stroke(width = stroke, cap = StrokeCap.Round),
+            )
+            drawArc(
+                color = AccentColor,
+                startAngle = -90f, sweepAngle = 360f * (1f - progress), useCenter = false,
+                style = Stroke(width = stroke, cap = StrokeCap.Round),
+            )
+        }
+        Text(centerText, fontSize = 44.sp, fontWeight = FontWeight.Bold, color = InkColor)
+    }
+}
+
+/** res/raw 리소스를 이름으로 찾아 android.resource:// URI 문자열로(없으면 null). 정인 펫 뷰와 동일 방식. */
+private fun rawUri(context: Context, name: String): String? {
+    val resId = context.resources.getIdentifier(name, "raw", context.packageName)
+    return if (resId != 0) "android.resource://${context.packageName}/$resId" else null
+}
+
+/** assets/exercise/{name}.jpg 이미지를 로드(없으면 null → 플레이스홀더 표시). */
+@Composable
+private fun rememberAssetImage(context: Context, name: String?): ImageBitmap? =
+    remember(name) {
+        if (name == null) return@remember null
+        runCatching {
+            context.assets.open("exercise/$name.jpg").use { BitmapFactory.decodeStream(it) }.asImageBitmap()
+        }.getOrNull()
+    }

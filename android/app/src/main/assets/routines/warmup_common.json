@@ -1,0 +1,67 @@
+{
+  "id": "warmup_common",
+  "title": "몸풀기 운동",
+  "subtitle": "시작 전 가볍게",
+  "bgm": "meditation_warmup",
+  "totalSec": 251,
+  "steps": [
+    { "type": "intro", "sec": 10, "name": "몸풀기 운동", "guide": "편안하게 시작해볼까요" },
+
+    { "type": "video", "asset": "march_loop", "sec": 30, "mode": "timer",
+      "name": "제자리 걷기", "guide": "팔을 크게 흔들며 무릎을 번갈아 들어요" },
+
+    { "type": "video", "asset": "arm_swing_loop", "sec": 20, "mode": "count", "count": 10,
+      "name": "팔 앞뒤 흔들기", "guide": "두 팔을 앞뒤로 시원하게 흔들어요" },
+
+    { "type": "image", "asset": "neck_5", "sec": 5, "mode": "timer",
+      "name": "목 늘리기", "guide": "고개를 천천히 앞으로 숙여요" },
+    { "type": "image", "asset": "neck_6", "sec": 5, "mode": "timer",
+      "name": "목 늘리기", "guide": "고개를 천천히 뒤로 젖혀요" },
+    { "type": "image", "asset": "neck_3", "sec": 5, "mode": "timer",
+      "name": "목 늘리기", "guide": "고개를 옆으로 기울여요" },
+    { "type": "image", "asset": "neck_4", "sec": 5, "mode": "timer",
+      "name": "목 늘리기", "guide": "반대쪽으로 기울여요" },
+    { "type": "image", "asset": "neck_1", "sec": 5, "mode": "timer",
+      "name": "목 늘리기", "guide": "대각선 아래를 바라봐요" },
+    { "type": "image", "asset": "neck_2", "sec": 5, "mode": "timer",
+      "name": "목 늘리기", "guide": "반대쪽 대각선 아래를 바라봐요" },
+
+    { "type": "image", "asset": "shoulder_1", "sec": 10, "mode": "timer",
+      "name": "어깨 스트레칭", "guide": "팔을 가슴 앞으로 당겨 어깨를 늘려요" },
+    { "type": "image", "asset": "shoulder_2", "sec": 10, "mode": "timer",
+      "name": "어깨 스트레칭", "guide": "반대쪽 어깨도 늘려요" },
+
+    { "type": "image", "asset": "side_bend_1", "sec": 10, "mode": "timer",
+      "name": "옆구리 스트레칭", "guide": "팔을 머리 위로 올려 옆구리를 늘려요" },
+    { "type": "image", "asset": "side_bend_2", "sec": 10, "mode": "timer",
+      "name": "옆구리 스트레칭", "guide": "반대쪽 옆구리도 늘려요" },
+
+    { "type": "video", "asset": "torso_twist_loop", "sec": 20, "mode": "count", "count": 6,
+      "name": "몸통 회전", "guide": "발은 고정하고 상체만 좌우로 돌려요" },
+
+    { "type": "notice", "sec": 3, "name": "의자에 앉아주세요",
+      "guide": "이제 앉아서 하는 운동이에요" },
+
+    { "type": "video", "asset": "ankle_rotate_loop", "sec": 9, "mode": "count", "count": 8,
+      "name": "발목 돌리기", "guide": "발목을 천천히 돌려요" },
+    { "type": "video", "asset": "ankle_rotate_loop", "sec": 9, "mode": "count", "count": 8,
+      "mirror": true,
+      "name": "발목 돌리기 (반대 발)", "guide": "반대쪽 발목도 돌려요" },
+    { "type": "image", "asset": "ankle_pull_1", "sec": 21, "mode": "count", "count": 8,
+      "name": "발가락 당기기", "guide": "발가락을 잡고 위로 당겨요" },
+    { "type": "image", "asset": "ankle_pull_2", "sec": 21, "mode": "count", "count": 8,
+      "name": "발가락 당기기 (반대 발)", "guide": "반대쪽 발가락도 당겨요" },
+
+    { "type": "notice", "sec": 3, "name": "천천히 일어나주세요",
+      "guide": "의자를 잡고 천천히 일어서세요", "safety": "의자를 꼭 잡으세요" },
+
+    { "type": "image", "asset": "calf_1", "sec": 15, "mode": "timer",
+      "name": "종아리 스트레칭", "guide": "의자를 잡고 뒷발 뒤꿈치를 바닥에 붙여요",
+      "safety": "의자를 꼭 잡으세요" },
+    { "type": "image", "asset": "calf_2", "sec": 15, "mode": "timer",
+      "name": "종아리 스트레칭", "guide": "반대쪽 종아리도 늘려요",
+      "safety": "의자를 꼭 잡으세요" },
+
+    { "type": "outro", "sec": 5, "name": "수고하셨어요", "guide": "잘하셨습니다!" }
+  ]
+}
