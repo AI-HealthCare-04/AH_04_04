@@ -41,6 +41,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -174,50 +175,55 @@ fun RoutinePlayerScreen(
     }
 
     // ---------------- UI ----------------
+    //   헤더(고정) + 미디어(weight: 남는 세로 공간) + 타이머(고정) + 컨트롤(고정, 항상 보임).
+    //   고정 9:16이 폭을 채우면 너무 높아 하단 버튼이 화면 밖으로 밀리므로 미디어를 weight로 둔다(리뷰 #78).
     Column(
-        modifier = Modifier.fillMaxSize().background(BgColor).statusBarsPadding().padding(20.dp),
+        modifier = Modifier.fillMaxSize().background(BgColor).statusBarsPadding().padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (step == null) return@Column
 
-        Text(step.name, fontSize = 40.sp, fontWeight = FontWeight.Bold, color = InkColor)
+        Text(step.name, fontSize = 34.sp, fontWeight = FontWeight.Bold, color = InkColor, textAlign = TextAlign.Center)
         if (step.guide.isNotEmpty()) {
-            Text(step.guide, fontSize = 28.sp, color = InkColor)
+            Text(step.guide, fontSize = 22.sp, color = InkColor, textAlign = TextAlign.Center)
         }
         step.safety?.let {
-            Text("⚠ $it", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = SafetyColor)
+            Text("⚠ $it", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = SafetyColor, textAlign = TextAlign.Center)
         }
 
-        // 9:16 고정 캔버스 — centerInside(잘리지 않게). 영상/이미지/텍스트 단계 분기.
+        // 미디어 — weight로 남는 공간 차지. 안쪽에서 9:16 비율 유지하며 가용 높이에 맞춤(잘리지 않게).
         Box(
-            modifier = Modifier.fillMaxWidth().aspectRatio(9f / 16f).background(Color.White),
+            modifier = Modifier.fillMaxWidth().weight(1f),
             contentAlignment = Alignment.Center,
         ) {
             val mirror = if (step.mirror) -1f else 1f
-            when (step.type) {
-                StepType.VIDEO -> AndroidView(
-                    // PlayerView(SurfaceView)는 scaleX 변환이 안 먹어 거울상이 안 된다.
-                    //   → TextureView에 붙이면 scaleX = -1f 로 좌우 반전이 실제 반영된다(mirror).
-                    //   영상이 9:16이고 캔버스도 9:16이라 fill 해도 왜곡 없음.
-                    factory = { ctx -> TextureView(ctx).also { clipPlayer.setVideoTextureView(it) } },
-                    update = { it.scaleX = mirror },
-                    modifier = Modifier.fillMaxSize(),
-                )
-                StepType.IMAGE -> {
-                    val bmp = rememberAssetImage(context, step.asset)
-                    if (bmp != null) {
-                        Image(
-                            bitmap = bmp,
-                            contentDescription = step.name,
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier.fillMaxSize().graphicsLayer(scaleX = mirror),
-                        )
-                    } else {
-                        Text("[이미지: ${step.asset}]", fontSize = 22.sp, color = Color.Gray)
+            Box(
+                modifier = Modifier.fillMaxHeight().aspectRatio(9f / 16f).background(Color.White),
+                contentAlignment = Alignment.Center,
+            ) {
+                when (step.type) {
+                    StepType.VIDEO -> AndroidView(
+                        // PlayerView(SurfaceView)는 scaleX가 안 먹어 거울상이 안 됨 → TextureView로 반전(mirror).
+                        factory = { ctx -> TextureView(ctx).also { clipPlayer.setVideoTextureView(it) } },
+                        update = { it.scaleX = mirror },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    StepType.IMAGE -> {
+                        val bmp = rememberAssetImage(context, step.asset)
+                        if (bmp != null) {
+                            Image(
+                                bitmap = bmp,
+                                contentDescription = step.name,
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.fillMaxSize().graphicsLayer(scaleX = mirror),
+                            )
+                        } else {
+                            Text("[이미지: ${step.asset}]", fontSize = 20.sp, color = Color.Gray)
+                        }
                     }
+                    else -> Text(step.name, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = InkColor, textAlign = TextAlign.Center)
                 }
-                else -> Text(step.name, fontSize = 34.sp, fontWeight = FontWeight.Bold, color = InkColor)
             }
         }
 
@@ -232,7 +238,7 @@ fun RoutinePlayerScreen(
             StepMode.COUNT -> {
                 val count = step.count ?: 0
                 val cur = if (count > 0) min(count, (progress * count).toInt() + 1) else 0
-                Text("$cur / $count", fontSize = 48.sp, fontWeight = FontWeight.Bold, color = AccentColor)
+                Text("$cur / $count", fontSize = 40.sp, fontWeight = FontWeight.Bold, color = AccentColor)
             }
             StepMode.NONE -> {
                 if (step.type == StepType.INTRO) {
@@ -241,28 +247,28 @@ fun RoutinePlayerScreen(
             }
         }
 
-        // 컨트롤 — 최소 48dp 이상 큰 버튼
+        // 컨트롤 — 3개를 weight로 나눠 좁은 폭에도 들어가게(특히 "나가기"가 항상 보여야 함).
         Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Button(
                 onClick = { paused = !paused },
-                modifier = Modifier.height(64.dp),
+                modifier = Modifier.weight(1f).height(60.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = InkColor),
-            ) { Text(if (paused) "재개" else "일시정지", fontSize = 24.sp) }
+            ) { Text(if (paused) "재개" else "일시정지", fontSize = 20.sp) }
 
             Button(
                 onClick = { if (stepIndex + 1 < routine.steps.size) stepIndex++ else finished = true },
-                modifier = Modifier.height(64.dp),
+                modifier = Modifier.weight(1f).height(60.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = InkColor),
-            ) { Text("건너뛰기", fontSize = 24.sp) }
+            ) { Text("건너뛰기", fontSize = 20.sp) }
 
             Button(
                 onClick = { showExit = true },
-                modifier = Modifier.height(64.dp),
+                modifier = Modifier.weight(1f).height(60.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF757575)),
-            ) { Text("나가기", fontSize = 24.sp) }
+            ) { Text("나가기", fontSize = 20.sp) }
         }
     }
 
@@ -281,9 +287,9 @@ fun RoutinePlayerScreen(
 /** 원형 카운트다운 게이지 + 가운데 남은 초. 어르신이 숫자만으론 놓치므로 게이지 병행. */
 @Composable
 private fun CircularTimer(progress: Float, centerText: String) {
-    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(120.dp)) {
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(96.dp)) {
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val stroke = 14.dp.toPx()
+            val stroke = 12.dp.toPx()
             drawArc(
                 color = Color(0xFFD8D8E0),
                 startAngle = -90f, sweepAngle = 360f, useCenter = false,
@@ -295,7 +301,7 @@ private fun CircularTimer(progress: Float, centerText: String) {
                 style = Stroke(width = stroke, cap = StrokeCap.Round),
             )
         }
-        Text(centerText, fontSize = 44.sp, fontWeight = FontWeight.Bold, color = InkColor)
+        Text(centerText, fontSize = 36.sp, fontWeight = FontWeight.Bold, color = InkColor)
     }
 }
 

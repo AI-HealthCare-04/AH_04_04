@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -68,11 +67,16 @@ fun ExerciseVideosScreen(
     ) {
         TopBar(title = "운동하기", onBack = onBack)
 
-        when {
-            vm.loading && vm.videos.isEmpty() -> CenterLoading()
-            // 백엔드 목록이 비었거나 실패해도(오프라인/준비중) 번들 몸풀기는 항상 제공한다.
-            vm.videos.isEmpty() -> WarmupFallback(onStart = { showRoutine = true }, retry = if (vm.error) vm::load else null)
-            else -> StageTabs(vm.videos, onStartWarmup = { showRoutine = true })
+        // 번들 몸풀기는 네트워크와 무관하게 '즉시' 시작 가능해야 한다(오프라인/느린망 포함).
+        //   서버 목록이 오면 탭으로, 아직이면(로딩/빈/에러) 폴백에서 몸풀기 버튼을 바로 보여준다.
+        if (vm.videos.isNotEmpty()) {
+            StageTabs(vm.videos, onStartWarmup = { showRoutine = true })
+        } else {
+            WarmupFallback(
+                onStart = { showRoutine = true },
+                loading = vm.loading,
+                retry = if (vm.error) vm::load else null,
+            )
         }
     }
 }
@@ -139,14 +143,12 @@ private fun VideoArea(item: ExerciseVideoItem, onStartWarmup: () -> Unit) {
     }
 }
 
+/**
+ * 백엔드 목록이 아직 없어도(로딩/오프라인/준비중) 번들 몸풀기는 '즉시' 시작할 수 있게 하는 폴백.
+ * 서버 로딩은 몸풀기 버튼을 막지 않고 "다른 운동 불러오는 중"으로만 별도 표시한다.
+ */
 @Composable
-private fun CenterLoading() {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-}
-
-/** 백엔드 목록이 비어도(오프라인/준비중) 번들 몸풀기 루틴은 항상 시작할 수 있게 하는 폴백. */
-@Composable
-private fun WarmupFallback(onStart: () -> Unit, retry: (() -> Unit)?) {
+private fun WarmupFallback(onStart: () -> Unit, loading: Boolean, retry: (() -> Unit)?) {
     Box(Modifier.fillMaxSize().padding(Dimens.ScreenPadding), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text("🤸", style = MaterialTheme.typography.headlineLarge)
@@ -156,7 +158,14 @@ private fun WarmupFallback(onStart: () -> Unit, retry: (() -> Unit)?) {
                 fontWeight = FontWeight.Medium,
             )
             Button(onClick = onStart) { Text("몸풀기 운동 시작하기") }
-            if (retry != null) TextButton(onClick = retry) { Text("다른 운동 다시 불러오기") }
+            when {
+                loading -> Text(
+                    "다른 운동을 불러오는 중…",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                retry != null -> TextButton(onClick = retry) { Text("다른 운동 다시 불러오기") }
+            }
         }
     }
 }
