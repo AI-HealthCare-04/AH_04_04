@@ -185,17 +185,17 @@ fun RoutinePlayerScreen(
     Column(
         modifier = Modifier.fillMaxSize().background(BgColor).systemBarsPadding().padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         if (step == null) return@Column
 
-        // 명세 시니어 사이즈: 동작명 40sp / 안내 28sp / 안전 24sp. (weight 미디어가 공간 흡수)
-        Text(step.name, fontSize = 40.sp, fontWeight = FontWeight.Bold, color = InkColor, textAlign = TextAlign.Center)
+        // 영상이 주인공 → 헤더·타이머는 절제(동작명 30sp/안내 20sp/타이머 100dp)해 weight 미디어에 세로를 몰아줌.
+        Text(step.name, fontSize = 30.sp, lineHeight = 38.sp, fontWeight = FontWeight.Bold, color = InkColor, textAlign = TextAlign.Center)
         if (step.guide.isNotEmpty()) {
-            Text(step.guide, fontSize = 28.sp, color = InkColor, textAlign = TextAlign.Center)
+            Text(step.guide, fontSize = 20.sp, lineHeight = 28.sp, color = InkColor, textAlign = TextAlign.Center, maxLines = 2)
         }
         step.safety?.let {
-            Text("⚠ $it", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = SafetyColor, textAlign = TextAlign.Center)
+            Text("⚠ $it", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = SafetyColor, textAlign = TextAlign.Center)
         }
 
         // 미디어 — weight로 남는 공간 차지. 안쪽에서 9:16 비율 유지하며 가용 높이에 맞춤(잘리지 않게).
@@ -228,7 +228,7 @@ fun RoutinePlayerScreen(
                             Text("[이미지: ${step.asset}]", fontSize = 20.sp, color = Color.Gray)
                         }
                     }
-                    else -> Text(step.name, fontSize = 34.sp, fontWeight = FontWeight.Bold, color = InkColor, textAlign = TextAlign.Center)
+                    else -> Text(step.name, fontSize = 34.sp, lineHeight = 42.sp, fontWeight = FontWeight.Bold, color = InkColor, textAlign = TextAlign.Center)
                 }
             }
         }
@@ -244,7 +244,7 @@ fun RoutinePlayerScreen(
             StepMode.COUNT -> {
                 val count = step.count ?: 0
                 val cur = if (count > 0) min(count, (progress * count).toInt() + 1) else 0
-                Text("$cur / $count", fontSize = 44.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                Text("$cur / $count", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
             }
             StepMode.NONE -> {
                 if (step.type == StepType.INTRO) {
@@ -254,8 +254,9 @@ fun RoutinePlayerScreen(
         }
 
         // 컨트롤 — 3개를 weight로 나눠 좁은 폭에도 들어가게. 어르신용으로 크게(높이 72dp·22sp).
-        //   내부 패딩을 줄여(글자 공간 확보) 좁은 화면에서도 "일시정지"가 안 잘리게 한다.
-        val ctrlPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp)
+        //   레이블을 2~3자(정지/다음/나가기)로 줄이고 내부 패딩·글자(20sp)도 축소 →
+        //   320dp + 큰 글꼴 배율에서도 안 잘리게(지영 리뷰: 가용 ~82dp > 3자 필요폭).
+        val ctrlPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -265,14 +266,14 @@ fun RoutinePlayerScreen(
                 modifier = Modifier.weight(1f).height(72.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                 contentPadding = ctrlPadding,
-            ) { Text(if (paused) "재개" else "일시정지", fontSize = 22.sp, maxLines = 1) }
+            ) { Text(if (paused) "재개" else "정지", fontSize = 20.sp, maxLines = 1) }
 
             Button(
                 onClick = { if (stepIndex + 1 < routine.steps.size) stepIndex++ else finished = true },
                 modifier = Modifier.weight(1f).height(72.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                 contentPadding = ctrlPadding,
-            ) { Text("건너뛰기", fontSize = 22.sp, maxLines = 1) }
+            ) { Text("다음", fontSize = 20.sp, maxLines = 1) }
 
             // 나가기 = 2차 강조(아웃라인 녹색): 브랜드 색 통일 + 실수 이탈 방지로 덜 튀게.
             OutlinedButton(
@@ -281,7 +282,7 @@ fun RoutinePlayerScreen(
                 border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
                 contentPadding = ctrlPadding,
-            ) { Text("나가기", fontSize = 22.sp, maxLines = 1) }
+            ) { Text("나가기", fontSize = 20.sp, maxLines = 1) }
         }
     }
 
@@ -301,9 +302,9 @@ fun RoutinePlayerScreen(
 @Composable
 private fun CircularTimer(progress: Float, centerText: String) {
     val accent = MaterialTheme.colorScheme.primary // 브랜드 테마색(DrawScope 밖에서 읽어 arc에 전달)
-    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(124.dp)) {
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(100.dp)) {
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val stroke = 16.dp.toPx()
+            val stroke = 12.dp.toPx()
             drawArc(
                 color = Color(0xFFD8D8E0),
                 startAngle = -90f, sweepAngle = 360f, useCenter = false,
@@ -315,7 +316,7 @@ private fun CircularTimer(progress: Float, centerText: String) {
                 style = Stroke(width = stroke, cap = StrokeCap.Round),
             )
         }
-        Text(centerText, fontSize = 48.sp, fontWeight = FontWeight.Bold, color = InkColor)
+        Text(centerText, fontSize = 36.sp, fontWeight = FontWeight.Bold, color = InkColor)
     }
 }
 
