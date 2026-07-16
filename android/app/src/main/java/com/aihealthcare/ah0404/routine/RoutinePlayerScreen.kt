@@ -1,5 +1,6 @@
 package com.aihealthcare.ah0404.routine
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.view.TextureView
@@ -27,6 +28,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -105,9 +108,9 @@ fun RoutinePlayerScreen(
         }
     }
 
-    var stepIndex by remember { mutableStateOf(0) }
+    var stepIndex by remember { mutableIntStateOf(0) }
     var paused by remember { mutableStateOf(false) }
-    var elapsedMs by remember { mutableStateOf(0L) }
+    var elapsedMs by remember { mutableLongStateOf(0L) }
     var finished by remember { mutableStateOf(false) }
     var showExit by remember { mutableStateOf(false) }
 
@@ -305,6 +308,8 @@ private fun CircularTimer(progress: Float, centerText: String) {
 }
 
 /** res/raw 리소스를 이름으로 찾아 android.resource:// URI 문자열로(없으면 null). 정인 펫 뷰와 동일 방식. */
+//   JSON 루틴의 동적 자산 이름으로 조회해야 해서 getIdentifier가 맞는 방법(의도적 — lint 억제).
+@SuppressLint("DiscouragedApi")
 private fun rawUri(context: Context, name: String): String? {
     val resId = context.resources.getIdentifier(name, "raw", context.packageName)
     return if (resId != 0) "android.resource://${context.packageName}/$resId" else null
