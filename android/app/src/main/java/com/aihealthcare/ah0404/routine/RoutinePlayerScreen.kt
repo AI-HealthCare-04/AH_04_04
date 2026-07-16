@@ -2,6 +2,7 @@ package com.aihealthcare.ah0404.routine
 
 import android.content.Context
 import android.graphics.BitmapFactory
+import android.view.TextureView
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -51,8 +52,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import kotlin.math.ceil
 import kotlin.math.min
@@ -198,14 +197,12 @@ fun RoutinePlayerScreen(
             val mirror = if (step.mirror) -1f else 1f
             when (step.type) {
                 StepType.VIDEO -> AndroidView(
-                    factory = {
-                        PlayerView(it).apply {
-                            useController = false
-                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                        }
-                    },
-                    update = { it.player = clipPlayer },   // player는 update에서(재구성마다 반영)
-                    modifier = Modifier.fillMaxSize().graphicsLayer(scaleX = mirror),
+                    // PlayerView(SurfaceView)는 scaleX 변환이 안 먹어 거울상이 안 된다.
+                    //   → TextureView에 붙이면 scaleX = -1f 로 좌우 반전이 실제 반영된다(mirror).
+                    //   영상이 9:16이고 캔버스도 9:16이라 fill 해도 왜곡 없음.
+                    factory = { ctx -> TextureView(ctx).also { clipPlayer.setVideoTextureView(it) } },
+                    update = { it.scaleX = mirror },
+                    modifier = Modifier.fillMaxSize(),
                 )
                 StepType.IMAGE -> {
                     val bmp = rememberAssetImage(context, step.asset)
