@@ -1,3 +1,8 @@
 <resources>
     <string name="app_name">My Application</string>
+
+    <!-- Suno AI 무료 티어: 비상업 이용 + 출처 표시(attribution) 의무. 임의 제거 금지. (몸풀기 루틴 BGM) -->
+    <string name="credit_music_title">음악 크레딧</string>
+    <string name="credit_music_body">배경음악은 Suno AI로 생성되었습니다.\nMusic generated with Suno AI (suno.com)</string>
+    <string name="credit_noncommercial">본 앱은 비상업적 학습·연구 목적으로 제작되었습니다.</string>
 </resources>
