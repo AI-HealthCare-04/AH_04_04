@@ -32,6 +32,7 @@ import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
 import com.aihealthcare.ah0404.ui.components.MEDICAL_DISCLAIMER_DEFAULT
 import com.aihealthcare.ah0404.ui.components.MedicalDisclaimer
 import com.aihealthcare.ah0404.ui.theme.Dimens
+import kotlin.math.roundToInt
 
 /**
  * 홈 화면(_3) — 화면 API 계약(재란) `GET /home` 필드 기준.
@@ -91,7 +92,18 @@ fun HomeScreen(
     LaunchedEffect(Unit) { vm.load() }
     val ui = vm.ui
     when {
-        ui != null -> HomeContent(ui, onGoMissions, onOpenSettings, onOpenRecords, onOpenExercise, modifier)
+        // 캐시된 ui 가 있으면 콘텐츠 유지하되, 재조회 실패 시 상단 배너로 알린다(리뷰 #79:
+        //   낡은 홈 데이터를 최신으로 오인하지 않게). 최초 실패는 전체 오류 화면.
+        ui != null -> HomeContent(
+            ui = ui,
+            refreshError = vm.error,
+            onRetry = vm::load,
+            onGoMissions = onGoMissions,
+            onOpenSettings = onOpenSettings,
+            onOpenRecords = onOpenRecords,
+            onOpenExercise = onOpenExercise,
+            modifier = modifier,
+        )
         vm.error -> HomeError(onRetry = vm::load, modifier = modifier)
         else -> HomeLoading(modifier)
     }
@@ -115,6 +127,8 @@ private fun HomeError(onRetry: () -> Unit, modifier: Modifier = Modifier) {
 @Composable
 private fun HomeContent(
     ui: HomeUi,
+    refreshError: Boolean,
+    onRetry: () -> Unit,
     onGoMissions: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenRecords: () -> Unit,
@@ -129,6 +143,19 @@ private fun HomeContent(
         verticalArrangement = Arrangement.spacedBy(Dimens.ElementGap),
     ) {
         Spacer(Modifier.height(Dimens.Space8))
+
+        // 재조회 실패 시: 낡은 값 위에 안내 배너 + 재시도(리뷰 #79). 아래 값은 이전 정보일 수 있음.
+        if (refreshError) {
+            AigoCard {
+                Text(
+                    "최신 정보를 불러오지 못했어요. 아래 값은 이전 정보일 수 있어요.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(Dimens.Space4))
+                AigoSecondaryButton(text = "다시 불러오기", onClick = onRetry)
+            }
+        }
 
         // 인사 + 포인트(골드 강조)
         Row(
@@ -181,7 +208,8 @@ private fun HomeContent(
             Text("오늘 걷기", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(Dimens.Space8))
             Text(
-                "오늘 ${ui.todayWalkingMin.toInt()}분 걸었어요 · %,d보".format(ui.todayWalkingSteps),
+                // 절삭 대신 반올림(0.9분+걸음이 "0분"으로 보이지 않게, 리뷰 #79).
+                "오늘 ${ui.todayWalkingMin.roundToInt()}분 걸었어요 · %,d보".format(ui.todayWalkingSteps),
                 style = MaterialTheme.typography.bodyLarge,
             )
         }

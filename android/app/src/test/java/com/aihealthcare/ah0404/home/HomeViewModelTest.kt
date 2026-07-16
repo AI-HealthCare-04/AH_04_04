@@ -81,4 +81,19 @@ class HomeViewModelTest {
         assertTrue(vm.error)
         assertNull(vm.ui)
     }
+
+    /** 리뷰 #79: 최초 성공 후 재조회 실패 시 error=true 이면서 ui 는 유지 → 화면이 배너+재시도를 노출. */
+    @Test
+    fun reentry_failure_sets_error_while_keeping_ui() = runTest {
+        var fail = false
+        val vm = HomeViewModel(FakeApi { if (fail) throw RuntimeException("boom") else home() })
+        vm.load(); advanceUntilIdle()
+        assertEquals("홍길동", vm.ui?.nickname)
+        assertFalse(vm.error)
+
+        fail = true
+        vm.load(); advanceUntilIdle()
+        assertTrue(vm.error)                      // 재조회 실패 노출
+        assertEquals("홍길동", vm.ui?.nickname)   // 기존 ui 유지(콘텐츠 위 배너로 안내)
+    }
 }
