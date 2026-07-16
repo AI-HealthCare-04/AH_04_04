@@ -8,11 +8,7 @@ import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 
-// 온보딩 = 별도 실행 중인 dev 백엔드(Python-only 정본)에 HTTP 호출. (BACKEND_ONBOARDING_CONTRACT §0,§5)
-// 에뮬레이터 → 호스트 로컬 dev 백엔드 = 10.0.2.2:8000 (10.0.2.2 = 호스트 localhost).
-// 실기기 테스트 시에는 Mac 의 Wi-Fi LAN IP 로 임시 교체(`ipconfig getifaddr en0`), 커밋엔 10.0.2.2 유지.
-private const val BASE_URL = "http://10.0.2.2:8000/api/v1/"
-
+// API 주소는 debug/release 빌드 타입별 BuildConfig 값으로 주입한다.
 object TokenHolder {
     var token: String = ""
 }
@@ -47,7 +43,7 @@ private val okHttpClient = OkHttpClient.Builder()
     .build()
 
 val retrofit: Retrofit = Retrofit.Builder()
-    .baseUrl(BASE_URL)
+    .baseUrl(BuildConfig.API_BASE_URL)
     .client(okHttpClient)
     .addConverterFactory(json.asConverterFactory("application/json; charset=UTF-8".toMediaType()))
     .build()
