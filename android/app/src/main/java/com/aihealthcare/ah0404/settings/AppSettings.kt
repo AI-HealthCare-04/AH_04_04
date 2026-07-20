@@ -11,7 +11,7 @@ import androidx.compose.runtime.setValue
  *
  *  - `fontScale`: MyApplicationTheme 이 LocalDensity 의 fontScale 에 곱해 **모든 sp 텍스트를 전역 확대/축소**.
  *  - `soundScale`: 미디어 플레이어 volume 배율.
- *  - `musicEnabled`: **배경음악(루틴 BGM) 켜기/끄기**. 끄기면 BGM 무음. (운동 영상 나레이션은 배경음악이 아니므로 게이트 대상 아님)
+ *  - `musicEnabled`: **배경음악(루틴 BGM) 켜기/끄기**. 끄기면 BGM을 준비·재생·오디오포커스 요청 안 함(다른 앱 음악 미방해, #87). (운동 영상 나레이션은 배경음악이 아니므로 대상 아님)
  *  Compose 가 관찰하도록 State 로 두어 설정 변경 시 즉시 반영되고, SharedPreferences 로 재시작에도 유지된다.
  *  (설정 저장의 단일 원천은 서버 #73 이지만, 전역 즉시 적용·오프라인/시작 시점을 위해 로컬 캐시를 둔다.)
  */
@@ -43,13 +43,6 @@ object AppSettings {
         SIZE_LARGE -> 1.0f
         else -> SOUND_MEDIUM
     }
-
-    /**
-     * 배경음악(BGM) 실효 볼륨: 끄기면 무음(0), 켜기면 기준볼륨 × 소리배율.
-     * 순수 함수(파라미터 주입)라 Context 없이 유닛 테스트 가능. 운동 영상 나레이션엔 쓰지 않는다.
-     */
-    fun mediaVolume(baseVolume: Float, musicEnabled: Boolean, soundScale: Float): Float =
-        if (musicEnabled) baseVolume * soundScale else 0f
 
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

@@ -85,26 +85,27 @@ fun RoutinePlayerScreen(
     val routine = remember { RoutineLoader.load(context, routineFile) }
 
     // BGM: 루틴 전체(251초) 동안 끊김 없이 1회 재생. 251초 전용 트랙이라 루프하지 않는다.
+    //   배경음악 끄기(music_enabled=false)면 미디어 준비·재생·오디오포커스 요청을 '아예 하지 않는다'(리뷰 #87):
+    //   무음 재생조차 안 해 디코딩 자원을 안 쓰고, 다른 앱(음악/라디오)의 오디오 포커스를 뺏거나 덕킹하지 않는다.
+    //   (설정은 루틴 진입 시점 값으로 고정 — 재생 중엔 설정 화면에 못 가므로 1회 읽기로 충분)
+    val musicOn = com.aihealthcare.ah0404.settings.AppSettings.musicEnabled
+    val bgmSoundScale = com.aihealthcare.ah0404.settings.AppSettings.soundScale
     val bgmPlayer = remember {
         ExoPlayer.Builder(context).build().apply {
-            rawUri(context, routine.bgm)?.let { uri ->
-                setMediaItem(MediaItem.fromUri(uri))
-                repeatMode = Player.REPEAT_MODE_OFF
-                // 기준 BGM 볼륨(0.4)에 설정 소리 크기 배율을 곱한다(묶음 C-2, 리뷰 #86-2).
-                // 배경음악: 끄기(music_enabled=false)면 무음, 켜기면 기준 0.4 × 소리크기(C-3)
-                volume = com.aihealthcare.ah0404.settings.AppSettings.mediaVolume(
-                    baseVolume = 0.4f,
-                    musicEnabled = com.aihealthcare.ah0404.settings.AppSettings.musicEnabled,
-                    soundScale = com.aihealthcare.ah0404.settings.AppSettings.soundScale,
-                )
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(C.USAGE_MEDIA)
-                        .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-                        .build(),
-                    /* handleAudioFocus = */ true, // 전화 오면 자동 일시정지
-                )
-                prepare()
+            if (musicOn) {
+                rawUri(context, routine.bgm)?.let { uri ->
+                    setMediaItem(MediaItem.fromUri(uri))
+                    repeatMode = Player.REPEAT_MODE_OFF
+                    volume = 0.4f * bgmSoundScale // 기준 0.4 × 설정 소리 크기(#86-2)
+                    setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(C.USAGE_MEDIA)
+                            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                            .build(),
+                        /* handleAudioFocus = */ true, // 전화 오면 자동 일시정지 (켜기일 때만 요청)
+                    )
+                    prepare()
+                }
             }
         }
     }
@@ -125,15 +126,15 @@ fun RoutinePlayerScreen(
 
     val step = routine.steps.getOrNull(stepIndex)
 
-    // BGM은 루틴 시작과 동시에 1회 play.
-    LaunchedEffect(Unit) { bgmPlayer.playWhenReady = true }
+    // BGM은 루틴 시작과 동시에 1회 play. (끄기면 준비 자체를 안 했으므로 재생도 안 한다)
+    LaunchedEffect(Unit) { if (musicOn) bgmPlayer.playWhenReady = true }
 
     // 일시정지/재개 — 타이머·클립·BGM 동시 제어(동기 유지).
     LaunchedEffect(paused) {
         if (paused) {
             bgmPlayer.pause(); clipPlayer.pause()
         } else if (!finished) {
-            bgmPlayer.play()
+            if (musicOn) bgmPlayer.play()
             if (routine.steps.getOrNull(stepIndex)?.type == StepType.VIDEO) clipPlayer.play()
         }
     }
