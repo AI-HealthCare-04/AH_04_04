@@ -46,6 +46,7 @@ fun StreamingVideoPlayer(
                 setMediaItem(MediaItem.fromUri(url))
                 prepare()
                 playWhenReady = autoPlay
+                volume = com.aihealthcare.ah0404.settings.AppSettings.soundScale // 설정 소리 크기 적용(C-2)
             }
     }
 

@@ -8,7 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -23,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aihealthcare.ah0404.BuildConfig
@@ -50,8 +51,16 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
     vm: SettingsViewModel = viewModel(),
 ) {
+    val context = LocalContext.current
     // 진입마다 서버 설정 재조회(리뷰 #68 교훈).
     LaunchedEffect(Unit) { vm.load() }
+    // 서버 값 로드되면 전역 적용값(글자·소리)을 서버 기준으로 동기화(묶음 C-2).
+    LaunchedEffect(vm.loaded) {
+        if (vm.loaded) {
+            AppSettings.setFontSize(context, vm.fontSize)
+            AppSettings.setSoundSize(context, vm.soundSize)
+        }
+    }
 
     val sizeOptions = listOf(
         SegmentOption("small", "작게"),
@@ -62,7 +71,7 @@ fun SettingsScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .statusBarsPadding()
+            .systemBarsPadding()
             .verticalScroll(rememberScrollState()),
     ) {
         TopBar(title = "설정", onBack = onBack)
@@ -88,12 +97,23 @@ fun SettingsScreen(
             AigoCard {
                 Text("글자 크기", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(Dimens.Space8))
-                AigoSegmentedSelector(sizeOptions, vm.fontSize, vm::changeFontSize, horizontal = true)
+                // 변경 즉시 전역 적용(AppSettings) + 서버 저장(vm). 이 카드의 미리보기 텍스트로 체감된다.
+                AigoSegmentedSelector(
+                    sizeOptions, vm.fontSize,
+                    { AppSettings.setFontSize(context, it); vm.changeFontSize(it) },
+                    horizontal = true,
+                )
+                Spacer(Modifier.height(Dimens.Space8))
+                Text("보기: 글자 크기가 이렇게 바뀌어요.", style = MaterialTheme.typography.bodyLarge)
             }
             AigoCard {
                 Text("소리 크기", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(Dimens.Space8))
-                AigoSegmentedSelector(sizeOptions, vm.soundSize, vm::changeSoundSize, horizontal = true)
+                AigoSegmentedSelector(
+                    sizeOptions, vm.soundSize,
+                    { AppSettings.setSoundSize(context, it); vm.changeSoundSize(it) },
+                    horizontal = true,
+                )
             }
             AigoCard {
                 Text("펫 종류", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)

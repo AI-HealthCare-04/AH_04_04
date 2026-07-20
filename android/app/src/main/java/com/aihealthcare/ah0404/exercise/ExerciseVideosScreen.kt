@@ -8,7 +8,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Tab
@@ -63,7 +63,7 @@ fun ExerciseVideosScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .statusBarsPadding(),
+            .systemBarsPadding(),
     ) {
         TopBar(title = "영상 따라 운동하기", onBack = onBack)
 
