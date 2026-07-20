@@ -131,6 +131,15 @@ def check_voice_data_guard() -> None:
         result = _alembic_capture("upgrade", "head")
         if result.returncode == 0:
             sys.exit("가드 검증 실패: 음성 데이터가 있는데 마이그레이션이 성공했다(데이터 손실 경로!)")
+        # 실패 '원인'이 preflight 가드인지까지 확인한다(리뷰 #111 비블로킹 제안).
+        #   단순 non-zero만 보면, 향후 가드가 사라져도 enum ALTER 실패로 우연히 통과할 수 있다.
+        guard_marker = "0006_remove_voice_parser 중단"
+        combined = (result.stderr or "") + (result.stdout or "")
+        if guard_marker not in combined:
+            sys.exit(
+                "가드 검증 실패: 마이그레이션이 실패했으나 preflight 가드가 아닌 다른 원인일 수 있음 "
+                f"(가드 메시지 '{guard_marker}' 미검출). 마지막 출력:\n{combined[-2000:]}"
+            )
         # 데이터가 정규화/삭제되지 않고 원본 그대로 남아있는지 확인.
         remaining = asyncio.run(
             _scalar_on_mig(
