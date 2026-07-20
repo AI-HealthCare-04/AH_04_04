@@ -76,6 +76,9 @@ class SettingsViewModel(
         musicEnabled = s.musicEnabled
         // 서버가 확인해 준 값 → 스냅샷 갱신(수렴 GET 실패 시 되돌릴 기준).
         confirmed = Snapshot(fontSize, soundSize, petType, musicEnabled)
+        // 서버 확인값이 들어왔으므로 로드오류 상태 해제(리뷰 #86 후속): 최초 GET 실패 후라도 저장 성공/
+        //   재조회 성공이면 값이 권위값이 되어, 화면(전역 적용)이 이 값을 반영할 수 있게 한다.
+        loadError = false
     }
 
     /** 수렴 GET 마저 실패했을 때, 마지막으로 서버가 확인해 준 값으로 화면을 되돌린다(미저장 낙관값 제거). */

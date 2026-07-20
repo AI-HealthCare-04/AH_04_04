@@ -42,6 +42,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // 저장된 토큰 복원(리뷰 #63 P1-2). 완료 사용자는 온보딩을 건너뛴다.
         SessionStore.restore(this)
+        // 마지막으로 고른 글자·소리 크기를 시작 즉시 전역 적용(묶음 C-2).
+        com.aihealthcare.ah0404.settings.AppSettings.load(this)
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {

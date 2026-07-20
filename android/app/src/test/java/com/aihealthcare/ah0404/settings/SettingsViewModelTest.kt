@@ -179,4 +179,28 @@ class SettingsViewModelTest {
         assertNotNull(vm.saveError)
         assertFalse(vm.saving)
     }
+
+    /** 리뷰 #86 후속: 최초 GET 실패(loadError=true) 후 저장이 성공하면 loadError 가 해제되어야
+     *  전역 적용이 서버 확인값을 반영할 수 있다. */
+    @Test
+    fun successful_save_after_load_failure_clears_load_error() = runTest {
+        val api = object : SettingsApi {
+            var getCalls = 0
+            override suspend fun getSettings(): UserSettingsResponse {
+                getCalls++
+                if (getCalls == 1) throw RuntimeException("offline") // 최초 조회 실패
+                return UserSettingsResponse("small", "small", "dog", true)
+            }
+            override suspend fun updateSettings(body: UserSettingsUpdateRequest) =
+                UserSettingsResponse(body.fontSize ?: "small", "small", "dog", true)
+        }
+        val vm = SettingsViewModel(api)
+
+        vm.refresh(); advanceUntilIdle()
+        assertTrue(vm.loadError) // 최초 GET 실패
+
+        vm.changeFontSize("small"); advanceUntilIdle() // PATCH 성공 → applyResponse
+        assertFalse(vm.loadError) // 서버 확인값 들어와 loadError 해제
+        assertEquals("small", vm.fontSize)
+    }
 }
