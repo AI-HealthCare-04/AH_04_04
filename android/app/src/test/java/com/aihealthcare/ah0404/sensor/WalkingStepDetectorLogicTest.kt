@@ -158,10 +158,25 @@ class WalkingStepDetectorLogicTest {
     }
 
     @Test
+    fun `케이던스는 걸음-1 간격으로 환산한다`() {
+        // 600ms 간격 3걸음(count=3), 구간 1200ms → 간격 2개 → (3-1)*60000/1200 = 100보/분
+        walkSteps(3, startMs = 0L, intervalMs = 600L)
+        assertEquals(100, logic.cadenceStepsPerMin)
+    }
+
+    @Test
+    fun `구간이 없거나 걸음이 부족하면 케이던스는 0`() {
+        assertEquals(0, logic.cadenceStepsPerMin) // 시작 전
+        oneStep(0L) // 피크 1개(미보행) → count 0
+        assertEquals(0, logic.cadenceStepsPerMin)
+    }
+
+    @Test
     fun `reset은 시간 지표도 초기화한다`() {
         walkSteps(3)
         logic.reset()
         assertEquals(0L, logic.walkingSpanMs)
         assertEquals(0L, logic.lastIntervalMs)
+        assertEquals(0, logic.cadenceStepsPerMin)
     }
 }

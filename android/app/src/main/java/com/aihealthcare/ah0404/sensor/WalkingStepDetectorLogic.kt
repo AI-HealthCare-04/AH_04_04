@@ -60,6 +60,10 @@ class WalkingStepDetectorLogic {
     val walkingSpanMs: Long
         get() = if (hasSeenPeak) lastPeakTimeMs - firstPeakTimeMs else 0L
 
+    /** 디버그/튜닝용: 평균 케이던스(보/분). N걸음의 구간에는 간격이 N-1개이므로 (count-1)로 환산한다. */
+    val cadenceStepsPerMin: Int
+        get() = if (count >= 2 && walkingSpanMs > 0L) ((count - 1) * 60_000L / walkingSpanMs).toInt() else 0
+
     private var wasAboveThreshold = false
     private var lastPeakTimeMs = 0L
     private var firstPeakTimeMs = 0L
