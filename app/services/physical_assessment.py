@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,11 +14,17 @@ from app.models.enums import ActivityLevel, LevelReason, ReasonType
 from app.models.health import PhysicalAssessment
 from app.models.users import User
 from app.repositories.activity_profile_repository import ActivityProfileRepository
+from app.repositories.health_profile_repository import HealthProfileRepository
 from app.repositories.physical_assessment_repository import PhysicalAssessmentRepository
 
 DEFAULT_WALK_DISTANCE_M = Decimal("6.00")
-EASY_WALK_SPEED_THRESHOLD_MPS = Decimal("0.80")
-HARD_WALK_SPEED_THRESHOLD_MPS = Decimal("1.00")
+
+# 콜드스타트 밴드는 5STS(5회 의자 일어서기) '단독'으로 산출한다(팀 결정 2026-07-20).
+#   경계 = 연령대 5STS 평균(초, Bohannon 2006): 5STS ≤ 평균 → 중 / 초과 → 하. 콜드스타트는 하/중만.
+#   ⚠️ 6m 걷기 속도는 밴드에 쓰지 않는다(확장/기록·본인 비교용). 상(hard)은 행동 데이터로만 획득.
+NORM_5STS_65_69 = Decimal("11.4")
+NORM_5STS_70_79 = Decimal("12.6")
+NORM_5STS_80_PLUS = Decimal("14.8")
 
 
 class PhysicalAssessmentService:
@@ -25,6 +32,7 @@ class PhysicalAssessmentService:
         self.session = session
         self.repo = PhysicalAssessmentRepository(session)
         self.activity_repo = ActivityProfileRepository(session)
+        self.health_repo = HealthProfileRepository(session)
 
     async def create_assessment(
         self,
@@ -35,10 +43,19 @@ class PhysicalAssessmentService:
         if data.walk_6m_time_sec is not None and walk_distance is None:
             walk_distance = DEFAULT_WALK_DISTANCE_M
 
+        # 6m 걷기는 기록·본인 비교(확장)용으로만 속도 계산/저장 — 밴드 산출엔 쓰지 않는다.
         walk_speed = self._calculate_walk_speed(walk_distance, data.walk_6m_time_sec)
-        used_for_level_setting = walk_speed is not None
+
+        # 밴드는 5STS 단독. 유효한 5STS(미스킵·값 존재)가 있어야 이 평가가 레벨을 설정한다.
+        #   미실시/스킵 → used_for_level_setting=False → 기존 유지 또는 기본값(하) 생성.
+        chair_stand_valid = not data.chair_stand_skipped and data.chair_stand_5_time_sec is not None
+        used_for_level_setting = chair_stand_valid
+
+        profile = await self.health_repo.get_latest_profile(user.user_id)
+        age = self._age_years(profile.birth_date) if profile is not None else None
         activity_level = self._determine_activity_level(
-            walk_speed=walk_speed,
+            chair_stand_sec=data.chair_stand_5_time_sec if chair_stand_valid else None,
+            age_norm_sec=self._age_norm_5sts(age),
             pain_reported=data.pain_reported,
             dizziness_reported=data.dizziness_reported,
         )
@@ -87,19 +104,35 @@ class PhysicalAssessmentService:
         return (distance_m / time_sec).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     @staticmethod
+    def _age_years(birth: date) -> int:
+        today = now_kst().date()
+        return today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
+
+    @staticmethod
+    def _age_norm_5sts(age: int | None) -> Decimal | None:
+        """연령대 5STS 평균(초). 앱 대상 65+; <65도 방어적으로 최엄격(65-69) 기준."""
+        if age is None:
+            return None
+        if age < 70:
+            return NORM_5STS_65_69
+        if age < 80:
+            return NORM_5STS_70_79
+        return NORM_5STS_80_PLUS
+
+    @staticmethod
     def _determine_activity_level(
         *,
-        walk_speed: Decimal | None,
+        chair_stand_sec: Decimal | None,
+        age_norm_sec: Decimal | None,
         pain_reported: bool,
         dizziness_reported: bool,
     ) -> ActivityLevel:
-        if pain_reported or dizziness_reported or walk_speed is None:
+        # 콜드스타트 밴드는 하/중만(상은 행동 데이터로 획득). 6m 걷기는 밴드에 쓰지 않는다.
+        #   안전 플래그(통증·어지럼)·측정값/연령 기준 부재 → 하(기본).
+        if pain_reported or dizziness_reported or chair_stand_sec is None or age_norm_sec is None:
             return ActivityLevel.EASY
-        if walk_speed < EASY_WALK_SPEED_THRESHOLD_MPS:
-            return ActivityLevel.EASY
-        if walk_speed >= HARD_WALK_SPEED_THRESHOLD_MPS:
-            return ActivityLevel.HARD
-        return ActivityLevel.NORMAL
+        # 5STS ≤ 연령대 평균 → 중 / 초과 → 하
+        return ActivityLevel.NORMAL if chair_stand_sec <= age_norm_sec else ActivityLevel.EASY
 
     async def _upsert_activity_profile(
         self,
