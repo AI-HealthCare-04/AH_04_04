@@ -18,14 +18,17 @@ class PhysicalAssessmentCreateRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_measurements(self) -> "PhysicalAssessmentCreateRequest":
+        # 밴드 산출 입력인 5STS(chair_stand)는 필수(스킵 아니면).
         if not self.chair_stand_skipped and self.chair_stand_5_time_sec is None:
             raise ValueError("chair_stand_5_time_sec is required unless chair_stand_skipped is true.")
         if self.chair_stand_skipped and self.chair_stand_5_time_sec is not None:
             raise ValueError("chair_stand_5_time_sec must be omitted when chair_stand_skipped is true.")
-        if not self.walk_6m_skipped and self.walk_6m_time_sec is None:
-            raise ValueError("walk_6m_time_sec is required unless walk_6m_skipped is true.")
+        # 6m 걷기는 밴드에 쓰지 않는 확장/기록용 → 선택 입력(필수 아님). skipped=True면 값 생략만 강제.
         if self.walk_6m_skipped and (self.walk_6m_time_sec is not None or self.walk_6m_distance_m is not None):
             raise ValueError("walk_6m fields must be omitted when walk_6m_skipped is true.")
+        # 거리만 있고 시간이 없으면 속도 산출 불가·기록 의미 불명확 → 거부(시간이 있어야 거리 유효).
+        if self.walk_6m_time_sec is None and self.walk_6m_distance_m is not None:
+            raise ValueError("walk_6m_distance_m requires walk_6m_time_sec.")
         return self
 
 
