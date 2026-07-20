@@ -9,6 +9,7 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import com.aihealthcare.ah0404.pet.PetIdle
 import androidx.compose.foundation.rememberScrollState
@@ -38,6 +40,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -86,6 +89,12 @@ fun StepCounterSection() {
     val filteredMag = remember { mutableStateOf(9.8f) }
     val walkState = remember { mutableStateOf(WalkingStepDetectorLogic.State.IDLE) }
     val consecutivePeaks = remember { mutableStateOf(0) }
+
+    // 런타임 조절 상태(감지기 var와 동기화) — A-4a 실기기 정확도 측정용. 값 바꿔가며 오탐/미탐 비교.
+    val peaksToStart = remember { mutableStateOf(walkLogic.peaksToStartWalking) }
+    val peakThreshold = remember { mutableStateOf(walkLogic.peakThreshold) }
+    val minInterval = remember { mutableStateOf(walkLogic.minPeakIntervalMs) }
+    val maxInterval = remember { mutableStateOf(walkLogic.maxPeakIntervalMs) }
 
     val sensorManager = remember {
         context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -196,10 +205,40 @@ fun StepCounterSection() {
             DebugPanel {
                 DebugRow("원시 크기", "%.2f m/s²".format(rawMag.value))
                 DebugRow("필터된 크기 (알고리즘 입력)", "%.2f m/s²".format(filteredMag.value))
-                DebugRow("피크 임계값", "%.1f m/s² (초과 시 피크)".format(WalkingStepDetectorLogic.PEAK_THRESHOLD))
                 DebugRow("현재 상태", if (walking) "WALKING" else "IDLE")
-                DebugRow("연속 규칙 피크", "${consecutivePeaks.value} / ${WalkingStepDetectorLogic.PEAKS_TO_START_WALKING} (보행 진입 기준)")
-                DebugRow("피크 간격 허용", "${WalkingStepDetectorLogic.MIN_PEAK_INTERVAL_MS}~${WalkingStepDetectorLogic.MAX_PEAK_INTERVAL_MS} ms")
+                DebugRow("연속 규칙 피크", "${consecutivePeaks.value} / ${peaksToStart.value} (보행 진입 기준)")
+            }
+            // 🔧 런타임 튜닝(실험용) — 값 바꿔가며 정확도 측정. 확정되면 코드 기본값으로 고정하고 이 패널 정리.
+            DebugPanel {
+                DebugRow("🔧 튜닝 (실험용)", "재빌드 없이 즉석 변경")
+                TuneRow("보행 진입 기준 (걸음)", "${peaksToStart.value}", onDec = {
+                    val v = (peaksToStart.value - 1).coerceAtLeast(2)
+                    peaksToStart.value = v; walkLogic.peaksToStartWalking = v
+                }, onInc = {
+                    val v = (peaksToStart.value + 1).coerceAtMost(30)
+                    peaksToStart.value = v; walkLogic.peaksToStartWalking = v
+                })
+                TuneRow("피크 임계값 (m/s²)", "%.1f".format(peakThreshold.value), onDec = {
+                    val v = (peakThreshold.value - 0.5f).coerceAtLeast(9.9f)
+                    peakThreshold.value = v; walkLogic.peakThreshold = v
+                }, onInc = {
+                    val v = (peakThreshold.value + 0.5f).coerceAtMost(15f)
+                    peakThreshold.value = v; walkLogic.peakThreshold = v
+                })
+                TuneRow("최소 간격 (ms)", "${minInterval.value}", onDec = {
+                    val v = (minInterval.value - 50L).coerceAtLeast(100L)
+                    minInterval.value = v; walkLogic.minPeakIntervalMs = v
+                }, onInc = {
+                    val v = (minInterval.value + 50L).coerceAtMost(500L)
+                    minInterval.value = v; walkLogic.minPeakIntervalMs = v
+                })
+                TuneRow("최대 간격 (ms)", "${maxInterval.value}", onDec = {
+                    val v = (maxInterval.value - 250L).coerceAtLeast(1000L)
+                    maxInterval.value = v; walkLogic.maxPeakIntervalMs = v
+                }, onInc = {
+                    val v = (maxInterval.value + 250L).coerceAtMost(4000L)
+                    maxInterval.value = v; walkLogic.maxPeakIntervalMs = v
+                })
             }
         }
     }
@@ -366,5 +405,41 @@ private fun DebugRow(label: String, value: String) {
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+/** 실험용 파라미터 조절 행 (− 값 + ). 값이 정해지면 이 도구는 정리한다. */
+@Composable
+private fun TuneRow(label: String, value: String, onDec: () -> Unit, onInc: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "−",
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.clickable(onClick = onDec).padding(horizontal = 12.dp)
+            )
+            Text(
+                value,
+                fontSize = 14.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.width(64.dp)
+            )
+            Text(
+                "+",
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.clickable(onClick = onInc).padding(horizontal = 12.dp)
+            )
+        }
     }
 }
