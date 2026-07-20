@@ -1,6 +1,7 @@
 package com.aihealthcare.ah0404
 
 import android.os.Bundle
+import android.app.Activity
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -26,6 +27,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.aihealthcare.ah0404.auth.AuthLoginViewModel
+import com.aihealthcare.ah0404.auth.SocialProvider
+import com.aihealthcare.ah0404.auth.SocialSignInClients
 import com.aihealthcare.ah0404.auth.LoginRequiredScreen
 import com.aihealthcare.ah0404.auth.OfflineModeScreen
 import com.aihealthcare.ah0404.exercise.ExerciseVideosScreen
@@ -59,6 +64,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             MyApplicationTheme {
                 val context = LocalContext.current
+                val activity = context as Activity
+                val authLoginViewModel: AuthLoginViewModel = viewModel()
+                val authLoginState by authLoginViewModel.state.collectAsState()
                 var demoMode by remember { mutableStateOf(false) }
                 var sessionRevision by remember { mutableIntStateOf(0) }
                 val networkAvailable by rememberNetworkAvailable()
@@ -95,10 +103,20 @@ class MainActivity : ComponentActivity() {
                         },
                     )
                     AppRoute.LOGIN_REQUIRED -> LoginRequiredScreen(
+                        onGoogleLogin = {
+                            authLoginViewModel.signIn(SocialProvider.GOOGLE, activity) { sessionRevision++ }
+                        },
+                        onKakaoLogin = {
+                            authLoginViewModel.signIn(SocialProvider.KAKAO, activity) { sessionRevision++ }
+                        },
                         onRetry = {
                             AuthFailureCoordinator.retryTransientFailure()
                             sessionRevision++
                         },
+                        loading = authLoginState.loading,
+                        message = authLoginState.message,
+                        googleEnabled = SocialSignInClients.googleConfigured,
+                        kakaoEnabled = SocialSignInClients.kakaoConfigured,
                     )
                     AppRoute.OFFLINE -> OfflineModeScreen(
                         onRetry = {

@@ -30,13 +30,19 @@ object SessionStore {
     fun isOnboarded(context: Context): Boolean =
         prefs(context).getBoolean(KEY_ONBOARDED, false)
 
-    /** 온보딩 완료 확정 시: 현재 토큰 + 완료 플래그 저장. */
-    fun markOnboarded(context: Context) {
+    /** OAuth 성공 시 서버의 계정별 온보딩 상태를 로컬 세션에 함께 반영한다. */
+    fun saveAuthentication(context: Context, accessToken: String, onboardingCompleted: Boolean) {
+        TokenHolder.token = accessToken
         prefs(context).edit()
-            .putString(KEY_TOKEN, TokenHolder.token)
-            .putBoolean(KEY_ONBOARDED, true)
+            .putString(KEY_TOKEN, accessToken)
+            .putBoolean(KEY_ONBOARDED, onboardingCompleted)
             .apply()
         AuthFailureCoordinator.onAuthenticated()
+    }
+
+    /** 온보딩 완료 확정 시: 현재 토큰 + 완료 플래그 저장. */
+    fun markOnboarded(context: Context) {
+        saveAuthentication(context, TokenHolder.token, onboardingCompleted = true)
     }
 
     /** 로그아웃 시 인증 정보만 제거한다. 온보딩 완료 여부는 계정 인증과 분리해 보존한다. */

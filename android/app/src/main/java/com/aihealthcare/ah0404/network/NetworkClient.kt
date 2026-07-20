@@ -52,7 +52,8 @@ private val okHttpClient = OkHttpClient.Builder()
         HttpLoggingInterceptor().apply {
             redactHeader("Authorization")
             level = if (BuildConfig.DEBUG) {
-                HttpLoggingInterceptor.Level.BODY
+                // OAuth ID token과 건강정보 요청 본문을 로그에 남기지 않는다.
+                HttpLoggingInterceptor.Level.BASIC
             } else {
                 HttpLoggingInterceptor.Level.NONE
             }

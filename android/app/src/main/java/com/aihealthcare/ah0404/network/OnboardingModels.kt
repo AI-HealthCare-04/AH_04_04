@@ -37,7 +37,8 @@ data class AuthResponse(
 
 @Serializable
 data class SocialLoginRequest(
-    @SerialName("authorization_code") val authorizationCode: String,
+    @SerialName("id_token") val idToken: String,
+    val nonce: String,
 )
 
 // ── 2) 약관 목록 ──────────────────────────────────────────────────────────

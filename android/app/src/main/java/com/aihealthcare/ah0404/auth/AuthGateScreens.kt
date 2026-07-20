@@ -17,15 +17,36 @@ import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
 import com.aihealthcare.ah0404.ui.theme.Dimens
 
 @Composable
-fun LoginRequiredScreen(onRetry: () -> Unit, modifier: Modifier = Modifier) {
+fun LoginRequiredScreen(
+    onGoogleLogin: () -> Unit,
+    onKakaoLogin: () -> Unit,
+    onRetry: () -> Unit,
+    loading: SocialProvider? = null,
+    message: String? = null,
+    googleEnabled: Boolean = true,
+    kakaoEnabled: Boolean = true,
+    modifier: Modifier = Modifier,
+) {
     GateLayout(
         title = "다시 로그인이 필요해요",
         message = "안전하게 계속하려면 간편로그인으로 본인 확인을 해 주세요.",
         modifier = modifier,
     ) {
-        AigoPrimaryButton(text = "Google 로그인 (준비 중)", onClick = {}, enabled = false)
+        AigoPrimaryButton(
+            text = if (loading == SocialProvider.GOOGLE) "Google 로그인 중…" else "Google로 로그인",
+            onClick = onGoogleLogin,
+            enabled = googleEnabled && loading == null,
+        )
         Spacer(Modifier.height(Dimens.Space12))
-        AigoSecondaryButton(text = "카카오 로그인 (준비 중)", onClick = {}, enabled = false)
+        AigoSecondaryButton(
+            text = if (loading == SocialProvider.KAKAO) "카카오 로그인 중…" else "카카오로 로그인",
+            onClick = onKakaoLogin,
+            enabled = kakaoEnabled && loading == null,
+        )
+        if (message != null) {
+            Spacer(Modifier.height(Dimens.Space12))
+            Text(message, color = MaterialTheme.colorScheme.error)
+        }
         Spacer(Modifier.height(Dimens.Space12))
         AigoSecondaryButton(text = "상태 다시 확인", onClick = onRetry)
     }
