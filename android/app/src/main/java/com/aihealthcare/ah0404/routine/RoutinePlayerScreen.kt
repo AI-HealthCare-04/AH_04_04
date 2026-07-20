@@ -132,8 +132,12 @@ fun RoutinePlayerScreen(
         }
     }
 
-    // 단계 진입 시 클립 세팅(영상일 때만). 이미지/텍스트 단계는 클립 정지.
+    // 단계 진입 시 클립 세팅. 자원 유무·단계 종류와 무관하게 '먼저' 이전 클립을 정지·비운다 →
+    //   직전 VIDEO 단계의 영상이 이미지/텍스트 단계나 영상 누락 단계에 남아 재생되는 것을 차단(지영 리뷰 #82).
+    //   (로더가 영상 누락을 로드 단계에서 이미 막지만, 방어적으로 여기서도 항상 초기화한다.)
     LaunchedEffect(stepIndex) {
+        clipPlayer.stop()
+        clipPlayer.clearMediaItems()
         val st = routine.steps.getOrNull(stepIndex)
         if (st?.type == StepType.VIDEO && st.asset != null) {
             rawUri(context, st.asset)?.let { uri ->
@@ -141,8 +145,6 @@ fun RoutinePlayerScreen(
                 clipPlayer.prepare()
                 clipPlayer.playWhenReady = !paused
             }
-        } else {
-            clipPlayer.stop()
         }
     }
 
