@@ -1,5 +1,5 @@
 from datetime import date
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,11 +17,9 @@ from app.repositories.activity_profile_repository import ActivityProfileReposito
 from app.repositories.health_profile_repository import HealthProfileRepository
 from app.repositories.physical_assessment_repository import PhysicalAssessmentRepository
 
-DEFAULT_WALK_DISTANCE_M = Decimal("6.00")
-
 # 콜드스타트 밴드는 5STS(5회 의자 일어서기) '단독'으로 산출한다(팀 결정 2026-07-20).
 #   경계 = 연령대 5STS 평균(초, Bohannon 2006): 5STS ≤ 평균 → 중 / 초과 → 하. 콜드스타트는 하/중만.
-#   ⚠️ 6m 걷기 속도는 밴드에 쓰지 않는다(확장/기록·본인 비교용). 상(hard)은 행동 데이터로만 획득.
+#   ⚠️ 6m 걷기는 미구현·제외(#109). 상(hard)은 행동 데이터로만 획득.
 # Bohannon 2006 규준: 11.4=60-69 / 12.6=70-79 / 14.8=80-89. (앱 대상 65+ → 첫 구간은 65-69에 적용=부분집합)
 #   90+ 는 규준 범위 밖이라 외삽하지 않고 밴드 미산출(→ 하). 출처: pubmed.ncbi.nlm.nih.gov/17037663
 NORM_5STS_65_69 = Decimal("11.4")
@@ -41,15 +39,6 @@ class PhysicalAssessmentService:
         user: User,
         data: PhysicalAssessmentCreateRequest,
     ) -> PhysicalAssessmentResponse:
-        # 6m 걷기는 밴드 미사용 확장/기록용. 시간이 있어야 유효 기록으로 저장하고,
-        #   시간이 없으면 스킵으로 정규화 → "스킵 아닌데 값 없음" 모순 상태를 안 남긴다(리뷰 #103-2).
-        walk_provided = data.walk_6m_time_sec is not None
-        walk_distance = data.walk_6m_distance_m if walk_provided else None
-        if walk_provided and walk_distance is None:
-            walk_distance = DEFAULT_WALK_DISTANCE_M
-        walk_speed = self._calculate_walk_speed(walk_distance, data.walk_6m_time_sec)
-        walk_skipped_stored = data.walk_6m_skipped or not walk_provided
-
         # 밴드는 5STS 단독으로 '항상' 산출: 유효 5STS → 중/하, 미실시/스킵/통증/어지럼/연령미상 → 하.
         #   팀 결정 "미실시·중단 → 하(기본값)"에 따라 기존 레벨도 하로 수렴한다(리뷰 #103-1).
         chair_stand_valid = not data.chair_stand_skipped and data.chair_stand_5_time_sec is not None
@@ -68,10 +57,6 @@ class PhysicalAssessmentService:
             assessment_type=data.assessment_type,
             chair_stand_5_time_sec=data.chair_stand_5_time_sec,
             chair_stand_skipped=data.chair_stand_skipped,
-            walk_6m_time_sec=data.walk_6m_time_sec,
-            walk_6m_distance_m=walk_distance,
-            walk_6m_speed_mps=walk_speed,
-            walk_6m_skipped=walk_skipped_stored,
             pain_reported=data.pain_reported,
             dizziness_reported=data.dizziness_reported,
             used_for_level_setting=True,
@@ -87,19 +72,12 @@ class PhysicalAssessmentService:
         await self.session.refresh(activity_profile)
         return PhysicalAssessmentResponse(
             physical_assessment_id=assessment.physical_assessment_id,
-            walk_6m_speed_mps=assessment.walk_6m_speed_mps,
             used_for_level_setting=assessment.used_for_level_setting,
             activity_profile=PhysicalAssessmentActivityProfile(
                 current_level=activity_profile.current_level,
                 level_reason=activity_profile.level_reason,
             ),
         )
-
-    @staticmethod
-    def _calculate_walk_speed(distance_m: Decimal | None, time_sec: Decimal | None) -> Decimal | None:
-        if distance_m is None or time_sec is None:
-            return None
-        return (distance_m / time_sec).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     @staticmethod
     def _age_years(birth: date) -> int:
