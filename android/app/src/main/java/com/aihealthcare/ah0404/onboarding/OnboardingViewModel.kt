@@ -117,9 +117,20 @@ class OnboardingViewModel(
 
     private val requiredTerms = listOf("service", "privacy", "sensitive_health")
 
-    /** S0 → 게스트 로그인 후 약관 목록 로드. */
+    /** S0 → 체험 사용자의 게스트 로그인 후 약관 목록 로드. 기존 소셜 토큰은 덮어쓰지 않는다. */
     fun start() = launchStep("시작") {
-        TokenHolder.token = api.guestLogin().accessToken
+        if (TokenHolder.token.isBlank()) {
+            TokenHolder.token = api.guestLogin().accessToken
+        }
+        loadTerms()
+    }
+
+    /** 소셜 로그인 성공 후 같은 온보딩 흐름을 이어간다. */
+    fun continueAuthenticated() = launchStep("로그인") {
+        loadTerms()
+    }
+
+    private suspend fun loadTerms() {
         terms = api.getTerms().terms
         step = OnbStep.TERMS
     }

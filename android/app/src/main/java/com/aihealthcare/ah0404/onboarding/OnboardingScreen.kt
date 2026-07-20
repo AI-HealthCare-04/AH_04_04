@@ -1,5 +1,6 @@
 package com.aihealthcare.ah0404.onboarding
 
+import android.app.Activity
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,16 +19,22 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aihealthcare.ah0404.BuildConfig
+import com.aihealthcare.ah0404.auth.AuthLoginUiState
+import com.aihealthcare.ah0404.auth.AuthLoginViewModel
+import com.aihealthcare.ah0404.auth.SocialProvider
+import com.aihealthcare.ah0404.auth.SocialSignInClients
 import com.aihealthcare.ah0404.ui.components.AigoCheckboxRow
 import com.aihealthcare.ah0404.ui.components.AigoDialog
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
@@ -51,21 +58,34 @@ fun OnboardingScreen(
     onBrowseDemo: () -> Unit,
     modifier: Modifier = Modifier,
     vm: OnboardingViewModel = viewModel(),
+    authVm: AuthLoginViewModel = viewModel(),
 ) {
+    val activity = LocalContext.current as Activity
+    val authState by authVm.state.collectAsState()
     Box(
         modifier
             .fillMaxSize()
             .systemBarsPadding(),
     ) {
         when (vm.step) {
-            OnbStep.WELCOME -> WelcomeStep(vm, onBrowseDemo)
+            OnbStep.WELCOME -> WelcomeStep(
+                vm = vm,
+                authState = authState,
+                onGoogleLogin = {
+                    authVm.signIn(SocialProvider.GOOGLE, activity, vm::continueAuthenticated)
+                },
+                onKakaoLogin = {
+                    authVm.signIn(SocialProvider.KAKAO, activity, vm::continueAuthenticated)
+                },
+                onSkipToDemo = onBrowseDemo,
+            )
             OnbStep.TERMS -> TermsStep(vm)
             OnbStep.PROFILE -> ProfileStep(vm)
             OnbStep.ASSESSMENT -> AssessmentStep(vm)
             OnbStep.RESULT -> ResultStep(vm, onComplete)
         }
 
-        if (vm.loading) {
+        if (vm.loading || authState.loading != null) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
@@ -120,7 +140,13 @@ private fun StepScaffold(
 }
 
 @Composable
-private fun WelcomeStep(vm: OnboardingViewModel, onSkipToDemo: () -> Unit) {
+private fun WelcomeStep(
+    vm: OnboardingViewModel,
+    authState: AuthLoginUiState,
+    onGoogleLogin: () -> Unit,
+    onKakaoLogin: () -> Unit,
+    onSkipToDemo: () -> Unit,
+) {
     Column(
         Modifier
             .fillMaxSize()
@@ -136,7 +162,23 @@ private fun WelcomeStep(vm: OnboardingViewModel, onSkipToDemo: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(Dimens.Space32))
-        AigoPrimaryButton(text = "시작하기", onClick = vm::start)
+        AigoPrimaryButton(
+            text = "Google로 시작하기",
+            onClick = onGoogleLogin,
+            enabled = SocialSignInClients.googleConfigured && authState.loading == null,
+        )
+        Spacer(Modifier.height(Dimens.Space12))
+        AigoSecondaryButton(
+            text = "카카오로 시작하기",
+            onClick = onKakaoLogin,
+            enabled = SocialSignInClients.kakaoConfigured && authState.loading == null,
+        )
+        Spacer(Modifier.height(Dimens.Space12))
+        AigoTonalButton(text = "체험으로 시작하기", onClick = vm::start, enabled = authState.loading == null)
+        authState.message?.let { message ->
+            Spacer(Modifier.height(Dimens.Space12))
+            Text(message, color = MaterialTheme.colorScheme.error)
+        }
         // 개발/데모 전용: debug 빌드에서만 노출(리뷰 #63 P1-1 — 목업/우회 진입은 debug 로 제한).
         if (BuildConfig.DEBUG) {
             Spacer(Modifier.height(Dimens.Space12))
