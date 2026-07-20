@@ -47,7 +47,7 @@ class HealthProfileService:
             has_estimated_value=data.has_estimated_value,
         )
         await self.repo.create_profile(profile)
-        # 프로필 저장 = 건강체크 세션의 최종 완료 시점(음성 재확인 /voice는 세션을 완료시키지 않으므로 여기서 확정).
+        # 프로필 저장 = 건강체크 세션의 최종 완료 시점(여기서 STARTED 세션을 확정한다).
         #   STARTED 세션만 COMPLETED로 원자적으로(같은 커밋) 갱신한다. skip 등 이미 종료된 세션은 건드리지 않는다.
         if health_check_session is not None and health_check_session.status == HealthCheckStatus.STARTED:
             health_check_session.status = HealthCheckStatus.COMPLETED

@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, Text, func
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -30,7 +30,6 @@ class HealthCheckSession(Base):
         Enum(InputMethod, values_callable=enum_values, name="health_input_method_enum"),
         nullable=False,
     )
-    raw_transcript: Mapped[str | None] = mapped_column(Text, nullable=True)
     has_estimated_value: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
