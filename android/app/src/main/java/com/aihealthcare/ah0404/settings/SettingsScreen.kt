@@ -54,8 +54,10 @@ fun SettingsScreen(
     val context = LocalContext.current
     // 진입마다 서버 설정 재조회(리뷰 #68 교훈).
     LaunchedEffect(Unit) { vm.load() }
-    // 서버 값 로드되면 전역 적용값(글자·소리)을 서버 기준으로 동기화(묶음 C-2).
-    LaunchedEffect(vm.loaded) {
+    // 전역 적용값(글자·소리)을 VM 의 최종 설정값에 항상 동기화(묶음 C-2, 리뷰 #86-1).
+    //   loaded 뿐 아니라 fontSize/soundSize 변경까지 관찰 → 저장 실패 후 롤백/서버 재조회로 값이
+    //   되돌아와도 전역 배율·로컬 저장값이 서버값으로 수렴한다(실패한 값이 잔류하지 않음).
+    LaunchedEffect(vm.loaded, vm.fontSize, vm.soundSize) {
         if (vm.loaded) {
             AppSettings.setFontSize(context, vm.fontSize)
             AppSettings.setSoundSize(context, vm.soundSize)
@@ -97,23 +99,16 @@ fun SettingsScreen(
             AigoCard {
                 Text("글자 크기", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(Dimens.Space8))
-                // 변경 즉시 전역 적용(AppSettings) + 서버 저장(vm). 이 카드의 미리보기 텍스트로 체감된다.
-                AigoSegmentedSelector(
-                    sizeOptions, vm.fontSize,
-                    { AppSettings.setFontSize(context, it); vm.changeFontSize(it) },
-                    horizontal = true,
-                )
+                // vm.changeFontSize 가 값을 낙관적으로 바꾸면 위 LaunchedEffect(vm.fontSize) 가
+                //   전역 적용(AppSettings) 을 동기화한다(실패 시 롤백값으로도 수렴). 미리보기 문구로 체감.
+                AigoSegmentedSelector(sizeOptions, vm.fontSize, vm::changeFontSize, horizontal = true)
                 Spacer(Modifier.height(Dimens.Space8))
                 Text("보기: 글자 크기가 이렇게 바뀌어요.", style = MaterialTheme.typography.bodyLarge)
             }
             AigoCard {
                 Text("소리 크기", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(Dimens.Space8))
-                AigoSegmentedSelector(
-                    sizeOptions, vm.soundSize,
-                    { AppSettings.setSoundSize(context, it); vm.changeSoundSize(it) },
-                    horizontal = true,
-                )
+                AigoSegmentedSelector(sizeOptions, vm.soundSize, vm::changeSoundSize, horizontal = true)
             }
             AigoCard {
                 Text("펫 종류", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)

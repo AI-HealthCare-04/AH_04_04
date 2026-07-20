@@ -90,7 +90,8 @@ fun RoutinePlayerScreen(
             rawUri(context, routine.bgm)?.let { uri ->
                 setMediaItem(MediaItem.fromUri(uri))
                 repeatMode = Player.REPEAT_MODE_OFF
-                volume = 0.4f
+                // 기준 BGM 볼륨(0.4)에 설정 소리 크기 배율을 곱한다(묶음 C-2, 리뷰 #86-2).
+                volume = 0.4f * com.aihealthcare.ah0404.settings.AppSettings.soundScale
                 setAudioAttributes(
                     AudioAttributes.Builder()
                         .setUsage(C.USAGE_MEDIA)
