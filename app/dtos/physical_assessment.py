@@ -26,6 +26,9 @@ class PhysicalAssessmentCreateRequest(BaseModel):
         # 6m 걷기는 밴드에 쓰지 않는 확장/기록용 → 선택 입력(필수 아님). skipped=True면 값 생략만 강제.
         if self.walk_6m_skipped and (self.walk_6m_time_sec is not None or self.walk_6m_distance_m is not None):
             raise ValueError("walk_6m fields must be omitted when walk_6m_skipped is true.")
+        # 거리만 있고 시간이 없으면 속도 산출 불가·기록 의미 불명확 → 거부(시간이 있어야 거리 유효).
+        if self.walk_6m_time_sec is None and self.walk_6m_distance_m is not None:
+            raise ValueError("walk_6m_distance_m requires walk_6m_time_sec.")
         return self
 
 

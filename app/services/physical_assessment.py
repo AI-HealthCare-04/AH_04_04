@@ -22,9 +22,11 @@ DEFAULT_WALK_DISTANCE_M = Decimal("6.00")
 # 콜드스타트 밴드는 5STS(5회 의자 일어서기) '단독'으로 산출한다(팀 결정 2026-07-20).
 #   경계 = 연령대 5STS 평균(초, Bohannon 2006): 5STS ≤ 평균 → 중 / 초과 → 하. 콜드스타트는 하/중만.
 #   ⚠️ 6m 걷기 속도는 밴드에 쓰지 않는다(확장/기록·본인 비교용). 상(hard)은 행동 데이터로만 획득.
+# Bohannon 2006 규준: 11.4=60-69 / 12.6=70-79 / 14.8=80-89. (앱 대상 65+ → 첫 구간은 65-69에 적용=부분집합)
+#   90+ 는 규준 범위 밖이라 외삽하지 않고 밴드 미산출(→ 하). 출처: pubmed.ncbi.nlm.nih.gov/17037663
 NORM_5STS_65_69 = Decimal("11.4")
 NORM_5STS_70_79 = Decimal("12.6")
-NORM_5STS_80_PLUS = Decimal("14.8")
+NORM_5STS_80_89 = Decimal("14.8")
 
 
 class PhysicalAssessmentService:
@@ -39,18 +41,18 @@ class PhysicalAssessmentService:
         user: User,
         data: PhysicalAssessmentCreateRequest,
     ) -> PhysicalAssessmentResponse:
-        walk_distance = data.walk_6m_distance_m
-        if data.walk_6m_time_sec is not None and walk_distance is None:
+        # 6m 걷기는 밴드 미사용 확장/기록용. 시간이 있어야 유효 기록으로 저장하고,
+        #   시간이 없으면 스킵으로 정규화 → "스킵 아닌데 값 없음" 모순 상태를 안 남긴다(리뷰 #103-2).
+        walk_provided = data.walk_6m_time_sec is not None
+        walk_distance = data.walk_6m_distance_m if walk_provided else None
+        if walk_provided and walk_distance is None:
             walk_distance = DEFAULT_WALK_DISTANCE_M
-
-        # 6m 걷기는 기록·본인 비교(확장)용으로만 속도 계산/저장 — 밴드 산출엔 쓰지 않는다.
         walk_speed = self._calculate_walk_speed(walk_distance, data.walk_6m_time_sec)
+        walk_skipped_stored = data.walk_6m_skipped or not walk_provided
 
-        # 밴드는 5STS 단독. 유효한 5STS(미스킵·값 존재)가 있어야 이 평가가 레벨을 설정한다.
-        #   미실시/스킵 → used_for_level_setting=False → 기존 유지 또는 기본값(하) 생성.
+        # 밴드는 5STS 단독으로 '항상' 산출: 유효 5STS → 중/하, 미실시/스킵/통증/어지럼/연령미상 → 하.
+        #   팀 결정 "미실시·중단 → 하(기본값)"에 따라 기존 레벨도 하로 수렴한다(리뷰 #103-1).
         chair_stand_valid = not data.chair_stand_skipped and data.chair_stand_5_time_sec is not None
-        used_for_level_setting = chair_stand_valid
-
         profile = await self.health_repo.get_latest_profile(user.user_id)
         age = self._age_years(profile.birth_date) if profile is not None else None
         activity_level = self._determine_activity_level(
@@ -69,21 +71,17 @@ class PhysicalAssessmentService:
             walk_6m_time_sec=data.walk_6m_time_sec,
             walk_6m_distance_m=walk_distance,
             walk_6m_speed_mps=walk_speed,
-            walk_6m_skipped=data.walk_6m_skipped,
+            walk_6m_skipped=walk_skipped_stored,
             pain_reported=data.pain_reported,
             dizziness_reported=data.dizziness_reported,
-            used_for_level_setting=used_for_level_setting,
+            used_for_level_setting=True,
         )
         await self.repo.create_physical_assessment(assessment)
-        if used_for_level_setting:
-            activity_profile = await self._upsert_activity_profile(
-                user_id=user.user_id,
-                current_level=activity_level,
-                physical_assessment_id=assessment.physical_assessment_id,
-            )
-        else:
-            # Walk measurement was skipped, so keep the existing level. If none exists, create the default.
-            activity_profile = await self._get_or_create_default_profile(user.user_id)
+        activity_profile = await self._upsert_activity_profile(
+            user_id=user.user_id,
+            current_level=activity_level,
+            physical_assessment_id=assessment.physical_assessment_id,
+        )
         await self.session.commit()
         await self.session.refresh(assessment)
         await self.session.refresh(activity_profile)
@@ -110,14 +108,17 @@ class PhysicalAssessmentService:
 
     @staticmethod
     def _age_norm_5sts(age: int | None) -> Decimal | None:
-        """연령대 5STS 평균(초). 앱 대상 65+; <65도 방어적으로 최엄격(65-69) 기준."""
+        """연령대 5STS 평균(초, Bohannon 2006). 규준 범위(60-89) 밖인 90+는 외삽 없이 None(→하).
+        앱 대상 65+; 65-69에는 규준 60-69(부분집합)를 적용한다."""
         if age is None:
             return None
         if age < 70:
             return NORM_5STS_65_69
         if age < 80:
             return NORM_5STS_70_79
-        return NORM_5STS_80_PLUS
+        if age < 90:
+            return NORM_5STS_80_89
+        return None  # 90+ 규준 범위 밖 → 안전 기본값(하)
 
     @staticmethod
     def _determine_activity_level(
@@ -170,18 +171,4 @@ class PhysicalAssessmentService:
                     accepted_by_user=False,
                 )
             )
-        return profile
-
-    async def _get_or_create_default_profile(self, user_id: int) -> UserActivityProfile:
-        profile = await self.activity_repo.get_by_user_id(user_id)
-        if profile is not None:
-            return profile
-        profile = UserActivityProfile(
-            user_id=user_id,
-            current_level=ActivityLevel.EASY,
-            level_reason=LevelReason.RULE,
-            physical_assessment_id=None,
-            started_at=now_kst(),
-        )
-        await self.activity_repo.create_profile(profile)
         return profile

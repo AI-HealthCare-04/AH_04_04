@@ -111,6 +111,14 @@ def test_walk_6m_is_optional_extension_not_required() -> None:
     assert data.walk_6m_time_sec is None
 
 
+def test_walk_6m_distance_without_time_rejected() -> None:
+    # 거리만 있고 시간이 없으면 속도 산출 불가 → 거부(리뷰 #103-2).
+    with pytest.raises(ValidationError):
+        PhysicalAssessmentCreateRequest(
+            chair_stand_5_time_sec=Decimal("11.0"), walk_6m_distance_m=Decimal("6.0")
+        )
+
+
 def test_physical_assessment_allows_skipped_measurements() -> None:
     data = PhysicalAssessmentCreateRequest(chair_stand_skipped=True, walk_6m_skipped=True)
 
@@ -130,7 +138,8 @@ def test_walk_speed_uses_two_decimal_places() -> None:
 def test_age_norm_5sts_by_age_band() -> None:
     assert PhysicalAssessmentService._age_norm_5sts(67) == Decimal("11.4")  # 65-69
     assert PhysicalAssessmentService._age_norm_5sts(75) == Decimal("12.6")  # 70-79
-    assert PhysicalAssessmentService._age_norm_5sts(85) == Decimal("14.8")  # 80+
+    assert PhysicalAssessmentService._age_norm_5sts(89) == Decimal("14.8")  # 80-89 (규준 상한)
+    assert PhysicalAssessmentService._age_norm_5sts(90) is None  # 90+ 규준 범위 밖 → 밴드 미산출(하)
     assert PhysicalAssessmentService._age_norm_5sts(None) is None  # 나이 미상
 
 
@@ -260,13 +269,13 @@ async def test_create_assessment_logs_activity_level_change() -> None:
     assert activity_repo.created_level_change_log.accepted_by_user is False
 
 
-async def test_create_assessment_keeps_level_when_5sts_skipped() -> None:
-    # 5STS 미실시/스킵 → 밴드 미설정(기존 유지). 신규 사용자면 별도 경로에서 기본값(하).
+async def test_create_assessment_skipped_5sts_falls_to_easy() -> None:
+    # 팀 결정: 5STS 미실시/스킵 → 하(기본). 기존 hard 사용자도 하로 수렴한다(리뷰 #103-1).
     existing = UserActivityProfile(
         activity_profile_id=100,
         user_id=1,
-        current_level=ActivityLevel.NORMAL,
-        level_reason=LevelReason.INITIAL_TEST,
+        current_level=ActivityLevel.HARD,
+        level_reason=LevelReason.USER_SELECTED,
         physical_assessment_id=10,
         started_at=datetime(2026, 7, 10, 12, 0, 0),
     )
@@ -278,11 +287,25 @@ async def test_create_assessment_keeps_level_when_5sts_skipped() -> None:
         PhysicalAssessmentCreateRequest(chair_stand_skipped=True, walk_6m_skipped=True),
     )
 
-    assert response.used_for_level_setting is False
-    assert response.activity_profile.current_level == ActivityLevel.NORMAL
+    assert response.used_for_level_setting is True
+    assert response.activity_profile.current_level == ActivityLevel.EASY
     assert assessment_repo.created is not None
-    assert assessment_repo.created.used_for_level_setting is False
-    assert activity_repo.updated is None
-    assert activity_repo.created is None
-    assert activity_repo.created_level_change_log is None
+    assert activity_repo.updated is not None
+    assert activity_repo.created_level_change_log is not None
+    assert activity_repo.created_level_change_log.from_level == ActivityLevel.HARD
+    assert activity_repo.created_level_change_log.to_level == ActivityLevel.EASY
     assert session.committed is True
+
+
+async def test_create_assessment_normalizes_omitted_walk_to_skipped() -> None:
+    # 6m 시간 미제공 → 스킵으로 정규화 저장(모순 상태 방지, 리뷰 #103-2).
+    service, assessment_repo, _, _ = _service()
+    user = cast(User, SimpleNamespace(user_id=1))
+
+    await service.create_assessment(
+        user, PhysicalAssessmentCreateRequest(chair_stand_5_time_sec=Decimal("11.0"))
+    )
+
+    assert assessment_repo.created is not None
+    assert assessment_repo.created.walk_6m_skipped is True
+    assert assessment_repo.created.walk_6m_speed_mps is None
