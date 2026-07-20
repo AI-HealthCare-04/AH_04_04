@@ -1,7 +1,7 @@
 """add one-time OAuth login nonce storage
 
-Revision ID: 0006_oauth_login_nonces
-Revises: 0005_backfill_kidney_check
+Revision ID: 0007_oauth_login_nonces
+Revises: 0006_remove_voice_parser
 Create Date: 2026-07-20 00:00:00
 """
 
@@ -10,8 +10,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0006_oauth_login_nonces"
-down_revision: str | None = "0005_backfill_kidney_check"
+revision: str = "0007_oauth_login_nonces"
+down_revision: str | None = "0006_remove_voice_parser"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
