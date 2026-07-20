@@ -29,6 +29,20 @@ from app.models.missions import MissionTemplate
 #   목록에서 숨긴다. (멱등 seed는 insert만 하므로 이 정리가 없으면 옛 2개가 남아 운동 미션이 3개로 보인다.)
 OBSOLETE_MISSION_TITLES = ["앉아서 다리 펴기", "서서 팔 들어올리기"]
 
+# 이름 통일 (2026-07-16 팀 확정): 걷기는 '부사 + 걷기 (N분)' 시리즈로 성공 기준을 이름에 노출,
+#   전 미션 '~하기' 형태 통일, 게임은 종류 미확정이라 범용 '게임하기'.
+#   title이 멱등 키라서 이미 시드된 DB의 옛 이름은 seed()에서 새 이름으로 UPDATE 이관한다.
+#   값: (새 title, 새 description|None — None이면 기존 설명 유지)
+TITLE_RENAMES: dict[str, tuple[str, str | None]] = {
+    "가볍게 걷기": ("가볍게 걷기 (20분)", None),
+    "동네 한 바퀴 걷기": ("활기차게 걷기 (30분)", None),
+    "든든하게 걷기": ("힘차게 걷기 (40분)", None),
+    "운동하기": ("영상 따라 운동하기", None),
+    "단백질 식사 기록": ("단백질 식사 기록하기", None),
+    "카드 짝 맞추기": ("게임하기", "두뇌를 깨우는 간단한 게임을 해요."),
+}
+
+
 # 걷기/운동/식사/게임 최소 구성 (각 1~2개). 시니어 대상이라 난이도는 normal 기준.
 MISSION_TEMPLATES: list[dict] = [
     # 걷기 — 난이도별 일일 누적 시간 목표(분): easy 20 / normal 30 / hard 40.
@@ -36,7 +50,7 @@ MISSION_TEMPLATES: list[dict] = [
     #   달성 판정 = 당일 누적 시간(daily_total_min) ≥ 목표. 걸음수(daily_total_steps)는 표시 전용.
     {
         "mission_type": MissionType.WALKING,
-        "title": "가볍게 걷기",
+        "title": "가볍게 걷기 (20분)",
         "description": "천천히 동네를 걸어요. 하루 20분을 채우면 완료예요. (여러 번 나눠 걸어도 합산돼요)",
         "level": ActivityLevel.EASY,
         "display_order": 10,
@@ -48,7 +62,7 @@ MISSION_TEMPLATES: list[dict] = [
     },
     {
         "mission_type": MissionType.WALKING,
-        "title": "동네 한 바퀴 걷기",
+        "title": "활기차게 걷기 (30분)",
         "description": "천천히 동네를 걸어요. 하루 30분을 채우면 완료예요. (여러 번 나눠 걸어도 합산돼요)",
         "level": ActivityLevel.NORMAL,
         "display_order": 10,
@@ -60,7 +74,7 @@ MISSION_TEMPLATES: list[dict] = [
     },
     {
         "mission_type": MissionType.WALKING,
-        "title": "든든하게 걷기",
+        "title": "힘차게 걷기 (40분)",
         "description": "천천히 동네를 걸어요. 하루 40분을 채우면 완료예요. (여러 번 나눠 걸어도 합산돼요)",
         "level": ActivityLevel.HARD,
         "display_order": 10,
@@ -76,7 +90,7 @@ MISSION_TEMPLATES: list[dict] = [
     #   → 세션 전체 미션이라 단일 단계 값(exercise_category/activity_type)은 두지 않는다(None).
     {
         "mission_type": MissionType.EXERCISE,
-        "title": "운동하기",
+        "title": "영상 따라 운동하기",
         "description": "몸풀기·앉아서·서서·마무리 중 3가지 운동을 해요. (각 4분, 총 10분 이상이면 완료)",
         "level": ActivityLevel.NORMAL,
         "display_order": 20,
@@ -89,7 +103,7 @@ MISSION_TEMPLATES: list[dict] = [
     # 식사 (1일 1회)
     {
         "mission_type": MissionType.MEAL,
-        "title": "단백질 식사 기록",
+        "title": "단백질 식사 기록하기",
         "description": "오늘 드신 단백질 음식(달걀·두부·생선·고기 등)을 기록해요.",
         "level": ActivityLevel.NORMAL,
         "display_order": 30,
@@ -103,8 +117,8 @@ MISSION_TEMPLATES: list[dict] = [
     # 게임
     {
         "mission_type": MissionType.GAME,
-        "title": "카드 짝 맞추기",
-        "description": "같은 그림 카드를 찾아 짝을 맞추는 기억력 놀이예요.",
+        "title": "게임하기",
+        "description": "두뇌를 깨우는 간단한 게임을 해요.",
         "level": ActivityLevel.NORMAL,
         "display_order": 40,
         "default_target_value": 1,
@@ -139,6 +153,7 @@ async def seed(session_factory: async_sessionmaker[AsyncSession] = AsyncSessionL
             )
             print(f"  비활성화(구버전 운동 미션): {obsolete}")
 
+        # (주의: 아래 블록은 '옛 title'을 대상으로 하므로 TITLE_RENAMES 이관보다 먼저 실행되어야 한다)
         # 걷기 목표 단위 변경 정정: 기존에 걸음수(steps) 기준으로 시드된 '동네 한 바퀴 걷기'를
         #   분(minutes) 기준 normal(30분)로 바로잡는다. title 멱등 시드는 기존 행을 건너뛰므로,
         #   이미 시드된 DB의 목표 단위/값 변경은 여기서 명시적으로 반영한다(target_unit=STEPS만 대상 → 멱등).
@@ -157,7 +172,23 @@ async def seed(session_factory: async_sessionmaker[AsyncSession] = AsyncSessionL
             )
         )
 
+        # 이름 통일 이관: 옛 title → 새 title (새 이름이 이미 있으면 건너뜀 — 중복 방지 멱등 가드).
+        #   mission_logs는 템플릿 id를 참조하므로 title 변경으로 이력이 깨지지 않는다.
         existing_titles = set((await session.scalars(select(MissionTemplate.title))).all())
+        for old_title, (new_title, new_desc) in TITLE_RENAMES.items():
+            if old_title in existing_titles and new_title not in existing_titles:
+                values: dict = {"title": new_title}
+                if new_desc is not None:
+                    values["description"] = new_desc
+                await session.execute(
+                    update(MissionTemplate)
+                    .where(MissionTemplate.title == old_title)
+                    .values(**values)
+                )
+                existing_titles.discard(old_title)
+                existing_titles.add(new_title)
+                print(f"  이름 변경: {old_title} → {new_title}")
+
         inserted = 0
         for spec in MISSION_TEMPLATES:
             if spec["title"] in existing_titles:

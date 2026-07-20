@@ -5,7 +5,7 @@
 # =====================================================================================
 from datetime import date
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,12 +41,22 @@ class MissionRepository:
     ) -> list[MissionTemplate]:
         """활성 미션 템플릿을 레벨/종류로 필터링해 display_order 순으로 반환.
 
+        레벨 필터는 '걷기'에만 적용한다: 걷기만 추론 모델이 정한 난이도별
+        변형(easy 20분 / normal 30분 / hard 40분)이 있고, 운동/식사/게임은
+        전 레벨 공통이라 레벨과 무관하게 노출한다.
+        → 걷기는 사용자당 정확히 1개. 레벨이 바뀌면 그 레벨의 걷기로 교체되어 나온다.
+
         exclude_kidney_check=True면 신장/단백질 제한 사용자에게 위험한
         (requires_kidney_check=True) 미션을 제외한다. (안전 필터)
         """
         stmt = select(MissionTemplate).where(MissionTemplate.is_active.is_(True))
         if level is not None:
-            stmt = stmt.where(MissionTemplate.level == level)
+            stmt = stmt.where(
+                or_(
+                    MissionTemplate.mission_type != MissionType.WALKING,
+                    MissionTemplate.level == level,
+                )
+            )
         if mission_type is not None:
             stmt = stmt.where(MissionTemplate.mission_type == mission_type)
         if exclude_kidney_check:
