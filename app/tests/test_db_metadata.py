@@ -14,6 +14,7 @@ def test_core_db_metadata_tables() -> None:
         "meal_logs",
         "mission_logs",
         "mission_templates",
+        "oauth_login_nonces",
         "personalized_settings",
         "physical_activity_logs",
         "physical_assessments",

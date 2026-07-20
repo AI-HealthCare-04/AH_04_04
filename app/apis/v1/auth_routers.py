@@ -33,11 +33,9 @@ def _to_login_response(result: LoginResult) -> LoginResponse:
     )
 
 
-# 현재 google/kakao는 실제 OAuth 미구현이라 항상 501을 반환합니다.
-# OpenAPI 문서(/api/docs)에서 오해가 없도록 501 응답을 명시합니다.
-# (크리덴셜 준비 후 실제 OAuth가 붙으면 200 + LoginResponse가 정상 동작합니다.)
-_NOT_IMPLEMENTED_DOC: dict[int | str, dict[str, Any]] = {
-    status.HTTP_501_NOT_IMPLEMENTED: {"description": "실제 OAuth 미구현 상태 — 현재는 501 반환(체험하기 이용). 크리덴셜 준비 후 구현 예정."}
+_OAUTH_ERROR_DOC: dict[int | str, dict[str, Any]] = {
+    status.HTTP_401_UNAUTHORIZED: {"description": "서명·audience·issuer·만료·nonce 검증 실패"},
+    status.HTTP_503_SERVICE_UNAVAILABLE: {"description": "공급자 설정 누락 또는 공개키 서버 연결 실패"},
 }
 
 
@@ -45,7 +43,7 @@ _NOT_IMPLEMENTED_DOC: dict[int | str, dict[str, Any]] = {
     "/login/google",
     response_model=LoginResponse,
     status_code=status.HTTP_200_OK,
-    responses=_NOT_IMPLEMENTED_DOC,
+    responses=_OAUTH_ERROR_DOC,
 )
 async def login_google(
     request: SocialLoginRequest,
@@ -59,7 +57,7 @@ async def login_google(
     "/login/kakao",
     response_model=LoginResponse,
     status_code=status.HTTP_200_OK,
-    responses=_NOT_IMPLEMENTED_DOC,
+    responses=_OAUTH_ERROR_DOC,
 )
 async def login_kakao(
     request: SocialLoginRequest,

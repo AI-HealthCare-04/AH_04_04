@@ -50,9 +50,11 @@ class Config(BaseSettings):
     REFRESH_TOKEN_EXPIRE_MINUTES: int = 14 * 24 * 60
     JWT_LEEWAY: int = 5
 
-    # OAuth 클라이언트 크리덴셜(google/kakao). 실제 값은 배포 환경변수로 주입한다(코드에 두지 않음).
-    #   비어 있으면 '미구성'으로 보고 해당 소셜 로그인은 501을 반환한다(크리덴셜 준비 전 안전장치).
+    # OIDC audience. Android와 동일한 Google Web Client ID / Kakao Native App Key를 주입한다.
+    # 비어 있으면 해당 공급자 로그인은 503으로 닫힌다. 비밀값은 아니지만 환경별로 관리한다.
     GOOGLE_CLIENT_ID: str = ""
+    KAKAO_NATIVE_APP_KEY: str = ""
+    # 기존 authorization-code 배포 설정과의 호환을 위해 남긴 deprecated 항목.
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_REDIRECT_URI: str = ""
     KAKAO_CLIENT_ID: str = ""  # 카카오 REST API 키

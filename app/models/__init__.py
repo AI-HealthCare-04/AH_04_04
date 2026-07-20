@@ -5,7 +5,7 @@ from app.models.missions import GameLog, MealLog, MissionLog, MissionTemplate, P
 from app.models.predictions import RiskPrediction
 from app.models.settings import PersonalizedSetting
 from app.models.terms import TermsAgreement
-from app.models.users import User
+from app.models.users import OAuthLoginNonce, User
 
 __all__ = [
     "ActivityLevelChangeLog",
@@ -16,6 +16,7 @@ __all__ = [
     "MealLog",
     "MissionLog",
     "MissionTemplate",
+    "OAuthLoginNonce",
     "PhysicalActivityLog",
     "PhysicalAssessment",
     "PointBalance",
