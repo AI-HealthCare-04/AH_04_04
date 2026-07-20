@@ -36,6 +36,7 @@ object SessionStore {
             .putString(KEY_TOKEN, TokenHolder.token)
             .putBoolean(KEY_ONBOARDED, true)
             .apply()
+        AuthFailureCoordinator.onAuthenticated()
     }
 
     /** 로그아웃 시 인증 정보만 제거한다. 온보딩 완료 여부는 계정 인증과 분리해 보존한다. */

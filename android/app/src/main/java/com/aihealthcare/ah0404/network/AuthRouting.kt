@@ -1,0 +1,89 @@
+package com.aihealthcare.ah0404.network
+
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
+
+enum class TokenStatus {
+    MISSING,
+    MALFORMED,
+    EXPIRED,
+    VALID,
+}
+
+enum class AppRoute {
+    ONBOARDING,
+    LOGIN_REQUIRED,
+    MAIN,
+    OFFLINE,
+}
+
+object JwtTokenInspector {
+    private const val BASE64_URL_ALPHABET =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
+    /** 로컬 라우팅 힌트만 판정한다. 토큰의 진짜 유효성은 서버 401 응답이 최종 권위다. */
+    fun inspect(token: String, nowEpochSeconds: Long = System.currentTimeMillis() / 1_000): TokenStatus {
+        if (token.isBlank()) return TokenStatus.MISSING
+        val parts = token.split('.')
+        if (parts.size != 3 || parts.any(String::isBlank)) return TokenStatus.MALFORMED
+
+        return runCatching {
+            val payload = decodeBase64Url(parts[1]).toString(Charsets.UTF_8)
+            val exp = Json.parseToJsonElement(payload)
+                .jsonObject["exp"]
+                ?.jsonPrimitive
+                ?.longOrNull
+                ?: return TokenStatus.MALFORMED
+            if (exp <= nowEpochSeconds) TokenStatus.EXPIRED else TokenStatus.VALID
+        }.getOrDefault(TokenStatus.MALFORMED)
+    }
+
+    private fun decodeBase64Url(value: String): ByteArray {
+        val bytes = ArrayList<Byte>(value.length * 3 / 4)
+        var buffer = 0
+        var bits = 0
+        for (character in value.trimEnd('=')) {
+            val digit = BASE64_URL_ALPHABET.indexOf(character)
+            require(digit >= 0) { "Invalid base64url character" }
+            buffer = (buffer shl 6) or digit
+            bits += 6
+            if (bits >= 8) {
+                bits -= 8
+                bytes += ((buffer shr bits) and 0xff).toByte()
+            }
+        }
+        return bytes.toByteArray()
+    }
+}
+
+object AppRouteResolver {
+    fun resolve(
+        onboardingCompleted: Boolean,
+        tokenStatus: TokenStatus,
+        networkAvailable: Boolean,
+        failure: AuthFailure?,
+    ): AppRoute {
+        if (!onboardingCompleted) return AppRoute.ONBOARDING
+        if (failure == AuthFailure.UNAUTHORIZED) return AppRoute.LOGIN_REQUIRED
+
+        return when (tokenStatus) {
+            TokenStatus.MISSING,
+            TokenStatus.MALFORMED,
+            -> AppRoute.LOGIN_REQUIRED
+
+            TokenStatus.EXPIRED -> {
+                if (networkAvailable) AppRoute.LOGIN_REQUIRED else AppRoute.OFFLINE
+            }
+
+            TokenStatus.VALID -> {
+                if (!networkAvailable || failure == AuthFailure.NETWORK || failure == AuthFailure.SERVER) {
+                    AppRoute.OFFLINE
+                } else {
+                    AppRoute.MAIN
+                }
+            }
+        }
+    }
+}
