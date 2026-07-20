@@ -45,7 +45,6 @@ class HealthCheckStatus(StrEnum):
 
 class InputMethod(StrEnum):
     FORM = "form"
-    VOICE = "voice"
     SERVICE_LOG = "service_log"
     SENSOR = "sensor"
     MANUAL = "manual"

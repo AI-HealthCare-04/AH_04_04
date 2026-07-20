@@ -8,7 +8,6 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dtos.health_check import HealthCheckSessionCreateRequest
-from app.dtos.voice_parse import VoiceParseField, VoiceParseRequest
 from app.models.activity import UserActivityProfile
 from app.models.enums import ActivityLevel, HealthCheckStatus, InputMethod, LevelReason, OnboardingStatus
 from app.models.health import HealthCheckSession
@@ -99,7 +98,6 @@ def _started_session() -> HealthCheckSession:
         user_id=1,
         status=HealthCheckStatus.STARTED,
         input_method=InputMethod.FORM,
-        raw_transcript=None,
         has_estimated_value=False,
         created_at=_NOW,
         completed_at=None,
@@ -126,30 +124,8 @@ async def test_start_session_creates_started_form_session() -> None:
     assert result.session_id == 100
     assert result.status == HealthCheckStatus.STARTED
     assert result.input_method == InputMethod.FORM
-    assert result.raw_transcript is None
     assert result.has_estimated_value is False
     assert repo.created_session is not None
-    assert session.committed is True
-
-
-async def test_parse_voice_saves_transcript_without_completing_session() -> None:
-    service, repo, _, session = _service(_started_session())
-
-    result = await service.parse_voice(
-        _user(),
-        10,
-        VoiceParseRequest(field=VoiceParseField.HEIGHT_CM, raw_transcript="백육십"),
-    )
-
-    # 응답은 파싱 결과({field, value, needs_confirmation}) — 세션 객체가 아니다.
-    assert result.field == VoiceParseField.HEIGHT_CM
-    # 원문은 세션에 저장(참조 구조)되고, input_method는 voice로 기록된다.
-    assert repo.health_check_session is not None
-    assert repo.health_check_session.raw_transcript == "백육십"
-    assert repo.health_check_session.input_method == InputMethod.VOICE
-    # 음성 입력은 '확인 단계'라 세션을 완료시키지 않는다(STARTED 유지).
-    assert repo.health_check_session.status == HealthCheckStatus.STARTED
-    assert repo.health_check_session.completed_at is None
     assert session.committed is True
 
 
@@ -196,14 +172,13 @@ async def test_missing_session_returns_404() -> None:
 
 
 async def test_finished_session_cannot_be_changed_again() -> None:
+    # 이미 종료된 세션에 skip을 재시도하면 409(_get_started_session 가드).
     finished = _started_session()
     finished.status = HealthCheckStatus.SKIPPED
     service, _, _, session = _service(finished)
 
     with pytest.raises(HTTPException) as exc:
-        await service.parse_voice(
-            _user(), 10, VoiceParseRequest(field=VoiceParseField.HEIGHT_CM, raw_transcript="백육십")
-        )
+        await service.skip_session(_user(), 10)
 
     assert exc.value.status_code == 409
     assert exc.value.detail == "이미 종료된 세션입니다."
@@ -213,7 +188,3 @@ async def test_finished_session_cannot_be_changed_again() -> None:
 def test_create_request_rejects_invalid_input_method() -> None:
     with pytest.raises(ValidationError):
         HealthCheckSessionCreateRequest.model_validate({"input_method": "chat"})
-
-
-# 음성 요청(VoiceParseRequest)의 검증(빈 문자열 거부/strip, 미지원 field 거부)은
-# app/tests/health_check_apis/test_voice_parse.py 에서 다룬다.

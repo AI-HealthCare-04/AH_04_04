@@ -69,7 +69,7 @@ def test_health_profile_request_accepts_unknown_waist() -> None:
         walking_practice=True,
         strength_exercise=False,
         activity_input_source=ActivityInputSource.SELF_REPORT,
-        input_method=InputMethod.VOICE,
+        input_method=InputMethod.FORM,
         has_estimated_value=False,
     )
 
@@ -77,7 +77,7 @@ def test_health_profile_request_accepts_unknown_waist() -> None:
     assert data.kidney_status == KidneyStatus.UNKNOWN
     assert data.protein_restriction_status == ProteinRestrictionStatus.UNKNOWN
     assert data.activity_input_source == ActivityInputSource.SELF_REPORT
-    assert data.input_method == InputMethod.VOICE
+    assert data.input_method == InputMethod.FORM
     assert data.has_estimated_value is False
 
 
