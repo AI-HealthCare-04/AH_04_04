@@ -20,6 +20,9 @@ class WalkingStepDetectorLogic {
     enum class State { IDLE, WALKING }
 
     companion object {
+        // 튜닝 대상(팀 결정 2026-07-20): 지팡이·보행기 없이 스스로 걷는 '독립 보행' 시니어(≈60~120보/분).
+        //   보행기·지팡이급 초저속·불규칙 보행은 v1 정확도 미보장 — 틀리더라도 '덜 세는 쪽'으로 열화한다
+        //   (과다카운트=거짓 격려 금지). 그래서 임계값·최소간격은 '올리는' 방향이 안전과 상성이 맞다.
         // ── 기본(가설) 값 — 실기기 측정으로 확정 예정 ─────────────
         const val DEFAULT_PEAK_THRESHOLD = 10.5f
         const val DEFAULT_MIN_PEAK_INTERVAL_MS = 250L // ≈ 최대 240보/분
