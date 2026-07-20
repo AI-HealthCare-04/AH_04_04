@@ -49,8 +49,17 @@ class WalkingStepDetectorLogic {
     var consecutivePeaks = 0
         private set
 
+    /** 디버그/튜닝용: 마지막으로 인정된 두 피크 사이 간격(ms). 걸음 내부 이중봉우리 진단용(A-4a). */
+    var lastIntervalMs: Long = 0L
+        private set
+
+    /** 디버그/튜닝용: 첫 피크~마지막 피크 구간(ms). 케이던스(보/분) 산출·측정시간 기록용. */
+    val walkingSpanMs: Long
+        get() = if (hasSeenPeak) lastPeakTimeMs - firstPeakTimeMs else 0L
+
     private var wasAboveThreshold = false
     private var lastPeakTimeMs = 0L
+    private var firstPeakTimeMs = 0L
     private var hasSeenPeak = false
 
     /**
@@ -80,6 +89,8 @@ class WalkingStepDetectorLogic {
         }
 
         val interval = if (hasSeenPeak) timestampMs - lastPeakTimeMs else Long.MAX_VALUE
+        // 첫 피크는 구간 시작점만 잡고, 이후 피크는 직전 간격을 기록(진단용).
+        if (hasSeenPeak) lastIntervalMs = interval else firstPeakTimeMs = timestampMs
         lastPeakTimeMs = timestampMs
         hasSeenPeak = true
 
@@ -111,8 +122,10 @@ class WalkingStepDetectorLogic {
         state = State.IDLE
         count = 0
         consecutivePeaks = 0
+        lastIntervalMs = 0L
         wasAboveThreshold = false
         lastPeakTimeMs = 0L
+        firstPeakTimeMs = 0L
         hasSeenPeak = false
     }
 }

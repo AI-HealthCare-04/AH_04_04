@@ -139,4 +139,29 @@ class WalkingStepDetectorLogicTest {
         walkSteps(3, startMs = 10000L)
         assertEquals(3, logic.count)
     }
+
+    // ── 측정 시간·간격 노출 (A-4a 기록/진단용) ──────────────
+
+    @Test
+    fun `걸음 구간과 마지막 피크 간격을 노출한다`() {
+        // 600ms 간격 3걸음: 피크 t=0,600,1200 → 구간 1200, 마지막 간격 600
+        walkSteps(3, startMs = 0L, intervalMs = 600L)
+        assertEquals(600L, logic.lastIntervalMs)
+        assertEquals(1200L, logic.walkingSpanMs)
+    }
+
+    @Test
+    fun `첫 피크만 있으면 구간과 간격은 0`() {
+        oneStep(0L)
+        assertEquals(0L, logic.walkingSpanMs)
+        assertEquals(0L, logic.lastIntervalMs)
+    }
+
+    @Test
+    fun `reset은 시간 지표도 초기화한다`() {
+        walkSteps(3)
+        logic.reset()
+        assertEquals(0L, logic.walkingSpanMs)
+        assertEquals(0L, logic.lastIntervalMs)
+    }
 }
