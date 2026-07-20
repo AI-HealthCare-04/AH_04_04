@@ -102,7 +102,6 @@ class OnboardingWiringIntegrationTest {
         val assessment = api.createPhysicalAssessment(
             PhysicalAssessmentRequest(
                 sessionId = session.sessionId, chairStand5TimeSec = 12.4,
-                walk6mTimeSec = 6.1, walk6mDistanceM = 6.0,
             )
         )
         assertNotNull("난이도 산정", assessment.activityProfile.currentLevel)

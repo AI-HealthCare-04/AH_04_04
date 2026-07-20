@@ -197,13 +197,11 @@ class OnboardingViewModel(
         predictAndFinish()
     }
 
-    /** S4 → 체력검사 값 제출 후 결과로. */
-    fun submitAssessment(chairStandSec: Double?, walk6mSec: Double?) = launchStep("체력검사 제출") {
+    /** S4 → 체력검사 값 제출 후 결과로. 밴드는 5STS 단독(#102), 6m 미전송(#109). */
+    fun submitAssessment(chairStandSec: Double?) = launchStep("체력검사 제출") {
         val body = PhysicalAssessmentRequest(
             chairStandSkipped = chairStandSec == null,
-            walk6mSkipped = walk6mSec == null,
             chairStand5TimeSec = chairStandSec,
-            walk6mTimeSec = walk6mSec,
             sessionId = sessionId,
         )
         api.createPhysicalAssessment(body)
