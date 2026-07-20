@@ -48,6 +48,7 @@ import com.aihealthcare.ah0404.ui.theme.Dimens
 @Composable
 fun OnboardingScreen(
     onComplete: () -> Unit,
+    onBrowseDemo: () -> Unit,
     modifier: Modifier = Modifier,
     vm: OnboardingViewModel = viewModel(),
 ) {
@@ -57,7 +58,7 @@ fun OnboardingScreen(
             .systemBarsPadding(),
     ) {
         when (vm.step) {
-            OnbStep.WELCOME -> WelcomeStep(vm, onComplete)
+            OnbStep.WELCOME -> WelcomeStep(vm, onBrowseDemo)
             OnbStep.TERMS -> TermsStep(vm)
             OnbStep.PROFILE -> ProfileStep(vm)
             OnbStep.ASSESSMENT -> AssessmentStep(vm)

@@ -48,13 +48,20 @@ class MainActivity : ComponentActivity() {
         setContent {
             MyApplicationTheme {
                 val context = LocalContext.current
-                // 완료 상태는 로컬에 영속화된 값으로 초기화 → 재시작 후에도 온보딩 반복 안 함.
-                var onboarded by remember { mutableStateOf(SessionStore.isOnboarded(context)) }
-                if (!onboarded) {
-                    OnboardingScreen(onComplete = {
-                        SessionStore.markOnboarded(context)
-                        onboarded = true
-                    })
+                // 정식 온보딩 완료만 영속화한다. 둘러보기는 현재 실행에서만 메인 화면을 연다.
+                var showMainContent by remember {
+                    mutableStateOf(SessionStore.isOnboarded(context))
+                }
+                if (!showMainContent) {
+                    OnboardingScreen(
+                        onComplete = {
+                            SessionStore.markOnboarded(context)
+                            showMainContent = true
+                        },
+                        onBrowseDemo = {
+                            showMainContent = true
+                        },
+                    )
                     return@MyApplicationTheme
                 }
 
