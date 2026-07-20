@@ -11,6 +11,8 @@ class WalkingStepDetectorLogicTest {
     @Before
     fun setUp() {
         logic = WalkingStepDetectorLogic()
+        // 기존 게이팅 로직 테스트는 진입 기준 3으로 고정 — 기본값(가설 10)과 독립적으로 로직만 검증.
+        logic.peaksToStartWalking = 3
     }
 
     // 한 걸음 = 큰 가속도(피크) 샘플 + 작은 가속도(골) 샘플.
@@ -57,6 +59,25 @@ class WalkingStepDetectorLogicTest {
     fun `연속 10걸음이면 정확히 10 카운트`() {
         walkSteps(10)
         assertEquals(10, logic.count)
+    }
+
+    // ── 런타임 조절 (A-4a 정확도 측정용) ─────────────────────
+
+    @Test
+    fun `진입 기준 가설 기본값은 10`() {
+        assertEquals(10, WalkingStepDetectorLogic().peaksToStartWalking)
+        assertEquals(10, WalkingStepDetectorLogic.DEFAULT_PEAKS_TO_START_WALKING)
+    }
+
+    @Test
+    fun `진입 기준을 런타임에 5로 올리면 4걸음 미진입 5걸음 진입`() {
+        logic.peaksToStartWalking = 5
+        walkSteps(4) // 4연속 → 아직 진입 전
+        assertEquals(0, logic.count)
+        assertEquals(WalkingStepDetectorLogic.State.IDLE, logic.state)
+        oneStep(4 * 600L) // 5번째 걸음 → 진입 + 웜업 소급 5
+        assertEquals(5, logic.count)
+        assertEquals(WalkingStepDetectorLogic.State.WALKING, logic.state)
     }
 
     // ── 중복 진동 제거 ───────────────────────────────────

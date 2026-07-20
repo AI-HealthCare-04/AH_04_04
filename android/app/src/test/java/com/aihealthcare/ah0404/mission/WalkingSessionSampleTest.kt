@@ -21,6 +21,8 @@ class WalkingSessionSampleTest {
     @Before
     fun setUp() {
         detector = WalkingStepDetectorLogic()
+        // 이 샘플 테스트들은 진입 기준 3 전제 — 기본값(가설 10)과 독립적으로 로직만 검증.
+        detector.peaksToStartWalking = 3
     }
 
     // 주어진 크기(magnitude)를 x=y=z 에 고루 분산: sqrt(3·v²)=mag → v=mag/√3
