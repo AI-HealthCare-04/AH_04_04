@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -26,6 +27,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.aihealthcare.ah0404.pet.PetIdle
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
 import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
@@ -135,14 +138,18 @@ private fun HomeContent(
     onOpenExercise: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(Dimens.ScreenPadding),
-        verticalArrangement = Arrangement.spacedBy(Dimens.ElementGap),
-    ) {
-        Spacer(Modifier.height(Dimens.Space8))
+    // 스크롤 콘텐츠 위에 마스코트 펫을 '고정 오버레이'로 얹는다.
+    //   PetIdleView 는 GLSurfaceView(setZOrderOnTop) 라 스크롤 Column 안에 넣으면 떠서 깨지므로,
+    //   Box 로 감싸 하단 코너에 고정한다(센서 탭과 동일 방식). 마지막 콘텐츠는 하단 여백으로 가림 방지.
+    Box(modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(Dimens.ScreenPadding),
+            verticalArrangement = Arrangement.spacedBy(Dimens.ElementGap),
+        ) {
+            Spacer(Modifier.height(Dimens.Space8))
 
         // 재조회 실패 시: 낡은 값 위에 안내 배너 + 재시도(리뷰 #79). 아래 값은 이전 정보일 수 있음.
         if (refreshError) {
@@ -235,6 +242,17 @@ private fun HomeContent(
 
         // TODO: 백엔드 연결 — 주간 리포트·걸음 목표/비교(계약 GAP: /home 확장 대기)
         Spacer(Modifier.height(Dimens.Space8))
+        // 하단 코너 펫 오버레이가 마지막 콘텐츠를 가리지 않도록 여백 확보.
+        Spacer(Modifier.height(140.dp))
+        }
+
+        // 마스코트 펫(고개 갸웃 idle) — 배경 투명, 하단 코너 고정. 홈에 온기를 더한다.
+        PetIdle(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(Dimens.Space8)
+                .size(160.dp),
+        )
     }
 }
 
