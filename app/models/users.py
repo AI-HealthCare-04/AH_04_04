@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Enum, String, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, Enum, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -29,3 +29,15 @@ class User(Base, TimestampMixin):
     @property
     def id(self) -> int:
         return self.user_id
+
+
+class OAuthLoginNonce(Base):
+    """성공한 소셜 로그인의 nonce 해시. 같은 ID token 묶음의 재사용을 막는다."""
+
+    __tablename__ = "oauth_login_nonces"
+
+    nonce_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(20), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.current_timestamp()
+    )

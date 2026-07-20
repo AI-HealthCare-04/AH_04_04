@@ -6,9 +6,10 @@
 from pydantic import BaseModel, Field
 
 
-# [요청] 소셜 로그인 공통 요청 (google/kakao 동일). 클라이언트는 OAuth '인가코드'만 보냅니다.
+# [요청] 소셜 로그인 공통 요청. Android SDK의 ID token과 발급 요청에 사용한 nonce를 함께 보냅니다.
 class SocialLoginRequest(BaseModel):
-    authorization_code: str = Field(..., description="OAuth 인가코드 (안드로이드 클라이언트가 전달)")
+    id_token: str = Field(..., min_length=1, max_length=10000, description="공급자 OIDC ID token")
+    nonce: str = Field(..., min_length=16, max_length=512, description="ID token 발급 요청에 사용한 nonce")
 
 
 # [응답] 로그인 응답에 담기는 사용자 요약 정보 (google/kakao 공통)
