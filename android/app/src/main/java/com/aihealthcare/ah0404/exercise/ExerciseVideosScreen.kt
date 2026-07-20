@@ -65,7 +65,7 @@ fun ExerciseVideosScreen(
             .fillMaxSize()
             .statusBarsPadding(),
     ) {
-        TopBar(title = "운동하기", onBack = onBack)
+        TopBar(title = "영상 따라 운동하기", onBack = onBack)
 
         // 번들 몸풀기는 네트워크와 무관하게 '즉시' 시작 가능해야 한다(오프라인/느린망 포함).
         //   서버 목록이 오면 탭으로, 아직이면(로딩/빈/에러) 폴백에서 몸풀기 버튼을 바로 보여준다.
