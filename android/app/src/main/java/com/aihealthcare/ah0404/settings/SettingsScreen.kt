@@ -55,15 +55,16 @@ fun SettingsScreen(
     // 진입마다 서버 설정 재조회(리뷰 #68 교훈).
     LaunchedEffect(Unit) { vm.load() }
     // 전역 적용값(글자·소리)을 VM 의 최종 설정값에 항상 동기화(묶음 C-2, 리뷰 #86-1).
-    //   loaded 뿐 아니라 fontSize/soundSize 변경까지 관찰 → 저장 실패 후 롤백/서버 재조회로 값이
+    //   loaded 뿐 아니라 fontSize/soundSize/musicEnabled 변경까지 관찰 → 저장 실패 후 롤백/서버 재조회로 값이
     //   되돌아와도 전역 배율·로컬 저장값이 서버값으로 수렴한다(실패한 값이 잔류하지 않음).
     //   ⚠️ loadError 시엔 동기화 안 함(리뷰 #86-1): 최초 GET 실패 시 vm 값은 서버 확인값이 아니라
     //     기본값(medium)이라, 이를 저장하면 시작 시 복원한 정상 로컬 캐시(예: large)를 덮어쓴다.
     //     서버가 확인해 준 값(성공) 또는 사용자가 바꾼 값(성공 로드 후)일 때만 전역에 반영한다.
-    LaunchedEffect(vm.loaded, vm.loadError, vm.fontSize, vm.soundSize) {
+    LaunchedEffect(vm.loaded, vm.loadError, vm.fontSize, vm.soundSize, vm.musicEnabled) {
         if (vm.loaded && !vm.loadError) {
             AppSettings.setFontSize(context, vm.fontSize)
             AppSettings.setSoundSize(context, vm.soundSize)
+            AppSettings.setMusicEnabled(context, vm.musicEnabled)
         }
     }
 

@@ -91,7 +91,12 @@ fun RoutinePlayerScreen(
                 setMediaItem(MediaItem.fromUri(uri))
                 repeatMode = Player.REPEAT_MODE_OFF
                 // 기준 BGM 볼륨(0.4)에 설정 소리 크기 배율을 곱한다(묶음 C-2, 리뷰 #86-2).
-                volume = 0.4f * com.aihealthcare.ah0404.settings.AppSettings.soundScale
+                // 배경음악: 끄기(music_enabled=false)면 무음, 켜기면 기준 0.4 × 소리크기(C-3)
+                volume = com.aihealthcare.ah0404.settings.AppSettings.mediaVolume(
+                    baseVolume = 0.4f,
+                    musicEnabled = com.aihealthcare.ah0404.settings.AppSettings.musicEnabled,
+                    soundScale = com.aihealthcare.ah0404.settings.AppSettings.soundScale,
+                )
                 setAudioAttributes(
                     AudioAttributes.Builder()
                         .setUsage(C.USAGE_MEDIA)

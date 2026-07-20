@@ -21,4 +21,16 @@ class AppSettingsTest {
         assertEquals(1.0f, AppSettings.soundScaleFor("large"))
         assertEquals(0.8f, AppSettings.soundScaleFor("unknown"))
     }
+
+    /** 배경음악 게이트(C-3): 끄기 → 무음, 켜기 → 기준볼륨 × 소리배율. */
+    @Test
+    fun bgm_media_volume_gate() {
+        // 끄기: 소리 배율과 무관하게 무음
+        assertEquals(0f, AppSettings.mediaVolume(0.4f, musicEnabled = false, soundScale = 1.0f))
+        assertEquals(0f, AppSettings.mediaVolume(0.4f, musicEnabled = false, soundScale = 0.5f))
+        // 켜기: 기준볼륨 × 소리배율
+        assertEquals(0.4f, AppSettings.mediaVolume(0.4f, musicEnabled = true, soundScale = 1.0f))
+        assertEquals(0.32f, AppSettings.mediaVolume(0.4f, musicEnabled = true, soundScale = 0.8f), 1e-6f)
+        assertEquals(0.2f, AppSettings.mediaVolume(0.4f, musicEnabled = true, soundScale = 0.5f), 1e-6f)
+    }
 }
