@@ -108,17 +108,18 @@ class PhysicalAssessmentService:
 
     @staticmethod
     def _age_norm_5sts(age: int | None) -> Decimal | None:
-        """연령대 5STS 평균(초, Bohannon 2006). 규준 범위(60-89) 밖인 90+는 외삽 없이 None(→하).
-        앱 대상 65+; 65-69에는 규준 60-69(부분집합)를 적용한다."""
-        if age is None:
+        """연령대 5STS 평균(초, Bohannon 2006: 65-69→11.4 / 70-79→12.6 / 80-89→14.8).
+        규준·앱대상(65+) 범위 밖(미상·<65·90+)과 비정상 연령(미래 생년 등 음수)은 외삽하지 않고
+        None → 안전 기본값(하)으로 수렴시킨다(리뷰 #103). 65-69에는 규준 60-69(부분집합)를 적용."""
+        # 하한/상한 fail-safe: 미상·<65·90+·음수(미래 생년)는 모두 밴드 미산출(→하).
+        #   DTO가 미래 생년을 걸러도 기존/비정상 데이터가 들어올 수 있어 서비스에서 다시 막는다.
+        if age is None or age < 65 or age >= 90:
             return None
         if age < 70:
             return NORM_5STS_65_69
         if age < 80:
             return NORM_5STS_70_79
-        if age < 90:
-            return NORM_5STS_80_89
-        return None  # 90+ 규준 범위 밖 → 안전 기본값(하)
+        return NORM_5STS_80_89  # 80-89
 
     @staticmethod
     def _determine_activity_level(

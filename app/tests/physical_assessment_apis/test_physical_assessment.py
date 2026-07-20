@@ -136,11 +136,19 @@ def test_walk_speed_uses_two_decimal_places() -> None:
 
 
 def test_age_norm_5sts_by_age_band() -> None:
+    assert PhysicalAssessmentService._age_norm_5sts(65) == Decimal("11.4")  # 하한 경계(포함)
     assert PhysicalAssessmentService._age_norm_5sts(67) == Decimal("11.4")  # 65-69
     assert PhysicalAssessmentService._age_norm_5sts(75) == Decimal("12.6")  # 70-79
     assert PhysicalAssessmentService._age_norm_5sts(89) == Decimal("14.8")  # 80-89 (규준 상한)
     assert PhysicalAssessmentService._age_norm_5sts(90) is None  # 90+ 규준 범위 밖 → 밴드 미산출(하)
     assert PhysicalAssessmentService._age_norm_5sts(None) is None  # 나이 미상
+
+
+def test_age_norm_5sts_out_of_range_is_none_easy() -> None:
+    # 범위 밖·비정상 연령은 안전하게 None(→하): 하한 미만(<65)·음수(미래 생년) (리뷰 #103).
+    assert PhysicalAssessmentService._age_norm_5sts(64) is None  # 앱대상·규준 하한 미만
+    assert PhysicalAssessmentService._age_norm_5sts(0) is None
+    assert PhysicalAssessmentService._age_norm_5sts(-1) is None  # 미래 생년 → 음수 연령
 
 
 def test_activity_level_from_5sts_vs_age_norm() -> None:
@@ -309,3 +317,16 @@ async def test_create_assessment_normalizes_omitted_walk_to_skipped() -> None:
     assert assessment_repo.created is not None
     assert assessment_repo.created.walk_6m_skipped is True
     assert assessment_repo.created.walk_6m_speed_mps is None
+
+
+async def test_create_assessment_future_birthdate_negative_age_is_easy() -> None:
+    # 미래 생년월일 → 음수 연령. 빠른 5STS(잘함)여도 NORMAL로 오판하지 않고 안전하게 하(리뷰 #103).
+    #   DTO가 미래 생년을 걸러도 기존/비정상 데이터가 들어올 수 있어 서비스 fail-safe를 확인한다.
+    service, _, _, _ = _service(birth_date=date(2100, 1, 1))
+    user = cast(User, SimpleNamespace(user_id=1))
+
+    response = await service.create_assessment(
+        user, PhysicalAssessmentCreateRequest(chair_stand_5_time_sec=Decimal("9.0"))
+    )
+
+    assert response.activity_profile.current_level == ActivityLevel.EASY
