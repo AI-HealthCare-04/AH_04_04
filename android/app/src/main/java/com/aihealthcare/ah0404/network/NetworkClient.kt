@@ -7,9 +7,11 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
+import java.io.IOException
 
 // API 주소는 debug/release 빌드 타입별 BuildConfig 값으로 주입한다.
 object TokenHolder {
+    @Volatile
     var token: String = ""
 }
 
@@ -26,6 +28,22 @@ private val okHttpClient = OkHttpClient.Builder()
             original
         }
         chain.proceed(request)
+    }
+    .addInterceptor { chain ->
+        try {
+            val response = chain.proceed(chain.request())
+            when {
+                response.code == 401 && chain.request().header("Authorization") != null -> {
+                    AuthFailureCoordinator.reportUnauthorized()
+                }
+                response.code >= 500 -> AuthFailureCoordinator.reportServerFailure()
+                response.isSuccessful -> AuthFailureCoordinator.onRequestSucceeded()
+            }
+            response
+        } catch (exception: IOException) {
+            AuthFailureCoordinator.reportNetworkFailure()
+            throw exception
+        }
     }
     .addInterceptor(
         // 민감정보 유출 방지(리뷰 #58): 온보딩이 생년월일·성별·키·몸무게·질환 등을 이 클라이언트로
