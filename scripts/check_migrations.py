@@ -36,11 +36,39 @@ def _admin_url() -> URL:
     )
 
 
+def _mig_url() -> URL:
+    # 임시 마이그레이션 DB에 직접 접속(가드 fixture 주입/확인용).
+    return URL.create(
+        "mysql+asyncmy", username=USER, password=PASSWORD,
+        host=HOST, port=PORT, database=MIG_DB, query={"charset": "utf8mb4"},
+    )
+
+
 async def _exec(sql: str) -> None:
     engine = create_async_engine(_admin_url(), isolation_level="AUTOCOMMIT")
     try:
         async with engine.connect() as conn:
             await conn.execute(text(sql))
+    finally:
+        await engine.dispose()
+
+
+async def _exec_many_on_mig(sqls: list[str]) -> None:
+    # 한 연결에서 순차 실행(SET FOREIGN_KEY_CHECKS 세션값이 INSERT까지 유지되도록).
+    engine = create_async_engine(_mig_url(), isolation_level="AUTOCOMMIT")
+    try:
+        async with engine.connect() as conn:
+            for sql in sqls:
+                await conn.execute(text(sql))
+    finally:
+        await engine.dispose()
+
+
+async def _scalar_on_mig(sql: str) -> int:
+    engine = create_async_engine(_mig_url(), isolation_level="AUTOCOMMIT")
+    try:
+        async with engine.connect() as conn:
+            return int((await conn.execute(text(sql))).scalar_one())
     finally:
         await engine.dispose()
 
@@ -54,7 +82,17 @@ def _alembic(*args: str) -> None:
     )
 
 
-def main() -> None:
+def _alembic_capture(*args: str) -> subprocess.CompletedProcess[str]:
+    # 실패를 '기대'하는 호출용(check=False). 반환코드/출력을 직접 검사한다.
+    env = {**os.environ, "DB_NAME": MIG_DB}
+    print(f"\n== alembic {' '.join(args)} (실패 기대) ==", flush=True)
+    return subprocess.run(
+        ["uv", "run", "--group", "app", "--group", "dev", "alembic", *args],
+        env=env, capture_output=True, text=True,
+    )
+
+
+def check_migration_roundtrip() -> None:
     print(f"임시 DB 재생성: {MIG_DB} @ {HOST}:{PORT} (user={USER})")
     asyncio.run(_exec(f"DROP DATABASE IF EXISTS `{MIG_DB}`"))
     asyncio.run(_exec(f"CREATE DATABASE `{MIG_DB}` CHARACTER SET utf8mb4"))
@@ -66,6 +104,51 @@ def main() -> None:
         print("\n== OK: 마이그레이션 왕복 + drift 통과 ==")
     finally:
         asyncio.run(_exec(f"DROP DATABASE IF EXISTS `{MIG_DB}`"))
+
+
+def check_voice_data_guard() -> None:
+    # 0006의 파괴적 제거가 '음성 데이터가 실재할 때' 조용히 정규화·삭제하지 않고
+    #   안전하게 중단되는지 검증한다(리뷰 #111). 왕복/drift는 스키마만 보므로 이 손실 경로를 못 잡는다.
+    print(f"\n임시 DB 재생성(음성 데이터 가드 검증): {MIG_DB}", flush=True)
+    asyncio.run(_exec(f"DROP DATABASE IF EXISTS `{MIG_DB}`"))
+    asyncio.run(_exec(f"CREATE DATABASE `{MIG_DB}` CHARACTER SET utf8mb4"))
+    try:
+        # voice 컬럼/enum이 살아있는 직전 리비전까지만 올린다.
+        _alembic("upgrade", "0005_backfill_kidney_check")
+        # 음성 잔재 1건 시뮬레이션(FK 무시, raw_transcript+voice 세션 삽입).
+        asyncio.run(
+            _exec_many_on_mig(
+                [
+                    "SET FOREIGN_KEY_CHECKS=0",
+                    "INSERT INTO health_check_sessions "
+                    "(user_id,status,input_method,raw_transcript,has_estimated_value,created_at) "
+                    "VALUES (1,'started','voice','백육십',0,NOW())",
+                    "SET FOREIGN_KEY_CHECKS=1",
+                ]
+            )
+        )
+        # 이제 0006으로 올리면 가드가 걸려 '실패'해야 한다.
+        result = _alembic_capture("upgrade", "head")
+        if result.returncode == 0:
+            sys.exit("가드 검증 실패: 음성 데이터가 있는데 마이그레이션이 성공했다(데이터 손실 경로!)")
+        # 데이터가 정규화/삭제되지 않고 원본 그대로 남아있는지 확인.
+        remaining = asyncio.run(
+            _scalar_on_mig(
+                "SELECT COUNT(*) FROM health_check_sessions "
+                "WHERE input_method='voice' AND raw_transcript='백육십'"
+            )
+        )
+        if remaining != 1:
+            sys.exit(f"가드 검증 실패: 마이그레이션이 중단됐는데 데이터가 변형됐다(remaining={remaining})")
+        print("== OK: 음성 데이터 존재 시 0006이 안전하게 중단되고 원본이 보존됨 ==")
+    finally:
+        asyncio.run(_exec(f"DROP DATABASE IF EXISTS `{MIG_DB}`"))
+
+
+def main() -> None:
+    check_migration_roundtrip()
+    check_voice_data_guard()
+    print("\n== ALL OK ==")
 
 
 if __name__ == "__main__":
