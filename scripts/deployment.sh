@@ -81,8 +81,13 @@ ssh -i "${ssh_key_path}" "ubuntu@${ec2_ip}" \
   docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PAT"
   export DOCKER_USER DOCKER_REPOSITORY APP_VERSION
 
-  docker compose -f infra/docker/docker-compose.prod.yml pull fastapi
-  docker compose -f infra/docker/docker-compose.prod.yml up -d
+  # --env-file .env: compose 변수 보간(${DB_PASSWORD} 등)이 .env를 읽게 한다.
+  #   (없으면 MySQL이 compose 기본값으로 초기화돼, .env의 강한 비번을 쓰는 앱과 불일치 → Access denied)
+  COMPOSE="docker compose --env-file .env -f infra/docker/docker-compose.prod.yml"
+  $COMPOSE pull fastapi
+  $COMPOSE up -d
+  # DB 스키마 최신화 (Dockerfile이 uvicorn만 실행하므로 배포 시 명시적으로 마이그레이션).
+  $COMPOSE exec -T fastapi uv run --no-sync alembic upgrade head
   docker image prune -af
 EOF
 
