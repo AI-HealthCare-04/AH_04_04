@@ -2,9 +2,11 @@ package com.aihealthcare.ah0404
 
 import android.os.Bundle
 import android.app.Activity
+import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Icon
@@ -14,9 +16,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
@@ -26,6 +28,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aihealthcare.ah0404.auth.AuthLoginViewModel
@@ -46,10 +49,8 @@ import com.aihealthcare.ah0404.network.rememberNetworkAvailable
 import com.aihealthcare.ah0404.onboarding.OnboardingScreen
 import com.aihealthcare.ah0404.profile.ProfileScreen
 import com.aihealthcare.ah0404.record.RecordScreen
-import com.aihealthcare.ah0404.sensor.SensorScreen
 import com.aihealthcare.ah0404.settings.SettingsScreen
 import com.aihealthcare.ah0404.settings.SupportScreen
-import com.aihealthcare.ah0404.voice.VoiceProbeScreen
 import com.aihealthcare.ah0404.ui.theme.MyApplicationTheme
 
 class MainActivity : ComponentActivity() {
@@ -135,82 +136,88 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+internal enum class MainTab(val label: String) {
+    HOME("홈"),
+    MISSIONS("미션"),
+    RECORDS("기록"),
+    SETTINGS("설정"),
+}
+
+private val MainTab.icon: ImageVector
+    get() = when (this) {
+        MainTab.HOME -> Icons.Default.Home
+        MainTab.MISSIONS -> Icons.AutoMirrored.Filled.List
+        MainTab.RECORDS -> Icons.Default.History
+        MainTab.SETTINGS -> Icons.Default.Settings
+    }
+
 @androidx.media3.common.util.UnstableApi
 @Composable
 private fun MainContent() {
-    // 탭 위에 얹히는 서브 화면(설정/고객센터). null = 탭 화면.
+    var selectedTab by remember { mutableStateOf(MainTab.HOME) }
+
+    // 탭 위에 얹히는 서브 화면(프로필/고객센터/운동 영상). null = 탭 화면.
     var subScreen by remember { mutableStateOf<String?>(null) }
     when (subScreen) {
-        "settings" -> {
-            SettingsScreen(
-                onBack = { subScreen = null },
-                onOpenSupport = { subScreen = "support" },
-                onOpenProfile = { subScreen = "profile" },
-            )
-            return
-        }
         "profile" -> {
-            ProfileScreen(onBack = { subScreen = "settings" })
+            BackHandler { subScreen = null }
+            ProfileScreen(onBack = { subScreen = null })
             return
         }
         "support" -> {
-            SupportScreen(onBack = { subScreen = "settings" })
-            return
-        }
-        "records" -> {
-            RecordScreen(onBack = { subScreen = null })
+            BackHandler { subScreen = null }
+            SupportScreen(onBack = { subScreen = null })
             return
         }
         "exercise" -> {
+            BackHandler { subScreen = null }
             ExerciseVideosScreen(onBack = { subScreen = null })
             return
         }
     }
 
-    var selectedTab by remember { mutableIntStateOf(0) }
+    BackHandler(enabled = selectedTab != MainTab.HOME) {
+        selectedTab = MainTab.HOME
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         bottomBar = {
             NavigationBar {
-                NavigationBarItem(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    icon = { Icon(Icons.Default.Home, contentDescription = null) },
-                    label = { Text("홈") },
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
-                    label = { Text("미션") },
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 },
-                    icon = { Icon(Icons.Default.FitnessCenter, contentDescription = null) },
-                    label = { Text("센서") },
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 3,
-                    onClick = { selectedTab = 3 },
-                    icon = { Icon(Icons.Default.Mic, contentDescription = null) },
-                    label = { Text("음성") },
-                )
+                MainTab.entries.forEach { tab ->
+                    NavigationBarItem(
+                        selected = selectedTab == tab,
+                        onClick = { selectedTab = tab },
+                        icon = { Icon(tab.icon, contentDescription = tab.label) },
+                        label = { Text(tab.label, maxLines = 1) },
+                    )
+                }
             }
         },
     ) { innerPadding ->
+        val contentModifier = Modifier
+            .padding(innerPadding)
+            .consumeWindowInsets(innerPadding)
+
         when (selectedTab) {
-            0 -> HomeScreen(
-                onGoMissions = { selectedTab = 1 },
-                onOpenSettings = { subScreen = "settings" },
-                onOpenRecords = { subScreen = "records" },
+            MainTab.HOME -> HomeScreen(
+                onGoMissions = { selectedTab = MainTab.MISSIONS },
+                onOpenSettings = { selectedTab = MainTab.SETTINGS },
+                onOpenRecords = { selectedTab = MainTab.RECORDS },
                 onOpenExercise = { subScreen = "exercise" },
-                modifier = Modifier.padding(innerPadding),
+                modifier = contentModifier,
             )
-            1 -> MissionScreen(modifier = Modifier.padding(innerPadding))
-            2 -> SensorScreen(modifier = Modifier.padding(innerPadding))
-            3 -> VoiceProbeScreen(modifier = Modifier.padding(innerPadding))
+            MainTab.MISSIONS -> MissionScreen(modifier = contentModifier)
+            MainTab.RECORDS -> RecordScreen(
+                onBack = { selectedTab = MainTab.HOME },
+                modifier = contentModifier,
+            )
+            MainTab.SETTINGS -> SettingsScreen(
+                onBack = { selectedTab = MainTab.HOME },
+                onOpenSupport = { subScreen = "support" },
+                onOpenProfile = { subScreen = "profile" },
+                modifier = contentModifier,
+            )
         }
     }
 }
