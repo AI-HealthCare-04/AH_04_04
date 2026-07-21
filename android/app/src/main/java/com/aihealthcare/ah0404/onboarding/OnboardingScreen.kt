@@ -295,22 +295,19 @@ private fun ProfileStep(vm: OnboardingViewModel) {
 @Composable
 private fun AssessmentStep(vm: OnboardingViewModel) {
     var chairStand by remember { mutableStateOf("") }
-    var walk6m by remember { mutableStateOf("") }
     StepScaffold(
         title = "간단 체력 검사",
         subtitle = "어려우면 건너뛰어도 괜찮아요. 나중에 언제든 할 수 있어요.",
         content = {
             Text("의자에서 5번 앉았다 일어서기 (초)", style = MaterialTheme.typography.titleMedium)
             AigoTextField(chairStand, { chairStand = it }, "예: 12.5", keyboardType = KeyboardType.Decimal)
-            Text("6m 걷는 데 걸린 시간 (초)", style = MaterialTheme.typography.titleMedium)
-            AigoTextField(walk6m, { walk6m = it }, "예: 6.0", keyboardType = KeyboardType.Decimal)
         },
         footer = {
             Column(verticalArrangement = Arrangement.spacedBy(Dimens.Space12)) {
                 AigoPrimaryButton(
                     text = "검사 완료",
                     onClick = {
-                        vm.submitAssessment(chairStand.toDoubleOrNull(), walk6m.toDoubleOrNull())
+                        vm.submitAssessment(chairStand.toDoubleOrNull())
                     },
                 )
                 AigoSecondaryButton(text = "건너뛰기", onClick = vm::skipAssessment)

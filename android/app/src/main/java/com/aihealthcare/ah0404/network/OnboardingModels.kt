@@ -132,7 +132,7 @@ data class HealthProfileResponse(
 
 // ── 6) 기초체력검사 (스킵 상호배제: 위반 시 422) ──────────────────────────────
 // chair_stand_skipped=false → chair_stand_5_time_sec 필수 / =true → 생략
-// walk_6m_skipped=false → walk_6m_time_sec 필수 / =true → walk_6m_* 전부 생략
+// 밴드는 5STS 단독(#102). 6m 걷기는 미구현·제외(#109)라 요청에서 전송하지 않는다.
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class PhysicalAssessmentRequest(
@@ -141,15 +141,11 @@ data class PhysicalAssessmentRequest(
     @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     @SerialName("chair_stand_skipped") val chairStandSkipped: Boolean = false,
     @EncodeDefault(EncodeDefault.Mode.ALWAYS)
-    @SerialName("walk_6m_skipped") val walk6mSkipped: Boolean = false,
-    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     @SerialName("pain_reported") val painReported: Boolean = false,
     @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     @SerialName("dizziness_reported") val dizzinessReported: Boolean = false,
     @SerialName("session_id") val sessionId: Int? = null,
     @SerialName("chair_stand_5_time_sec") val chairStand5TimeSec: Double? = null,
-    @SerialName("walk_6m_time_sec") val walk6mTimeSec: Double? = null,
-    @SerialName("walk_6m_distance_m") val walk6mDistanceM: Double? = null,
 )
 
 @Serializable
@@ -162,7 +158,6 @@ data class ActivityProfile(
 @Serializable
 data class PhysicalAssessmentResponse(
     @SerialName("physical_assessment_id") val physicalAssessmentId: Int,
-    @SerialName("walk_6m_speed_mps") val walk6mSpeedMps: Double? = null,
     @SerialName("used_for_level_setting") val usedForLevelSetting: Boolean? = null,
     @SerialName("activity_profile") val activityProfile: ActivityProfile,
 )
