@@ -81,8 +81,21 @@ ssh -i "${ssh_key_path}" "ubuntu@${ec2_ip}" \
   docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PAT"
   export DOCKER_USER DOCKER_REPOSITORY APP_VERSION
 
-  docker compose -f infra/docker/docker-compose.prod.yml pull fastapi
-  docker compose -f infra/docker/docker-compose.prod.yml up -d
+  # --env-file .env: compose 변수 보간(${DB_PASSWORD} 등)이 .env를 읽게 한다.
+  #   (없으면 MySQL이 compose 기본값으로 초기화돼, .env의 강한 비번을 쓰는 앱과 불일치 → Access denied)
+  COMPOSE="docker compose --env-file .env -f infra/docker/docker-compose.prod.yml"
+  $COMPOSE pull fastapi
+
+  # 마이그레이션은 앱 기동 "전"에, 일회성 컨테이너로 끝낸다.
+  #   앱을 먼저 띄우면 새 코드가 구 스키마로 시작 못 해 재시작 루프에 빠지고,
+  #   그러면 exec 자체가 실패해 스키마를 올릴 방법이 없다. 실패한 배포가 노출되는 문제도 있다.
+  # 1) DB만 healthy 될 때까지 대기
+  $COMPOSE up -d --wait mysql
+  # 2) DB 스키마 최신화 (Dockerfile이 uvicorn만 실행하므로 배포 시 명시적으로 마이그레이션).
+  #    --no-deps: 위에서 이미 띄운 mysql을 다시 건드리지 않는다.
+  $COMPOSE run --rm --no-deps fastapi uv run --no-sync alembic upgrade head
+  # 3) 마이그레이션 성공 후에만 전체 서비스 기동 (실패 시 set -e로 여기서 중단)
+  $COMPOSE up -d
   docker image prune -af
 EOF
 

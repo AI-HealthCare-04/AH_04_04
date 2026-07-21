@@ -7,6 +7,10 @@ wheels/
 .venv
 .*.env
 .env
+# .*.env 패턴은 확장자가 더 붙은 사본(.prod.env.bak 등)을 잡지 못한다.
+*.bak
+# SSH 개인키가 실수로 커밋되는 것을 막는다.
+*.pem
 .idea/
 .vscode
 .coverage
