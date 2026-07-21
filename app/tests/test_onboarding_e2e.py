@@ -122,12 +122,9 @@ async def test_onboarding_happy_path_guest_to_completed(db_client: AsyncClient) 
     assert risk_body["display_message"]
     # 결과 화면 고지: 참고용·비진단 disclaimer 노출(#56/#57 정렬 계약)
     assert risk_body["disclaimer"]
-    # 내부 원점수·확률 비노출(#57 test_display_message_does_not_expose_internal_score의 관통 레벨 짝)
-    risk_text = risk.text
-    assert "score" not in risk_text.lower()
-    assert "probability" not in risk_text.lower()
-    assert "점수" not in risk_text
-    assert "확률" not in risk_text
+    # 연속 risk_score는 공개 계약이다. 내부 구현 필드는 계속 비노출인지 관통 수준에서 검사한다.
+    for internal_key in ("internal_risk_score", "internal_risk_level", "model_version"):
+        assert internal_key not in risk_body
 
     # 8) 홈 → latest_prediction 노출(온보딩 성공 판정)
     home = await db_client.get("/api/v1/home", headers=auth)

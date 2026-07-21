@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.utils.clock import today_kst
 from app.dtos.risk_prediction import (
     CareStage,
+    RiskComparisonStatus,
     RiskPredictionCreateRequest,
     RiskPredictionCreateResponse,
     RiskPredictionHistoryItem,
@@ -74,8 +75,14 @@ class RiskPredictionService:
         if limit <= 0:
             return RiskPredictionHistoryResponse(predictions=[])
         predictions = await self.prediction_repo.get_recent_predictions(user.user_id, limit)
+        chronological = list(reversed(predictions))
+        items: list[RiskPredictionHistoryItem] = []
+        previous: RiskPrediction | None = None
+        for prediction in chronological:
+            items.append(self._to_history_item(prediction, previous))
+            previous = prediction
         return RiskPredictionHistoryResponse(
-            predictions=[self._to_history_item(prediction) for prediction in predictions],
+            predictions=items,
         )
 
     async def _predict_and_save(
@@ -108,6 +115,7 @@ class RiskPredictionService:
             prediction_id=prediction.prediction_id,
             profile_id=prediction.profile_id,
             model_variant=prediction.model_variant.value,
+            risk_score=self._public_risk_score(prediction),
             care_stage=care_stage,
             display_message=self._display_message(care_stage),
         )
@@ -117,6 +125,7 @@ class RiskPredictionService:
         return RiskPredictionReassessResponse(
             profile_id=prediction.profile_id,
             prediction_id=prediction.prediction_id,
+            risk_score=self._public_risk_score(prediction),
             care_stage=care_stage,
             display_message=self._display_message(care_stage),
         )
@@ -162,13 +171,33 @@ class RiskPredictionService:
         return profile
 
     @staticmethod
-    def _to_history_item(prediction: RiskPrediction) -> RiskPredictionHistoryItem:
-        # 비노출: internal_risk_level/score 는 care_stage 로만 변환해 노출(원값은 응답에 넣지 않는다).
+    def _to_history_item(
+        prediction: RiskPrediction,
+        previous: RiskPrediction | None = None,
+    ) -> RiskPredictionHistoryItem:
+        score = RiskPredictionService._public_risk_score(prediction)
+        change_percentage_points: float | None = None
+        if previous is None:
+            comparison_status = RiskComparisonStatus.BASELINE
+        elif previous.model_version != prediction.model_version:
+            comparison_status = RiskComparisonStatus.MODEL_CHANGED
+        else:
+            comparison_status = RiskComparisonStatus.COMPARABLE
+            previous_score = RiskPredictionService._public_risk_score(previous)
+            change_percentage_points = round((score - previous_score) * 100, 1)
+
         return RiskPredictionHistoryItem(
             prediction_id=prediction.prediction_id,
             created_at=prediction.created_at,
+            risk_score=score,
+            change_percentage_points=change_percentage_points,
+            comparison_status=comparison_status,
             care_stage=RiskPredictionService._care_stage_from_risk_level(prediction.internal_risk_level),
         )
+
+    @staticmethod
+    def _public_risk_score(prediction: RiskPrediction) -> float:
+        return float(prediction.internal_risk_score)
 
     @staticmethod
     def _care_stage_from_risk_level(level: RiskLevel) -> CareStage:

@@ -1,8 +1,9 @@
 from datetime import date
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.dtos.base import KstDatetime
+from app.dtos.risk_prediction import RiskComparisonStatus
 from app.models.enums import ActivityLevel, DailyResult
 
 
@@ -100,6 +101,10 @@ class LifestyleRecords(BaseModel):
 
 class RiskChangePoint(BaseModel):
     at: KstDatetime
+    risk_score: float = Field(ge=0, le=1)
+    change_percentage_points: float | None = Field(ge=-100, le=100)
+    comparison_status: RiskComparisonStatus
+    # 기존 Android 호환 필드. 연속형 화면 전환 뒤 제거 또는 내부 한정 예정이다.
     care_stage: str
 
 

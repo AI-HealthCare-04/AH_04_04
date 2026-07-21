@@ -1,17 +1,19 @@
-"""위험도 이력(표시용) 비노출 계약 회귀 방지.
+"""연속 위험도 공개 범위와 내부 모델 정보 비노출 계약 회귀 방지.
 
-`_13 나의 기록`에 붙는 위험도 추이 응답은 내부 등급/점수(risk_level·risk_score)를
-절대 노출하지 않는다(#57 비노출). care_stage(순화 등급)만 표시용으로 내려간다.
-스키마 단(DTO)에서 잠그므로 DB/서버 없이도 검증된다.
+연속 risk_score와 변화량은 공개한다. 내부 등급·모델 식별자는 노출하지 않고
+서버가 비교 가능 여부를 comparison_status로 추상화한다.
 """
+
 from app.apis.v1.risk_prediction_routers import get_risk_prediction_history
 from app.dtos.risk_prediction import RiskPredictionHistoryItem
 
 
-def test_history_item_never_exposes_internal_risk_fields() -> None:
+def test_history_item_exposes_score_without_internal_model_fields() -> None:
     fields = set(RiskPredictionHistoryItem.model_fields.keys())
     assert "risk_level" not in fields, "내부 위험도 등급이 이력 응답에 노출되면 안 됩니다(#57 비노출)"
-    assert "risk_score" not in fields, "내부 위험도 점수가 이력 응답에 노출되면 안 됩니다(#57 비노출)"
+    assert "risk_score" in fields, "연속 위험도 추이를 위해 risk_score가 공개돼야 합니다"
+    assert "model_version" not in fields, "모델 버전 비교는 서버가 comparison_status로 추상화해야 합니다"
+    assert "model_variant" not in fields, "내부 모델 변형은 사용자 이력 응답에 불필요합니다"
 
 
 def test_history_item_shape_is_display_safe() -> None:
@@ -19,6 +21,9 @@ def test_history_item_shape_is_display_safe() -> None:
     assert set(RiskPredictionHistoryItem.model_fields.keys()) == {
         "prediction_id",
         "created_at",
+        "risk_score",
+        "change_percentage_points",
+        "comparison_status",
         "care_stage",
     }
 
