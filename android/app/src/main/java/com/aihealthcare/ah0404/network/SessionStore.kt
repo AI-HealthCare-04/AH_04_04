@@ -50,4 +50,14 @@ object SessionStore {
         prefs(context).edit().remove(KEY_TOKEN).apply()
         TokenHolder.token = ""
     }
+
+    /**
+     * [DEBUG 탈출구] 세션 전체 초기화(토큰 + 온보딩 완료 플래그) → 다음 라우팅이 온보딩(시작화면)으로 복귀(#119).
+     * 키 미설정 개발 빌드에서 LOGIN_REQUIRED에 갇힌 테스터의 탈출용. 운영 노출 금지(호출부는 DEBUG 전용).
+     */
+    fun resetSession(context: Context) {
+        prefs(context).edit().clear().apply()
+        TokenHolder.token = ""
+        AuthFailureCoordinator.onAuthenticated()
+    }
 }

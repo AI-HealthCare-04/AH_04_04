@@ -63,6 +63,21 @@ class SessionStoreInstrumentedTest {
         assertEquals("", TokenHolder.token)
     }
 
+    @Test
+    fun resetSession_clearsTokenAndOnboarding() {
+        // DEBUG 탈출구(#119): 세션 전체 초기화 → 다음 라우팅이 온보딩(시작화면)으로 복귀하도록
+        //   토큰과 온보딩 완료 플래그가 모두 지워져야 한다(clearAuthentication과 달리 완료 플래그도 제거).
+        TokenHolder.token = "saved-token"
+        SessionStore.markOnboarded(context)
+        assertTrue(SessionStore.isOnboarded(context))
+
+        SessionStore.resetSession(context)
+        SessionStore.restore(context)
+
+        assertFalse(SessionStore.isOnboarded(context))
+        assertEquals("", TokenHolder.token)
+    }
+
     private fun clearSessionPreferences() {
         context.getSharedPreferences("aigo_session", Context.MODE_PRIVATE)
             .edit()

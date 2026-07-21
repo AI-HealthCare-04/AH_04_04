@@ -12,6 +12,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.aihealthcare.ah0404.BuildConfig
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
 import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
 import com.aihealthcare.ah0404.ui.theme.Dimens
@@ -21,6 +22,7 @@ fun LoginRequiredScreen(
     onGoogleLogin: () -> Unit,
     onKakaoLogin: () -> Unit,
     onRetry: () -> Unit,
+    onResetSession: () -> Unit = {},
     loading: SocialProvider? = null,
     message: String? = null,
     googleEnabled: Boolean = true,
@@ -49,6 +51,16 @@ fun LoginRequiredScreen(
         }
         Spacer(Modifier.height(Dimens.Space12))
         AigoSecondaryButton(text = "상태 다시 확인", onClick = onRetry)
+        // [DEBUG 전용] 키 미설정 개발 빌드에서 LOGIN_REQUIRED 고립 방지용 탈출구(#119).
+        //   세션을 초기화해 온보딩(시작화면)으로 복귀시킨다. 릴리스 빌드에는 노출하지 않는다.
+        if (BuildConfig.DEBUG) {
+            Spacer(Modifier.height(Dimens.Space12))
+            AigoSecondaryButton(
+                text = "처음부터 다시 시작 (개발용)",
+                onClick = onResetSession,
+                enabled = loading == null,
+            )
+        }
     }
 }
 
