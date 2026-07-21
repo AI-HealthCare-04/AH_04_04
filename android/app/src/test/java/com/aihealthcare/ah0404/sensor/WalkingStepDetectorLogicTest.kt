@@ -96,10 +96,34 @@ class WalkingStepDetectorLogicTest {
     @Test
     fun `간격이 최대 허용을 넘으면 규칙 카운트가 리셋되어 보행 안 됨`() {
         oneStep(0L)
-        oneStep(3000L) // 3초 간격: MAX_PEAK_INTERVAL_MS(2000) 및 TIMEOUT(2500) 초과
+        oneStep(3000L) // 3초 간격: MAX_PEAK_INTERVAL_MS(1000) 및 TIMEOUT(2500) 초과
         oneStep(6000L)
         assertEquals(0, logic.count)
         assertEquals(WalkingStepDetectorLogic.State.IDLE, logic.state)
+    }
+
+    @Test
+    fun `정상 보행 직후 앉기(느린 리듬)는 유령 카운트되지 않는다`() {
+        // 리뷰 #121: WALKING 상태에서도 max 간격을 적용해야 함.
+        //   정상 5걸음(600ms)으로 WALKING 진입(count 5) 직후, timeout(2500ms) 전에
+        //   앉기 리듬(1200ms > max 1000ms)이 시작돼도 걸음으로 세지 않아야 한다.
+        walkSteps(5, startMs = 0L, intervalMs = 600L) // 마지막 피크 t=2400, count 5, WALKING
+        assertEquals(5, logic.count)
+        assertEquals(WalkingStepDetectorLogic.State.WALKING, logic.state)
+
+        oneStep(3600L) // 간격 1200ms(>max, <timeout) → 리듬 이탈로 IDLE 복귀, 카운트 안 함
+        oneStep(4800L)
+        oneStep(6000L)
+        assertEquals(5, logic.count) // 앉기가 유령 카운트되지 않음
+        assertEquals(WalkingStepDetectorLogic.State.IDLE, logic.state)
+    }
+
+    @Test
+    fun `느린 정상 보행 하한(간격 1000ms = 60보per분)은 집계된다`() {
+        // 리뷰 #121: max=1000ms는 대상 하한(60보/분=1000ms)을 포함해야 함(경계 inclusive).
+        walkSteps(5, startMs = 0L, intervalMs = 1000L)
+        assertEquals(5, logic.count)
+        assertEquals(WalkingStepDetectorLogic.State.WALKING, logic.state)
     }
 
     // ── 정지 후 IDLE 복귀 ───────────────────────────────

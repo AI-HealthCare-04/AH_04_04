@@ -104,7 +104,8 @@ class WalkingStepDetectorLogic {
         hasSeenPeak = true
 
         // 1단계: 규칙성 판정 (걷기다운 간격이면 연속 카운트, 아니면 리셋 후 새 시작)
-        consecutivePeaks = if (interval <= maxPeakIntervalMs) consecutivePeaks + 1 else 1
+        val rhythmic = interval <= maxPeakIntervalMs
+        consecutivePeaks = if (rhythmic) consecutivePeaks + 1 else 1
 
         // 2단계: 상태별 카운트
         return when (state) {
@@ -119,8 +120,17 @@ class WalkingStepDetectorLogic {
                 }
             }
             State.WALKING -> {
-                count++
-                true
+                if (rhythmic) {
+                    count++
+                    true
+                } else {
+                    // 리듬이 끊긴 피크(간격 > max)는 보행 이탈로 보고 IDLE 복귀, 카운트하지 않음.
+                    //   walkingTimeoutMs(정지) 외에 '너무 느린 다음 피크'도 보행 종료로 처리한다 →
+                    //   정상 보행 직후 앉기(≈1200ms 리듬)가 유령 카운트되지 않는다(리뷰 #121, 지영·재란).
+                    //   consecutivePeaks 는 위에서 1로 리셋됐으므로 이 피크는 새 웜업의 시작점이 된다(냉시작과 동일).
+                    state = State.IDLE
+                    false
+                }
             }
         }
     }
