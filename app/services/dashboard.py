@@ -131,11 +131,18 @@ class DashboardService:
 
     async def _risk_change(self, user: User) -> list[RiskChangePoint]:
         # 예측 도메인 공개 인터페이스(get_recent_predictions)를 소비한다.
-        #   최근순으로 오므로 시계열 그래프용으로 오래된→최신 순서로 뒤집는다.
-        #   care_stage는 예측 도메인이 계산한 값을 그대로 쓴다(매핑 단일 출처).
+        #   응답은 이미 그래프용 오래된→최신 순서이며, 모델 버전 비교 정책도 예측 도메인이 계산한다.
+        #   care_stage는 기존 Android 호환을 위해 이번 단계에서만 함께 전달한다.
         history = await self.risk_service.get_recent_predictions(user, limit=self._RISK_CHANGE_LIMIT)
         return [
-            RiskChangePoint(at=item.created_at, care_stage=item.care_stage) for item in reversed(history.predictions)
+            RiskChangePoint(
+                at=item.created_at,
+                risk_score=item.risk_score,
+                change_percentage_points=item.change_percentage_points,
+                comparison_status=item.comparison_status,
+                care_stage=item.care_stage,
+            )
+            for item in history.predictions
         ]
 
     async def get_points(self, user: User) -> PointsResponse:

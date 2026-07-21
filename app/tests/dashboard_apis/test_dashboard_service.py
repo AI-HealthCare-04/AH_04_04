@@ -164,7 +164,7 @@ def _summary_service(
         return summaries
 
     async def fake_recent(user: object, limit: int) -> object:
-        # get_recent_predictions는 최근순 목록을 담은 응답을 돌려준다.
+        # get_recent_predictions는 그래프용 오래된→최신 목록을 돌려준다.
         return SimpleNamespace(predictions=list(predictions))
 
     service.repo.get_activity_logs_between = fake_logs  # type: ignore[assignment]
@@ -206,20 +206,34 @@ def test_get_summary_aggregates_trend_total_and_lifestyle() -> None:
 
 
 def test_get_summary_maps_risk_change_chronologically() -> None:
-    # 예측 이력은 최근순으로 온다(newer 먼저). risk_change는 오래된→최신으로 뒤집혀야 한다.
+    # 예측 이력의 오래된→최신 순서와 서버 계산 변화량을 대시보드 계약이 보존한다.
     newer = datetime(2026, 7, 10, 12, 0, 0)
     older = datetime(2026, 7, 3, 12, 0, 0)
     predictions = [
-        SimpleNamespace(created_at=newer, care_stage="action_needed"),
-        SimpleNamespace(created_at=older, care_stage="maintain"),
+        SimpleNamespace(
+            created_at=older,
+            risk_score=0.324,
+            change_percentage_points=None,
+            comparison_status="baseline",
+            care_stage="maintain",
+        ),
+        SimpleNamespace(
+            created_at=newer,
+            risk_score=0.281,
+            change_percentage_points=-4.3,
+            comparison_status="comparable",
+            care_stage="action_needed",
+        ),
     ]
     service = _summary_service(logs=[], summaries=[], predictions=predictions)
 
     result = asyncio.run(service.get_summary(_USER_WITH_ID, days=7))
 
-    assert [(p.at, p.care_stage) for p in result.risk_change] == [
-        (older, "maintain"),
-        (newer, "action_needed"),
+    assert [
+        (p.at, p.risk_score, p.change_percentage_points, p.comparison_status, p.care_stage) for p in result.risk_change
+    ] == [
+        (older, 0.324, None, "baseline", "maintain"),
+        (newer, 0.281, -4.3, "comparable", "action_needed"),
     ]
 
 

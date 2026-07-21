@@ -6,7 +6,12 @@ from typing import cast
 import pytest
 from pydantic import ValidationError
 
-from app.dtos.risk_prediction import CareStage, RiskPredictionCreateResponse, RiskPredictionReassessRequest
+from app.dtos.risk_prediction import (
+    CareStage,
+    RiskComparisonStatus,
+    RiskPredictionCreateResponse,
+    RiskPredictionReassessRequest,
+)
 from app.models.enums import (
     ActivityInputSource,
     ActivityType,
@@ -89,6 +94,7 @@ def test_risk_prediction_response_includes_public_model_context() -> None:
         profile_id=22,
         model_variant=ModelVariant.WITH_WAIST,
         internal_risk_level=RiskLevel.HIGH,
+        internal_risk_score=Decimal("0.427"),
     )
 
     response = RiskPredictionService(session=None)._to_response(prediction)  # type: ignore[arg-type]
@@ -96,6 +102,7 @@ def test_risk_prediction_response_includes_public_model_context() -> None:
     assert response.prediction_id == 11
     assert response.profile_id == 22
     assert response.model_variant == "with_waist"
+    assert response.risk_score == 0.427
     assert response.care_stage == CareStage.ACTION_NEEDED
     assert response.disclaimer == "본 결과는 참고용이며 의학적 진단이 아닙니다."
 
@@ -105,6 +112,7 @@ def test_create_response_includes_onboarding_status() -> None:
         prediction_id=1,
         profile_id=2,
         model_variant=ModelVariant.MINIMAL.value,
+        risk_score=0.121,
         care_stage=CareStage.GOOD,
         display_message="ok",
         onboarding_status=OnboardingStatus.COMPLETED.value,
@@ -126,6 +134,7 @@ def test_reassess_response_uses_v73_contract_without_model_variant() -> None:
         prediction_id=90,
         profile_id=72,
         internal_risk_level=RiskLevel.MEDIUM,
+        internal_risk_score=Decimal("0.427"),
     )
 
     response = RiskPredictionService(session=None)._to_reassess_response(prediction)  # type: ignore[arg-type]
@@ -134,6 +143,7 @@ def test_reassess_response_uses_v73_contract_without_model_variant() -> None:
     assert dumped == {
         "profile_id": 72,
         "prediction_id": 90,
+        "risk_score": 0.427,
         "care_stage": "maintain",
         "display_message": RiskPredictionService._display_message(CareStage.MAINTAIN),
         "disclaimer": "본 결과는 참고용이며 의학적 진단이 아닙니다.",
@@ -142,13 +152,13 @@ def test_reassess_response_uses_v73_contract_without_model_variant() -> None:
     assert "model_variant" not in dumped
 
 
-def test_history_item_is_display_safe() -> None:
-    # 표시용 필드(care_stage/model_variant)는 있고, 내부값(risk_level/risk_score)은 없어야 한다.
+def test_history_item_exposes_continuous_score_without_internal_model_fields() -> None:
     prediction = SimpleNamespace(
         prediction_id=11,
         created_at=datetime(2026, 7, 10, 12, 0, 0),
         internal_risk_level=RiskLevel.MEDIUM,
         internal_risk_score=Decimal("0.427"),
+        model_version="awgs2025-v2",
         model_variant=ModelVariant.WITH_WAIST,
     )
 
@@ -156,27 +166,40 @@ def test_history_item_is_display_safe() -> None:
 
     assert item.prediction_id == 11
     assert item.created_at == datetime(2026, 7, 10, 12, 0, 0)
+    assert item.risk_score == 0.427
+    assert item.change_percentage_points is None
+    assert item.comparison_status == RiskComparisonStatus.BASELINE
     assert item.care_stage == CareStage.MAINTAIN
-    # 비노출(#57): 내부 risk_level/risk_score 는 물론 내부 식별자 model_variant 도 이력 항목에 없다.
+    # 내부 등급과 모델 식별자는 계속 비노출한다.
     assert not hasattr(item, "risk_level")
-    assert not hasattr(item, "risk_score")
+    assert not hasattr(item, "model_version")
     assert not hasattr(item, "model_variant")
 
 
-async def test_get_recent_predictions_returns_history_items_in_repo_order() -> None:
+async def test_get_recent_predictions_returns_chronological_continuous_trend() -> None:
     predictions: list[object] = [
+        SimpleNamespace(
+            prediction_id=13,
+            created_at=datetime(2026, 7, 11, 12, 0, 0),
+            internal_risk_level=RiskLevel.MEDIUM,
+            internal_risk_score=Decimal("0.281"),
+            model_version="awgs2025-v2",
+            model_variant=ModelVariant.MINIMAL,
+        ),
         SimpleNamespace(
             prediction_id=12,
             created_at=datetime(2026, 7, 10, 12, 0, 0),
-            internal_risk_level=RiskLevel.HIGH,
-            internal_risk_score=Decimal("0.751"),
+            internal_risk_level=RiskLevel.MEDIUM,
+            internal_risk_score=Decimal("0.324"),
+            model_version="awgs2025-v2",
             model_variant=ModelVariant.MINIMAL,
         ),
         SimpleNamespace(
             prediction_id=11,
             created_at=datetime(2026, 7, 9, 12, 0, 0),
             internal_risk_level=RiskLevel.LOW,
-            internal_risk_score=Decimal("0.121"),
+            internal_risk_score=Decimal("0.400"),
+            model_version="awgs2019-v1",
             model_variant=ModelVariant.WITH_WAIST,
         ),
     ]
@@ -191,13 +214,17 @@ async def test_get_recent_predictions_returns_history_items_in_repo_order() -> N
     service.prediction_repo = repo  # type: ignore[assignment]
     user = SimpleNamespace(user_id=1)
 
-    response = await service.get_recent_predictions(user, limit=2)  # type: ignore[arg-type]
+    response = await service.get_recent_predictions(user, limit=3)  # type: ignore[arg-type]
 
-    assert repo.called_with == (1, 2)
-    assert [item.prediction_id for item in response.predictions] == [12, 11]
-    # 순서·내용은 care_stage(표시용)로 검증. 내부 risk_level/risk_score 는 비노출이라 확인 대상 아님.
-    assert response.predictions[0].care_stage == CareStage.ACTION_NEEDED
-    assert response.predictions[1].care_stage == CareStage.GOOD
+    assert repo.called_with == (1, 3)
+    assert [item.prediction_id for item in response.predictions] == [11, 12, 13]
+    assert [item.risk_score for item in response.predictions] == [0.4, 0.324, 0.281]
+    assert [item.change_percentage_points for item in response.predictions] == [None, None, -4.3]
+    assert [item.comparison_status for item in response.predictions] == [
+        RiskComparisonStatus.BASELINE,
+        RiskComparisonStatus.MODEL_CHANGED,
+        RiskComparisonStatus.COMPARABLE,
+    ]
 
 
 async def test_get_recent_predictions_returns_empty_list_for_non_positive_limit() -> None:

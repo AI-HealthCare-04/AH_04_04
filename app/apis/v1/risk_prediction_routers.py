@@ -37,7 +37,8 @@ async def get_risk_prediction_history(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     limit: Annotated[int, Query(ge=1, le=30)] = 7,
 ) -> RiskPredictionHistoryResponse:
-    # `_13 나의 기록`용 위험도 추이. 비노출 계약: 응답에 내부 risk_level/risk_score 없음(care_stage 만).
+    # `_13 나의 기록`용 연속 추이. risk_score와 비교 가능한 변화량은 공개하되,
+    # 내부 등급·모델 버전은 숨기고 서버가 비교 상태를 판정한다.
     return await RiskPredictionService(session).get_recent_predictions(user, limit)
 
 
