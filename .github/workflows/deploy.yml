@@ -5,9 +5,8 @@ name: Deploy
 # 로컬 대신 러너에서 빌드하므로 EC2(프리티어)의 OOM/디스크 부족 위험이 없고,
 # 러너가 x86이라 --platform linux/amd64 크로스빌드도 필요 없다.
 
-# 배포 대상은 dev 하나뿐이다. git-flow상 release/main도 있지만 서버가 1대라
-# 브랜치를 늘리면 서로 같은 서버를 덮어쓴다. 서버를 분리할 때 Environments로
-# 브랜치별 배포 대상을 나눈다 — 이슈 #128 참고.
+# 배포 대상은 dev 하나뿐이다. git-flow상 release/main도 있지만 배포 서버가 1대라,
+# 브랜치를 늘리면 나중 머지가 앞선 머지를 덮어써 브랜치를 나눈 의미가 없어진다.
 on:
   push:
     branches: [dev]
