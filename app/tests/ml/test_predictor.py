@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import String
 
 from app.ml.predictor import (
     MINIMAL_ARTIFACT_PATH,
@@ -196,6 +197,7 @@ def test_awgs2025_artifact_contract(
     assert bundle["model_version"] == expected_model_version
     assert list(bundle["model"].classes_) == [0, 1]
 
-    model_version_max_length = RiskPrediction.__table__.c.model_version.type.length
-    assert model_version_max_length is not None
-    assert len(bundle["model_version"]) <= model_version_max_length
+    model_version_column_type = RiskPrediction.__table__.c.model_version.type
+    assert isinstance(model_version_column_type, String)
+    assert model_version_column_type.length is not None
+    assert len(bundle["model_version"]) <= model_version_column_type.length
