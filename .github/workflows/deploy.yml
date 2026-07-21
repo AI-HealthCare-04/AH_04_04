@@ -114,7 +114,8 @@ jobs:
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           envs: DOCKER_USER,DOCKER_REPOSITORY,APP_VERSION,DOCKERHUB_TOKEN
-          script_stop: true
+          # ssh-action v1.x에는 script_stop 옵션이 없다. 중간 실패에서 멈추려면
+          # 원격 스크립트 안에서 직접 set -e 해야 한다.
           script: |
             set -euo pipefail
             cd ~/project
@@ -150,7 +151,6 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
-          script_stop: true
           # 컨테이너가 뜬 직후엔 아직 못 받으므로 재시도한다. nginx는 /api/만 프록시하므로
           # fastapi가 호스트에 노출한 8000 포트로 직접 확인한다.
           script: |
@@ -166,7 +166,6 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
-          script_stop: true
           script: docker image prune -af
 
       # 배포가 실패해도 반드시 닫는다. 이게 없으면 실패할 때마다 열린 규칙이 쌓인다.
