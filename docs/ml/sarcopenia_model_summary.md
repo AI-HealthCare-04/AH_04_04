@@ -2,59 +2,86 @@
 
 ## Purpose
 
-MVP risk prediction uses a KNHANES-based sarcopenia risk model artifact for internal risk scoring.
-The result is not a medical diagnosis. It is used to personalize caution messages and lifestyle missions.
+The service uses a KNHANES-based model to produce a continuous sarcopenia screening probability. The value is an
+internal screening signal, not a medical diagnosis. User-facing wording and longitudinal visualization are handled by
+the API and client layers.
 
-## Artifacts
+## AWGS 2025 deployment
 
-- `app/ml/artifacts/sarcopenia_model_minimal.joblib`
-  - Version label: `sarcopenia_lr_self_report_minimal_v1`
-  - Feature set: `self_report_minimal`
-  - Used when waist circumference is unknown
-- `app/ml/artifacts/sarcopenia_model_with_waist.joblib`
-  - Version label: `sarcopenia_lr_self_report_plus_waist_v1`
-  - Feature set: `self_report_plus_waist`
-  - Used when waist circumference is provided
-- Model family: logistic regression pipeline with sigmoid calibration
-- Target: `sarcopenia_bia_label`
-- Selected threshold: stored in each artifact as `selected_threshold`
+The deployed artifacts were retrained on KNHANES 2022–2024 participants aged 65 or older. The target follows the
+AWGS 2025 BIA definition: low height-adjusted muscle mass **or** low BMI-adjusted muscle mass, together with low grip
+strength. Grip strength and BIA measurements define the target only and are not model inputs.
 
-## Service Runtime Inputs
+### Why this replaces the previous deployment
 
-The MVP service uses these app-collectable inputs:
+| decision | previous deployment | AWGS 2025 v2 |
+| --- | --- | --- |
+| target | AWGS 2019 height-adjusted low muscle mass + low grip strength | AWGS 2025 height-adjusted **or** BMI-adjusted low muscle mass + low grip strength |
+| coverage | can miss people whose absolute muscle mass is not low but is low relative to body size | includes both absolute low-muscle and sarcopenic-obesity patterns |
+| data | KNHANES 2022–2023 training with 2024 temporal validation | KNHANES 2022–2024 pooled AWGS 2025 labels |
+| downstream contract | continuous score existed internally, but the product consumed tiers and `care_stage` | continuous score is the primary signal for the planned longitudinal trend; tiers remain temporarily for compatibility |
+
+This is therefore not a change from a classifier that only produced categories to a new probability-producing
+algorithm. The existing logistic predictor already returned `risk_score`. The change is to deploy a newly defined,
+calibrated AWGS 2025 target and make that continuous value the authoritative input for the planned change-over-time
+feature instead of reducing it to three user-facing categories.
+
+| artifact | model version | feature set | use case |
+| --- | --- | --- | --- |
+| `sarcopenia_model_minimal.joblib` | `sarcopenia_lr_self_report_minimal_awgs2025_v2` | `self_report_minimal` | waist circumference unavailable |
+| `sarcopenia_model_with_waist.joblib` | `sarcopenia_lr_self_report_plus_waist_awgs2025_v2` | `self_report_plus_waist` | waist circumference available |
+
+- Model family: unweighted logistic regression pipeline
+- Probability type: raw `predict_proba` output
+- Target label: `sarcopenia_awgs2025`
+- Compatibility threshold: `0.20`
+- Runtime: scikit-learn `1.6.1`
+
+The threshold remains in the bundle for compatibility with the existing internal tier logic. Product features that
+show change over time should use the continuous `risk_score` rather than treating the tier as the primary result.
+With the current predictor, `0.20` is the high-tier boundary and the compatibility middle band begins at `0.10`.
+Those boundaries are not the scale of the continuous trend and are not intended as the primary graph output.
+
+## Service runtime inputs
+
+Both variants use app-collectable inputs:
 
 - `age`
-- `sex`: KNHANES-style numeric code, `1` for male and `2` for female
+- `sex`: KNHANES code `1` for male and `2` for female
 - `height_cm`
 - `weight_kg`
 - `bmi`
-- `waist_cm`: optional
+- `waist_cm`: optional; selects the waist-aware variant when present
 - `pa_walk_30min_5days`
 - `pa_muscle_2days`
 
-If the user selects "unknown" for waist circumference, the service uses the minimal model. If the user enters a waist
-value, the service uses the waist-aware model.
+## Integration flow
 
-## Integration Flow
+1. `HealthProfile` stores anthropometry and activity-practice fields.
+2. `features_from_health_profile()` normalizes them into the deployed feature contract.
+3. `RiskPredictor.predict()` selects an artifact according to waist availability.
+4. The sklearn pipeline returns a continuous probability through `risk_score` plus bundle metadata.
+5. The service persists the score, model version, model variant, and input snapshot.
 
-1. `HealthProfile` stores birth date, sex, height, weight, BMI, waist, and activity practice flags.
-2. `features_from_health_profile()` converts that ORM object to service input features.
-3. `RiskPredictor.predict()` selects the artifact based on whether `waist_cm` is present.
-4. The selected sklearn pipeline runs in an executor and returns score, level, message, model metadata, and input snapshot.
-5. The risk prediction API should persist the result to `risk_predictions`.
+No predictor code change is required for this artifact update: `RiskPredictor` already reads `feature_columns`,
+`selected_threshold`, `model_version`, and `feature_set` from each bundle.
 
-The first ML PR intentionally stops at the predictor boundary. API persistence should be added in the next PR with
-`physical_assessment` and `risk_prediction` services.
+## Longitudinal compatibility
 
-## Validation Reference
+AWGS 2019 v1 and AWGS 2025 v2 scores use different target definitions. A later history/visualization change must not
+present a jump across those model versions as if it were a change in the user's health. Trend calculations should use
+the same model version or explicitly establish a new baseline at the v2 deployment boundary.
 
-The source modeling package reported 2024 external validation against BIA labels:
+## Validation and limitations
 
-- `self_report_full`: AUROC 0.9004, AUPRC 0.5223, Brier 0.0580
-- `self_report_minimal`: AUROC 0.8841, AUPRC 0.4817, Brier 0.0609
+See [`sarcopenia_validation_awgs2025_summary.md`](sarcopenia_validation_awgs2025_summary.md) for the deployment
+validation summary.
 
-The deployed artifacts use self-report features so the MVP can run without health-checkup upload requirements.
+The labeled cohort requires concurrent grip-strength and BIA measurements, so the oldest participants may be
+under-represented. The model is intended for users aged 65 or older; results for younger users require separate
+validation. Production input drift should be monitored because app users may differ from KNHANES participants.
 
-## Files Intentionally Excluded
-
-The original modeling archive also contained raw KNHANES files, processed datasets, virtual environments, notebooks, and large prediction CSVs. Those are intentionally not copied into this repository.
+The modeling scripts used for this export currently remain in the model owner's separate analysis workspace
+(`local_analysis/awgs2025_results`) together with non-distributable KNHANES-derived data. They are not part of this
+deployment PR, so the checked-in SHA-256 values provide artifact integrity rather than full training reproducibility.
+A separately shareable reproducibility package should exclude raw and processed KNHANES data.

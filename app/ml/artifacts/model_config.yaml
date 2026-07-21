@@ -1,30 +1,27 @@
 age_min: 65
 
-protein:
-  low_g_per_kg: 0.8
-  sufficient_g_per_kg: 1.2
+training:
+  source: KNHANES
+  years: [2022, 2023, 2024]
+  fit: full_labeled_sample
+  weighting: unweighted
 
-split:
-  mode: temporal
-  train_years: [2022]
-  validation_years: [2023]
-  test_size: 0.2
+validation:
+  random_holdout:
+    test_size: 0.2
+    random_state: 42
   stratified_cv:
     n_splits: 5
     shuffle: true
     random_state: 42
-  random_state: 42
 
 feature_sets:
-  default: exam_lifestyle_nutrition
-  compare:
-    - app_minimal
-    - app_minimal_plus_protein
-    - exam_lifestyle_no_glucose_no_protein
-    - exam_lifestyle
-    - exam_lifestyle_nutrition
+  default: self_report_plus_waist
+  fallback: self_report_minimal
 
-target_label: sarcopenia_bia_label
+target_label: sarcopenia_awgs2025
+probability_type: raw
+selected_threshold: 0.20
 
 smote:
   enabled: false

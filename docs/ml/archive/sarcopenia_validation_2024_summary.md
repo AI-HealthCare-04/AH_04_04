@@ -1,4 +1,7 @@
-# 2024 External Validation Summary
+# 2024 External Validation Summary (archived v1)
+
+> This document describes the superseded AWGS 2019-era v1 model. It is retained to preserve the temporal and DXA
+> validation history and must not be interpreted as validation of the AWGS 2025 v2 artifacts.
 
 ## Setup
 
