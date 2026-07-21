@@ -90,7 +90,8 @@ uv run ruff check app
 
 ## 배포
 
-`dev`에 머지되면 `.github/workflows/deploy.yml`이 자동으로 배포합니다.
+`main`에 머지되면 `.github/workflows/deploy.yml`이 자동으로 배포합니다.
+git-flow에 따라 실제 릴리즈인 `main`만 배포 대상이며, `dev`(기능 통합)와 `release`(배포 전 확인)에서는 배포가 돌지 않습니다.
 러너에서 이미지를 빌드해 Docker Hub에 push하고, EC2에서 pull → 마이그레이션 → 기동합니다.
 이미지 태그는 배포한 커밋의 SHA(`app-<sha>`)입니다.
 

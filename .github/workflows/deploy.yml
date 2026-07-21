@@ -5,11 +5,11 @@ name: Deploy
 # 로컬 대신 러너에서 빌드하므로 EC2(프리티어)의 OOM/디스크 부족 위험이 없고,
 # 러너가 x86이라 --platform linux/amd64 크로스빌드도 필요 없다.
 
-# 배포 대상은 dev 하나뿐이다. git-flow상 release/main도 있지만 배포 서버가 1대라,
-# 브랜치를 늘리면 나중 머지가 앞선 머지를 덮어써 브랜치를 나눈 의미가 없어진다.
+# git-flow에 따라 실제 릴리즈인 main 머지에서만 배포한다.
+# dev(기능 통합 테스트)와 release(배포 전 확인)는 배포하지 않는다.
 on:
   push:
-    branches: [dev]
+    branches: [main]
 
 # 배포가 동시에 두 개 돌면 이미지 태그/마이그레이션이 꼬인다.
 # cancel-in-progress는 false — 진행 중인 배포를 중간에 끊으면
