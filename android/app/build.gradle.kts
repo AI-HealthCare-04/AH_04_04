@@ -56,6 +56,14 @@ val debugApiBaseUrl = providers.gradleProperty("AH_DEBUG_API_BASE_URL")
 val releaseApiBaseUrl = providers.gradleProperty("AH_RELEASE_API_BASE_URL")
     .orElse(providers.environmentVariable("AH_RELEASE_API_BASE_URL"))
 
+val googleWebClientId = providers.gradleProperty("AH_GOOGLE_WEB_CLIENT_ID")
+    .orElse(providers.environmentVariable("AH_GOOGLE_WEB_CLIENT_ID"))
+    .orElse("")
+
+val kakaoNativeAppKey = providers.gradleProperty("AH_KAKAO_NATIVE_APP_KEY")
+    .orElse(providers.environmentVariable("AH_KAKAO_NATIVE_APP_KEY"))
+    .orElse("")
+
 android {
     namespace = "com.aihealthcare.ah0404"
     compileSdk {
@@ -72,6 +80,9 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", googleWebClientId.get().asBuildConfigString())
+        buildConfigField("String", "KAKAO_NATIVE_APP_KEY", kakaoNativeAppKey.get().asBuildConfigString())
+        manifestPlaceholders["KAKAO_NATIVE_APP_KEY"] = kakaoNativeAppKey.get().ifBlank { "unconfigured" }
     }
 
     buildTypes {
@@ -140,6 +151,10 @@ dependencies {
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui)
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services.auth)
+    implementation(libs.googleid)
+    implementation(libs.kakao.user)
     testImplementation(libs.junit)
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
     androidTestImplementation(platform(libs.androidx.compose.bom))
