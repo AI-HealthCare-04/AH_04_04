@@ -83,9 +83,9 @@ def _alembic(*args: str) -> None:
 
 
 def _alembic_capture(*args: str) -> subprocess.CompletedProcess[str]:
-    # 실패를 '기대'하는 호출용(check=False). 반환코드/출력을 직접 검사한다.
+    # check=False. 반환코드/출력을 호출부에서 직접 검사한다(성공·실패 기대 케이스 공용).
     env = {**os.environ, "DB_NAME": MIG_DB}
-    print(f"\n== alembic {' '.join(args)} (실패 기대) ==", flush=True)
+    print(f"\n== alembic {' '.join(args)} (반환코드 검사) ==", flush=True)
     return subprocess.run(
         ["uv", "run", "--group", "app", "--group", "dev", "alembic", *args],
         env=env, capture_output=True, text=True,
@@ -154,9 +154,82 @@ def check_voice_data_guard() -> None:
         asyncio.run(_exec(f"DROP DATABASE IF EXISTS `{MIG_DB}`"))
 
 
+def _seed_6m_row_at_0007(values: str) -> None:
+    # 0008 직전 리비전(0007_oauth_login_nonces)까지 올린 뒤, walk_6m 컬럼을 채운 평가 1건을 심는다.
+    asyncio.run(_exec(f"DROP DATABASE IF EXISTS `{MIG_DB}`"))
+    asyncio.run(_exec(f"CREATE DATABASE `{MIG_DB}` CHARACTER SET utf8mb4"))
+    _alembic("upgrade", "0007_oauth_login_nonces")
+    asyncio.run(
+        _exec_many_on_mig(
+            [
+                "SET FOREIGN_KEY_CHECKS=0",
+                "INSERT INTO physical_assessments "
+                "(user_id,assessment_type,chair_stand_skipped,walk_6m_time_sec,walk_6m_skipped,"
+                f"pain_reported,dizziness_reported,used_for_level_setting) VALUES {values}",
+                "SET FOREIGN_KEY_CHECKS=1",
+            ]
+        )
+    )
+
+
+def check_walk_6m_data_guard() -> None:
+    # 0008의 파괴적 컬럼 DROP이 '6m 측정 데이터가 실재할 때' 조용히 삭제하지 않고
+    #   안전하게 중단되는지 검증한다(리뷰 #103, voice와 동일 패턴).
+    print(f"\n임시 DB 재생성(6m 측정값 가드 검증): {MIG_DB}", flush=True)
+    try:
+        # walk_6m_time_sec를 채운 '측정값' 행 → upgrade가 가드에 걸려 실패해야 한다.
+        _seed_6m_row_at_0007("(1,'initial',0,6.10,0,0,0,0)")
+        result = _alembic_capture("upgrade", "head")
+        if result.returncode == 0:
+            sys.exit("가드 검증 실패: 6m 측정 데이터가 있는데 마이그레이션이 성공했다(데이터 손실 경로!)")
+        guard_marker = "0008_drop_walk_6m_columns 중단"
+        combined = (result.stderr or "") + (result.stdout or "")
+        if guard_marker not in combined:
+            sys.exit(
+                "가드 검증 실패: 마이그레이션이 실패했으나 preflight 가드가 아닌 다른 원인일 수 있음 "
+                f"(가드 메시지 '{guard_marker}' 미검출). 마지막 출력:\n{combined[-2000:]}"
+            )
+        remaining = asyncio.run(
+            _scalar_on_mig("SELECT COUNT(*) FROM physical_assessments WHERE walk_6m_time_sec=6.10")
+        )
+        if remaining != 1:
+            sys.exit(f"가드 검증 실패: 마이그레이션이 중단됐는데 데이터가 변형됐다(remaining={remaining})")
+        print("== OK: 6m 측정값 존재 시 0008이 안전하게 중단되고 원본이 보존됨 ==")
+    finally:
+        asyncio.run(_exec(f"DROP DATABASE IF EXISTS `{MIG_DB}`"))
+
+
+def check_walk_6m_skipped_only_drops() -> None:
+    # skipped-only 행(측정값 없이 walk_6m_skipped=1)은 '측정값'이 아니라 파생 플래그라 폐기 대상(리뷰 #118-2).
+    #   가드에 걸리지 않고 정상적으로 컬럼과 함께 DROP돼야 한다(중단되면 5STS 단독 평가 DB가 통째로 막힘).
+    print(f"\n임시 DB 재생성(skipped-only 폐기 검증): {MIG_DB}", flush=True)
+    try:
+        _seed_6m_row_at_0007("(1,'initial',0,NULL,1,0,0,0)")
+        result = _alembic_capture("upgrade", "head")
+        if result.returncode != 0:
+            sys.exit(
+                "skipped-only 검증 실패: skipped=1(측정값 없음) 행에 가드가 걸려 마이그레이션이 중단됐다. "
+                f"마지막 출력:\n{(result.stderr or '') + (result.stdout or '')}[-2000:]"
+            )
+        dropped = asyncio.run(
+            _scalar_on_mig(
+                "SELECT COUNT(*) FROM information_schema.columns "
+                f"WHERE table_schema='{MIG_DB}' AND table_name='physical_assessments' "
+                "AND column_name LIKE 'walk_6m_%'"
+            )
+        )
+        if dropped != 0:
+            sys.exit(f"skipped-only 검증 실패: walk_6m 컬럼이 남아있다(count={dropped})")
+        print("== OK: skipped-only 행은 가드에 안 걸리고 컬럼과 함께 정상 폐기됨 ==")
+    finally:
+        asyncio.run(_exec(f"DROP DATABASE IF EXISTS `{MIG_DB}`"))
+
+
 def main() -> None:
     check_migration_roundtrip()
     check_voice_data_guard()
+    check_walk_6m_data_guard()
+    check_walk_6m_skipped_only_drops()
     print("\n== ALL OK ==")
 
 

@@ -103,9 +103,6 @@ async def test_onboarding_happy_path_guest_to_completed(db_client: AsyncClient) 
             "assessment_type": "initial",
             "chair_stand_5_time_sec": 12.4,
             "chair_stand_skipped": False,
-            "walk_6m_time_sec": 6.1,
-            "walk_6m_distance_m": 6.0,
-            "walk_6m_skipped": False,
             "pain_reported": False,
             "dizziness_reported": False,
         },
@@ -169,9 +166,6 @@ async def test_physical_assessment_mutual_exclusion_returns_422(db_client: Async
         json={
             "assessment_type": "initial",
             "chair_stand_skipped": False,
-            "walk_6m_time_sec": 6.1,
-            "walk_6m_distance_m": 6.0,
-            "walk_6m_skipped": False,
         },
         headers=auth,
     )
@@ -193,3 +187,42 @@ async def test_health_check_skip_completes_onboarding(db_client: AsyncClient) ->
     body = skip.json()
     assert body["onboarding_status"] == "completed"
     assert body["activity_profile"]["current_level"] in _LEVELS
+
+
+async def test_legacy_walk_6m_payload_ignored_band_from_5sts(db_client: AsyncClient) -> None:
+    # 구버전 앱이 walk_6m_*를 계속 보내도 422가 아니라 200/201로 무시(deprecated no-op)되고,
+    #   밴드는 5STS 단독으로 산출된다(6m 유무와 무관, 리뷰 #118-3).
+    auth = await _guest_auth(db_client)
+    await db_client.post(
+        "/api/v1/users/me/agreements", json=await _agreements_payload(db_client, auth), headers=auth
+    )
+    sid = (
+        await db_client.post("/api/v1/health-check/sessions", json={"input_method": "form"}, headers=auth)
+    ).json()["session_id"]
+    # 나이 68세(1958년생) → 65-69 규준 11.4초. 5STS 12.4 > 11.4 → easy.
+    await db_client.post(
+        "/api/v1/health-profiles",
+        json={
+            "session_id": sid, "birth_date": "1958-03-21", "sex": "male",
+            "height_cm": 168, "weight_kg": 63.5, "walking_practice": True, "strength_exercise": False,
+            "activity_input_source": "self_report", "input_method": "form", "has_estimated_value": False,
+        },
+        headers=auth,
+    )
+    resp = await db_client.post(
+        "/api/v1/physical-assessments",
+        json={
+            "assessment_type": "initial",
+            "chair_stand_5_time_sec": 12.4,
+            "chair_stand_skipped": False,
+            # 구버전 앱 잔재(deprecated no-op): 무시돼야 하고 밴드에 영향 없음.
+            "walk_6m_time_sec": 6.1,
+            "walk_6m_distance_m": 6.0,
+            "walk_6m_skipped": False,
+        },
+        headers=auth,
+    )
+    assert resp.status_code == status.HTTP_201_CREATED
+    body = resp.json()
+    assert "walk_6m_speed_mps" not in resp.text  # 응답 계약에도 6m 없음
+    assert body["activity_profile"]["current_level"] == "easy"  # 5STS 12.4 > 11.4 → easy
