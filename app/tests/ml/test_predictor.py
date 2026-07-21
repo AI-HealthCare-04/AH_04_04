@@ -1,10 +1,19 @@
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from app.ml.predictor import RiskPredictor, features_from_health_profile, has_waist_input, normalize_features
+from app.ml.predictor import (
+    MINIMAL_ARTIFACT_PATH,
+    WITH_WAIST_ARTIFACT_PATH,
+    RiskPredictor,
+    features_from_health_profile,
+    has_waist_input,
+    load_model_bundle,
+    normalize_features,
+)
 from app.models.enums import ModelVariant, RiskLevel, Sex
 
 
@@ -89,8 +98,9 @@ async def test_risk_predictor_loads_artifact_and_predicts() -> None:
     assert 0 <= result.risk_score <= 1
     assert result.risk_level in {RiskLevel.LOW, RiskLevel.MEDIUM, RiskLevel.HIGH}
     assert result.model_variant == ModelVariant.MINIMAL
-    assert result.model_version == "sarcopenia_lr_self_report_minimal_v1"
+    assert result.model_version == "sarcopenia_lr_self_report_minimal_awgs2025_v2"
     assert result.feature_set == "self_report_minimal"
+    assert result.threshold == pytest.approx(0.20)
     assert set(result.input_snapshot) == {
         "age",
         "sex",
@@ -118,6 +128,69 @@ async def test_risk_predictor_uses_waist_model_when_waist_is_present() -> None:
 
     assert 0 <= result.risk_score <= 1
     assert result.model_variant == ModelVariant.WITH_WAIST
-    assert result.model_version == "sarcopenia_lr_self_report_plus_waist_v1"
+    assert result.model_version == "sarcopenia_lr_self_report_plus_waist_awgs2025_v2"
     assert result.feature_set == "self_report_plus_waist"
+    assert result.threshold == pytest.approx(0.20)
     assert result.input_snapshot["waist_cm"] == 82.0
+
+
+@pytest.mark.parametrize(
+    ("artifact_path", "expected_feature_set", "expected_model_version", "expected_columns"),
+    [
+        (
+            MINIMAL_ARTIFACT_PATH,
+            "self_report_minimal",
+            "sarcopenia_lr_self_report_minimal_awgs2025_v2",
+            [
+                "age",
+                "sex",
+                "height_cm",
+                "weight_kg",
+                "bmi",
+                "pa_walk_30min_5days",
+                "pa_muscle_2days",
+            ],
+        ),
+        (
+            WITH_WAIST_ARTIFACT_PATH,
+            "self_report_plus_waist",
+            "sarcopenia_lr_self_report_plus_waist_awgs2025_v2",
+            [
+                "age",
+                "sex",
+                "height_cm",
+                "weight_kg",
+                "bmi",
+                "waist_cm",
+                "pa_walk_30min_5days",
+                "pa_muscle_2days",
+            ],
+        ),
+    ],
+)
+def test_awgs2025_artifact_contract(
+    artifact_path: Path,
+    expected_feature_set: str,
+    expected_model_version: str,
+    expected_columns: list[str],
+) -> None:
+    bundle = load_model_bundle(artifact_path)
+
+    assert {
+        "model",
+        "feature_columns",
+        "model_name",
+        "feature_set",
+        "target_label",
+        "selected_threshold",
+        "probability_type",
+        "model_version",
+    } <= bundle.keys()
+    assert bundle["feature_columns"] == expected_columns
+    assert bundle["model_name"] == "logistic_regression"
+    assert bundle["feature_set"] == expected_feature_set
+    assert bundle["target_label"] == "sarcopenia_awgs2025"
+    assert bundle["selected_threshold"] == pytest.approx(0.20)
+    assert bundle["probability_type"] == "raw"
+    assert bundle["model_version"] == expected_model_version
+    assert list(bundle["model"].classes_) == [0, 1]
