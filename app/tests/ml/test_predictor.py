@@ -15,6 +15,7 @@ from app.ml.predictor import (
     normalize_features,
 )
 from app.models.enums import ModelVariant, RiskLevel, Sex
+from app.models.predictions import RiskPrediction
 
 
 def test_normalize_features_maps_service_fields() -> None:
@@ -194,3 +195,7 @@ def test_awgs2025_artifact_contract(
     assert bundle["probability_type"] == "raw"
     assert bundle["model_version"] == expected_model_version
     assert list(bundle["model"].classes_) == [0, 1]
+
+    model_version_max_length = RiskPrediction.__table__.c.model_version.type.length
+    assert model_version_max_length is not None
+    assert len(bundle["model_version"]) <= model_version_max_length

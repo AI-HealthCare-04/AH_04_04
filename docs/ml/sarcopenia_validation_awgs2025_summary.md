@@ -12,6 +12,16 @@
 The final deployment artifacts were fitted on all available 2022–2024 labeled rows. Validation results below come
 from cross-validation or a held-out random 80/20 split, not from the final full-data fit itself.
 
+### Why the evaluation strategy changed
+
+The previous v1 model trained on 2022–2023 and treated 2024 as a temporal external-validation set. That result cannot
+be carried forward as validation of v2 because AWGS 2025 changes the target population, and the final v2 artifacts use
+all three years for training. For v2, 2022–2024 were pooled and evaluated with stratified cross-validation plus a
+random 80/20 holdout before the final full-data fit. This prioritizes a stable number of positive cases: the pooled
+AWGS 2025 cohort has 568 positives, which would become substantially smaller and less stable if a single year were
+reserved. The reported v2 results are therefore internal validation, not a replacement claim for temporal or external
+validation. A future untouched cohort remains desirable.
+
 ## Performance
 
 | variant | evaluation | AUROC | AUPRC | Brier | ECE |
@@ -23,6 +33,17 @@ from cross-validation or a held-out random 80/20 split, not from the final full-
 The holdout calibration curve closely followed the identity line. The Brier and ECE results support preserving the
 continuous probability for longitudinal use. This is internal validation; it does not turn the output into a clinical
 diagnosis or replace external validation on the production population.
+
+## Continuous score and transitional threshold
+
+The former runtime already persisted a continuous `risk_score`, but API responses and the client primarily consumed
+three tiers through `care_stage`. The product direction now requires change-over-time visualization, so downstream
+work will preserve and expose the calibrated continuous value rather than collapsing every observation to a tier.
+
+`selected_threshold=0.20` is retained as a transitional high-tier/action boundary so the existing `risk_level` and
+`care_stage` pipeline continues to operate until the continuous API and client migration are complete. The current
+predictor derives its middle compatibility band at half that threshold (`0.10`). Neither boundary defines the
+continuous graph scale, and the planned trend must use `risk_score` together with `model_version`.
 
 ## Variant policy
 
@@ -61,3 +82,5 @@ target, threshold `0.20`, and v2 model versions.
 - The labeled sample selection can under-represent frailer and oldest participants.
 - App users may have a different input distribution from KNHANES participants.
 - Model-version boundaries must be retained when continuous scores are later exposed as a trend.
+- The former temporal/DXA validation record is preserved under `docs/ml/archive/` as v1 historical evidence; it must
+  not be presented as validation of the AWGS 2025 v2 artifacts.
