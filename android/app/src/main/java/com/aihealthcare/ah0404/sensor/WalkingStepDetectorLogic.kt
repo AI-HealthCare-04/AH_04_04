@@ -23,11 +23,12 @@ class WalkingStepDetectorLogic {
         //   초저속·셔플·불규칙 보행은 v1 정확도 미보장 — 틀리면 '덜 세는 쪽'으로 열화(과다카운트=거짓 격려 금지).
         //   2차 실측(#89, 2026-07-21) 요약: 정상 20보 → 350ms에서 평균 21.0(최적). 250ms는 걸음 내부
         //   이중봉우리로 과다카운트. 앉았다 일어나기(느린 리듬 ≈47~52보/분)는 max 2000ms에선 걷기로 오탐
-        //   (실측 13·10보) → max를 정상 케이던스 대역(간격 ≤900ms)으로 좁혀 느린 비보행을 걸러낸다.
+        //   (실측 13·10보) → max를 정상 케이던스 대역(간격 ≤1000ms, 2차 조정 900→1000)으로 좁혀 느린 비보행을
+        //   걸러낸다. 앉기 리듬(≈47~52보/분 = 간격 ≈1200ms)은 1000ms에서도 초과라 카운트 0으로 유지된다.
         // ── 실측 확정 값(#89) ─────────────────────────────────────
         const val DEFAULT_PEAK_THRESHOLD = 10.5f
         const val DEFAULT_MIN_PEAK_INTERVAL_MS = 350L // 실측 확정: 이중봉우리 병합, 진짜 걸음(≈570ms)은 유지
-        const val DEFAULT_MAX_PEAK_INTERVAL_MS = 900L // 실측 확정: 정상 대역만 인정(앉기·초저속 오탐 차단)
+        const val DEFAULT_MAX_PEAK_INTERVAL_MS = 1000L // 2차 조정 900→1000: 느린 정상 보행 여유 확보. 앉기(≈1200ms 간격)는 1000ms에서도 걸러져 FP 0 유지
         const val DEFAULT_PEAKS_TO_START_WALKING = 10 // 가설 유지: 연속 10걸음 확정
         const val DEFAULT_WALKING_TIMEOUT_MS = 2500L // 마지막 피크 후 이 시간 지나면 IDLE 복귀
         const val DEFAULT_LOW_PASS_ALPHA = 0.3f // 높을수록 빠른 반응 / 낮을수록 노이즈 제거
