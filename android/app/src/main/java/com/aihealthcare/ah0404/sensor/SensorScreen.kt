@@ -97,6 +97,11 @@ fun StepCounterSection() {
     val minInterval = remember { mutableStateOf(walkLogic.minPeakIntervalMs) }
     val maxInterval = remember { mutableStateOf(walkLogic.maxPeakIntervalMs) }
 
+    // 측정 시간·간격 표시(A-4a): "몇 초에 몇 보"를 함께 기록하고, 걸음 내부 이중봉우리를 진단하기 위함.
+    val walkSpanMs = remember { mutableStateOf(0L) }
+    val lastIntervalMs = remember { mutableStateOf(0L) }
+    val cadence = remember { mutableStateOf(0) }
+
     // 측정 초기화(카운트·상태·화면) — 리셋 버튼 + 튜닝 변경 시 공통 사용.
     //   각 실험을 깨끗한 상태에서 시작해 이전 설정의 누적 상태가 안 섞이게 함(리뷰 #104).
     val resetMeasurement = {
@@ -104,6 +109,9 @@ fun StepCounterSection() {
         stepCount.value = 0
         walkState.value = WalkingStepDetectorLogic.State.IDLE
         consecutivePeaks.value = 0
+        walkSpanMs.value = 0L
+        lastIntervalMs.value = 0L
+        cadence.value = 0
     }
 
     val sensorManager = remember {
@@ -125,6 +133,9 @@ fun StepCounterSection() {
                 filteredMag.value = walkLogic.filteredMagnitude
                 walkState.value = walkLogic.state
                 consecutivePeaks.value = walkLogic.consecutivePeaks
+                walkSpanMs.value = walkLogic.walkingSpanMs
+                lastIntervalMs.value = walkLogic.lastIntervalMs
+                cadence.value = walkLogic.cadenceStepsPerMin
             }
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
         }
@@ -196,6 +207,16 @@ fun StepCounterSection() {
                 lineHeight = 96.sp
             )
             Text("걸음", fontSize = 22.sp, color = MaterialTheme.colorScheme.secondary)
+            Spacer(Modifier.height(4.dp))
+            // 측정 시간·케이던스 — "몇 초에 몇 보"를 함께 기록하기 위한 표시(A-4a).
+            //   경과 = 첫 걸음~마지막 걸음 구간. 평균 보/분 = 감지기가 (걸음-1) 간격으로 환산(순수 로직).
+            val spanSec = walkSpanMs.value / 1000f
+            Text(
+                text = "경과 %.1f초 · 평균 %d보/분".format(spanSec, cadence.value),
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.secondary,
+            )
             Spacer(Modifier.height(8.dp))
             AigoSecondaryButton(
                 text = "리셋 (0부터 다시 세기)",
@@ -212,6 +233,7 @@ fun StepCounterSection() {
                 DebugRow("필터된 크기 (알고리즘 입력)", "%.2f m/s²".format(filteredMag.value))
                 DebugRow("현재 상태", if (walking) "WALKING" else "IDLE")
                 DebugRow("연속 규칙 피크", "${consecutivePeaks.value} / ${peaksToStart.value} (보행 진입 기준)")
+                DebugRow("마지막 피크 간격", "${lastIntervalMs.value} ms (걸음내 이중봉우리 진단)")
             }
             // 🔧 런타임 튜닝(실험용) — DEBUG 빌드에서만 노출(리뷰 #104: 릴리스에서 감지 동작 변경 방지).
             //   값 변경 시 resetMeasurement() 로 측정 자동 초기화 → 이전 설정 상태가 안 섞임.

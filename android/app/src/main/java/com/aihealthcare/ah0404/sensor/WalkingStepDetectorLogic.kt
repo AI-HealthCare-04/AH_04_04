@@ -20,6 +20,9 @@ class WalkingStepDetectorLogic {
     enum class State { IDLE, WALKING }
 
     companion object {
+        // 튜닝 대상(팀 결정 2026-07-20): 지팡이·보행기 없이 스스로 걷는 '독립 보행' 시니어(≈60~120보/분).
+        //   보행기·지팡이급 초저속·불규칙 보행은 v1 정확도 미보장 — 틀리더라도 '덜 세는 쪽'으로 열화한다
+        //   (과다카운트=거짓 격려 금지). 그래서 임계값·최소간격은 '올리는' 방향이 안전과 상성이 맞다.
         // ── 기본(가설) 값 — 실기기 측정으로 확정 예정 ─────────────
         const val DEFAULT_PEAK_THRESHOLD = 10.5f
         const val DEFAULT_MIN_PEAK_INTERVAL_MS = 250L // ≈ 최대 240보/분
@@ -49,8 +52,21 @@ class WalkingStepDetectorLogic {
     var consecutivePeaks = 0
         private set
 
+    /** 디버그/튜닝용: 마지막으로 인정된 두 피크 사이 간격(ms). 걸음 내부 이중봉우리 진단용(A-4a). */
+    var lastIntervalMs: Long = 0L
+        private set
+
+    /** 디버그/튜닝용: 첫 피크~마지막 피크 구간(ms). 케이던스(보/분) 산출·측정시간 기록용. */
+    val walkingSpanMs: Long
+        get() = if (hasSeenPeak) lastPeakTimeMs - firstPeakTimeMs else 0L
+
+    /** 디버그/튜닝용: 평균 케이던스(보/분). N걸음의 구간에는 간격이 N-1개이므로 (count-1)로 환산한다. */
+    val cadenceStepsPerMin: Int
+        get() = if (count >= 2 && walkingSpanMs > 0L) ((count - 1) * 60_000L / walkingSpanMs).toInt() else 0
+
     private var wasAboveThreshold = false
     private var lastPeakTimeMs = 0L
+    private var firstPeakTimeMs = 0L
     private var hasSeenPeak = false
 
     /**
@@ -80,6 +96,8 @@ class WalkingStepDetectorLogic {
         }
 
         val interval = if (hasSeenPeak) timestampMs - lastPeakTimeMs else Long.MAX_VALUE
+        // 첫 피크는 구간 시작점만 잡고, 이후 피크는 직전 간격을 기록(진단용).
+        if (hasSeenPeak) lastIntervalMs = interval else firstPeakTimeMs = timestampMs
         lastPeakTimeMs = timestampMs
         hasSeenPeak = true
 
@@ -111,8 +129,10 @@ class WalkingStepDetectorLogic {
         state = State.IDLE
         count = 0
         consecutivePeaks = 0
+        lastIntervalMs = 0L
         wasAboveThreshold = false
         lastPeakTimeMs = 0L
+        firstPeakTimeMs = 0L
         hasSeenPeak = false
     }
 }
