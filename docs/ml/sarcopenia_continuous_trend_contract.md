@@ -30,11 +30,18 @@ History is returned from oldest to newest within the requested limit.
 The server owns this policy. Android must not parse or compare model-version strings. AWGS 2019 v1 and AWGS 2025 v2
 scores are never connected as a health change; the first v2 record after v1 establishes a new baseline.
 
+When `comparison_status` is `model_changed`, the client must not draw a line from the previous point. It starts a new
+visual segment and baseline so scores produced by different model versions are never presented as one continuous trend.
+
 ## Compatibility and removal plan
 
 `care_stage` remains in responses temporarily because the current Android flow consumes it. It is not the final trend
 contract. After Android switches to the continuous chart, `risk_level`, `care_stage`, and `selected_threshold`
 dependencies should be removed or restricted to internal compatibility paths.
+
+The history endpoint now returns records from oldest to newest for chart consumption. Until the Android record screen
+is updated, this also changes the visible order of its existing timeline because that screen renders the server order
+without sorting. Coordinate the merge and deployment order with the Android trend-chart change.
 
 ## Terms and user communication
 
