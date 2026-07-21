@@ -113,6 +113,10 @@ class MainActivity : ComponentActivity() {
                             AuthFailureCoordinator.retryTransientFailure()
                             sessionRevision++
                         },
+                        onResetSession = {
+                            SessionStore.resetSession(context)
+                            sessionRevision++
+                        },
                         loading = authLoginState.loading,
                         message = authLoginState.message,
                         googleEnabled = SocialSignInClients.googleConfigured,
