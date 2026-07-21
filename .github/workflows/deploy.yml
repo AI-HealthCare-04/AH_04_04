@@ -26,8 +26,10 @@ jobs:
 
     env:
       AWS_REGION: ap-northeast-2
+      # DOCKER_USER/DOCKER_REPOSITORY는 envs/.prod.env의 값과 반드시 같아야 한다.
+      # (다르면 러너는 A에 push하고 EC2는 B를 pull해 "manifest unknown"으로 실패)
       DOCKER_USER: ${{ secrets.DOCKERHUB_USERNAME }}
-      DOCKER_REPOSITORY: senior-challenge
+      DOCKER_REPOSITORY: ai-health
       # 배포마다 고유한 태그. compose의 ${APP_VERSION} 자리에 들어간다.
       # (셸 환경변수가 --env-file .env보다 우선하므로 서버 .env의 APP_VERSION을 덮어쓴다)
       APP_VERSION: ${{ github.sha }}
