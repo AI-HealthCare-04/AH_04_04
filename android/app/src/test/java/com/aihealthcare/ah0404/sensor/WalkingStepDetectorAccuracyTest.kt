@@ -9,12 +9,13 @@ import org.junit.Test
  *
  * 현장 실측(정인님 2차 측정 가이드)에서 눈으로 확인할 시나리오를 **결정론적 합성 신호**로 고정한다.
  * 기존 WalkingStepDetectorLogicTest 는 진입 기준을 3으로 낮춰 '게이팅 로직'만 봤다면, 여기서는
- * **실측 확정값(게이트 10 / 최소간격 350 / 최대 900)** 그대로 두고 정확도 목표를 검증한다.
+ * **실측 확정값(게이트 10 / 최소간격 350 / 최대 1000)** 그대로 두고 정확도 목표를 검증한다.
+ *   (max는 2차 재측정으로 900→1000 상향: 대상 하한 60보/분=1000ms 포함, 앉기 1200ms는 계속 차단. 리뷰 #121)
  *
  *  1) 이중봉우리(더블범프): 한 걸음이 두 번 잡히는 보행 — 최소간격을 올리면 병합돼 실제 걸음수에 수렴 (1차 버그 20보→34)
- *  2) 초저속/느린(범위 밖): 최대간격(900ms) 밖 리듬이라 걷기로 인정 안 됨(과다 방지 우선)
+ *  2) 초저속/느린(범위 밖): 최대간격(1000ms) 밖 리듬이라 걷기로 인정 안 됨(과다 방지 우선)
  *  3) 앉았다 일어나기 / 짧은 폰 흔들기: 오탐(FP) 0 — 특히 앉기(느린 리듬)는 max 축소로 차단
- *  4) 최소/최대 간격 경계값(350 / 900)
+ *  4) 최소/최대 간격 경계값(350 / 1000)
  *
  * 근거·결정: docs/sensor_walking_gate_a4a.md (#89 2차 실측 2026-07-21).
  */
@@ -61,8 +62,8 @@ class WalkingStepDetectorAccuracyTest {
     // ── 2. 초저속/느린(범위 밖) — 정상 대역만 인정 ──────────────────
 
     @Test
-    fun `느린 보행(1100ms 간격)은 최대간격 900 밖이라 걷기로 인정하지 않는다`() {
-        // 정상 대역(≈95~107보/분, 간격 ≈580ms)만 걷기로 본다. 1100ms(≈55보/분)는 최대간격(900) 초과 →
+    fun `느린 보행(1100ms 간격)은 최대간격 1000 밖이라 걷기로 인정하지 않는다`() {
+        // 정상 대역(하한 60보/분=1000ms)만 걷기로 본다. 1100ms(≈55보/분)는 최대간격(1000) 초과 →
         // 매 걸음 리듬이 끊겨 게이트에 도달하지 못한다. 초저속을 못 세는 대신 앉기 오탐을 막는 의도적 트레이드오프(#89).
         repeat(20) { i -> peak(i * 1100L) }
         assertEquals(0, logic.count)
@@ -80,9 +81,9 @@ class WalkingStepDetectorAccuracyTest {
     }
 
     @Test
-    fun `앉았다 일어나기의 느린 리듬(1200ms)은 최대간격 900 밖이라 많이 반복해도 0카운트`() {
+    fun `앉았다 일어나기의 느린 리듬(1200ms)은 최대간격 1000 밖이라 많이 반복해도 0카운트`() {
         // 실측(#89): 앉기 5회가 걸음 13·10으로 오탐됐음(느린 리듬 ≈47~52보/분, 간격 ≈1200ms).
-        // max를 900으로 좁혀, 피크가 12번 나도 매번 리듬이 끊겨 게이트에 도달하지 못한다 → FP 차단.
+        // max를 1000으로 좁혀, 피크가 12번 나도 매번 리듬이 끊겨 게이트에 도달하지 못한다 → FP 차단(1200 > 1000).
         repeat(12) { i -> peak(i * 1200L) }
         assertEquals(0, logic.count)
         assertEquals(WalkingStepDetectorLogic.State.IDLE, logic.state)
@@ -107,19 +108,19 @@ class WalkingStepDetectorAccuracyTest {
     }
 
     @Test
-    fun `간격이 최대허용과 정확히 같으면(900) 규칙이 유지된다`() {
+    fun `간격이 최대허용과 정확히 같으면(1000) 규칙이 유지된다`() {
         logic.peaksToStartWalking = 2
         peak(0L)
-        peak(900L) // 정확히 900ms → 'interval <= 900'이라 리듬 유지(리셋 아님)
+        peak(1000L) // 정확히 1000ms → 'interval <= 1000'이라 리듬 유지(리셋 아님)
         assertEquals(2, logic.count)
         assertEquals(WalkingStepDetectorLogic.State.WALKING, logic.state)
     }
 
     @Test
-    fun `간격이 최대허용을 넘으면(901) 리듬이 끊겨 게이트에 도달하지 않는다`() {
+    fun `간격이 최대허용을 넘으면(1001) 리듬이 끊겨 게이트에 도달하지 않는다`() {
         logic.peaksToStartWalking = 2
         peak(0L)
-        peak(901L) // 901ms → 'interval <= 900'을 벗어나 연속 카운트 리셋 → 진입 실패
+        peak(1001L) // 1001ms → 'interval <= 1000'을 벗어나 연속 카운트 리셋 → 진입 실패
         assertEquals(0, logic.count)
         assertEquals(WalkingStepDetectorLogic.State.IDLE, logic.state)
     }
