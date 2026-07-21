@@ -88,6 +88,35 @@ uv run ruff check app
 
 윈도우에서 uv 캐시 권한 문제가 나면 터미널을 새로 열거나 관리자 권한 PowerShell에서 다시 실행합니다.
 
+## 배포
+
+`dev`에 머지되면 `.github/workflows/deploy.yml`이 자동으로 배포합니다.
+러너에서 이미지를 빌드해 Docker Hub에 push하고, EC2에서 pull → 마이그레이션 → 기동합니다.
+이미지 태그는 배포한 커밋의 SHA(`app-<sha>`)입니다.
+
+### EC2에서 수동 실행 시 주의 — APP_VERSION
+
+워크플로는 `APP_VERSION`을 셸 환경변수로만 넘기고 서버의 `.env`에는 기록하지 않습니다.
+서버 `.env`의 `APP_VERSION`은 계속 예전 값(`v1.0.0` 등)으로 남아 있습니다.
+
+그래서 EC2에서 아래처럼 그냥 실행하면 **`.env`의 옛 값을 읽어 구버전 이미지로 조용히 롤백됩니다.**
+
+```bash
+# ❌ 하지 말 것 — 방금 배포한 버전이 아니라 .env의 APP_VERSION으로 되돌아간다
+docker compose --env-file .env -f infra/docker/docker-compose.prod.yml up -d
+```
+
+수동으로 올릴 때는 버전을 반드시 명시하세요.
+
+```bash
+# ✅ 현재 떠 있는 버전 확인
+docker ps --format '{{.Image}}'
+
+# ✅ 그 버전을 명시해 실행 (롤백할 때도 원하는 태그를 여기에 지정)
+cd ~/project && DOCKER_USER=menteur DOCKER_REPOSITORY=ai-health APP_VERSION=<태그> \
+  docker compose --env-file .env -f infra/docker/docker-compose.prod.yml up -d
+```
+
 ## 현재 MVP 범위
 
 포함:
