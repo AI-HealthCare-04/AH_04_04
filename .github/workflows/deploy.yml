@@ -1,0 +1,160 @@
+name: Deploy
+
+# 배포 흐름은 scripts/deployment.sh와 동일하다.
+#   러너에서 이미지 빌드 → Docker Hub push → EC2에서 pull → 마이그레이션 → up -d
+# 로컬 대신 러너에서 빌드하므로 EC2(프리티어)의 OOM/디스크 부족 위험이 없고,
+# 러너가 x86이라 --platform linux/amd64 크로스빌드도 필요 없다.
+
+on:
+  push:
+    branches: [backend/feature/deploy-github-actions] # ← 테스트용, PR 올리기 전 삭제
+    # branches: [dev]                                 # ← 최종본
+
+# 배포가 동시에 두 개 돌면 이미지 태그/마이그레이션이 꼬인다.
+# cancel-in-progress는 false — 진행 중인 배포를 중간에 끊으면
+# 보안그룹 규칙이 열린 채 남거나 마이그레이션이 반쯤 적용될 수 있다.
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest # self-hosted 금지 — public 레포라 외부 PR로 EC2에서 임의 코드가 실행된다
+
+    env:
+      AWS_REGION: ap-northeast-2
+      DOCKER_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKER_REPOSITORY: senior-challenge
+      # 배포마다 고유한 태그. compose의 ${APP_VERSION} 자리에 들어간다.
+      # (셸 환경변수가 --env-file .env보다 우선하므로 서버 .env의 APP_VERSION을 덮어쓴다)
+      APP_VERSION: ${{ github.sha }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Docker Hub 로그인
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Buildx 준비
+        uses: docker/setup-buildx-action@v3
+
+      - name: 이미지 빌드 & 푸시
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: app/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.DOCKER_USER }}/${{ env.DOCKER_REPOSITORY }}:app-${{ env.APP_VERSION }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 운영 시크릿을 파일로 복원한다. 값은 env로 넘겨서 셸에 직접 보간하지 않는다
+      # (${{ }}를 run 본문에 그대로 쓰면 개행/따옴표가 든 값이 스크립트를 깨뜨린다).
+      - name: 운영 .env 복원
+        env:
+          PROD_ENV: ${{ secrets.PROD_ENV }}
+        run: |
+          umask 077
+          printf '%s\n' "$PROD_ENV" > prod.env
+
+      # ── 여기서부터 EC2 접속 구간. 보안그룹이 열려 있는 시간을 최소화하려고
+      #    빌드/푸시를 모두 끝낸 뒤에 연다. ──────────────────────────────────
+      - name: 러너 공인 IP 확인
+        id: ip
+        run: echo "addr=$(curl -sS --fail --max-time 10 https://checkip.amazonaws.com)" >> "$GITHUB_OUTPUT"
+
+      - name: AWS 자격증명 설정
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # GitHub 러너는 매번 다른 IP에서 실행된다. EC2 22번 포트는 특정 IP만 열려 있으므로
+      # 배포 직전에 이번 러너 IP만 추가하고, 끝나면 반드시 제거한다.
+      - name: 보안그룹 22번 열기
+        run: |
+          aws ec2 authorize-security-group-ingress \
+            --group-id "${{ secrets.AWS_SG_ID }}" \
+            --protocol tcp --port 22 \
+            --cidr "${{ steps.ip.outputs.addr }}/32"
+
+      - name: 배포 파일 업로드
+        uses: appleboy/scp-action@v1.0.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          # infra/nginx/default.conf는 올리지 않는다.
+          # 레포의 것은 server_name이 비어 있는 템플릿이고, 실제 도메인/HTTPS 설정이 반영된
+          # 파일이 이미 서버에 있다(deployment.sh가 sed로 생성해 올린 것). 덮어쓰면 nginx가 죽는다.
+          source: "prod.env,infra/docker/docker-compose.prod.yml"
+          target: ~/project
+
+      - name: EC2 배포
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: DOCKER_USER,DOCKER_REPOSITORY,APP_VERSION,DOCKERHUB_TOKEN
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd ~/project
+
+            mv -f prod.env .env
+            chmod 600 .env
+
+            echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKER_USER" --password-stdin
+            export DOCKER_USER DOCKER_REPOSITORY APP_VERSION
+
+            # --env-file .env: compose 변수 보간(${DB_PASSWORD} 등)이 .env를 읽게 한다.
+            #   (없으면 MySQL이 compose 기본값으로 초기화돼, .env의 강한 비번을 쓰는 앱과 불일치 → Access denied)
+            COMPOSE="docker compose --env-file .env -f infra/docker/docker-compose.prod.yml"
+            $COMPOSE pull fastapi
+
+            # 마이그레이션은 앱 기동 "전"에, 일회성 컨테이너로 끝낸다. (#123에서 확정한 순서)
+            #   앱을 먼저 띄우면 새 코드가 구 스키마로 시작 못 해 재시작 루프에 빠지고,
+            #   그러면 exec 자체가 실패해 스키마를 올릴 방법이 없다.
+            # 1) DB만 healthy 될 때까지 대기
+            $COMPOSE up -d --wait mysql
+            # 2) DB 스키마 최신화. --no-deps: 위에서 이미 띄운 mysql을 다시 건드리지 않는다.
+            $COMPOSE run --rm --no-deps fastapi uv run --no-sync alembic upgrade head
+            # 3) 마이그레이션 성공 후에만 전체 서비스 기동 (실패 시 set -e로 여기서 중단)
+            $COMPOSE up -d
+
+            docker image prune -af
+            docker logout
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 헬스체크
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script_stop: true
+          # 컨테이너가 뜬 직후엔 아직 못 받으므로 재시도한다. nginx는 /api/만 프록시하므로
+          # fastapi가 호스트에 노출한 8000 포트로 직접 확인한다.
+          script: |
+            curl -fsS --max-time 5 --retry 12 --retry-delay 5 --retry-all-errors \
+              http://localhost:8000/health
+
+      # 배포가 실패해도 반드시 닫는다. 이게 없으면 실패할 때마다 열린 규칙이 쌓인다.
+      - name: 보안그룹 22번 닫기
+        if: always() && steps.ip.outputs.addr != ''
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id "${{ secrets.AWS_SG_ID }}" \
+            --protocol tcp --port 22 \
+            --cidr "${{ steps.ip.outputs.addr }}/32"

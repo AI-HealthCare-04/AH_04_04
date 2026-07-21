@@ -11,6 +11,8 @@ wheels/
 *.bak
 # SSH 개인키가 실수로 커밋되는 것을 막는다.
 *.pem
+# deploy 워크플로가 PROD_ENV 시크릿을 복원하는 파일명(러너에서만 생성되지만 로컬 사본 방지).
+/prod.env
 .idea/
 .vscode
 .coverage
