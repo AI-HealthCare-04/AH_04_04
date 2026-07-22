@@ -98,12 +98,36 @@ class WalkingSession(
         activeTime.pause()
     }
 
-    /** 화면에 돌아올 때(onResume): 측정 중이면 센서 재등록 + 경과 시계 재개. */
-    override fun resume() {
-        if (running) {
-            registerSensor()
+    /**
+     * 화면에 돌아올 때(onResume): 측정 중이면 센서 재등록 + 경과 시계 재개.
+     * ⚠️ 센서 재등록 성공(registered=true) 시에만 시계를 재개한다. 실패했는데 시계만 흘리면
+     *    걸음은 못 세면서 경과만 늘어 이 PR 이 없애려는 드리프트가 재발하므로, 실패 시엔 세션을
+     *    정지 상태로 만들고 false 를 돌려 호출부가 READY/재시도로 수렴하게 한다.
+     * @return 측정이 정상 재개됐는가.
+     */
+    override fun resume(): Boolean {
+        if (!running) return false
+        registerSensor()
+        if (registered) {
             activeTime.resume()
+            return true
         }
+        // 복귀 시 센서 재등록 실패 → 시계 재개하지 않고 세션 중단.
+        running = false
+        activeTime.stop()
+        Log.w(TAG, "복귀 시 센서 재등록 실패 → 측정 중단(경과 시계 동결)")
+        return false
+    }
+
+    /**
+     * 화면 완전 이탈용 중단. 센서 해제 + 활성 시계 종료 + running 해제까지 명시적으로 처리해,
+     * 같은 세션 인스턴스에서 이후 start() 로 **재시작이 가능**하도록 한다(pause 는 running 유지라 불가).
+     */
+    override fun cancel() {
+        running = false
+        unregisterSensor()
+        activeTime.stop()
+        Log.i(TAG, "세션 취소(화면 이탈) → 재시작 가능 상태로 정리")
     }
 
     /** 현재까지 실제 측정 중이던 경과 시간(초). 종료·정지 후에는 그 시점 기준으로 고정된다. */

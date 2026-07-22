@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -23,6 +24,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,6 +38,8 @@ import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
 import com.aihealthcare.ah0404.ui.components.MEDICAL_DISCLAIMER_DEFAULT
 import com.aihealthcare.ah0404.ui.components.MedicalDisclaimer
 import com.aihealthcare.ah0404.ui.theme.Dimens
+import java.util.Calendar
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 /**
@@ -138,6 +143,27 @@ private fun HomeContent(
     onOpenExercise: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val hourOfDay by produceState(initialValue = currentHourOfDay()) {
+        while (true) {
+            delay(60_000L)
+            value = currentHourOfDay()
+        }
+    }
+    val bubbleMessage = remember(ui, refreshError, hourOfDay) {
+        selectPetBubbleMessage(
+            PetBubbleContext(
+                nickname = ui.nickname,
+                completedToday = ui.completedToday,
+                availableMeal = ui.availableMeal,
+                availableExercise = ui.availableExercise,
+                availableWalking = ui.availableWalking,
+                todayWalkingMin = ui.todayWalkingMin,
+                todayWalkingSteps = ui.todayWalkingSteps,
+                hourOfDay = hourOfDay,
+                hasFreshHomeData = !refreshError,
+            ),
+        )
+    }
     // 스크롤 콘텐츠 위에 마스코트 펫을 '고정 오버레이'로 얹는다.
     //   PetIdleView 는 GLSurfaceView(setZOrderOnTop) 라 스크롤 Column 안에 넣으면 떠서 깨지므로,
     //   Box 로 감싸 하단 코너에 고정한다(센서 탭과 동일 방식). 마지막 콘텐츠는 하단 여백으로 가림 방지.
@@ -243,8 +269,19 @@ private fun HomeContent(
         // TODO: 백엔드 연결 — 주간 리포트·걸음 목표/비교(계약 GAP: /home 확장 대기)
         Spacer(Modifier.height(Dimens.Space8))
         // 하단 코너 펫 오버레이가 마지막 콘텐츠를 가리지 않도록 여백 확보.
-        Spacer(Modifier.height(140.dp))
+        Spacer(Modifier.height(320.dp))
         }
+
+        PetSpeechBubble(
+            text = bubbleMessage.text,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(
+                    start = Dimens.Space16,
+                    end = Dimens.Space16,
+                    bottom = 164.dp,
+                ),
+        )
 
         // 마스코트 펫(고개 갸웃 idle) — 배경 투명, 하단 코너 고정. 홈에 온기를 더한다.
         PetIdle(
@@ -255,6 +292,33 @@ private fun HomeContent(
         )
     }
 }
+
+@Composable
+private fun PetSpeechBubble(
+    text: String,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier.widthIn(max = 280.dp),
+        color = MaterialTheme.colorScheme.primaryContainer,
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        shape = MaterialTheme.shapes.large,
+        tonalElevation = 4.dp,
+        shadowElevation = 4.dp,
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(
+                horizontal = Dimens.Space16,
+                vertical = Dimens.Space12,
+            ),
+        )
+    }
+}
+
+private fun currentHourOfDay(): Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
 
 @Composable
 private fun PointsChip(points: Int) {
