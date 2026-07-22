@@ -4,7 +4,6 @@ package com.aihealthcare.ah0404.mission
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -38,7 +36,6 @@ import com.aihealthcare.ah0404.pet.PetWalkingView
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoHeroCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
-import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
 import com.aihealthcare.ah0404.ui.components.WalkSitGuidanceNote
 import com.aihealthcare.ah0404.ui.theme.Dimens
 import kotlinx.coroutines.delay
@@ -160,25 +157,18 @@ fun WalkingMeasureScreen(
         when (ui.phase) {
             WalkingSessionViewModel.Phase.READY -> ReadyContent(
                 sensorAvailable = ui.sensorAvailable,
+                startFailed = ui.startFailed,
                 onStart = vm::startMeasuring,
             )
 
             WalkingSessionViewModel.Phase.MEASURING -> MeasuringContent(
                 ui = ui,
-                onFinish = { vm.finish(mission.missionTemplateId) },
+                onFinish = vm::finish,
             )
-
-            WalkingSessionViewModel.Phase.SUBMITTING -> SubmittingContent()
 
             WalkingSessionViewModel.Phase.DONE -> DoneContent(
                 ui = ui,
                 onConfirm = onBack,
-            )
-
-            WalkingSessionViewModel.Phase.ERROR -> ErrorContent(
-                message = ui.errorMessage,
-                onRetry = { vm.retrySubmit(mission.missionTemplateId) },
-                onBack = onBack,
             )
         }
         Spacer(Modifier.height(Dimens.Space8))
@@ -186,7 +176,11 @@ fun WalkingMeasureScreen(
 }
 
 @Composable
-private fun ReadyContent(sensorAvailable: Boolean, onStart: () -> Unit) {
+private fun ReadyContent(
+    sensorAvailable: Boolean,
+    startFailed: Boolean,
+    onStart: () -> Unit,
+) {
     if (!sensorAvailable) {
         Text(
             text = "이 기기는 걸음 측정을 지원하지 않아요.",
@@ -195,11 +189,20 @@ private fun ReadyContent(sensorAvailable: Boolean, onStart: () -> Unit) {
         )
         return
     }
-    Text(
-        text = "휴대폰을 손에 들거나 주머니에 넣고,\n준비되면 아래 버튼을 눌러 걸어 주세요.",
-        style = MaterialTheme.typography.bodyLarge,
-    )
-    AigoPrimaryButton(text = "측정 시작", onClick = onStart)
+    if (startFailed) {
+        // 센서는 있으나 등록에 실패한 경우 — 다시 시도 안내.
+        Text(
+            text = "측정을 시작하지 못했어요. 잠시 후 다시 눌러 주세요.",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.error,
+        )
+    } else {
+        Text(
+            text = "휴대폰을 손에 들거나 주머니에 넣고,\n준비되면 아래 버튼을 눌러 걸어 주세요.",
+            style = MaterialTheme.typography.bodyLarge,
+        )
+    }
+    AigoPrimaryButton(text = if (startFailed) "다시 시도" else "측정 시작", onClick = onStart)
 }
 
 @Composable
@@ -251,30 +254,22 @@ private fun MeasuringContent(
 }
 
 @Composable
-private fun SubmittingContent() {
-    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            CircularProgressIndicator()
-            Spacer(Modifier.height(Dimens.Space12))
-            Text("걷기 기록을 저장하는 중…", style = MaterialTheme.typography.bodyLarge)
-        }
-    }
-}
-
-@Composable
 private fun DoneContent(
     ui: WalkingSessionViewModel.UiState,
     onConfirm: () -> Unit,
 ) {
-    val r = ui.result
     Text("🎉 걷기 완료!", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
     AigoCard {
         ResultRow("걸음 수", "${ui.steps} 걸음")
         Spacer(Modifier.height(Dimens.Space8))
-        ResultRow("걸은 시간", r?.let { "%.1f 분".format(it.durationMin) } ?: "-")
-        Spacer(Modifier.height(Dimens.Space8))
-        ResultRow("걸은 거리", r?.let { "%.2f km".format(it.distanceKm) } ?: "-")
+        ResultRow("걸은 시간", formatElapsed(ui.elapsedSec))
     }
+    // 거리·포인트 반영과 서버 저장은 다음 업데이트(#91)에서 연결된다. 지금은 측정값만 확정해 보여준다.
+    Text(
+        text = "기록 저장은 다음 업데이트에서 연결돼요.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
     AigoPrimaryButton(text = "확인", onClick = onConfirm)
 }
 
@@ -287,22 +282,6 @@ private fun ResultRow(label: String, value: String) {
         Text(label, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
     }
-}
-
-@Composable
-private fun ErrorContent(
-    message: String?,
-    onRetry: () -> Unit,
-    onBack: () -> Unit,
-) {
-    Text("전송에 실패했어요", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-    Text(
-        text = message ?: "잠시 후 다시 시도해 주세요.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.error,
-    )
-    AigoPrimaryButton(text = "다시 시도", onClick = onRetry)
-    AigoSecondaryButton(text = "미션으로 돌아가기", onClick = onBack)
 }
 
 /** 경과 초 → "m분 s초" / "s초". */

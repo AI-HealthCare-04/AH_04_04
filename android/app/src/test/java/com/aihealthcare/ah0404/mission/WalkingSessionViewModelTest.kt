@@ -1,61 +1,43 @@
 package com.aihealthcare.ah0404.mission
 
 import com.aihealthcare.ah0404.sensor.WalkingStepDetectorLogic
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.advanceUntilIdle
-import kotlinx.coroutines.test.resetMain
-import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.test.setMain
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Test
 
 /**
- * WalkingSessionViewModel 세션 상태 머신 테스트(#90) — 센서/서버 없이 fake controller 로 전이 검증.
+ * WalkingSessionViewModel 세션 상태 머신 테스트(#90) — 센서 없이 fake controller 로 전이 검증.
  *
  *  ⚠️ 걸음 감지 정확도(피크·게이팅)는 WalkingStepDetectorLogicTest 소관. 여기서는 세션 상태 전이만.
+ *  ⚠️ 서버 제출은 #90 범위에서 제거됐다(→ #91). 종료는 로컬 스냅샷 확정까지만 검증한다.
  */
-@OptIn(ExperimentalCoroutinesApi::class)
 class WalkingSessionViewModelTest {
 
-    @Before fun setUp() = Dispatchers.setMain(StandardTestDispatcher())
-    @After fun tearDown() = Dispatchers.resetMain()
-
-    /** WalkingSessionController 를 흉내내는 fake — 걸음/상태/센서지원/결과를 테스트에서 조작. */
+    /** WalkingSessionController 를 흉내내는 fake — 걸음/상태/센서지원/시작성공을 테스트에서 조작. */
     private class FakeController : WalkingSessionController {
         override var isSensorAvailable = true
         override var steps = 0
         override var state = WalkingStepDetectorLogic.State.IDLE
         var elapsed = 0
+        /** start() 반환값(센서 등록 성공 여부)을 흉내 — 등록 실패 경로 검증용. */
+        var startSucceeds = true
         var startCount = 0
         var pauseCount = 0
         var resumeCount = 0
-        var submittedWith: Int? = null
-        var submitError: Exception? = null
-        var submitResult: WalkingFlowUseCase.Result = WalkingFlowUseCase.Result(
-            missionLogId = 1, steps = 0, durationMin = 0f, distanceKm = 0f,
-            finalStatus = "completed", success = true, dailyTotalMin = null,
-        )
+        var stopCount = 0
+        var snapshot = WalkingSnapshot(steps = 0, durationSec = 0)
 
-        override fun start(): Boolean { startCount++; return isSensorAvailable }
+        override fun start(): Boolean { startCount++; return startSucceeds }
         override fun pause() { pauseCount++ }
         override fun resume() { resumeCount++ }
         override fun elapsedSec() = elapsed
-        override suspend fun stopAndSubmit(missionTemplateId: Int): WalkingFlowUseCase.Result {
-            submittedWith = missionTemplateId
-            submitError?.let { throw it }
-            return submitResult
-        }
+        override fun stop(): WalkingSnapshot { stopCount++; return snapshot }
     }
 
     @Test
-    fun start_moves_to_measuring_and_registers_sensor() = runTest {
+    fun start_moves_to_measuring_and_registers_sensor() {
         val fake = FakeController()
         val vm = WalkingSessionViewModel(fake)
 
@@ -63,11 +45,12 @@ class WalkingSessionViewModelTest {
 
         assertEquals(WalkingSessionViewModel.Phase.MEASURING, vm.uiState.phase)
         assertTrue(vm.uiState.sensorAvailable)
+        assertFalse(vm.uiState.startFailed)
         assertEquals(1, fake.startCount)
     }
 
     @Test
-    fun start_without_sensor_stays_ready() = runTest {
+    fun start_without_sensor_stays_ready() {
         val fake = FakeController().apply { isSensorAvailable = false }
         val vm = WalkingSessionViewModel(fake)
 
@@ -79,7 +62,21 @@ class WalkingSessionViewModelTest {
     }
 
     @Test
-    fun poll_before_walking_is_provisional_not_confirmed() = runTest {
+    fun start_registration_failure_stays_ready_with_flag() {
+        // 가속도계 객체는 있으나 registerListener 실패 → MEASURING 진입 금지, 다시 시도 안내
+        val fake = FakeController().apply { isSensorAvailable = true; startSucceeds = false }
+        val vm = WalkingSessionViewModel(fake)
+
+        vm.startMeasuring()
+
+        assertEquals(WalkingSessionViewModel.Phase.READY, vm.uiState.phase)
+        assertTrue(vm.uiState.sensorAvailable)     // 센서 자체는 있음
+        assertTrue(vm.uiState.startFailed)         // 등록 실패 안내
+        assertEquals(1, fake.startCount)           // start 는 시도했다
+    }
+
+    @Test
+    fun poll_before_walking_is_provisional_not_confirmed() {
         val fake = FakeController()
         val vm = WalkingSessionViewModel(fake)
         vm.startMeasuring()
@@ -97,7 +94,7 @@ class WalkingSessionViewModelTest {
     }
 
     @Test
-    fun poll_after_walking_confirmed_exposes_steps() = runTest {
+    fun poll_after_walking_confirmed_exposes_steps() {
         val fake = FakeController()
         val vm = WalkingSessionViewModel(fake)
         vm.startMeasuring()
@@ -115,7 +112,7 @@ class WalkingSessionViewModelTest {
     }
 
     @Test
-    fun poll_ignored_when_not_measuring() = runTest {
+    fun poll_ignored_when_not_measuring() {
         val fake = FakeController().apply { steps = 99 }
         val vm = WalkingSessionViewModel(fake)
 
@@ -126,75 +123,52 @@ class WalkingSessionViewModelTest {
     }
 
     @Test
-    fun finish_success_submits_and_moves_to_done() = runTest {
+    fun finish_moves_to_done_with_snapshot() {
         val fake = FakeController().apply {
-            steps = 42
-            submitResult = submitResult.copy(steps = 42, durationMin = 5f, distanceKm = 0.03f)
+            snapshot = WalkingSnapshot(steps = 42, durationSec = 300)
         }
         val vm = WalkingSessionViewModel(fake)
         vm.startMeasuring()
 
-        vm.finish(missionTemplateId = 7)
-        assertEquals(WalkingSessionViewModel.Phase.SUBMITTING, vm.uiState.phase) // 즉시 제출중
-        advanceUntilIdle()
+        vm.finish()
 
         assertEquals(WalkingSessionViewModel.Phase.DONE, vm.uiState.phase)
-        assertEquals(7, fake.submittedWith)
+        assertEquals(1, fake.stopCount)
         assertEquals(42, vm.uiState.steps)
-        assertEquals(42, vm.uiState.result?.steps)
+        assertEquals(300, vm.uiState.elapsedSec)
+        assertEquals(WalkingSnapshot(42, 300), vm.uiState.result)
     }
 
     @Test
-    fun finish_failure_moves_to_error_with_message() = runTest {
-        val fake = FakeController().apply { submitError = RuntimeException("network down") }
-        val vm = WalkingSessionViewModel(fake)
-        vm.startMeasuring()
-
-        vm.finish(missionTemplateId = 3)
-        advanceUntilIdle()
-
-        assertEquals(WalkingSessionViewModel.Phase.ERROR, vm.uiState.phase)
-        assertEquals("network down", vm.uiState.errorMessage)
-    }
-
-    @Test
-    fun retry_after_error_resubmits_and_can_succeed() = runTest {
-        val fake = FakeController().apply {
-            steps = 20
-            submitError = RuntimeException("timeout")
-        }
-        val vm = WalkingSessionViewModel(fake)
-        vm.startMeasuring()
-        vm.finish(missionTemplateId = 5)
-        advanceUntilIdle()
-        assertEquals(WalkingSessionViewModel.Phase.ERROR, vm.uiState.phase)
-
-        // 네트워크 회복 후 재시도 → 같은 걸음 수로 재전송, 성공
-        fake.submitError = null
-        fake.submitResult = fake.submitResult.copy(steps = 20)
-        vm.retrySubmit(missionTemplateId = 5)
-        assertEquals(WalkingSessionViewModel.Phase.SUBMITTING, vm.uiState.phase)
-        advanceUntilIdle()
-
-        assertEquals(WalkingSessionViewModel.Phase.DONE, vm.uiState.phase)
-        assertNull(vm.uiState.errorMessage)
-        assertEquals(20, vm.uiState.result?.steps)
-    }
-
-    @Test
-    fun finish_ignored_when_not_measuring() = runTest {
+    fun finish_ignored_when_not_measuring() {
         val fake = FakeController()
         val vm = WalkingSessionViewModel(fake)
 
-        vm.finish(missionTemplateId = 1) // READY 상태 → 무시
-        advanceUntilIdle()
+        vm.finish() // READY 상태 → 무시
 
         assertEquals(WalkingSessionViewModel.Phase.READY, vm.uiState.phase)
-        assertNull(fake.submittedWith)
+        assertEquals(0, fake.stopCount)
+        assertNull(vm.uiState.result)
     }
 
     @Test
-    fun lifecycle_pause_resume_delegates_to_session() = runTest {
+    fun can_measure_again_after_done() {
+        // DONE 이후 다시 측정 시작이 가능해야 한다(세션 재시작 안전성).
+        val fake = FakeController().apply { snapshot = WalkingSnapshot(5, 10) }
+        val vm = WalkingSessionViewModel(fake)
+        vm.startMeasuring()
+        vm.finish()
+        assertEquals(WalkingSessionViewModel.Phase.DONE, vm.uiState.phase)
+
+        vm.startMeasuring()
+
+        assertEquals(WalkingSessionViewModel.Phase.MEASURING, vm.uiState.phase)
+        assertEquals(2, fake.startCount)
+        assertNull(vm.uiState.result) // 새 세션은 이전 결과를 비운다
+    }
+
+    @Test
+    fun lifecycle_pause_resume_delegates_to_session_when_measuring() {
         val fake = FakeController()
         val vm = WalkingSessionViewModel(fake)
         vm.startMeasuring()
@@ -204,5 +178,18 @@ class WalkingSessionViewModelTest {
 
         assertEquals(1, fake.pauseCount)
         assertEquals(1, fake.resumeCount)
+    }
+
+    @Test
+    fun lifecycle_pause_ignored_when_not_measuring() {
+        // onResume 과 대칭: 측정 중이 아닐 땐 센서를 건드리지 않는다.
+        val fake = FakeController()
+        val vm = WalkingSessionViewModel(fake)
+
+        vm.onPause()
+        vm.onResume()
+
+        assertEquals(0, fake.pauseCount)
+        assertEquals(0, fake.resumeCount)
     }
 }

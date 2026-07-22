@@ -1,14 +1,10 @@
 package com.aihealthcare.ah0404.mission
 
-import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import com.aihealthcare.ah0404.sensor.WalkingStepDetectorLogic
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.launch
 
 /**
  * ============================================================================
@@ -17,7 +13,7 @@ import kotlinx.coroutines.launch
  *
  *  걸음 감지 자체의 상태 머신(IDLE/WALKING·워밍업 소급·짧은 멈춤 병합)은
  *  WalkingStepDetectorLogic 에 이미 있다(#89). 이 ViewModel 은 그 위에서
- *  '측정 세션'의 상태(준비→측정중→제출중→완료/오류)를 관리하고,
+ *  '측정 세션'의 상태(준비→측정중→완료)를 관리하고,
  *  걸음 수·경과 시간·산책 영상이 모두 이 한 세션 상태를 공유하게 한다(산정 지점 1곳).
  *
  *  "확정 전 잠정 표시": 보행이 확정(WALKING)되기 전 워밍업 구간에는 걸음 수가 0이라,
@@ -26,43 +22,52 @@ import kotlinx.coroutines.launch
  *  갱신 주기: 화면(LaunchedEffect)이 측정 중 동안 poll() 을 주기 호출한다.
  *  ViewModel 자체는 무한 타이머를 돌리지 않아 순수 JVM 테스트로 상태 전이를 검증할 수 있다.
  *
- *  생명주기 복원(백그라운드/회전 후 세션 유지)은 후속(#90 2단계)에서 다룬다.
+ *  ⚠️ 서버 제출은 이 단계에서 하지 않는다. 종료 시 불변 스냅샷(걸음+경과)만 확정하고,
+ *     실제 업로드·멱등성(session_id)·거리 계산은 #91(#105 이후) 소관.
+ *  생명주기 복원(백그라운드/회전 후 세션 유지)은 후속(#90 2단계).
  * ============================================================================
  */
 class WalkingSessionViewModel(
     private val session: WalkingSessionController,
 ) : ViewModel() {
 
-    enum class Phase { READY, MEASURING, SUBMITTING, DONE, ERROR }
+    enum class Phase { READY, MEASURING, DONE }
 
     data class UiState(
         val phase: Phase = Phase.READY,
+        /** 이 기기가 가속도계를 지원하는가. false 면 측정 불가 안내. */
         val sensorAvailable: Boolean = true,
+        /** 센서는 있으나 등록에 실패한 경우. sensorAvailable=false 와 구분되는 재시도 안내용. */
+        val startFailed: Boolean = false,
         /** 현재 보행 상태가 WALKING 인가(배지 표시용). */
         val walking: Boolean = false,
         /** 보행이 확정돼 걸음 수가 유효한가. false 면 '측정 중…' 잠정 표시. */
         val confirmed: Boolean = false,
         val steps: Int = 0,
         val elapsedSec: Int = 0,
-        val result: WalkingFlowUseCase.Result? = null,
-        val errorMessage: String? = null,
+        /** 종료 후 확정된 불변 스냅샷(DONE 에서 표시). */
+        val result: WalkingSnapshot? = null,
     )
 
     var uiState by mutableStateOf(UiState(sensorAvailable = session.isSensorAvailable))
         private set
 
-    /** 측정 시작. 센서 미지원이면 READY 를 유지하고 sensorAvailable=false 로 안내. */
+    /**
+     * 측정 시작.
+     *  - 가속도계 미지원 → READY 유지, sensorAvailable=false.
+     *  - 지원하나 등록 실패 → READY 유지, startFailed=true (다시 시도 안내). MEASURING 으로 가지 않는다.
+     */
     fun startMeasuring() {
         if (uiState.phase == Phase.MEASURING) return
         if (!session.isSensorAvailable) {
-            uiState = uiState.copy(sensorAvailable = false)
+            uiState = uiState.copy(sensorAvailable = false, startFailed = false)
             return
         }
-        session.start()
-        uiState = UiState(
-            phase = Phase.MEASURING,
-            sensorAvailable = true,
-        )
+        if (!session.start()) {
+            uiState = uiState.copy(sensorAvailable = true, startFailed = true)
+            return
+        }
+        uiState = UiState(phase = Phase.MEASURING, sensorAvailable = true)
     }
 
     /** 화면이 측정 중 동안 주기적으로 호출 — 세션에서 걸음/상태/경과를 읽어 반영한다. */
@@ -83,64 +88,25 @@ class WalkingSessionViewModel(
         if (uiState.phase == Phase.MEASURING) session.resume()
     }
 
-    /** onPause: 센서 해제(누적값은 유지). */
+    /** onPause: 측정 중이면 센서 해제(누적값은 유지). onResume 과 대칭. */
     fun onPause() {
-        session.pause()
+        if (uiState.phase == Phase.MEASURING) session.pause()
     }
 
-    /**
-     * 측정 종료 → 서버 흐름 실행. MEASURING 상태에서만 유효.
-     * @param missionTemplateId 대상 걷기 미션 템플릿 id
-     */
-    fun finish(missionTemplateId: Int) {
+    /** 측정 종료 → 세션 스냅샷을 확정해 DONE 으로. 서버 제출은 없다(#91). MEASURING 에서만 유효. */
+    fun finish() {
         if (uiState.phase != Phase.MEASURING) return
+        val snapshot = session.stop()
         uiState = uiState.copy(
-            phase = Phase.SUBMITTING,
-            steps = session.steps,
-            elapsedSec = session.elapsedSec(),
+            phase = Phase.DONE,
+            steps = snapshot.steps,
+            elapsedSec = snapshot.durationSec,
+            result = snapshot,
         )
-        submit(missionTemplateId)
-    }
-
-    /** 전송 실패(ERROR) 후 재시도. 세션은 이미 종료돼 누적 걸음/시간이 고정돼 있어 그대로 다시 보낸다. */
-    fun retrySubmit(missionTemplateId: Int) {
-        if (uiState.phase != Phase.ERROR) return
-        uiState = uiState.copy(phase = Phase.SUBMITTING, errorMessage = null)
-        submit(missionTemplateId)
-    }
-
-    private fun submit(missionTemplateId: Int) {
-        viewModelScope.launch {
-            val outcome = try {
-                Result.success(session.stopAndSubmit(missionTemplateId))
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Result.failure(e)
-            }
-            outcome
-                .onSuccess { r ->
-                    uiState = uiState.copy(
-                        phase = Phase.DONE,
-                        result = r,
-                        steps = r.steps,
-                    )
-                }
-                .onFailure { e ->
-                    Log.w(TAG, "걷기 결과 전송 실패: ${e.message}")
-                    uiState = uiState.copy(
-                        phase = Phase.ERROR,
-                        errorMessage = e.message ?: "전송에 실패했어요. 잠시 후 다시 시도해 주세요.",
-                    )
-                }
-        }
     }
 
     override fun onCleared() {
+        // remember{} 로 만들면 자동 호출이 보장되진 않지만, 스토어에 등록된 경우를 위해 방어적으로 해제.
         session.pause()
-    }
-
-    companion object {
-        const val TAG = "WalkingSessionVM"
     }
 }
