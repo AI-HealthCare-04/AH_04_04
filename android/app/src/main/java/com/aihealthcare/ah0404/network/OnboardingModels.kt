@@ -84,7 +84,6 @@ data class SessionResponse(
     @SerialName("session_id") val sessionId: Int,
     val status: String,
     @SerialName("input_method") val inputMethod: String? = null,
-    @SerialName("raw_transcript") val rawTranscript: String? = null,
     @SerialName("has_estimated_value") val hasEstimatedValue: Boolean? = null,
     @SerialName("created_at") val createdAt: String? = null,
     @SerialName("completed_at") val completedAt: String? = null,
