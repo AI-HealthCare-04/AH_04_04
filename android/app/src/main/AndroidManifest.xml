@@ -28,6 +28,15 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.MyApplication">
+
+        <!-- Android 16(targetSdk 36)부터 sw600dp 이상 대형 화면에서는 screenOrientation=portrait가
+             기본 무시된다. 이 opt-out으로 태블릿·폴더블에서도 세로 고정을 실제 보장해 회전 시 측정값·타이머
+             리셋(#122)을 막는다. ⚠️ opt-out은 targetSdk 37부터 효력이 없어지므로, 그 전에 #90의 생명주기
+             복원(ViewModel/rememberSaveable 세션 복원)으로 대체하는 것이 최종 해법이다. -->
+        <property
+            android:name="android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY"
+            android:value="true" />
+
         <activity
             android:name="com.kakao.sdk.auth.AuthCodeHandlerActivity"
             android:exported="true"
@@ -40,7 +49,8 @@
             </intent-filter>
         </activity>
         <!-- 세로 고정: 시니어 대상 세로 전용 UI(가로 레이아웃 없음). 회전 시 Activity 재생성으로
-             걸음수·10분 타이머가 리셋되는 문제 방지(#122). 대형/폴더블 권장 경고는 의도적 결정이라 무시. -->
+             걸음수·10분 타이머가 리셋되는 문제 방지(#122). 대형 화면은 위 RESTRICTED_RESIZABILITY
+             opt-out으로 함께 보장. 대형/폴더블 권장 경고는 의도적 결정이라 무시. -->
         <activity
             android:name=".pet.WalkingChallengeActivity"
             android:exported="false"
@@ -50,6 +60,7 @@
 
         <!-- 세로 고정: 전 화면이 시니어 대상 세로 전용 UI(가로 레이아웃 없음). 자동회전 시
              MainActivity 재생성으로 탭·측정 상태(센서 걸음수 등)가 전부 리셋되는 문제 방지(#122).
+             대형 화면은 위 RESTRICTED_RESIZABILITY opt-out으로 함께 보장.
              대형/폴더블 권장 경고는 v1의 의도적 결정이라 무시. -->
         <activity
             android:name=".MainActivity"
