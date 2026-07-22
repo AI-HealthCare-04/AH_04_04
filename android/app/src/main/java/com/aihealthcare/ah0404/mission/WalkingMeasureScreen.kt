@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
 import com.aihealthcare.ah0404.R
 import com.aihealthcare.ah0404.network.Mission
@@ -54,8 +55,13 @@ private const val POLL_MS = 300L
  *  🟡 #132 안내(보행 직후 곧바로 앉기 과다카운트 완화)가 실제 사용자에게 노출되는 첫 화면이다
  *     — 측정 중 걸음 수 아래에 WalkSitGuidanceNote 를 배치한다.
  *
- *  생명주기: onResume/onPause 에 맞춰 센서·영상을 재개/정지하고, 화면을 벗어나면 영상을 release.
- *     (백그라운드/회전 후 '세션 값 복원'은 후속 #90 2단계 — 지금은 화면을 떠나면 세션이 끝난다.)
+ *  생명주기 복원(#90 2단계):
+ *   - 구성 변경(회전·폰트 크기 변경 등): VM 을 Activity ViewModelStore 에 두어(viewModel())
+ *     세션(걸음·활성시간)을 그대로 유지. 진입 상태(어느 미션인지)는 MainActivity 의
+ *     rememberSaveable 이 보존한다.
+ *   - 백그라운드/전화: onPause 로 센서·영상 정지 + 경과 시계 동결(드리프트 제거), onResume 자동 재개.
+ *   - 화면 이탈(뒤로/완료 후 확인): leave() 로 세션 리셋(센서 해제 + 다음 진입 stale 방지).
+ *   - 프로세스 종료 후 측정값 복원은 범위 밖(#91/#105) — 재생성 시 READY 부터 시작.
  * ============================================================================
  */
 @UnstableApi
@@ -67,14 +73,19 @@ fun WalkingMeasureScreen(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    // 이 화면은 자체 ViewModelStoreOwner(NavBackStackEntry)가 없어, viewModel()을 쓰면 VM이 Activity
-    // 스토어에 남아 (1) 화면 이탈 후에도 센서가 등록된 채 남고 (2) 재진입 시 이전 세션 상태가 되살아난다.
-    // PR1 의미("화면을 떠나면 세션이 끝난다")대로, VM을 화면 생존기간에 묶고 이탈 시 센서를 해제한다.
-    // (회전/백그라운드 후 세션 값 복원은 후속 #90 2단계.)
-    val vm = remember {
+    // VM 을 Activity ViewModelStore 에 둔다(viewModel()) → 구성 변경(회전 등)에 세션이 생존한다.
+    // 오버레이는 자체 ViewModelStoreOwner 가 없어 Activity 에 바인딩되므로, 화면을 떠날 때
+    // leave() 가 명시적으로 reset() 을 호출해 (1) 센서 해제 (2) 재진입 시 이전 세션 상태 부활을 막는다.
+    val vm: WalkingSessionViewModel = viewModel {
         WalkingSessionViewModel(WalkingSession(context.applicationContext))
     }
     val ui = vm.uiState
+
+    // 화면을 완전히 떠날 때: 세션을 리셋(센서 해제 + stale 방지)한 뒤 상위로 이탈.
+    val leave = {
+        vm.reset()
+        onBack()
+    }
 
     // 펫 산책 영상 뷰 — 세션과 같은 화면/상태를 공유. remember 로 유지, 화면 이탈 시 release.
     val petView = remember {
@@ -118,7 +129,7 @@ fun WalkingMeasureScreen(
         }
     }
 
-    BackHandler { onBack() }
+    BackHandler { leave() }
 
     Column(
         modifier = modifier
@@ -168,7 +179,7 @@ fun WalkingMeasureScreen(
 
             WalkingSessionViewModel.Phase.DONE -> DoneContent(
                 ui = ui,
-                onConfirm = onBack,
+                onConfirm = leave,
             )
         }
         Spacer(Modifier.height(Dimens.Space8))

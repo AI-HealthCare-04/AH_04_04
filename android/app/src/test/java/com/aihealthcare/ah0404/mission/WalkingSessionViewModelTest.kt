@@ -168,6 +168,48 @@ class WalkingSessionViewModelTest {
     }
 
     @Test
+    fun reset_returns_to_ready_and_releases_sensor() {
+        // 화면 이탈 시: 측정 중이던 세션을 준비 상태로 되돌리고 센서를 해제한다.
+        val fake = FakeController()
+        val vm = WalkingSessionViewModel(fake)
+        vm.startMeasuring()
+
+        vm.reset()
+
+        assertEquals(WalkingSessionViewModel.Phase.READY, vm.uiState.phase)
+        assertEquals(1, fake.pauseCount) // 센서 해제(pause) 위임
+        assertNull(vm.uiState.result)
+    }
+
+    @Test
+    fun reset_after_done_clears_stale_result() {
+        // DONE 이후 이탈했다가 재진입해도 이전 결과가 남지 않아야 한다(Activity 스토어 VM 재사용 대비).
+        val fake = FakeController().apply { snapshot = WalkingSnapshot(7, 20) }
+        val vm = WalkingSessionViewModel(fake)
+        vm.startMeasuring()
+        vm.finish()
+        assertEquals(WalkingSessionViewModel.Phase.DONE, vm.uiState.phase)
+
+        vm.reset()
+
+        assertEquals(WalkingSessionViewModel.Phase.READY, vm.uiState.phase)
+        assertEquals(0, vm.uiState.steps)
+        assertNull(vm.uiState.result)
+    }
+
+    @Test
+    fun reset_reflects_sensor_availability() {
+        // 리셋 후 READY 상태는 현재 센서 지원 여부를 반영한다.
+        val fake = FakeController().apply { isSensorAvailable = false }
+        val vm = WalkingSessionViewModel(fake)
+
+        vm.reset()
+
+        assertEquals(WalkingSessionViewModel.Phase.READY, vm.uiState.phase)
+        assertFalse(vm.uiState.sensorAvailable)
+    }
+
+    @Test
     fun lifecycle_pause_resume_delegates_to_session_when_measuring() {
         val fake = FakeController()
         val vm = WalkingSessionViewModel(fake)

@@ -26,6 +26,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -48,6 +50,9 @@ import com.aihealthcare.ah0404.network.JwtTokenInspector
 import com.aihealthcare.ah0404.network.SessionStore
 import com.aihealthcare.ah0404.network.TokenHolder
 import com.aihealthcare.ah0404.network.rememberNetworkAvailable
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import com.aihealthcare.ah0404.onboarding.OnboardingScreen
 import com.aihealthcare.ah0404.profile.ProfileScreen
 import com.aihealthcare.ah0404.record.RecordScreen
@@ -153,13 +158,24 @@ private val MainTab.icon: ImageVector
         MainTab.SETTINGS -> Icons.Default.Settings
     }
 
+// 걷기 오버레이 진입 상태(어느 미션인지)를 구성 변경(회전 등)에 보존하기 위한 Saver.
+// Mission 은 @Serializable(kotlinx) 이라 JSON 문자열로 저장/복원한다(Parcelable 불필요).
+private val MissionJson = Json { ignoreUnknownKeys = true }
+private val MissionStateSaver: Saver<Mission?, String> = Saver(
+    save = { mission -> mission?.let { MissionJson.encodeToString(it) } },
+    restore = { MissionJson.decodeFromString<Mission>(it) },
+)
+
 @androidx.media3.common.util.UnstableApi
 @Composable
 private fun MainContent() {
     var selectedTab by remember { mutableStateOf(MainTab.HOME) }
 
     // 걷기 측정 화면(전체 화면 오버레이). 미션 목록에서 걷기 미션을 고르면 진입. null = 목록.
-    var walkingMission by remember { mutableStateOf<Mission?>(null) }
+    // rememberSaveable: 구성 변경(회전·폰트 크기 변경) 후에도 측정 화면을 유지한다(세션 값은 VM 이 보존).
+    var walkingMission by rememberSaveable(stateSaver = MissionStateSaver) {
+        mutableStateOf<Mission?>(null)
+    }
     walkingMission?.let { mission ->
         WalkingMeasureScreen(
             mission = mission,

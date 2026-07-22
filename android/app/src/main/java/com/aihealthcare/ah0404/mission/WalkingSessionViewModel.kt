@@ -105,8 +105,21 @@ class WalkingSessionViewModel(
         )
     }
 
+    /**
+     * 세션을 준비 상태로 초기화한다 — 화면을 완전히 떠날 때(뒤로/완료 후 확인) 호출.
+     *
+     * 이 VM은 화면 오버레이가 자체 ViewModelStore 가 없어 **Activity 스토어에 바인딩**되므로
+     * 구성 변경(회전 등)에는 살아남지만, 화면을 떠나도 Activity 가 살아있는 한 인스턴스가 남는다.
+     * 그래서 이탈 시 명시적으로 리셋해 (1) 센서를 확실히 해제하고 (2) 다음 미션 재진입 시
+     * 이전 세션 상태(DONE/걸음 수)가 되살아나지 않게 한다.
+     */
+    fun reset() {
+        session.pause()
+        uiState = UiState(sensorAvailable = session.isSensorAvailable)
+    }
+
     override fun onCleared() {
-        // remember{} 로 만들면 자동 호출이 보장되진 않지만, 스토어에 등록된 경우를 위해 방어적으로 해제.
+        // Activity 파괴 시 방어적으로 센서 해제(구성 변경에서는 호출되지 않는다).
         session.pause()
     }
 }
