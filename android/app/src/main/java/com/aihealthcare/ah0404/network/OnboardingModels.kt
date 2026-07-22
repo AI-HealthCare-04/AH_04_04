@@ -84,7 +84,6 @@ data class SessionResponse(
     @SerialName("session_id") val sessionId: Int,
     val status: String,
     @SerialName("input_method") val inputMethod: String? = null,
-    @SerialName("raw_transcript") val rawTranscript: String? = null,
     @SerialName("has_estimated_value") val hasEstimatedValue: Boolean? = null,
     @SerialName("created_at") val createdAt: String? = null,
     @SerialName("completed_at") val completedAt: String? = null,
@@ -189,7 +188,7 @@ object OnbEnums {
     val KIDNEY_STATUS = listOf("none", "kidney_disease", "dialysis", "unknown")
     val PROTEIN_RESTRICTION_STATUS = listOf("none", "restricted", "unknown")
     val ACTIVITY_INPUT_SOURCE = listOf("self_report", "service_log")
-    val INPUT_METHOD = listOf("form", "voice", "service_log", "sensor", "manual")
+    val INPUT_METHOD = listOf("form", "service_log", "sensor", "manual")
     val ASSESSMENT_TYPE = listOf("initial", "reassessment")
     val ACTIVITY_LEVEL = listOf("easy", "normal", "hard")
     val LEVEL_REASON = listOf("initial_test", "rule", "llm_recommendation", "user_selected")

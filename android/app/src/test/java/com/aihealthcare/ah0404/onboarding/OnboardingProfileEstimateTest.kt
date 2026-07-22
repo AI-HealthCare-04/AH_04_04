@@ -7,7 +7,6 @@ import com.aihealthcare.ah0404.network.PhysicalAssessmentRequest
 import com.aihealthcare.ah0404.network.RiskPredictionRequest
 import com.aihealthcare.ah0404.network.SessionCreateRequest
 import com.aihealthcare.ah0404.network.SocialLoginRequest
-import com.aihealthcare.ah0404.network.VoiceParseRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -43,7 +42,6 @@ class OnboardingProfileEstimateTest {
         override suspend fun getTerms() = TODO()
         override suspend fun agreeTerms(body: AgreementsRequest) = TODO()
         override suspend fun createSession(body: SessionCreateRequest) = TODO()
-        override suspend fun parseSessionVoice(sessionId: Int, body: VoiceParseRequest) = TODO()
         override suspend fun skipHealthCheck(sessionId: Int) = TODO()
         override suspend fun createHealthProfile(body: HealthProfileRequest) = TODO()
         override suspend fun createPhysicalAssessment(body: PhysicalAssessmentRequest) = TODO()

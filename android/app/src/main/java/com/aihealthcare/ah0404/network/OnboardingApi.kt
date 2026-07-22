@@ -34,13 +34,6 @@ interface OnboardingApi {
     @POST("health-check/sessions")
     suspend fun createSession(@Body body: SessionCreateRequest = SessionCreateRequest()): SessionResponse
 
-    // 4b) (선택) 세션 스코프 음성 파싱 — VoiceApi 의 stateless /voice/parse 와 다른 엔드포인트
-    @POST("health-check/sessions/{session_id}/voice")
-    suspend fun parseSessionVoice(
-        @Path("session_id") sessionId: Int,
-        @Body body: VoiceParseRequest,
-    ): VoiceParseResponse
-
     // 7-대체) 체력검사 스킵 → completed (기본 난이도)
     @POST("health-check/sessions/{session_id}/skip")
     suspend fun skipHealthCheck(@Path("session_id") sessionId: Int): SkipResponse
