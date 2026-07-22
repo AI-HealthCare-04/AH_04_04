@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableIntState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -83,6 +84,7 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
     val detector = remember { WalkingStepDetectorLogic() }
     val recorder = remember { WaveformRecorder() }
     val toneGen = remember { ToneGenerator(AudioManager.STREAM_MUSIC, 100) }
+    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
 
     val label = remember { mutableStateOf(WaveformLabel.NORMAL_WALK) }
     val preset = remember { mutableStateOf(PLACEMENT_PRESETS.first()) }
@@ -152,20 +154,41 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
         }
     }
 
-    // 기기 무접촉 앉기 큐: 녹화 중(WALK_THEN_SIT)이면 WALK_SECONDS 카운트다운 후 비프 + markSitting.
-    LaunchedEffect(recording.value, label.value) {
-        if (recording.value && label.value == WaveformLabel.WALK_THEN_SIT) {
-            var remaining = WALK_SECONDS
-            while (remaining > 0) {
-                cueCountdown.intValue = remaining
-                delay(1000)
-                remaining--
+    // 기기 무접촉 고정 프로토콜: 시작 후 화면을 건드리지 않아도 자동 큐·자동 종료까지 진행된다.
+    //   WALK_THEN_SIT: WALK_SECONDS 보행 → 비프 큐(전달 검증) → markSitting → SIT_SECONDS 앉기 → 자동 정지.
+    //   NORMAL_WALK  : 동일 총 길이(WALK_SECONDS+SIT_SECONDS) 보행 → 자동 정지(큐 없음).
+    // 종료도 자동이라, 주머니 배치에서 휴대폰을 꺼내는 조작이 수집 구간에 섞이지 않는다(Earthworm-jk 블로커).
+    LaunchedEffect(recording.value) {
+        if (!recording.value) return@LaunchedEffect
+        val autoStop = {
+            recorder.stop()
+            recording.value = false
+            Toast.makeText(context, "수집 완료 — 저장하세요.", Toast.LENGTH_LONG).show()
+        }
+        if (label.value == WaveformLabel.WALK_THEN_SIT) {
+            countdown(cueCountdown, WALK_SECONDS)
+            // 비프 전달 검증: 미디어 음량>0 && startTone 성공이어야 실제로 들린 것. 실패면 markSitting 하지 않고 중단.
+            val volume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            val started = runCatching { toneGen.startTone(ToneGenerator.TONE_PROP_BEEP2, 300) }
+                .getOrDefault(false)
+            if (volume <= 0 || !started) {
+                recorder.stop()
+                recording.value = false
+                Toast.makeText(
+                    context,
+                    "비프 전달 실패(음량 $volume) — 녹화를 중단합니다. 미디어 음량을 올리고 [🔊 비프 테스트]로 확인하세요.",
+                    Toast.LENGTH_LONG,
+                ).show()
+                return@LaunchedEffect
             }
-            cueCountdown.intValue = 0
-            // 오디오 비프로 신호(가속도계 영향 최소) + 무접촉 마커. 큐 직후 짧은 구간은 recorder 가 excluded 처리.
-            runCatching { toneGen.startTone(ToneGenerator.TONE_PROP_BEEP2, 300) }
+            // 큐 전달 확인됨 → 무접촉 마커. 큐 직후 짧은 구간은 recorder 가 excluded 처리.
             recorder.markSitting()
             phase.value = WaveformPhase.SITTING
+            countdown(cueCountdown, SIT_SECONDS) // 앉기 구간 수집
+            if (recording.value) autoStop()
+        } else {
+            countdown(cueCountdown, WALK_SECONDS + SIT_SECONDS)
+            if (recording.value) autoStop()
         }
     }
 
@@ -261,16 +284,20 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
             else MaterialTheme.colorScheme.outline,
         )
         Text("걸음 ${stepCount.intValue} · 샘플 ${sampleCount.intValue}개", fontSize = 18.sp)
-        if (recording.value && label.value == WaveformLabel.WALK_THEN_SIT) {
+        if (recording.value) {
+            val isSit = phase.value == WaveformPhase.SITTING
             Text(
-                text = if (phase.value == WaveformPhase.SITTING) {
-                    "🔔 앉기 신호! 지금 앉으세요 (구간: 앉기)"
-                } else {
-                    "앉기 신호까지 ${cueCountdown.intValue}초 — 계속 걸으세요"
+                text = when {
+                    label.value == WaveformLabel.WALK_THEN_SIT && isSit ->
+                        "🔔 앉기 신호! 지금 앉으세요 — ${cueCountdown.intValue}초 후 자동 종료"
+                    label.value == WaveformLabel.WALK_THEN_SIT ->
+                        "앉기 신호까지 ${cueCountdown.intValue}초 — 계속 걸으세요"
+                    else ->
+                        "수집 종료까지 ${cueCountdown.intValue}초 — 계속 걸으세요"
                 },
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Medium,
-                color = if (phase.value == WaveformPhase.SITTING) MaterialTheme.colorScheme.tertiary
+                color = if (isSit) MaterialTheme.colorScheme.tertiary
                 else MaterialTheme.colorScheme.primary,
             )
         }
@@ -278,6 +305,27 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
         Spacer(Modifier.height(4.dp))
 
         if (!recording.value) {
+            // 녹화 전 비프 점검 — 큐가 실제 들리는지(음량>0 + startTone 성공) 미리 확인.
+            AigoSecondaryButton(
+                text = "🔊 비프 테스트",
+                onClick = {
+                    val volume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                    if (volume <= 0) {
+                        Toast.makeText(
+                            context, "미디어 음량이 0 입니다 — 볼륨을 올리세요.", Toast.LENGTH_LONG,
+                        ).show()
+                    } else {
+                        val ok = runCatching { toneGen.startTone(ToneGenerator.TONE_PROP_BEEP2, 300) }
+                            .getOrDefault(false)
+                        Toast.makeText(
+                            context,
+                            if (ok) "비프 정상 — 이 소리가 들리면 준비 완료(음량 $volume)."
+                            else "비프 실패 — 다시 시도하세요.",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                },
+            )
             AigoPrimaryButton(
                 text = "● 녹화 시작 (${label.value.display})",
                 onClick = {
@@ -286,7 +334,8 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
                     recorder.start(label.value, newMeta(label.value, preset.value.spec))
                     recording.value = true
                     phase.value = WaveformPhase.WALKING
-                    cueCountdown.intValue = if (label.value == WaveformLabel.WALK_THEN_SIT) WALK_SECONDS else 0
+                    cueCountdown.intValue =
+                        if (label.value == WaveformLabel.WALK_THEN_SIT) WALK_SECONDS else WALK_SECONDS + SIT_SECONDS
                     sampleCount.intValue = 0
                     stepCount.intValue = 0
                     walking.value = false
@@ -294,8 +343,9 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
                 },
             )
         } else {
+            // 정상 흐름은 자동 종료. 이 버튼은 중단용(누르면 화면 조작이 섞이므로 그 파일은 폐기 권장).
             AigoPrimaryButton(
-                text = "■ 정지",
+                text = "■ 중단(정지)",
                 onClick = {
                     recorder.stop()
                     recording.value = false
@@ -335,6 +385,20 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
 /** 녹화 시작 후 앉기 큐(비프)까지 걷는 시간(초). 정상 보행 구간을 충분히 확보한다. */
 private const val WALK_SECONDS = 15
 
+/** 앉기 큐 이후 수집하는 시간(초) — 이 시간 뒤 자동 정지. NORMAL_WALK 은 WALK_SECONDS+SIT_SECONDS 총길이. */
+private const val SIT_SECONDS = 5
+
+/** 1초 단위 카운트다운(초 단위 표시 갱신). 코루틴 취소(정지·pause) 시 즉시 중단된다. */
+private suspend fun countdown(state: MutableIntState, seconds: Int) {
+    var remaining = seconds
+    while (remaining > 0) {
+        state.intValue = remaining
+        delay(1000)
+        remaining--
+    }
+    state.intValue = 0
+}
+
 /**
  * 착용 규격 프리셋 — 각 프리셋은 위치+좌/우+화면방향+상단방향+접힘까지 고정한 PlacementSpec 과
  * 화면 안내 문구를 함께 갖는다. 서로 다른 시험의 x/y/z 를 비교하려면 이 규격이 명시·고정돼야 한다.
@@ -369,5 +433,7 @@ private fun newMeta(label: WaveformLabel, placement: PlacementSpec): CaptureMeta
         trialId = "${label.id}_$stamp",
         deviceModel = "${Build.MANUFACTURER} ${Build.MODEL}",
         placement = placement,
+        // WALK_THEN_SIT 은 큐 전달 확인 시 markSitting 이 success 로 갱신. 큐 전 중단이면 pending 으로 남아 걸러진다.
+        cueDelivery = if (label == WaveformLabel.WALK_THEN_SIT) "pending" else "na",
     )
 }

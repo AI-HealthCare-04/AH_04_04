@@ -91,6 +91,11 @@ data class CaptureMeta(
     val deviceModel: String,
     /** 착용 위치·방향 규격. */
     val placement: PlacementSpec,
+    /**
+     * 앉기 큐(비프) 전달 상태 — "na"(큐 없는 NORMAL_WALK) / "pending"(큐 전 정지) / "success"(큐 전달됨).
+     * 큐가 실제로 들리지 않았는데 SITTING 으로 라벨링된 파일을 분석에서 걸러내기 위함(Earthworm-jk 블로커).
+     */
+    val cueDelivery: String = "na",
 ) {
     companion object {
         val UNKNOWN = CaptureMeta("unknown", "unknown", PlacementSpec.UNKNOWN)
@@ -136,7 +141,7 @@ data class WaveformSample(
 object WaveformCsv {
     const val HEADER =
         "trial_id,device_model,placement_id,position,side,screen_facing,top_direction,fold_state," +
-            "label,phase,event,excluded,sensor_elapsed_ms,callback_elapsed_ms," +
+            "cue_delivery,label,phase,event,excluded,sensor_elapsed_ms,callback_elapsed_ms," +
             "x,y,z,magnitude,filtered_mag,state,count,step_counted"
 
     /** CSV 셀 안의 콤마·개행을 공백으로 치환(따옴표 이스케이프 없이 단순 CSV 유지). */
@@ -146,10 +151,11 @@ object WaveformCsv {
         val p = meta.placement
         return String.format(
             Locale.US,
-            "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%d,%d,%d,%.5f,%.5f,%.5f,%.5f,%.5f,%s,%d,%d",
+            "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%d,%d,%d,%.5f,%.5f,%.5f,%.5f,%.5f,%s,%d,%d",
             cell(meta.trialId), cell(meta.deviceModel),
             cell(p.id), cell(p.position), cell(p.side), cell(p.screenFacing),
             cell(p.topDirection), cell(p.foldState),
+            cell(meta.cueDelivery),
             label.id, s.phase.id, cell(s.event), if (s.excluded) 1 else 0,
             s.sensorElapsedMs, s.callbackElapsedMs,
             s.x, s.y, s.z,
@@ -240,12 +246,14 @@ class WaveformRecorder {
     }
 
     /**
-     * 앉기 큐 — 기기 무접촉 자동 타이머가 호출한다(화면 터치 아님). 이후 add 되는 샘플이 SITTING 구간이 되고,
-     * 큐 직후 첫 샘플에 event=sit_cue + 정착 구간 excluded 가 찍힌다.
+     * 앉기 큐 — 기기 무접촉 자동 타이머가 **비프 전달 성공을 확인한 뒤에만** 호출한다(화면 터치 아님).
+     * 이후 add 되는 샘플이 SITTING 구간이 되고, 큐 직후 첫 샘플에 event=sit_cue + 정착 구간 excluded 가 찍힌다.
+     * 큐가 실제 전달됐음을 메타(cue_delivery=success)에 남긴다.
      */
     fun markSitting() {
         phase = WaveformPhase.SITTING
         pendingCue = true
+        meta = meta.copy(cueDelivery = CUE_DELIVERY_SUCCESS)
     }
 
     /** 녹화만 멈춘다 — 버퍼는 내보내기 위해 남겨둔다. */
@@ -267,6 +275,9 @@ class WaveformRecorder {
 
     companion object {
         const val EVENT_SIT_CUE = "sit_cue"
+
+        /** cue_delivery 메타값 — 큐 비프가 실제 전달됐음. */
+        const val CUE_DELIVERY_SUCCESS = "success"
 
         /** 큐 직후 배제 구간(ms) — 비프·자세전환의 정착 시간. */
         const val CUE_EXCLUSION_MS = 300L
