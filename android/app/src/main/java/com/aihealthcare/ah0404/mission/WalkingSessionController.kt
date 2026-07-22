@@ -28,11 +28,22 @@ interface WalkingSessionController {
     /** 측정 시작. @return 센서 등록 성공 여부(미지원이거나 registerListener 실패 시 false). */
     fun start(): Boolean
 
-    /** 화면을 벗어날 때: 센서만 해제(누적값 유지). */
+    /** 화면을 벗어날 때(onPause·백그라운드): 센서만 해제(누적값·측정중 상태 유지 → resume 로 재개). */
     fun pause()
 
-    /** 화면에 돌아올 때: 측정 중이면 센서 재등록. */
-    fun resume()
+    /**
+     * 화면에 돌아올 때(onResume): 측정 중이면 센서 재등록 + 경과 시계 재개.
+     * @return 측정이 정상 재개됐는가. 센서 재등록에 실패하면 시계를 재개하지 않고 false 를 돌려주며
+     *   (경과만 흐르는 드리프트 방지), 호출부는 READY/재시도 안내로 수렴시킨다.
+     */
+    fun resume(): Boolean
+
+    /**
+     * 화면을 완전히 떠날 때(뒤로/완료 후 확인): 측정을 **중단**한다 — 센서 해제 + 활성 시계 종료 +
+     * 내부 running 플래그 해제. pause() 와 달리 이후 같은 세션에서 start() 로 **재시작이 가능**하다.
+     * (pause 는 running 을 유지해 재시작 불가 → 화면 이탈엔 반드시 cancel 을 쓴다.)
+     */
+    fun cancel()
 
     /** 현재까지 경과 시간(초). */
     fun elapsedSec(): Int

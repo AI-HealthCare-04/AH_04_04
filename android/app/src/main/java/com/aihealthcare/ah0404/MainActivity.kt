@@ -26,6 +26,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -48,6 +50,9 @@ import com.aihealthcare.ah0404.network.JwtTokenInspector
 import com.aihealthcare.ah0404.network.SessionStore
 import com.aihealthcare.ah0404.network.TokenHolder
 import com.aihealthcare.ah0404.network.rememberNetworkAvailable
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import com.aihealthcare.ah0404.onboarding.OnboardingScreen
 import com.aihealthcare.ah0404.profile.ProfileScreen
 import com.aihealthcare.ah0404.record.RecordScreen
@@ -153,13 +158,38 @@ private val MainTab.icon: ImageVector
         MainTab.SETTINGS -> Icons.Default.Settings
     }
 
+// 걷기 오버레이 진입 상태(어느 미션인지)를 구성 변경에 보존하기 위한 Saver.
+// Mission 은 @Serializable(kotlinx) 이라 JSON 문자열로 저장/복원한다(Parcelable 불필요).
+// ⚠️ "구성 변경"은 회전이 아니다: #135 에서 screenOrientation=portrait 로 세로 고정해 기기를
+//    돌려도 Activity 재생성이 없다. 실제 재생성 트리거는 글꼴 크기·다크모드·멀티윈도우·폴더블
+//    접기/펴기·언어 변경 등이며, 이 Saver 는 그때 진입 상태를 유지한다.
+private val MissionJson = Json { ignoreUnknownKeys = true }
+private val MissionStateSaver: Saver<Mission?, String> = Saver(
+    save = { mission -> mission?.let { MissionJson.encodeToString(it) } },
+    restore = { MissionJson.decodeFromString<Mission>(it) },
+)
+
+// 하단 탭 선택도 구성 변경에 보존한다. remember 로 두면 재생성 시 HOME 으로 초기화돼,
+// 측정 오버레이가 복원된 상태에서 이탈(leave)하는 순간 미션 탭이 아니라 홈이 나타난다(#144 리뷰
+// 블로커 2). enum 은 Bundle 자동 저장 대상이 아니므로 이름 문자열로 명시 저장/복원한다.
+private val MainTabSaver: Saver<MainTab, String> = Saver(
+    save = { it.name },
+    restore = { MainTab.valueOf(it) },
+)
+
 @androidx.media3.common.util.UnstableApi
 @Composable
 private fun MainContent() {
-    var selectedTab by remember { mutableStateOf(MainTab.HOME) }
+    // rememberSaveable: 재생성(글꼴 크기·다크모드 등) 후에도 이탈 시 복귀할 탭을 보존한다.
+    // 오버레이(walkingMission)만 복원하고 이 탭을 remember 로 두면 홈으로 튄다(#144 블로커 2).
+    var selectedTab by rememberSaveable(stateSaver = MainTabSaver) { mutableStateOf(MainTab.HOME) }
 
     // 걷기 측정 화면(전체 화면 오버레이). 미션 목록에서 걷기 미션을 고르면 진입. null = 목록.
-    var walkingMission by remember { mutableStateOf<Mission?>(null) }
+    // rememberSaveable: 재생성(글꼴 크기·다크모드 등) 후에도 측정 화면을 유지한다(세션 값은 VM 이
+    // 보존). 회전은 #135 세로 고정으로 재생성이 없어 이 경로가 실행되지 않는다.
+    var walkingMission by rememberSaveable(stateSaver = MissionStateSaver) {
+        mutableStateOf<Mission?>(null)
+    }
     walkingMission?.let { mission ->
         WalkingMeasureScreen(
             mission = mission,

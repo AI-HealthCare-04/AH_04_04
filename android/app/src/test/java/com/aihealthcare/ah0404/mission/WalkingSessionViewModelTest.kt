@@ -15,25 +15,71 @@ import org.junit.Test
  */
 class WalkingSessionViewModelTest {
 
-    /** WalkingSessionController 를 흉내내는 fake — 걸음/상태/센서지원/시작성공을 테스트에서 조작. */
+    /**
+     * WalkingSessionController 를 흉내내는 fake.
+     *
+     * ⚠️ #144 리뷰 반영: 실제 WalkingSession 의 내부 상태(running/registered)를 **그대로 모델링**한다.
+     *    이전 fake 는 start/pause/resume 을 단순 카운터로만 두어, reset 이 pause 만 불러도(running 유지)
+     *    재측정 불가 버그가 테스트를 통과해버렸다. 이제 pause 는 센서만 해제(running 유지), cancel/stop 은
+     *    running 까지 해제 — 라는 실제 계약을 반영해 재진입/복귀 실패 경로를 정직하게 검증한다.
+     */
     private class FakeController : WalkingSessionController {
         override var isSensorAvailable = true
         override var steps = 0
         override var state = WalkingStepDetectorLogic.State.IDLE
         var elapsed = 0
-        /** start() 반환값(센서 등록 성공 여부)을 흉내 — 등록 실패 경로 검증용. */
-        var startSucceeds = true
+        /** 센서 등록(최초 start·복귀 resume) 성공 여부를 흉내 — 등록 실패 경로 검증용. */
+        var registerSucceeds = true
+
+        // 실제 세션 내부 상태.
+        var running = false
+            private set
+        var registered = false
+            private set
+
         var startCount = 0
         var pauseCount = 0
         var resumeCount = 0
+        var cancelCount = 0
         var stopCount = 0
         var snapshot = WalkingSnapshot(steps = 0, durationSec = 0)
 
-        override fun start(): Boolean { startCount++; return startSucceeds }
-        override fun pause() { pauseCount++ }
-        override fun resume() { resumeCount++ }
+        override fun start(): Boolean {
+            startCount++
+            if (running) return registered // 이미 측정 중이면 현재 등록 상태를 그대로 반환(실제 계약)
+            running = true
+            registered = isSensorAvailable && registerSucceeds
+            if (!registered) running = false // 등록 실패 → 시작 전으로 롤백
+            return registered
+        }
+
+        override fun pause() {
+            pauseCount++
+            registered = false // 센서만 해제, running 은 유지(나중에 resume 로 재개)
+        }
+
+        override fun resume(): Boolean {
+            resumeCount++
+            if (!running) return false
+            registered = isSensorAvailable && registerSucceeds
+            if (!registered) { running = false; return false } // 재등록 실패 → 세션 중단
+            return true
+        }
+
+        override fun cancel() {
+            cancelCount++
+            running = false
+            registered = false
+        }
+
         override fun elapsedSec() = elapsed
-        override fun stop(): WalkingSnapshot { stopCount++; return snapshot }
+
+        override fun stop(): WalkingSnapshot {
+            stopCount++
+            running = false
+            registered = false
+            return snapshot
+        }
     }
 
     @Test
@@ -64,7 +110,7 @@ class WalkingSessionViewModelTest {
     @Test
     fun start_registration_failure_stays_ready_with_flag() {
         // 가속도계 객체는 있으나 registerListener 실패 → MEASURING 진입 금지, 다시 시도 안내
-        val fake = FakeController().apply { isSensorAvailable = true; startSucceeds = false }
+        val fake = FakeController().apply { isSensorAvailable = true; registerSucceeds = false }
         val vm = WalkingSessionViewModel(fake)
 
         vm.startMeasuring()
@@ -165,6 +211,86 @@ class WalkingSessionViewModelTest {
         assertEquals(WalkingSessionViewModel.Phase.MEASURING, vm.uiState.phase)
         assertEquals(2, fake.startCount)
         assertNull(vm.uiState.result) // 새 세션은 이전 결과를 비운다
+    }
+
+    @Test
+    fun reset_returns_to_ready_and_cancels_session() {
+        // 화면 이탈 시: 측정 중이던 세션을 준비 상태로 되돌리고 센서 해제 + running 까지 정리한다.
+        val fake = FakeController()
+        val vm = WalkingSessionViewModel(fake)
+        vm.startMeasuring()
+
+        vm.reset()
+
+        assertEquals(WalkingSessionViewModel.Phase.READY, vm.uiState.phase)
+        assertEquals(1, fake.cancelCount) // pause 가 아니라 cancel 로 완전 중단(재시작 가능)
+        assertFalse(fake.running)          // running 까지 해제됐다
+        assertNull(vm.uiState.result)
+    }
+
+    @Test
+    fun can_measure_again_after_reset_midsession() {
+        // #144 블로커 1 회귀: 측정 중 이탈(reset) 후 같은 Activity 에서 재진입해 다시 측정 가능해야 한다.
+        // (구 reset→pause 는 running=true 를 남겨 start() 가 registered=false 를 즉시 반환 → 재측정 불가였음.)
+        val fake = FakeController()
+        val vm = WalkingSessionViewModel(fake)
+        vm.startMeasuring()
+        assertEquals(WalkingSessionViewModel.Phase.MEASURING, vm.uiState.phase)
+
+        vm.reset()
+        assertEquals(WalkingSessionViewModel.Phase.READY, vm.uiState.phase)
+
+        vm.startMeasuring() // 재진입
+
+        assertEquals(WalkingSessionViewModel.Phase.MEASURING, vm.uiState.phase)
+        assertFalse(vm.uiState.startFailed)
+        assertTrue(fake.running)
+    }
+
+    @Test
+    fun resume_registration_failure_returns_to_ready() {
+        // #144 블로커 3 회귀: 백그라운드 복귀 시 센서 재등록이 실패하면, 경과만 흐르는 드리프트를 막기 위해
+        // 측정을 중단하고 READY + 재시도 안내로 수렴한다(센서 자체는 있으므로 startFailed=true).
+        val fake = FakeController()
+        val vm = WalkingSessionViewModel(fake)
+        vm.startMeasuring()
+        vm.onPause()
+
+        fake.registerSucceeds = false // 복귀 시 센서 재등록이 실패하도록
+        vm.onResume()
+
+        assertEquals(WalkingSessionViewModel.Phase.READY, vm.uiState.phase)
+        assertTrue(vm.uiState.startFailed)
+        assertTrue(vm.uiState.sensorAvailable)
+        assertFalse(fake.running)
+    }
+
+    @Test
+    fun reset_after_done_clears_stale_result() {
+        // DONE 이후 이탈했다가 재진입해도 이전 결과가 남지 않아야 한다(Activity 스토어 VM 재사용 대비).
+        val fake = FakeController().apply { snapshot = WalkingSnapshot(7, 20) }
+        val vm = WalkingSessionViewModel(fake)
+        vm.startMeasuring()
+        vm.finish()
+        assertEquals(WalkingSessionViewModel.Phase.DONE, vm.uiState.phase)
+
+        vm.reset()
+
+        assertEquals(WalkingSessionViewModel.Phase.READY, vm.uiState.phase)
+        assertEquals(0, vm.uiState.steps)
+        assertNull(vm.uiState.result)
+    }
+
+    @Test
+    fun reset_reflects_sensor_availability() {
+        // 리셋 후 READY 상태는 현재 센서 지원 여부를 반영한다.
+        val fake = FakeController().apply { isSensorAvailable = false }
+        val vm = WalkingSessionViewModel(fake)
+
+        vm.reset()
+
+        assertEquals(WalkingSessionViewModel.Phase.READY, vm.uiState.phase)
+        assertFalse(vm.uiState.sensorAvailable)
     }
 
     @Test

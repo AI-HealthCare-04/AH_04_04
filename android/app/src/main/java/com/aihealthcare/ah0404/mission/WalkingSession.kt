@@ -33,6 +33,7 @@ import com.aihealthcare.ah0404.sensor.WalkingStepDetectorLogic
 class WalkingSession(
     context: Context,
     private val detector: WalkingStepDetectorLogic = WalkingStepDetectorLogic(),
+    nowMs: () -> Long = { SystemClock.elapsedRealtime() },
 ) : WalkingSessionController {
     private val sensorManager =
         context.applicationContext.getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -41,8 +42,9 @@ class WalkingSession(
 
     private var running = false
     private var registered = false
-    private var startElapsedMs = 0L
-    private var endElapsedMs = 0L
+
+    // 경과 시간은 "센서 등록돼 실제 측정 중이던 전경 시간"만 누적한다(백그라운드 드리프트 제거).
+    private val activeTime = ActiveTimeAccumulator(nowMs)
 
     /** 이 기기가 가속도계를 지원하는가. */
     override val isSensorAvailable: Boolean get() = accelSensor != null
@@ -73,14 +75,13 @@ class WalkingSession(
     override fun start(): Boolean {
         if (running) return registered
         detector.reset()
-        startElapsedMs = SystemClock.elapsedRealtime()
-        endElapsedMs = 0L
+        activeTime.start()
         running = true
         registerSensor()
         if (!registered) {
             // 가속도계 객체는 있어도 registerListener 가 실패할 수 있다 → 세션을 시작 전으로 롤백.
             running = false
-            startElapsedMs = 0L
+            activeTime.stop()
             Log.w(TAG, "가속도계 등록 실패 → 세션 롤백")
         } else {
             Log.i(TAG, "세션 시작")
@@ -88,31 +89,58 @@ class WalkingSession(
         return registered
     }
 
-    /** 화면을 벗어날 때(onPause): 센서만 해제하고 누적값/시작시각은 유지. */
+    /**
+     * 화면을 벗어날 때(onPause)·백그라운드: 센서를 해제하고 경과 시계도 **동결**한다.
+     * 걸음을 못 세는 구간은 시간에서도 빼서 걸음↔시간 정합을 지킨다(누적 걸음 수는 유지).
+     */
     override fun pause() {
         unregisterSensor()
-    }
-
-    /** 화면에 돌아올 때(onResume): 측정 중이면 센서 재등록. */
-    override fun resume() {
-        if (running) registerSensor()
-    }
-
-    /** 현재까지의 경과 시간(초). 종료 후에는 종료 시점 기준으로 고정된다. */
-    override fun elapsedSec(): Int {
-        if (startElapsedMs == 0L) return 0
-        val end = if (endElapsedMs != 0L) endElapsedMs else SystemClock.elapsedRealtime()
-        return ((end - startElapsedMs) / 1000L).toInt()
+        activeTime.pause()
     }
 
     /**
-     * 측정 종료 → 센서 해제 후 걸음/경과 시간을 **불변 스냅샷으로 고정**해 반환한다.
-     * 서버 업로드는 하지 않는다(#91). 재호출해도 종료 시각(endElapsedMs)은 최초 종료 기준으로 고정된다.
+     * 화면에 돌아올 때(onResume): 측정 중이면 센서 재등록 + 경과 시계 재개.
+     * ⚠️ 센서 재등록 성공(registered=true) 시에만 시계를 재개한다. 실패했는데 시계만 흘리면
+     *    걸음은 못 세면서 경과만 늘어 이 PR 이 없애려는 드리프트가 재발하므로, 실패 시엔 세션을
+     *    정지 상태로 만들고 false 를 돌려 호출부가 READY/재시도로 수렴하게 한다.
+     * @return 측정이 정상 재개됐는가.
      */
-    override fun stop(): WalkingSnapshot {
-        if (endElapsedMs == 0L) endElapsedMs = SystemClock.elapsedRealtime()
+    override fun resume(): Boolean {
+        if (!running) return false
+        registerSensor()
+        if (registered) {
+            activeTime.resume()
+            return true
+        }
+        // 복귀 시 센서 재등록 실패 → 시계 재개하지 않고 세션 중단.
+        running = false
+        activeTime.stop()
+        Log.w(TAG, "복귀 시 센서 재등록 실패 → 측정 중단(경과 시계 동결)")
+        return false
+    }
+
+    /**
+     * 화면 완전 이탈용 중단. 센서 해제 + 활성 시계 종료 + running 해제까지 명시적으로 처리해,
+     * 같은 세션 인스턴스에서 이후 start() 로 **재시작이 가능**하도록 한다(pause 는 running 유지라 불가).
+     */
+    override fun cancel() {
         running = false
         unregisterSensor()
+        activeTime.stop()
+        Log.i(TAG, "세션 취소(화면 이탈) → 재시작 가능 상태로 정리")
+    }
+
+    /** 현재까지 실제 측정 중이던 경과 시간(초). 종료·정지 후에는 그 시점 기준으로 고정된다. */
+    override fun elapsedSec(): Int = (activeTime.elapsedMs() / 1000L).toInt()
+
+    /**
+     * 측정 종료 → 센서 해제 후 걸음/경과 시간을 **불변 스냅샷으로 고정**해 반환한다.
+     * 서버 업로드는 하지 않는다(#91). 재호출해도 경과 시간은 최초 종료 기준으로 고정된다.
+     */
+    override fun stop(): WalkingSnapshot {
+        running = false
+        unregisterSensor()
+        activeTime.stop()
 
         val snapshot = WalkingSnapshot(steps = detector.count, durationSec = elapsedSec())
         Log.i(TAG, "세션 종료 → steps=${snapshot.steps}, durationSec=${snapshot.durationSec} (제출은 #91)")

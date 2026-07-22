@@ -83,9 +83,19 @@ class WalkingSessionViewModel(
         )
     }
 
-    /** onResume: 측정 중이면 센서 재등록. */
+    /**
+     * onResume: 측정 중이면 센서 재등록 + 경과 시계 재개.
+     * 재등록에 실패하면(백그라운드 복귀 시 센서 확보 실패) 걸음 없이 경과만 흐르는 걸 막기 위해
+     * READY 로 되돌리고 재시도 안내(startFailed)를 띄운다 — 센서 자체 유무로 안내를 구분한다.
+     */
     fun onResume() {
-        if (uiState.phase == Phase.MEASURING) session.resume()
+        if (uiState.phase != Phase.MEASURING) return
+        if (!session.resume()) {
+            uiState = UiState(
+                sensorAvailable = session.isSensorAvailable,
+                startFailed = session.isSensorAvailable,
+            )
+        }
     }
 
     /** onPause: 측정 중이면 센서 해제(누적값은 유지). onResume 과 대칭. */
@@ -105,8 +115,26 @@ class WalkingSessionViewModel(
         )
     }
 
+    /**
+     * 세션을 준비 상태로 초기화한다 — 화면을 완전히 떠날 때(뒤로/완료 후 확인) 호출.
+     *
+     * 이 VM은 화면 오버레이가 자체 ViewModelStore 가 없어 **Activity 스토어에 바인딩**되므로
+     * 구성 변경(회전 등)에는 살아남지만, 화면을 떠나도 Activity 가 살아있는 한 인스턴스가 남는다.
+     * 그래서 이탈 시 명시적으로 리셋해 (1) 센서를 확실히 해제하고 (2) 다음 미션 재진입 시
+     * 이전 세션 상태(DONE/걸음 수)가 되살아나지 않게 한다.
+     *
+     * ⚠️ pause() 가 아니라 cancel() 을 부른다. pause() 는 센서만 해제하고 running=true 를 유지해,
+     *    같은 Activity 에서 재진입해 start() 를 눌러도 `if (running) return registered` 로 이미
+     *    해제된 false 가 즉시 반환돼 재측정이 막힌다(#144 리뷰 블로커 1). cancel() 은 running 까지
+     *    해제해 재시작을 보장한다.
+     */
+    fun reset() {
+        session.cancel()
+        uiState = UiState(sensorAvailable = session.isSensorAvailable)
+    }
+
     override fun onCleared() {
-        // remember{} 로 만들면 자동 호출이 보장되진 않지만, 스토어에 등록된 경우를 위해 방어적으로 해제.
-        session.pause()
+        // Activity 파괴 시 방어적으로 세션 중단(구성 변경에서는 호출되지 않는다).
+        session.cancel()
     }
 }
