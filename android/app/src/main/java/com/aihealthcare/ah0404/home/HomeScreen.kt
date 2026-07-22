@@ -24,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.Alignment
@@ -38,6 +39,7 @@ import com.aihealthcare.ah0404.ui.components.MEDICAL_DISCLAIMER_DEFAULT
 import com.aihealthcare.ah0404.ui.components.MedicalDisclaimer
 import com.aihealthcare.ah0404.ui.theme.Dimens
 import java.util.Calendar
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 /**
@@ -141,7 +143,12 @@ private fun HomeContent(
     onOpenExercise: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val hourOfDay = remember { Calendar.getInstance().get(Calendar.HOUR_OF_DAY) }
+    val hourOfDay by produceState(initialValue = currentHourOfDay()) {
+        while (true) {
+            delay(60_000L)
+            value = currentHourOfDay()
+        }
+    }
     val bubbleMessage = remember(ui, refreshError, hourOfDay) {
         selectPetBubbleMessage(
             PetBubbleContext(
@@ -262,14 +269,18 @@ private fun HomeContent(
         // TODO: 백엔드 연결 — 주간 리포트·걸음 목표/비교(계약 GAP: /home 확장 대기)
         Spacer(Modifier.height(Dimens.Space8))
         // 하단 코너 펫 오버레이가 마지막 콘텐츠를 가리지 않도록 여백 확보.
-        Spacer(Modifier.height(260.dp))
+        Spacer(Modifier.height(320.dp))
         }
 
         PetSpeechBubble(
             text = bubbleMessage.text,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(end = Dimens.Space16, bottom = 164.dp),
+                .padding(
+                    start = Dimens.Space16,
+                    end = Dimens.Space16,
+                    bottom = 164.dp,
+                ),
         )
 
         // 마스코트 펫(고개 갸웃 idle) — 배경 투명, 하단 코너 고정. 홈에 온기를 더한다.
@@ -288,7 +299,7 @@ private fun PetSpeechBubble(
     modifier: Modifier = Modifier,
 ) {
     Surface(
-        modifier = modifier.widthIn(min = 180.dp, max = 280.dp),
+        modifier = modifier.widthIn(max = 280.dp),
         color = MaterialTheme.colorScheme.primaryContainer,
         contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         shape = MaterialTheme.shapes.large,
@@ -306,6 +317,8 @@ private fun PetSpeechBubble(
         )
     }
 }
+
+private fun currentHourOfDay(): Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
 
 @Composable
 private fun PointsChip(points: Int) {
