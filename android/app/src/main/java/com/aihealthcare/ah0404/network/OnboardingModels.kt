@@ -189,7 +189,7 @@ object OnbEnums {
     val KIDNEY_STATUS = listOf("none", "kidney_disease", "dialysis", "unknown")
     val PROTEIN_RESTRICTION_STATUS = listOf("none", "restricted", "unknown")
     val ACTIVITY_INPUT_SOURCE = listOf("self_report", "service_log")
-    val INPUT_METHOD = listOf("form", "voice", "service_log", "sensor", "manual")
+    val INPUT_METHOD = listOf("form", "service_log", "sensor", "manual")
     val ASSESSMENT_TYPE = listOf("initial", "reassessment")
     val ACTIVITY_LEVEL = listOf("easy", "normal", "hard")
     val LEVEL_REASON = listOf("initial_test", "rule", "llm_recommendation", "user_selected")
