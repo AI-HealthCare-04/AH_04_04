@@ -1,6 +1,7 @@
 package com.aihealthcare.ah0404.sensor
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -14,10 +15,12 @@ import org.junit.Test
  *
  *  1) 이중봉우리(더블범프): 한 걸음이 두 번 잡히는 보행 — 최소간격을 올리면 병합돼 실제 걸음수에 수렴 (1차 버그 20보→34)
  *  2) 초저속/느린(범위 밖): 최대간격(1000ms) 밖 리듬이라 걷기로 인정 안 됨(과다 방지 우선)
- *  3) 앉았다 일어나기 / 짧은 폰 흔들기: 오탐(FP) 0 — 특히 앉기(느린 리듬)는 max 축소로 차단
+ *  3) 정지 상태 앉았다 일어나기 / 짧은 폰 흔들기: 오탐(FP) 0 — 대역 밖 느린 리듬은 max 축소로 차단
  *  4) 최소/최대 간격 경계값(350 / 1000)
+ *  5) ⚠️ 알려진 한계: '보행 직후 곧바로 앉기'(≈882ms=68보/분)는 정상 대역 안이라 간격으로 분리 불가 →
+ *     과다카운트가 남는다. v1 미보장을 회귀 테스트로 '명시적으로' 고정한다(개선되면 이 테스트를 갱신).
  *
- * 근거·결정: docs/sensor_walking_gate_a4a.md (#89 2차 실측 2026-07-21).
+ * 근거·결정: docs/sensor_walking_gate_a4a.md (#89, 3차 실측 2026-07-22, §5-5 알려진 한계).
  */
 class WalkingStepDetectorAccuracyTest {
 
@@ -81,12 +84,32 @@ class WalkingStepDetectorAccuracyTest {
     }
 
     @Test
-    fun `앉았다 일어나기의 느린 리듬(1200ms)은 최대간격 1000 밖이라 많이 반복해도 0카운트`() {
-        // 실측(#89): 앉기 5회가 걸음 13·10으로 오탐됐음(느린 리듬 ≈47~52보/분, 간격 ≈1200ms).
+    fun `정지 상태 앉았다 일어나기의 느린 리듬(1200ms)은 최대간격 1000 밖이라 많이 반복해도 0카운트`() {
+        // 실측(#89): 정지 상태 앉기 5회가 걸음 13·10으로 오탐됐음(느린 리듬 ≈47~52보/분, 간격 ≈1200ms).
         // max를 1000으로 좁혀, 피크가 12번 나도 매번 리듬이 끊겨 게이트에 도달하지 못한다 → FP 차단(1200 > 1000).
         repeat(12) { i -> peak(i * 1200L) }
         assertEquals(0, logic.count)
         assertEquals(WalkingStepDetectorLogic.State.IDLE, logic.state)
+    }
+
+    // ── 5. 알려진 한계(v1 미보장) — 명시적 고정 ──────────────────────
+
+    @Test
+    fun `알려진 한계 - 보행 직후 곧바로 앉기는 대역 안(882ms) 리듬이라 간격으로 분리되지 않아 과다카운트가 남는다`() {
+        // 3차 실측(#89, 2026-07-22 SM-F766N): 정상 20보 → 곧바로 앉기 5회 = 28.
+        // 앉기 피크 간격 ≈882ms(68보/분)는 정상 보행 대역(500~1000ms) 한가운데 → interval <= max(1000) 통과.
+        // 간격이라는 단일 신호로는 정상 보행과 분리 불가 → v1 미보장(docs §5-5).
+        // 이 테스트는 '앉기 FP가 해소됐다'는 잘못된 주장을 막고, 현재 동작을 정직하게 고정한다.
+        repeat(20) { i -> peak(i * 600L) }          // 정상 보행 20보(≈100보/분, 대역 안)
+        val afterWalk = logic.count
+        assertEquals(20, afterWalk)                  // 보행 구간은 정확
+        repeat(5) { i -> peak(12_000L + i * 882L) } // 곧바로 앉기 5회(≈68보/분, 여전히 대역 안)
+        // 앉기 피크가 대역 안이라 WALKING이 유지되며 계속 카운트된다 → 과다.
+        assertTrue(
+            "보행 직후 앉기는 현재 분리 불가(알려진 한계)여서 과다카운트가 남아야 하는데 count=${logic.count} " +
+                "(개선됐다면 §5-5·문서·이 테스트를 함께 갱신)",
+            logic.count > afterWalk,
+        )
     }
 
     @Test
