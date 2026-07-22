@@ -88,6 +88,50 @@ uv run ruff check app
 
 윈도우에서 uv 캐시 권한 문제가 나면 터미널을 새로 열거나 관리자 권한 PowerShell에서 다시 실행합니다.
 
+## 배포
+
+`main`에 머지되면 `.github/workflows/deploy.yml`이 자동으로 배포합니다.
+git-flow에 따라 실제 릴리즈인 `main`만 배포 대상이며, `dev`(기능 통합)와 `release`(배포 전 확인)에서는 배포가 돌지 않습니다.
+러너에서 이미지를 빌드해 Docker Hub에 push하고, EC2에서 pull → 마이그레이션 → 기동합니다.
+이미지 태그는 배포한 커밋의 SHA(`app-<sha>`)입니다.
+
+### EC2에서 수동으로 compose를 실행할 때
+
+워크플로는 배포할 때마다 방금 올린 커밋 SHA를 서버 `.env`의 `APP_VERSION`에 기록합니다.
+그래서 EC2에서 아래처럼 그냥 실행해도 **현재 배포된 버전이 그대로 뜹니다.**
+
+```bash
+cd ~/project
+docker compose --env-file .env -f infra/docker/docker-compose.prod.yml up -d
+```
+
+일회성 명령도 마찬가지입니다.
+
+```bash
+docker compose --env-file .env -f infra/docker/docker-compose.prod.yml \
+  run --rm --no-deps fastapi uv run --no-sync alembic current
+```
+
+> 이 처리가 없던 초기 버전에서는 서버 `.env`가 `APP_VERSION=v1.0.0`으로 고정돼 있어,
+> 수동 실행 시 구버전 이미지가 조용히 뜨는 문제가 있었습니다.
+> `.env`를 직접 수정할 때 `APP_VERSION` 줄을 임의로 바꾸지 마세요.
+
+### 롤백
+
+되돌릴 버전을 명시해 실행합니다.
+
+```bash
+# 서버에 남아 있는 태그 확인 (`app-<sha>` 형태로 나옵니다)
+docker images menteur/ai-health --format '{{.Tag}}'
+
+# APP_VERSION에는 `app-` 접두어를 뺀 SHA만 넣습니다.
+# compose가 `...:app-${APP_VERSION}` 으로 조립하기 때문입니다.
+cd ~/project && DOCKER_USER=menteur DOCKER_REPOSITORY=ai-health APP_VERSION=<되돌릴 SHA> \
+  docker compose --env-file .env -f infra/docker/docker-compose.prod.yml up -d
+```
+
+배포 성공 시 이전 이미지는 정리되므로, 서버에 없으면 Docker Hub에서 다시 pull됩니다.
+
 ## 현재 MVP 범위
 
 포함:
