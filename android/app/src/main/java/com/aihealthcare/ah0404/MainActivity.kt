@@ -40,8 +40,11 @@ import com.aihealthcare.ah0404.auth.LoginRequiredScreen
 import com.aihealthcare.ah0404.auth.OfflineModeScreen
 import com.aihealthcare.ah0404.exercise.ExerciseVideosScreen
 import com.aihealthcare.ah0404.home.HomeScreen
+import com.aihealthcare.ah0404.mission.ComingSoonScreen
+import com.aihealthcare.ah0404.mission.MissionDestination
 import com.aihealthcare.ah0404.mission.MissionScreen
 import com.aihealthcare.ah0404.mission.WalkingMeasureScreen
+import com.aihealthcare.ah0404.mission.missionDestination
 import com.aihealthcare.ah0404.network.AppRoute
 import com.aihealthcare.ah0404.network.Mission
 import com.aihealthcare.ah0404.network.AppRouteResolver
@@ -184,6 +187,18 @@ private fun MainContent() {
         return
     }
 
+    // '준비 중' 오버레이(#93). 수행 화면이 아직 없는 유형(운동·식사·게임)을 누르면 진입.
+    var comingSoonMission by rememberSaveable(stateSaver = MissionStateSaver) {
+        mutableStateOf<Mission?>(null)
+    }
+    comingSoonMission?.let { mission ->
+        ComingSoonScreen(
+            mission = mission,
+            onBack = { comingSoonMission = null },
+        )
+        return
+    }
+
     // 탭 위에 얹히는 서브 화면(프로필/고객센터/운동 영상). null = 탭 화면.
     var subScreen by remember { mutableStateOf<String?>(null) }
     when (subScreen) {
@@ -237,7 +252,13 @@ private fun MainContent() {
             )
             MainTab.MISSIONS -> MissionScreen(
                 modifier = contentModifier,
-                onStartWalking = { walkingMission = it },
+                // 유형별 라우팅(#93): 걷기→측정 화면, 그 외→'준비 중'. 기록 POST는 여기서 하지 않는다(#91 단일 지점).
+                onMissionClick = { mission ->
+                    when (missionDestination(mission.missionType)) {
+                        MissionDestination.WALKING -> walkingMission = mission
+                        MissionDestination.COMING_SOON -> comingSoonMission = mission
+                    }
+                },
             )
             MainTab.RECORDS -> RecordScreen(
                 modifier = contentModifier,
