@@ -246,17 +246,6 @@
     <issue
         id="AutoboxingStateCreation"
         message="Prefer `mutableIntStateOf` instead of `mutableStateOf`"
-        errorLine1="    val selectedTab = remember { mutableStateOf(0) }"
-        errorLine2="                                 ~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/aihealthcare/ah0404/sensor/SensorScreen.kt"
-            line="51"
-            column="34"/>
-    </issue>
-
-    <issue
-        id="AutoboxingStateCreation"
-        message="Prefer `mutableIntStateOf` instead of `mutableStateOf`"
         errorLine1="    val stepCount = remember { mutableStateOf(0) }"
         errorLine2="                               ~~~~~~~~~~~~~~">
         <location
@@ -296,61 +285,6 @@
             file="src/main/java/com/aihealthcare/ah0404/sensor/SensorScreen.kt"
             line="88"
             column="39"/>
-    </issue>
-
-    <issue
-        id="AutoboxingStateCreation"
-        message="Prefer `mutableIntStateOf` instead of `mutableStateOf`"
-        errorLine1="    val shakeCount = remember { mutableStateOf(0) }"
-        errorLine2="                                ~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/aihealthcare/ah0404/sensor/SensorScreen.kt"
-            line="225"
-            column="33"/>
-    </issue>
-
-    <issue
-        id="AutoboxingStateCreation"
-        message="Prefer `mutableFloatStateOf` instead of `mutableStateOf`"
-        errorLine1="    val accelX = remember { mutableStateOf(0f) }"
-        errorLine2="                            ~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/aihealthcare/ah0404/sensor/SensorScreen.kt"
-            line="226"
-            column="29"/>
-    </issue>
-
-    <issue
-        id="AutoboxingStateCreation"
-        message="Prefer `mutableFloatStateOf` instead of `mutableStateOf`"
-        errorLine1="    val accelY = remember { mutableStateOf(0f) }"
-        errorLine2="                            ~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/aihealthcare/ah0404/sensor/SensorScreen.kt"
-            line="227"
-            column="29"/>
-    </issue>
-
-    <issue
-        id="AutoboxingStateCreation"
-        message="Prefer `mutableFloatStateOf` instead of `mutableStateOf`"
-        errorLine1="    val accelZ = remember { mutableStateOf(0f) }"
-        errorLine2="                            ~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/aihealthcare/ah0404/sensor/SensorScreen.kt"
-            line="228"
-            column="29"/>
-    </issue>
-
-    <issue
-        id="AutoboxingStateCreation"
-        message="Prefer `mutableFloatStateOf` instead of `mutableStateOf`"
-        errorLine1="    val magnitude = remember { mutableStateOf(0f) }"
-        errorLine2="                               ~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/aihealthcare/ah0404/sensor/SensorScreen.kt"
-            line="229"
-            column="32"/>
     </issue>
 
     <issue
