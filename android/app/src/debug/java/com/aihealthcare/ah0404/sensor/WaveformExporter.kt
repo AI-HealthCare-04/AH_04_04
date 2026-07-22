@@ -4,9 +4,6 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.content.FileProvider
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * 수집한 파형을 CSV 파일로 저장하고 공유(다른 앱/기기로 내보내기)한다. **디버그 소스셋 전용** — 릴리스 APK 에는 포함되지 않는다.
@@ -16,11 +13,13 @@ import java.util.Locale
  */
 object WaveformExporter {
 
-    /** 레코더 버퍼를 `waveforms/{label}_{yyyyMMdd_HHmmss}.csv` 로 저장하고 그 File 을 반환한다. */
+    /**
+     * 레코더 버퍼를 `waveforms/{trialId}.csv` 로 저장하고 그 File 을 반환한다.
+     * 파일명이 곧 trial_id(라벨+ms 정밀 타임스탬프)라 빠른 반복 수집에서도 덮어써지지 않는다(리뷰 #150).
+     */
     fun save(context: Context, recorder: WaveformRecorder): File {
         val dir = File(context.getExternalFilesDir(null), "waveforms").apply { mkdirs() }
-        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        val file = File(dir, "${recorder.label.id}_$stamp.csv")
+        val file = File(dir, "${recorder.meta.trialId}.csv")
         file.writeText(recorder.toCsv())
         return file
     }
