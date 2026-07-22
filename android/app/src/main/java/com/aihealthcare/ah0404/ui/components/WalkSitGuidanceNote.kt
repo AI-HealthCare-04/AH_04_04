@@ -9,9 +9,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.aihealthcare.ah0404.ui.theme.Dimens
 
 /**
  * 걷기 미션 안내 카드 — '보행 직후 곧바로 앉기' 과다카운트에 대한 단기 안전 완화(#132).
@@ -23,7 +21,11 @@ import androidx.compose.ui.unit.sp
  * 걷기 측정이 실제로 도는 화면에 배치한다(현재 SensorScreen). 향후 걷기 미션 측정 화면이
  *   구현되면 그 화면에서도 재사용한다.
  *
- * 카피: 리뷰(#141, @Earthworm-jk) 권장안 반영 — "2초 정도 멈춰 선 뒤 천천히" 로 완화 목적을 명확히.
+ * 카피(리뷰 #141): 주 문구는 완화 목적을 명확히("2초 정도 멈춰 선 뒤 천천히"), 보조 문구는
+ *   계측 오차를 강조하는 대신 행동 이유를 긍정형으로("정확하게 기록") 안내한다.
+ * 스타일: 디자인 토큰(Dimens/Typography)만 사용한다 — titleMedium/bodyMedium은 fontSize에
+ *   lineHeight가 짝지어 정의돼 있어 320dp에서 줄바꿈돼도 간격이 유지되고, 시니어 대응으로
+ *   스케일을 조정할 때 이 공용 컴포넌트에도 함께 반영된다(하드코딩 금지, MedicalDisclaimer 패턴).
  */
 @Composable
 fun WalkSitGuidanceNote(modifier: Modifier = Modifier) {
@@ -33,18 +35,17 @@ fun WalkSitGuidanceNote(modifier: Modifier = Modifier) {
         shape = MaterialTheme.shapes.medium,
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.padding(Dimens.CardPadding),
+            verticalArrangement = Arrangement.spacedBy(Dimens.Space4),
         ) {
             Text(
                 "💡 걷기를 마치면 2초 정도 멈춰 선 뒤 천천히 앉아 주세요",
-                fontSize = 17.sp,
-                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
             Text(
-                "걷다가 바로 앉으면 걸음이 실제보다 조금 많게 셀 수 있어요.",
-                fontSize = 15.sp,
+                "걸음 수를 정확하게 기록하기 위해서예요.",
+                style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
         }
