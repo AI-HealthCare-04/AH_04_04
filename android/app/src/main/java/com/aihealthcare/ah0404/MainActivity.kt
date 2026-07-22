@@ -40,8 +40,11 @@ import com.aihealthcare.ah0404.auth.LoginRequiredScreen
 import com.aihealthcare.ah0404.auth.OfflineModeScreen
 import com.aihealthcare.ah0404.exercise.ExerciseVideosScreen
 import com.aihealthcare.ah0404.home.HomeScreen
+import com.aihealthcare.ah0404.mission.ComingSoonScreen
+import com.aihealthcare.ah0404.mission.MissionDestination
 import com.aihealthcare.ah0404.mission.MissionScreen
 import com.aihealthcare.ah0404.mission.WalkingMeasureScreen
+import com.aihealthcare.ah0404.mission.missionDestination
 import com.aihealthcare.ah0404.network.AppRoute
 import com.aihealthcare.ah0404.network.Mission
 import com.aihealthcare.ah0404.network.AppRouteResolver
@@ -171,7 +174,8 @@ private val MissionStateSaver: Saver<Mission?, String> = Saver(
 
 // 하단 탭 선택도 구성 변경에 보존한다. remember 로 두면 재생성 시 HOME 으로 초기화돼,
 // 측정 오버레이가 복원된 상태에서 이탈(leave)하는 순간 미션 탭이 아니라 홈이 나타난다(#144 리뷰
-// 블로커 2). enum 은 Bundle 자동 저장 대상이 아니므로 이름 문자열로 명시 저장/복원한다.
+// 블로커 2). 준비중 오버레이(#147 comingSoonMission)도 같은 증상이라 이 Saver 로 함께 해결된다.
+// enum 은 Bundle 자동 저장 대상이 아니므로 이름 문자열로 명시 저장/복원한다.
 private val MainTabSaver: Saver<MainTab, String> = Saver(
     save = { it.name },
     restore = { MainTab.valueOf(it) },
@@ -194,6 +198,18 @@ private fun MainContent() {
         WalkingMeasureScreen(
             mission = mission,
             onBack = { walkingMission = null },
+        )
+        return
+    }
+
+    // '준비 중' 오버레이(#93). 수행 화면이 아직 없는 유형(운동·식사·게임)을 누르면 진입.
+    var comingSoonMission by rememberSaveable(stateSaver = MissionStateSaver) {
+        mutableStateOf<Mission?>(null)
+    }
+    comingSoonMission?.let { mission ->
+        ComingSoonScreen(
+            mission = mission,
+            onBack = { comingSoonMission = null },
         )
         return
     }
@@ -251,7 +267,13 @@ private fun MainContent() {
             )
             MainTab.MISSIONS -> MissionScreen(
                 modifier = contentModifier,
-                onStartWalking = { walkingMission = it },
+                // 유형별 라우팅(#93): 걷기→측정 화면, 그 외→'준비 중'. 기록 POST는 여기서 하지 않는다(#91 단일 지점).
+                onMissionClick = { mission ->
+                    when (missionDestination(mission.missionType)) {
+                        MissionDestination.WALKING -> walkingMission = mission
+                        MissionDestination.COMING_SOON -> comingSoonMission = mission
+                    }
+                },
             )
             MainTab.RECORDS -> RecordScreen(
                 modifier = contentModifier,

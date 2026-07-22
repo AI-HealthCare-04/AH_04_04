@@ -45,7 +45,8 @@ internal fun targetUnitLabel(unit: String): String = when (unit) {
 fun MissionScreen(
     modifier: Modifier = Modifier,
     vm: MissionViewModel = viewModel(),
-    onStartWalking: (Mission) -> Unit = {},
+    // 미션 카드를 누르면 유형과 무관하게 호출 — 유형별 목적지 라우팅은 호출부(MainActivity)가 담당(#93).
+    onMissionClick: (Mission) -> Unit = {},
 ) {
     val state by vm.uiState.collectAsState()
 
@@ -88,12 +89,10 @@ fun MissionScreen(
                     )
                 }
                 items(s.missions) { mission ->
+                    // 모든 유형이 눌러서 이동(라우팅만). 걷기→측정 화면, 그 외→'준비 중'. 목적지는 호출부가 결정.
                     MissionCard(
                         mission = mission,
-                        // 걷기 미션만 측정 화면으로 진입(다른 유형은 후속). 산책 측정 UI 통합 = #90.
-                        onClick = if (mission.missionType == "walking") {
-                            { onStartWalking(mission) }
-                        } else null,
+                        onClick = { onMissionClick(mission) },
                     )
                 }
                 item { Spacer(modifier = Modifier.height(8.dp)) }
@@ -152,12 +151,15 @@ private fun MissionCard(mission: Mission, onClick: (() -> Unit)? = null) {
         }
 
         if (onClick != null) {
+            val isWalking = mission.missionType == "walking"
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "눌러서 측정 시작 →",
+                // 걷기는 바로 측정, 나머지는 아직 수행 화면이 없어 '준비 중'으로 연결됨을 미리 알린다.
+                text = if (isWalking) "눌러서 측정 시작 →" else "준비 중 · 눌러서 보기 →",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
+                color = if (isWalking) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
