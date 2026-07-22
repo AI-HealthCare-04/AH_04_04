@@ -1,3 +1,4 @@
+import java.io.File
 import java.net.URI
 import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
@@ -49,6 +50,33 @@ abstract class ValidateApiBaseUrlTask : DefaultTask() {
     }
 }
 
+abstract class ValidateReleaseSigningTask : DefaultTask() {
+    @get:Input
+    abstract val configured: Property<Boolean>
+
+    @get:Input
+    @get:Optional
+    abstract val keystorePath: Property<String>
+
+    @TaskAction
+    fun validate() {
+        if (!configured.get()) {
+            throw GradleException(
+                """
+                Release 빌드에는 서명 설정이 필요합니다. 아래 4개를 ~/.gradle/gradle.properties 또는 환경변수로 지정하세요.
+                  AH_RELEASE_KEYSTORE_FILE, AH_RELEASE_KEYSTORE_PASSWORD, AH_RELEASE_KEY_ALIAS, AH_RELEASE_KEY_PASSWORD
+                서명 없이 만든 APK는 기기에 설치할 수 없고, debug 키로 서명하면 Google/Kakao 콘솔에 등록한
+                release SHA-1·key hash와 어긋나 로그인이 실패합니다. (레포에 두면 유출되므로 홈 디렉터리에 두세요.)
+                """.trimIndent(),
+            )
+        }
+        val path = keystorePath.get()
+        if (!File(path).isFile) {
+            throw GradleException("AH_RELEASE_KEYSTORE_FILE 경로에 keystore 파일이 없습니다: $path")
+        }
+    }
+}
+
 val debugApiBaseUrl = providers.gradleProperty("AH_DEBUG_API_BASE_URL")
     .orElse(providers.environmentVariable("AH_DEBUG_API_BASE_URL"))
     .orElse("http://10.0.2.2:8000/api/v1/")
@@ -63,6 +91,24 @@ val googleWebClientId = providers.gradleProperty("AH_GOOGLE_WEB_CLIENT_ID")
 val kakaoNativeAppKey = providers.gradleProperty("AH_KAKAO_NATIVE_APP_KEY")
     .orElse(providers.environmentVariable("AH_KAKAO_NATIVE_APP_KEY"))
     .orElse("")
+
+// release 서명 정보. 값은 레포에 두지 않는다 — android/gradle.properties 는 git이 추적하므로
+//   ~/.gradle/gradle.properties(홈 디렉터리) 나 환경변수로 주입한다. keystore 파일도 레포 밖에 둔다.
+val releaseKeystoreFile = providers.gradleProperty("AH_RELEASE_KEYSTORE_FILE")
+    .orElse(providers.environmentVariable("AH_RELEASE_KEYSTORE_FILE"))
+val releaseKeystorePassword = providers.gradleProperty("AH_RELEASE_KEYSTORE_PASSWORD")
+    .orElse(providers.environmentVariable("AH_RELEASE_KEYSTORE_PASSWORD"))
+val releaseKeyAlias = providers.gradleProperty("AH_RELEASE_KEY_ALIAS")
+    .orElse(providers.environmentVariable("AH_RELEASE_KEY_ALIAS"))
+val releaseKeyPassword = providers.gradleProperty("AH_RELEASE_KEY_PASSWORD")
+    .orElse(providers.environmentVariable("AH_RELEASE_KEY_PASSWORD"))
+
+val hasReleaseSigning = listOf(
+    releaseKeystoreFile,
+    releaseKeystorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { !it.orNull.isNullOrBlank() }
 
 android {
     namespace = "com.aihealthcare.ah0404"
@@ -85,6 +131,19 @@ android {
         manifestPlaceholders["KAKAO_NATIVE_APP_KEY"] = kakaoNativeAppKey.get().ifBlank { "unconfigured" }
     }
 
+    signingConfigs {
+        // 서명 정보가 주입된 경우에만 생성한다. 없으면 release 태스크가
+        // validateReleaseSigning 에서 명확한 메시지와 함께 실패한다(무서명 APK 방지).
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(releaseKeystoreFile.get())
+                storePassword = releaseKeystorePassword.get()
+                keyAlias = releaseKeyAlias.get()
+                keyPassword = releaseKeyPassword.get()
+            }
+        }
+    }
+
     buildTypes {
         getByName("debug") {
             buildConfigField(
@@ -94,6 +153,11 @@ android {
             )
         }
         release {
+            // 서명하지 않으면 설치 자체가 불가능하고, debug 키로 서명하면
+            // Google/Kakao 콘솔에 등록한 release SHA-1·key hash와 어긋나 로그인이 실패한다.
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             buildConfigField(
                 "String",
                 "API_BASE_URL",
@@ -128,9 +192,17 @@ val validateReleaseApiBaseUrl = tasks.register<ValidateApiBaseUrlTask>("validate
     requireHttps.set(true)
 }
 
+val validateReleaseSigning = tasks.register<ValidateReleaseSigningTask>("validateReleaseSigning") {
+    configured.set(hasReleaseSigning)
+    keystorePath.set(releaseKeystoreFile)
+}
+
 tasks.configureEach {
-    if (name.contains("Release") && name != validateReleaseApiBaseUrl.name) {
-        dependsOn(validateReleaseApiBaseUrl)
+    if (name.contains("Release") &&
+        name != validateReleaseApiBaseUrl.name &&
+        name != validateReleaseSigning.name
+    ) {
+        dependsOn(validateReleaseApiBaseUrl, validateReleaseSigning)
     }
 }
 

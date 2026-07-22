@@ -15,3 +15,9 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# release 서명 키 — 절대 커밋 금지. keystore는 레포 밖(홈 디렉터리 등)에 두고
+# 경로·비밀번호는 ~/.gradle/gradle.properties 나 환경변수로 주입한다.
+*.jks
+*.keystore
+keystore.properties
