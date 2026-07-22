@@ -3,7 +3,9 @@
 .venv/
 .idea/
 .pytest_cache/
-__pycache__/
+# `__pycache__/` 는 최상위만 매칭한다. `**/` 가 없으면 app/·scripts/ 하위 캐시가 전부 이미지에 들어간다.
+#   호스트에서 만들어진 바이트코드라 이미지 것과 무관하고, UV_COMPILE_BYTECODE=1 로 어차피 다시 컴파일된다.
+**/__pycache__/
 *.pyc
 
 .env
