@@ -4,7 +4,7 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- 걷기·흔들기 모두 가속도계 기반. 런타임 권한은 불필요.
+    <!-- 걷기 감지는 가속도계 기반. 런타임 권한은 불필요.
          센서가 없는 기기에서도 설치 가능하도록 required=false -->
     <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="false" />
 
