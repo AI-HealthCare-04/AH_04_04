@@ -236,7 +236,7 @@ private fun HomeContent(
             )
         }
 
-        // 나의 기록(_13) 진입 — care_stage 추이 + 활동 요약
+        // 나의 기록(_13) 진입 — 연속 예측 추이 + 활동 요약
         AigoSecondaryButton(text = "영상 따라 운동하기", onClick = onOpenExercise)
         AigoSecondaryButton(text = "나의 기록 보기", onClick = onOpenRecords)
 

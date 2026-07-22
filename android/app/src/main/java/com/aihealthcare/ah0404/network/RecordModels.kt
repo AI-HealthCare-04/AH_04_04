@@ -3,27 +3,24 @@ package com.aihealthcare.ah0404.network
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/**
- * `_13 나의 기록` 응답 DTO — dev 백엔드 정본(#62 위험도 이력, mission-logs 목록) 기준.
- *
- *  ⚠️ 비노출 계약(#57): 위험도 이력은 care_stage 만 온다. risk_level·risk_score 는 서버가
- *     응답에서 제외하며, 앱도 절대 표시/요청하지 않는다.
- *  created_at 은 KST(+09:00) ISO8601 문자열. 화면에서는 날짜(YYYY.MM.DD)만 사용한다.
- */
+/** `_13 나의 기록` 화면에서 사용하는 예측 이력과 미션 기록 DTO. */
 
-// ── GET /risk-predictions/me/history ────────────────────────────────────────
 @Serializable
 data class RiskHistoryItem(
     @SerialName("created_at") val createdAt: String,
-    @SerialName("care_stage") val careStage: String, // good | maintain | action_needed
+    @SerialName("care_stage") val careStage: String, // Android 전환 기간의 임시 호환 필드
+    @SerialName("prediction_id") val predictionId: Int = 0,
+    @SerialName("risk_score") val riskScore: Double? = null,
+    @SerialName("change_percentage_points") val changePercentagePoints: Double? = null,
+    @SerialName("comparison_status") val comparisonStatus: String = "baseline",
 )
 
 @Serializable
 data class RiskHistoryResponse(
+    /** 서버 계약에 따라 오래된 기록부터 최신 기록 순서로 온다. */
     val predictions: List<RiskHistoryItem> = emptyList(),
 )
 
-// ── GET /mission-logs ───────────────────────────────────────────────────────
 @Serializable
 data class MissionLogItem(
     @SerialName("mission_log_id") val missionLogId: Int,

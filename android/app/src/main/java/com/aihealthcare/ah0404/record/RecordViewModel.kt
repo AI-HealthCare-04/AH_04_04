@@ -18,7 +18,7 @@ import kotlinx.coroutines.launch
  * `_13 나의 기록` 상태 + 백엔드 배선.
  *
  *  두 소스를 **서로 독립적으로** 조회한다(리뷰 #68 지영 지적 2):
- *   - care_stage 추이(#62)  → 순화 등급 타임라인. 비노출 계약: 점수/등급 없음.
+ *   - 연속 예측 추이        → 관리 필요도 점수·변화량·모델 비교 상태.
  *   - mission-logs 목록      → 활동 요약(완료 미션 수 + 누적 적립 포인트).
  *  한쪽 호출이 실패해도 다른 쪽은 조회·표시되며, 실패한 섹션은 각자의 오류 상태로 표시한다.
  *
@@ -69,7 +69,7 @@ class RecordViewModel(
 
             historyResult
                 .onSuccess { history = it }
-                .onFailure { historyError = true; Log.w(TAG, "위험도 이력 조회 실패: ${it.message}") }
+                .onFailure { historyError = true; Log.w(TAG, "예측 추이 조회 실패: ${it.message}") }
             logsResult
                 .onSuccess { logs ->
                     completedMissions = logs.count { it.success }
