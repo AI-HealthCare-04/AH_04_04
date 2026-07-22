@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
+import androidx.annotation.RequiresApi
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -54,13 +55,15 @@ class AndroidTtsSpeaker(
     private val utteranceSeq = AtomicInteger(0)
 
     /**
-     * 아직 완료(done/error/stop) 통지가 오지 않은 발화 id.
+     * 미완료 발화 추적 + 오디오 포커스 보유 관리.
      *
-     *  단순 카운터가 아니라 **id 집합**인 이유: [stop] 이후 늦게 도착한 이전 발화의 콜백이
-     *  새 발화의 카운트를 깎아 오디오 포커스를 조기 반납하는 것을 막기 위해서다.
-     *  집합에 없는 id 의 콜백은 그냥 무시된다.
+     *  정산 경로가 완료·오류·중단·FLUSH·stop 으로 여러 갈래라 눈으로 맞추기 어렵다.
+     *  순수 클래스로 분리해 [SpeechFocusTrackerTest] 로 고정한다.
      */
-    private val outstandingIds = mutableSetOf<String>()
+    private val focusTracker = SpeechFocusTracker(
+        acquireFocus = { requestFocus() },
+        releaseFocus = { abandonFocus() },
+    )
 
     private var state = State.INITIALIZING
 
@@ -140,19 +143,15 @@ class AndroidTtsSpeaker(
     /** 실제 재생. 호출 전에 [State.READY] 가 보장돼야 한다. */
     private fun enqueue(text: String, mode: SpeechQueueMode) {
         val engine = tts ?: return
-        if (mode == SpeechQueueMode.FLUSH) {
-            // 끊긴 발화의 onStop 이 늦게 와도 새 발화를 깎지 않도록 미리 정리한다.
-            outstandingIds.clear()
-        }
-        if (outstandingIds.isEmpty()) requestFocus()
         val queueMode = if (mode == SpeechQueueMode.FLUSH) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
         val params = Bundle().apply { putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volume) }
         val id = "aigo-${utteranceSeq.incrementAndGet()}"
-        outstandingIds += id
+        // FLUSH 면 진행 중이던 발화를 정산 대상에서 빼되, 포커스는 보유한 채 유지한다.
+        focusTracker.onSpeakStart(id, flush = mode == SpeechQueueMode.FLUSH)
         val result = engine.speak(text, queueMode, params, id)
         if (result != TextToSpeech.SUCCESS) {
             Log.w(TAG, "발화 요청 실패(result=$result)")
-            settle(id)
+            focusTracker.onSettled(id)
         }
     }
 
@@ -161,17 +160,15 @@ class AndroidTtsSpeaker(
     private fun stopInternal() {
         pending.clear()
         tts?.stop()
-        // 남은 발화의 콜백은 집합에 없으므로 무시된다.
-        outstandingIds.clear()
-        abandonFocus()
+        // 남은 발화의 콜백은 추적 집합에 없으므로 무시된다.
+        focusTracker.reset()
     }
 
     override fun release() = synchronized(this) {
         if (state == State.RELEASED) return@synchronized
         state = State.RELEASED
         pending.clear()
-        outstandingIds.clear()
-        abandonFocus()
+        focusTracker.reset()
         tts?.setOnUtteranceProgressListener(null)
         tts?.stop()
         tts?.shutdown()
@@ -188,41 +185,42 @@ class AndroidTtsSpeaker(
         override fun onStart(utteranceId: String?) = Unit
 
         override fun onDone(utteranceId: String?) =
-            synchronized(this@AndroidTtsSpeaker) { settle(utteranceId) }
+            synchronized(this@AndroidTtsSpeaker) { focusTracker.onSettled(utteranceId) }
 
         @Deprecated("레거시 콜백 — 신형 onError(String, Int) 와 함께 유지해야 전 버전에서 누락되지 않는다.")
         override fun onError(utteranceId: String?) =
-            synchronized(this@AndroidTtsSpeaker) { settle(utteranceId) }
+            synchronized(this@AndroidTtsSpeaker) { focusTracker.onSettled(utteranceId) }
 
         override fun onError(utteranceId: String?, errorCode: Int) =
-            synchronized(this@AndroidTtsSpeaker) { settle(utteranceId) }
+            synchronized(this@AndroidTtsSpeaker) { focusTracker.onSettled(utteranceId) }
 
         /** QUEUE_FLUSH·stop() 으로 중단된 발화. 이 경로가 없으면 포커스가 반납되지 않는다. */
         override fun onStop(utteranceId: String?, interrupted: Boolean) =
-            synchronized(this@AndroidTtsSpeaker) { settle(utteranceId) }
-    }
-
-    /** 해당 발화를 미완료 목록에서 지운다. 이미 정리된 id(늦게 도착한 콜백)는 무시된다. */
-    private fun settle(utteranceId: String?) {
-        if (utteranceId == null) return
-        if (!outstandingIds.remove(utteranceId)) return
-        if (outstandingIds.isEmpty()) abandonFocus()
+            synchronized(this@AndroidTtsSpeaker) { focusTracker.onSettled(utteranceId) }
     }
 
     // ── 오디오 포커스 ──────────────────────────────────────────────
+    //   요청 객체는 **한 번 만들어 재사용**한다. 발화마다 새로 만들면 이전 객체 참조를 잃어
+    //   그 요청을 영영 반납하지 못한다(API 26+ 는 요청 객체 단위로 반납한다).
+    //   "언제 요청/반납할지"는 SpeechFocusTracker 가 결정하고, 여기서는 실제 호출만 한다.
 
-    private fun requestFocus() {
-        val manager = audioManager ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val attributes = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                .build()
-            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-                .setAudioAttributes(attributes)
-                .setOnAudioFocusChangeListener(focusListener)
-                .build()
-            focusRequest = request
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun buildFocusRequest(): AudioFocusRequest {
+        val attributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
+        return AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            .setAudioAttributes(attributes)
+            .setOnAudioFocusChangeListener(focusListener)
+            .build()
+    }
+
+    /** @return 포커스를 실제로 획득했는가. 실패하면 보유 상태로 기록하지 않는다. */
+    private fun requestFocus(): Boolean {
+        val manager = audioManager ?: return false
+        val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val request = focusRequest ?: buildFocusRequest().also { focusRequest = it }
             manager.requestAudioFocus(request)
         } else {
             @Suppress("DEPRECATION")
@@ -232,13 +230,14 @@ class AndroidTtsSpeaker(
                 AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
             )
         }
+        return result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
     }
 
     private fun abandonFocus() {
         val manager = audioManager ?: return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // 요청할 때 쓴 것과 **같은 객체**로 반납해야 한다. 그래서 null 로 비우지 않고 재사용한다.
             focusRequest?.let { manager.abandonAudioFocusRequest(it) }
-            focusRequest = null
         } else {
             @Suppress("DEPRECATION")
             manager.abandonAudioFocus(focusListener)
