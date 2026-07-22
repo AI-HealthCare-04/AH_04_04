@@ -59,9 +59,61 @@ class RiskTrendTest {
         val improved = buildRiskTrendSegments(
             listOf(item("2026-07-22", 0.18, "comparable", -6.0)),
         ).single().single()
+        val increased = buildRiskTrendSegments(
+            listOf(item("2026-07-22", 0.30, "comparable", 6.0)),
+        ).single().single()
+        val tinyChange = buildRiskTrendSegments(
+            listOf(item("2026-07-22", 0.18, "comparable", -0.9)),
+        ).single().single()
 
         assertEquals("새로운 기준으로 다시 살펴보기 시작했어요.", changeDescription(modelChanged))
         assertTrue(changeDescription(improved).contains("낮아졌어요"))
+        assertEquals(
+            "지난 기록보다 6.0%p 높아졌어요. 생활습관을 조금 더 살펴봐요.",
+            changeDescription(increased),
+        )
+        assertEquals("지난 기록과 비슷하게 유지되고 있어요.", changeDescription(tinyChange))
+    }
+
+    @Test
+    fun accessibility_description_announces_model_boundary() {
+        val segments = buildRiskTrendSegments(
+            listOf(
+                item("2026-07-01", 0.32, "baseline"),
+                item("2026-07-08", 0.30, "comparable", -2.0),
+                item("2026-07-15", 0.24, "model_changed"),
+            ),
+        )
+
+        assertEquals(
+            "2026.07.01 관리 필요도 32%, 2026.07.08 관리 필요도 30%. " +
+                "새로운 기준으로 다시 시작. 2026.07.15 관리 필요도 24%",
+            riskTrendContentDescription(segments),
+        )
+    }
+
+    @Test
+    fun x_axis_uses_elapsed_date_ratio_and_falls_back_for_invalid_dates() {
+        val dated = buildRiskTrendSegments(
+            listOf(
+                item("2026-07-01", 0.32, "baseline"),
+                item("2026-07-02", 0.30, "comparable", -2.0),
+                item("2026-07-20", 0.24, "comparable", -6.0),
+            ),
+        ).flatten()
+        val fractions = buildRiskTrendXFractions(dated)
+
+        assertEquals(0f, fractions[0], 0f)
+        assertEquals(1f / 19f, fractions[1], 0.0001f)
+        assertEquals(1f, fractions[2], 0f)
+
+        val invalid = dated.mapIndexed { index, point ->
+            if (index == 1) point.copy(createdAt = "날짜 없음") else point
+        }
+        assertEquals(listOf(0f, 0.5f, 1f), buildRiskTrendXFractions(invalid))
+
+        val sameDay = dated.map { it.copy(createdAt = "2026-07-22T09:00:00+09:00") }
+        assertEquals(listOf(0.5f, 0.5f, 0.5f), buildRiskTrendXFractions(sameDay))
     }
 
     @Test

@@ -35,7 +35,9 @@ import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.MEDICAL_DISCLAIMER_DEFAULT
 import com.aihealthcare.ah0404.ui.components.MedicalDisclaimer
 import com.aihealthcare.ah0404.ui.theme.Dimens
+import java.util.GregorianCalendar
 import java.util.Locale
+import java.util.TimeZone
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -199,11 +201,10 @@ private fun RiskTrendContent(items: List<RiskHistoryItem>) {
 @Composable
 private fun RiskTrendChart(segments: List<List<RiskTrendPoint>>) {
     val points = segments.flatten()
+    val xFractions = remember(points) { buildRiskTrendXFractions(points) }
     val primary = MaterialTheme.colorScheme.primary
     val grid = MaterialTheme.colorScheme.outlineVariant
-    val description = points.joinToString(", ") {
-        "${formatDate(it.createdAt)} 관리 필요도 ${scorePercent(it.score)}"
-    }
+    val description = riskTrendContentDescription(segments)
 
     Canvas(
         modifier = Modifier
@@ -217,19 +218,13 @@ private fun RiskTrendChart(segments: List<List<RiskTrendPoint>>) {
         val bottom = size.height - 8.dp.toPx()
         val chartWidth = right - left
         val chartHeight = bottom - top
-        val lastIndex = points.lastIndex
-
         listOf(0f, 0.5f, 1f).forEach { ratio ->
             val y = bottom - chartHeight * ratio
             drawLine(grid, Offset(left, y), Offset(right, y), strokeWidth = 1.dp.toPx())
         }
 
         fun offset(point: RiskTrendPoint): Offset {
-            val x = if (lastIndex == 0) {
-                left + chartWidth / 2f
-            } else {
-                left + chartWidth * point.index / lastIndex.toFloat()
-            }
+            val x = left + chartWidth * xFractions[point.index]
             val y = bottom - chartHeight * point.score.toFloat()
             return Offset(x, y)
         }
@@ -296,17 +291,60 @@ internal fun changeDescription(point: RiskTrendPoint): String {
         return "새로운 기준으로 다시 살펴보기 시작했어요."
     }
     val change = point.changePercentagePoints ?: return "첫 기록이에요. 앞으로의 변화를 함께 살펴봐요."
-    if (abs(change) < 0.05) return "지난 기록과 비슷하게 유지되고 있어요."
+    if (abs(change) < 1.0) return "지난 기록과 비슷하게 유지되고 있어요."
 
     val amount = String.format(Locale.KOREA, "%.1f", abs(change))
     return if (change < 0) {
         "지난 기록보다 ${amount}%p 낮아졌어요."
     } else {
-        "지난 기록보다 ${amount}%p 더 살펴볼 필요가 있어요."
+        "지난 기록보다 ${amount}%p 높아졌어요. 생활습관을 조금 더 살펴봐요."
     }
+}
+
+internal fun riskTrendContentDescription(segments: List<List<RiskTrendPoint>>): String =
+    segments.mapIndexed { index, segment ->
+        val pointsDescription = segment.joinToString(", ") {
+            "${formatDate(it.createdAt)} 관리 필요도 ${scorePercent(it.score)}"
+        }
+        if (index == 0) pointsDescription else "새로운 기준으로 다시 시작. $pointsDescription"
+    }.joinToString(". ")
+
+/** 실제 날짜 간격을 X축 비율로 바꾼다. 날짜가 하나라도 잘못되면 안전하게 순서 기반 배치로 폴백한다. */
+internal fun buildRiskTrendXFractions(points: List<RiskTrendPoint>): List<Float> {
+    if (points.isEmpty()) return emptyList()
+    if (points.size == 1) return listOf(0.5f)
+
+    val epochDays = points.map { parseIsoDateEpochDay(it.createdAt) }
+    val validDays = epochDays.filterNotNull()
+    val datesAreUsable = validDays.size == points.size &&
+        validDays.zipWithNext().all { (previous, current) -> previous <= current }
+    if (!datesAreUsable) {
+        return points.indices.map { it / points.lastIndex.toFloat() }
+    }
+
+    val first = validDays.first()
+    val span = validDays.last() - first
+    if (span == 0L) return List(points.size) { 0.5f }
+    return validDays.map { ((it - first).toDouble() / span).toFloat() }
+}
+
+private fun parseIsoDateEpochDay(value: String): Long? {
+    val match = ISO_DATE_PREFIX.matchEntire(value.take(10)) ?: return null
+    val (year, month, day) = match.destructured
+    return runCatching {
+        GregorianCalendar(UTC).apply {
+            isLenient = false
+            clear()
+            set(year.toInt(), month.toInt() - 1, day.toInt())
+        }.timeInMillis / MILLIS_PER_DAY
+    }.getOrNull()
 }
 
 private fun scorePercent(score: Double): String = "${(score * 100).roundToInt()}%"
 
 internal fun formatDate(iso: String): String =
     if (iso.length >= 10) iso.substring(0, 10).replace('-', '.') else iso
+
+private val ISO_DATE_PREFIX = Regex("""(\d{4})-(\d{2})-(\d{2})""")
+private val UTC: TimeZone = TimeZone.getTimeZone("UTC")
+private const val MILLIS_PER_DAY = 24L * 60L * 60L * 1000L
