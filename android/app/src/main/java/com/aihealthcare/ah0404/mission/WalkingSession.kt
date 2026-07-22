@@ -33,7 +33,7 @@ class WalkingSession(
     context: Context,
     private val detector: WalkingStepDetectorLogic = WalkingStepDetectorLogic(),
     private val useCase: WalkingFlowUseCase = WalkingFlowUseCase(),
-) {
+) : WalkingSessionController {
     private val sensorManager =
         context.applicationContext.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     private val accelSensor: Sensor? =
@@ -45,13 +45,13 @@ class WalkingSession(
     private var endElapsedMs = 0L
 
     /** 이 기기가 가속도계를 지원하는가. */
-    val isSensorAvailable: Boolean get() = accelSensor != null
+    override val isSensorAvailable: Boolean get() = accelSensor != null
 
     /** 지금까지 누적된 걸음 수. */
-    val steps: Int get() = detector.count
+    override val steps: Int get() = detector.count
 
     /** 현재 보행 상태(IDLE/WALKING). */
-    val state: WalkingStepDetectorLogic.State get() = detector.state
+    override val state: WalkingStepDetectorLogic.State get() = detector.state
 
     private val listener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent?) {
@@ -70,7 +70,7 @@ class WalkingSession(
      * 측정 시작. 걸음 수/상태를 초기화하고 센서를 등록한다.
      * @return 센서 등록 성공 여부(가속도계 미지원 시 false)
      */
-    fun start(): Boolean {
+    override fun start(): Boolean {
         if (running) return registered
         detector.reset()
         startElapsedMs = SystemClock.elapsedRealtime()
@@ -82,17 +82,17 @@ class WalkingSession(
     }
 
     /** 화면을 벗어날 때(onPause): 센서만 해제하고 누적값/시작시각은 유지. */
-    fun pause() {
+    override fun pause() {
         unregisterSensor()
     }
 
     /** 화면에 돌아올 때(onResume): 측정 중이면 센서 재등록. */
-    fun resume() {
+    override fun resume() {
         if (running) registerSensor()
     }
 
     /** 현재까지의 경과 시간(초). 종료 후에는 종료 시점 기준으로 고정된다. */
-    fun elapsedSec(): Int {
+    override fun elapsedSec(): Int {
         if (startElapsedMs == 0L) return 0
         val end = if (endElapsedMs != 0L) endElapsedMs else SystemClock.elapsedRealtime()
         return ((end - startElapsedMs) / 1000L).toInt()
@@ -103,7 +103,7 @@ class WalkingSession(
      * (센서 해제 후 WalkingFlowUseCase.runWalkingFlow 실행)
      * @param missionTemplateId 대상 걷기 미션 템플릿 id
      */
-    suspend fun stopAndSubmit(missionTemplateId: Int): WalkingFlowUseCase.Result {
+    override suspend fun stopAndSubmit(missionTemplateId: Int): WalkingFlowUseCase.Result {
         endElapsedMs = SystemClock.elapsedRealtime()
         running = false
         unregisterSensor()
