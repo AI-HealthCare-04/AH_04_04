@@ -4,6 +4,8 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 진동 피드백(feedback/AndroidHapticPlayer). normal 등급이라 런타임 요청은 필요 없다. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- 걷기 감지는 가속도계 기반. 런타임 권한은 불필요.
          센서가 없는 기기에서도 설치 가능하도록 required=false -->
     <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="false" />
