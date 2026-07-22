@@ -15,8 +15,9 @@ import kotlin.math.sqrt
  *    정상 보행 대역(60~120보/분 = 500~1000ms) 안에 들어와, 간격 게이트만으로는 분리할 수 없다 →
  *    v1 미보장(과다카운트 발생). 후속 이슈 #131에서 원시 파형 기반 분리 검토. (docs/sensor_walking_gate_a4a.md §5-5)
  *
- * 파라미터는 '런타임 조절 가능'(A-4a 실기기 정확도 측정용) — 앱에서 값을 바꿔가며 오탐/미탐을 잰다.
- * 최소간격·최대간격은 2차 실측(#89, 2026-07-21)으로 확정됨. 진입 기준(10)만 가설값 유지.
+ * 감지 파라미터는 실측(#89)으로 확정돼 DEFAULT_* 로 고정된다 — A-4a 런타임 튜닝 UI(TuneRow)는 #133에서 제거.
+ * var 로 두는 이유는 회귀 테스트에서 경계값·이중봉우리 버그를 재현하려 값을 바꿔 검증하기 때문이다.
+ * 프로덕션 경로에는 값을 바꾸는 코드가 없으므로 항상 DEFAULT_* 로 동작한다.
  */
 class WalkingStepDetectorLogic {
 
@@ -40,7 +41,7 @@ class WalkingStepDetectorLogic {
         // ──────────────────────────────────────────────────────────
     }
 
-    // ── 런타임 조절 파라미터 (디버그 튜닝). reset() 해도 유지된다. ──
+    // ── 감지 파라미터. 테스트에서만 값을 바꿔 검증한다(프로덕션은 DEFAULT_* 고정). reset() 해도 유지된다. ──
     var peakThreshold: Float = DEFAULT_PEAK_THRESHOLD
     var minPeakIntervalMs: Long = DEFAULT_MIN_PEAK_INTERVAL_MS
     var maxPeakIntervalMs: Long = DEFAULT_MAX_PEAK_INTERVAL_MS
