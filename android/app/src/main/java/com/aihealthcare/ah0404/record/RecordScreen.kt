@@ -40,7 +40,7 @@ import com.aihealthcare.ah0404.ui.theme.Dimens
  */
 @Composable
 fun RecordScreen(
-    onBack: () -> Unit,
+    onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     vm: RecordViewModel = viewModel(),
 ) {

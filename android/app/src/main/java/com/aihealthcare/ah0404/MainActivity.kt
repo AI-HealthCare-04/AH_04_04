@@ -209,11 +209,9 @@ private fun MainContent() {
             )
             MainTab.MISSIONS -> MissionScreen(modifier = contentModifier)
             MainTab.RECORDS -> RecordScreen(
-                onBack = { selectedTab = MainTab.HOME },
                 modifier = contentModifier,
             )
             MainTab.SETTINGS -> SettingsScreen(
-                onBack = { selectedTab = MainTab.HOME },
                 onOpenSupport = { subScreen = "support" },
                 onOpenProfile = { subScreen = "profile" },
                 modifier = contentModifier,

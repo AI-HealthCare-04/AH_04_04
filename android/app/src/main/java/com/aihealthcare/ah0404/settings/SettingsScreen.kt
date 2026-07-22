@@ -45,7 +45,7 @@ import com.aihealthcare.ah0404.ui.theme.Dimens
  */
 @Composable
 fun SettingsScreen(
-    onBack: () -> Unit,
+    onBack: (() -> Unit)? = null,
     onOpenSupport: () -> Unit,
     onOpenProfile: () -> Unit,
     modifier: Modifier = Modifier,
@@ -185,15 +185,17 @@ private fun ToggleRow(
 }
 
 @Composable
-internal fun TopBar(title: String, onBack: () -> Unit) {
+internal fun TopBar(title: String, onBack: (() -> Unit)? = null) {
     Row(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = Dimens.Space8, vertical = Dimens.Space8),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onBack) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
+        if (onBack != null) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
+            }
         }
         Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
     }
