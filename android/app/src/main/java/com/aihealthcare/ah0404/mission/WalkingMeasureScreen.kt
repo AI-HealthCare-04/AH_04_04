@@ -81,8 +81,16 @@ fun WalkingMeasureScreen(
     }
     val ui = vm.uiState
 
-    // 화면을 완전히 떠날 때: 세션을 리셋(센서 해제 + stale 방지)한 뒤 상위로 이탈.
+    // 진동·음성 피드백(#92) — 화면을 보지 않아도 진행을 알 수 있게 핵심 순간에만 신호를 낸다.
+    // tracker(순수)가 "언제" 를, feedback(Android)이 "어떻게(진동/TTS)" 를 담당. 둘 다 화면 수명.
+    val feedback: WalkingFeedback = remember { AndroidWalkingFeedback(context) }
+    val tracker = remember { WalkingFeedbackTracker() }
+    // 목표 신호는 단위가 걸음일 때만(그 외 걷기 목표는 목표 도달 신호 없음).
+    val goalSteps = mission.targetValue.takeIf { mission.targetUnit == "steps" }
+
+    // 화면을 완전히 떠날 때: 신호 이력·세션을 리셋(센서 해제 + stale 방지)한 뒤 상위로 이탈.
     val leave = {
+        tracker.reset()
         vm.reset()
         onBack()
     }
@@ -93,6 +101,12 @@ fun WalkingMeasureScreen(
             setBackground(R.drawable.park_background)
             setPuppyVideo(R.raw.puppy_walk_green)
         }
+    }
+
+    // 세션 상태(확정·걸음)가 바뀔 때마다 새로 발생한 신호만 재생(트래커가 1회로 dedupe).
+    // 측정 중에만 steps 가 변하므로 백그라운드(pause)에선 신호가 나지 않는다(#144 와 정합).
+    LaunchedEffect(ui.confirmed, ui.steps) {
+        tracker.onUpdate(ui.confirmed, ui.steps, goalSteps).forEach(feedback::play)
     }
 
     // 측정 중 동안만 주기 폴링. phase 가 바뀌면 이 이펙트가 재시작돼 루프가 자연히 멈춘다.
@@ -126,6 +140,7 @@ fun WalkingMeasureScreen(
             // 화면 이탈 시 센서 확실히 해제(측정 중 뒤로가기 시 ON_PAUSE가 안 오는 경로 커버).
             vm.onPause()
             petView.release()
+            feedback.release() // TTS 엔진·자원 해제
         }
     }
 
