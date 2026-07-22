@@ -32,8 +32,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
 import com.aihealthcare.ah0404.R
+import com.aihealthcare.ah0404.feedback.AppFeedback
 import com.aihealthcare.ah0404.network.Mission
 import com.aihealthcare.ah0404.pet.PetWalkingView
+import com.aihealthcare.ah0404.settings.AppSettings
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoHeroCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
@@ -56,9 +58,10 @@ private const val POLL_MS = 300L
  *     — 측정 중 걸음 수 아래에 WalkSitGuidanceNote 를 배치한다.
  *
  *  생명주기 복원(#90 2단계):
- *   - 구성 변경(회전·폰트 크기 변경 등): VM 을 Activity ViewModelStore 에 두어(viewModel())
- *     세션(걸음·활성시간)을 그대로 유지. 진입 상태(어느 미션인지)는 MainActivity 의
- *     rememberSaveable 이 보존한다.
+ *   - 구성 변경(글꼴 크기·다크모드·멀티윈도우·폴더블 접기/펴기·언어 변경 등. 회전은 #135 세로
+ *     고정으로 재생성이 없어 해당 없음): VM 을 Activity ViewModelStore 에 두어(viewModel())
+ *     세션(걸음·활성시간)을 그대로 유지. 진입 상태(어느 미션인지)와 복귀 탭은 MainActivity 의
+ *     rememberSaveable 이 보존한다. → QA 는 "설정 → 디스플레이 → 글꼴 크기 변경"으로 검증할 것.
  *   - 백그라운드/전화: onPause 로 센서·영상 정지 + 경과 시계 동결(드리프트 제거), onResume 자동 재개.
  *   - 화면 이탈(뒤로/완료 후 확인): leave() 로 세션 리셋(센서 해제 + 다음 진입 stale 방지).
  *   - 프로세스 종료 후 측정값 복원은 범위 밖(#91/#105) — 재생성 시 READY 부터 시작.
@@ -73,24 +76,27 @@ fun WalkingMeasureScreen(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    // VM 을 Activity ViewModelStore 에 둔다(viewModel()) → 구성 변경(회전 등)에 세션이 생존한다.
-    // 오버레이는 자체 ViewModelStoreOwner 가 없어 Activity 에 바인딩되므로, 화면을 떠날 때
-    // leave() 가 명시적으로 reset() 을 호출해 (1) 센서 해제 (2) 재진입 시 이전 세션 상태 부활을 막는다.
+    // VM 을 Activity ViewModelStore 에 둔다(viewModel()) → 재생성(글꼴 크기·다크모드 등)에 세션이
+    // 생존한다(회전은 #135 세로 고정으로 재생성 없음). 오버레이는 자체 ViewModelStoreOwner 가 없어
+    // Activity 에 바인딩되므로, 화면을 떠날 때 leave() 가 명시적으로 reset()→session.cancel() 을
+    // 호출해 (1) 센서 해제 (2) 재진입 시 이전 세션 상태 부활 방지 (3) 재측정 가능 상태로 정리한다.
     val vm: WalkingSessionViewModel = viewModel {
         WalkingSessionViewModel(WalkingSession(context.applicationContext))
     }
     val ui = vm.uiState
 
     // 진동·음성 피드백(#92) — 화면을 보지 않아도 진행을 알 수 있게 핵심 순간에만 신호를 낸다.
-    // tracker(순수)가 "언제" 를, feedback(Android)이 "어떻게(진동/TTS)" 를 담당. 둘 다 화면 수명.
-    val feedback: WalkingFeedback = remember { AndroidWalkingFeedback(context) }
-    val tracker = remember { WalkingFeedbackTracker() }
+    // 엔진은 앱 공용(#149 AppFeedback)이라 화면은 소비만 한다(release 금지 — 다른 화면 음성이 죽는다).
+    // "언제" 는 세션 VM 의 트래커가 결정(구성 변경에도 생존 → 재발화 없음), "어떻게(진동/TTS)" 는 feedback 이 담당.
+    val feedback: WalkingFeedback = remember { SharedWalkingFeedback(AppFeedback.tts, AppFeedback.haptic) }
     // 목표 신호는 단위가 걸음일 때만(그 외 걷기 목표는 목표 도달 신호 없음).
     val goalSteps = mission.targetValue.takeIf { mission.targetUnit == "steps" }
 
-    // 화면을 완전히 떠날 때: 신호 이력·세션을 리셋(센서 해제 + stale 방지)한 뒤 상위로 이탈.
+    // 사용자 소리 크기 설정(sound_size)을 TTS 음량에 연동(별도 AudioManager 없음). 설정 변경도 따라간다.
+    LaunchedEffect(AppSettings.soundScale) { AppFeedback.tts.setVolume(AppSettings.soundScale) }
+
+    // 화면을 완전히 떠날 때: 세션을 리셋(센서 해제 + stale 방지 + 신호 이력 초기화)한 뒤 상위로 이탈.
     val leave = {
-        tracker.reset()
         vm.reset()
         onBack()
     }
@@ -103,10 +109,12 @@ fun WalkingMeasureScreen(
         }
     }
 
-    // 세션 상태(확정·걸음)가 바뀔 때마다 새로 발생한 신호만 재생(트래커가 1회로 dedupe).
-    // 측정 중에만 steps 가 변하므로 백그라운드(pause)에선 신호가 나지 않는다(#144 와 정합).
+    // 세션 상태(확정·걸음)가 바뀔 때마다 새로 발생한 신호만 재생(VM 트래커가 1회로 dedupe).
+    // 트래커가 VM(구성 변경 생존) 수명이라, 회전/글꼴 변경으로 화면이 재구성돼 이 이펙트가 재실행돼도
+    // 같은 cue 가 다시 울리지 않는다(리뷰 #148 블로커 3). 측정 중에만 steps 가 변하므로
+    // 백그라운드(pause)에선 신호가 나지 않는다(#144 와 정합).
     LaunchedEffect(ui.confirmed, ui.steps) {
-        tracker.onUpdate(ui.confirmed, ui.steps, goalSteps).forEach(feedback::play)
+        vm.drainFeedbackCues(goalSteps).forEach(feedback::play)
     }
 
     // 측정 중 동안만 주기 폴링. phase 가 바뀌면 이 이펙트가 재시작돼 루프가 자연히 멈춘다.
@@ -140,7 +148,7 @@ fun WalkingMeasureScreen(
             // 화면 이탈 시 센서 확실히 해제(측정 중 뒤로가기 시 ON_PAUSE가 안 오는 경로 커버).
             vm.onPause()
             petView.release()
-            feedback.release() // TTS 엔진·자원 해제
+            feedback.stop() // 이 화면의 발화·진동만 중단(공용 엔진은 Application 소유라 release 금지)
         }
     }
 

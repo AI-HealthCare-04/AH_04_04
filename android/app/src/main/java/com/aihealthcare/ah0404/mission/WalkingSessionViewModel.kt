@@ -53,6 +53,14 @@ class WalkingSessionViewModel(
         private set
 
     /**
+     * 진동·음성 피드백 신호(#92) 발생 이력을 든 트래커. **화면(remember)이 아니라 VM 수명**에 둔다.
+     * VM 은 Activity ViewModelStore 에 있어 구성 변경(글꼴 크기·다크모드·멀티윈도우·폴더블 접기/펴기 등)에
+     * 생존하므로, 화면이 재구성돼 세션 상태(confirmed/steps)를 다시 전달해도 STARTED/GOAL_REACHED 가
+     * 재발생하지 않는다(리뷰 #148 블로커 3). 새 세션 시작·이탈 리셋에서만 함께 초기화된다.
+     */
+    private val feedbackTracker = WalkingFeedbackTracker()
+
+    /**
      * 측정 시작.
      *  - 가속도계 미지원 → READY 유지, sensorAvailable=false.
      *  - 지원하나 등록 실패 → READY 유지, startFailed=true (다시 시도 안내). MEASURING 으로 가지 않는다.
@@ -67,8 +75,18 @@ class WalkingSessionViewModel(
             uiState = uiState.copy(sensorAvailable = true, startFailed = true)
             return
         }
+        feedbackTracker.reset() // 새 세션 → 시작/목표 신호 재활성
         uiState = UiState(phase = Phase.MEASURING, sensorAvailable = true)
     }
+
+    /**
+     * 화면이 세션 상태 변화(confirmed/steps) 때 호출 — 이번에 **새로 발생한** 피드백 신호만 반환한다.
+     * 트래커가 VM 수명이라 구성 변경 후 같은 상태를 다시 전달해도 중복되지 않는다.
+     *
+     * @param goalSteps 목표 걸음 수(단위가 걸음일 때만). null/0 이하면 목표 도달 신호를 내지 않는다.
+     */
+    fun drainFeedbackCues(goalSteps: Int?): List<WalkingFeedbackCue> =
+        feedbackTracker.onUpdate(uiState.confirmed, uiState.steps, goalSteps)
 
     /** 화면이 측정 중 동안 주기적으로 호출 — 세션에서 걸음/상태/경과를 읽어 반영한다. */
     fun poll() {
@@ -83,9 +101,19 @@ class WalkingSessionViewModel(
         )
     }
 
-    /** onResume: 측정 중이면 센서 재등록. */
+    /**
+     * onResume: 측정 중이면 센서 재등록 + 경과 시계 재개.
+     * 재등록에 실패하면(백그라운드 복귀 시 센서 확보 실패) 걸음 없이 경과만 흐르는 걸 막기 위해
+     * READY 로 되돌리고 재시도 안내(startFailed)를 띄운다 — 센서 자체 유무로 안내를 구분한다.
+     */
     fun onResume() {
-        if (uiState.phase == Phase.MEASURING) session.resume()
+        if (uiState.phase != Phase.MEASURING) return
+        if (!session.resume()) {
+            uiState = UiState(
+                sensorAvailable = session.isSensorAvailable,
+                startFailed = session.isSensorAvailable,
+            )
+        }
     }
 
     /** onPause: 측정 중이면 센서 해제(누적값은 유지). onResume 과 대칭. */
@@ -112,14 +140,20 @@ class WalkingSessionViewModel(
      * 구성 변경(회전 등)에는 살아남지만, 화면을 떠나도 Activity 가 살아있는 한 인스턴스가 남는다.
      * 그래서 이탈 시 명시적으로 리셋해 (1) 센서를 확실히 해제하고 (2) 다음 미션 재진입 시
      * 이전 세션 상태(DONE/걸음 수)가 되살아나지 않게 한다.
+     *
+     * ⚠️ pause() 가 아니라 cancel() 을 부른다. pause() 는 센서만 해제하고 running=true 를 유지해,
+     *    같은 Activity 에서 재진입해 start() 를 눌러도 `if (running) return registered` 로 이미
+     *    해제된 false 가 즉시 반환돼 재측정이 막힌다(#144 리뷰 블로커 1). cancel() 은 running 까지
+     *    해제해 재시작을 보장한다.
      */
     fun reset() {
-        session.pause()
+        session.cancel()
+        feedbackTracker.reset() // 이탈 시 신호 이력도 초기화(다음 세션에서 다시 울리도록)
         uiState = UiState(sensorAvailable = session.isSensorAvailable)
     }
 
     override fun onCleared() {
-        // Activity 파괴 시 방어적으로 센서 해제(구성 변경에서는 호출되지 않는다).
-        session.pause()
+        // Activity 파괴 시 방어적으로 세션 중단(구성 변경에서는 호출되지 않는다).
+        session.cancel()
     }
 }

@@ -1,5 +1,6 @@
 package com.aihealthcare.ah0404.settings
 
+import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -147,6 +148,26 @@ fun SettingsScreen(
                 text = "고객센터 · 자주 묻는 질문",
                 onClick = onOpenSupport,
             )
+
+            // #131 파형 수집 진입 — 디버그 빌드에서만 노출(릴리스에는 대상 Activity 자체가 없음).
+            //   명시 인텐트를 문자열 ComponentName 으로 실행해, debug 소스셋 전용 Activity 를
+            //   릴리스에서 컴파일 참조하지 않는다(참조하면 릴리스 빌드가 깨진다).
+            if (BuildConfig.DEBUG) {
+                Spacer(Modifier.height(Dimens.Space4))
+                AigoSecondaryButton(
+                    text = "🔧 파형 수집 (디버그 · #131)",
+                    onClick = {
+                        runCatching {
+                            context.startActivity(
+                                Intent().setClassName(
+                                    context,
+                                    "com.aihealthcare.ah0404.sensor.WaveformCaptureActivity",
+                                ),
+                            )
+                        }
+                    },
+                )
+            }
         }
     }
 

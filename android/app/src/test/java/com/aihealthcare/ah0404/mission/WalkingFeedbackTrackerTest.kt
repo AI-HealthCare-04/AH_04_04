@@ -5,7 +5,7 @@ import org.junit.Test
 
 /**
  * WalkingFeedbackTracker(#92) — "언제 신호를 낼지" 검증.
- * 진동·TTS 발화 자체(AndroidWalkingFeedback)는 실기기 QA 소관, 여기선 신호 시점/중복만.
+ * 진동·TTS 발화 자체(SharedWalkingFeedback + 공용 엔진)는 실기기 QA 소관, 여기선 신호 시점/중복만.
  */
 class WalkingFeedbackTrackerTest {
 
