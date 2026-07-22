@@ -21,12 +21,21 @@ import java.util.concurrent.atomic.AtomicInteger
  *
  *  이 클래스가 책임지는 것:
  *   1. **비동기 초기화 중 발화 보관** — 준비 전 [speak] 를 버리지 않고 [PendingSpeechQueue] 에 모아
- *      준비되는 즉시 순서대로 재생한다.
- *   2. **graceful degrade** — 엔진 미탑재·한국어 미지원·초기화 실패 시 조용히 무동작.
+ *      준비되는 즉시 순서·정책 그대로 재생한다.
+ *   2. **graceful degrade** — 엔진 미탑재·언어 미지원·초기화 실패 시 조용히 무동작.
  *      호출부는 예외를 신경 쓰지 않아도 되고 앱은 정상 동작한다.
  *   3. **오디오 포커스** — 발화 동안만 `TRANSIENT_MAY_DUCK` 을 요청해 배경음(몸풀기 BGM 등)을
- *      낮추고, 큐가 비면 반납한다. 시니어 대상에서 안내가 배경음에 묻히지 않게 한다.
+ *      낮추고, 미완료 발화가 없어지면 반납한다.
  *   4. **중복 호출 안전** — [stop]·[release] 를 여러 번 불러도 문제없다.
+ *
+ *  **상태 기계** — 아래 4상태로 "지금 발화를 어떻게 처리할지"가 결정된다.
+ *
+ *  | 상태 | speak() 동작 |
+ *  |---|---|
+ *  | INITIALIZING | 보관(pending) — 준비되면 재생 |
+ *  | READY | 즉시 재생 |
+ *  | UNAVAILABLE | 무시 — **보관하지 않는다**(엔진을 못 쓰므로 쌓아도 재생될 일이 없다) |
+ *  | RELEASED | 무시 |
  *
  *  수명주기는 [TtsSpeaker] 문서 참고 — **앱 공용이며 [release] 는 Application 만 호출한다.**
  * ============================================================================
@@ -36,23 +45,38 @@ class AndroidTtsSpeaker(
     private val locale: Locale = Locale.KOREAN,
 ) : TtsSpeaker {
 
+    private enum class State { INITIALIZING, READY, UNAVAILABLE, RELEASED }
+
     private val appContext = context.applicationContext
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
 
     private val pending = PendingSpeechQueue()
     private val utteranceSeq = AtomicInteger(0)
 
-    /** 발화 중인(=아직 done/error 통지가 오지 않은) 건수. 0 이 되면 오디오 포커스를 반납한다. */
-    private var outstanding = 0
+    /**
+     * 아직 완료(done/error/stop) 통지가 오지 않은 발화 id.
+     *
+     *  단순 카운터가 아니라 **id 집합**인 이유: [stop] 이후 늦게 도착한 이전 발화의 콜백이
+     *  새 발화의 카운트를 깎아 오디오 포커스를 조기 반납하는 것을 막기 위해서다.
+     *  집합에 없는 id 의 콜백은 그냥 무시된다.
+     */
+    private val outstandingIds = mutableSetOf<String>()
 
-    /** 엔진이 실제로 말할 수 있는 상태인가(초기화 성공 + 해당 언어 사용 가능). */
-    private var speakable = false
-    private var released = false
+    private var state = State.INITIALIZING
 
     private var speechRate = 1.0f
     private var volume = 1.0f
 
     override var isEnabled: Boolean = true
+        set(value) = synchronized(this) {
+            field = value
+            // 끄는 순간 대기 중인 안내도 폐기한다. 그러지 않으면 초기화가 끝나는 시점에
+            // 이미 꺼진 음성이 되살아난다.
+            if (!value) {
+                pending.clear()
+                stopInternal()
+            }
+        }
 
     private var tts: TextToSpeech? = null
 
@@ -65,25 +89,29 @@ class AndroidTtsSpeaker(
     }
 
     private fun onInit(status: Int) = synchronized(this) {
-        if (released) return@synchronized
-        if (status != TextToSpeech.SUCCESS) {
-            Log.w(TAG, "TTS 초기화 실패(status=$status) → 음성 안내 비활성(앱 동작에는 영향 없음)")
-            pending.clear()
-            return@synchronized
-        }
-        val engine = tts ?: return@synchronized
-        val langResult = engine.setLanguage(locale)
-        if (langResult == TextToSpeech.LANG_MISSING_DATA || langResult == TextToSpeech.LANG_NOT_SUPPORTED) {
-            Log.w(TAG, "$locale 미지원/데이터 없음 → 음성 안내 비활성(앱 동작에는 영향 없음)")
-            pending.clear()
-            return@synchronized
-        }
-        engine.setSpeechRate(speechRate)
-        engine.setOnUtteranceProgressListener(progressListener)
-        speakable = true
+        if (state == State.RELEASED) return@synchronized
 
-        // 준비 전에 들어온 안내를 순서대로 재생한다(유실 방지).
+        val engine = tts
+        val languageOk = engine != null && status == TextToSpeech.SUCCESS && run {
+            val result = engine.setLanguage(locale)
+            result != TextToSpeech.LANG_MISSING_DATA && result != TextToSpeech.LANG_NOT_SUPPORTED
+        }
+
+        if (!languageOk) {
+            val reason = if (status != TextToSpeech.SUCCESS) "초기화 실패(status=$status)" else "$locale 미지원/데이터 없음"
+            Log.w(TAG, "$reason → 음성 안내 비활성(앱 동작에는 영향 없음)")
+            state = State.UNAVAILABLE
+            pending.clear()
+            return@synchronized
+        }
+
+        engine!!.setSpeechRate(speechRate)
+        engine.setOnUtteranceProgressListener(progressListener)
+        state = State.READY
+
+        // 준비 전에 들어온 안내를 순서·정책 그대로 재생한다(유실 방지).
         val queued = pending.drain()
+        if (!isEnabled) return@synchronized // 초기화 중 꺼졌으면 재생하지 않는다.
         if (queued.isNotEmpty()) Log.i(TAG, "초기화 전 보관된 발화 ${queued.size}건 재생")
         queued.forEach { enqueue(it.text, it.mode) }
     }
@@ -99,43 +127,50 @@ class AndroidTtsSpeaker(
     }
 
     override fun speak(text: String, mode: SpeechQueueMode) = synchronized(this) {
-        if (released || !isEnabled || text.isBlank()) return@synchronized
-        if (!speakable) {
-            // 아직 초기화 중일 수 있다 → 버리지 않고 보관. 초기화가 실패했다면 onInit 이 이미 비웠다.
-            pending.offer(text, mode)
-            return@synchronized
+        if (!isEnabled || text.isBlank()) return@synchronized
+        when (state) {
+            // 아직 초기화 중 → 버리지 않고 보관.
+            State.INITIALIZING -> pending.offer(text, mode)
+            State.READY -> enqueue(text, mode)
+            // 엔진을 쓸 수 없거나 이미 해제됨 → 보관해도 재생될 일이 없으므로 그냥 버린다.
+            State.UNAVAILABLE, State.RELEASED -> Unit
         }
-        enqueue(text, mode)
     }
 
-    /** 실제 재생. 호출 전에 [speakable] 이 보장돼야 한다. */
+    /** 실제 재생. 호출 전에 [State.READY] 가 보장돼야 한다. */
     private fun enqueue(text: String, mode: SpeechQueueMode) {
         val engine = tts ?: return
-        if (outstanding == 0) requestFocus()
+        if (mode == SpeechQueueMode.FLUSH) {
+            // 끊긴 발화의 onStop 이 늦게 와도 새 발화를 깎지 않도록 미리 정리한다.
+            outstandingIds.clear()
+        }
+        if (outstandingIds.isEmpty()) requestFocus()
         val queueMode = if (mode == SpeechQueueMode.FLUSH) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
         val params = Bundle().apply { putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volume) }
         val id = "aigo-${utteranceSeq.incrementAndGet()}"
-        outstanding += 1
+        outstandingIds += id
         val result = engine.speak(text, queueMode, params, id)
         if (result != TextToSpeech.SUCCESS) {
             Log.w(TAG, "발화 요청 실패(result=$result)")
-            onUtteranceSettled()
+            settle(id)
         }
     }
 
-    override fun stop() = synchronized(this) {
+    override fun stop() = synchronized(this) { stopInternal() }
+
+    private fun stopInternal() {
         pending.clear()
         tts?.stop()
-        outstanding = 0
+        // 남은 발화의 콜백은 집합에 없으므로 무시된다.
+        outstandingIds.clear()
         abandonFocus()
     }
 
     override fun release() = synchronized(this) {
-        if (released) return@synchronized
-        released = true
-        speakable = false
+        if (state == State.RELEASED) return@synchronized
+        state = State.RELEASED
         pending.clear()
-        outstanding = 0
+        outstandingIds.clear()
         abandonFocus()
         tts?.setOnUtteranceProgressListener(null)
         tts?.stop()
@@ -145,23 +180,33 @@ class AndroidTtsSpeaker(
     }
 
     // ── 발화 완료 추적 ─────────────────────────────────────────────
-    //   큐가 완전히 빈 시점에만 오디오 포커스를 반납한다. 연속 발화 사이에 배경음이
-    //   커졌다 작아졌다 하는 것을 막는다.
+    //   done / error / **stop** 세 경로를 모두 정산해야 한다. QUEUE_FLUSH 나 stop() 으로 끊긴
+    //   발화는 onStop 으로만 통지되므로, 이걸 빠뜨리면 outstanding 이 비지 않아 오디오 포커스를
+    //   영영 반납하지 못한다.
 
     private val progressListener = object : UtteranceProgressListener() {
         override fun onStart(utteranceId: String?) = Unit
-        override fun onDone(utteranceId: String?) = synchronized(this@AndroidTtsSpeaker) { onUtteranceSettled() }
+
+        override fun onDone(utteranceId: String?) =
+            synchronized(this@AndroidTtsSpeaker) { settle(utteranceId) }
 
         @Deprecated("레거시 콜백 — 신형 onError(String, Int) 와 함께 유지해야 전 버전에서 누락되지 않는다.")
-        override fun onError(utteranceId: String?) = synchronized(this@AndroidTtsSpeaker) { onUtteranceSettled() }
+        override fun onError(utteranceId: String?) =
+            synchronized(this@AndroidTtsSpeaker) { settle(utteranceId) }
 
         override fun onError(utteranceId: String?, errorCode: Int) =
-            synchronized(this@AndroidTtsSpeaker) { onUtteranceSettled() }
+            synchronized(this@AndroidTtsSpeaker) { settle(utteranceId) }
+
+        /** QUEUE_FLUSH·stop() 으로 중단된 발화. 이 경로가 없으면 포커스가 반납되지 않는다. */
+        override fun onStop(utteranceId: String?, interrupted: Boolean) =
+            synchronized(this@AndroidTtsSpeaker) { settle(utteranceId) }
     }
 
-    private fun onUtteranceSettled() {
-        if (outstanding > 0) outstanding -= 1
-        if (outstanding == 0) abandonFocus()
+    /** 해당 발화를 미완료 목록에서 지운다. 이미 정리된 id(늦게 도착한 콜백)는 무시된다. */
+    private fun settle(utteranceId: String?) {
+        if (utteranceId == null) return
+        if (!outstandingIds.remove(utteranceId)) return
+        if (outstandingIds.isEmpty()) abandonFocus()
     }
 
     // ── 오디오 포커스 ──────────────────────────────────────────────

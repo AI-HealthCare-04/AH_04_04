@@ -38,17 +38,12 @@ object AppFeedback {
     /** 앱 공용 진동 컴포넌트. [init] 전에는 무동작 구현. */
     val haptic: HapticPlayer get() = hapticPlayer
 
-    /**
-     * `AigoApplication.onCreate()` 에서 한 번 호출한다. 중복 호출은 무시한다.
-     *
-     *  진동은 아직 무동작 구현이다. 버전별 `Vibrator` 처리는 #148(걷기 피드백)에 이미 있어,
-     *  그 코드를 `AndroidHapticPlayer` 로 옮겨오는 후속 작업에서 여기 연결한다.
-     *  (`VIBRATE` 권한도 #148 이 추가하므로 이 PR 은 매니페스트를 건드리지 않는다.)
-     */
+    /** `AigoApplication.onCreate()` 에서 한 번 호출한다. 중복 호출은 무시한다. */
     @Synchronized
     fun init(application: Application) {
         if (ttsSpeaker !== NoOpTtsSpeaker) return
         ttsSpeaker = AndroidTtsSpeaker(application)
+        hapticPlayer = AndroidHapticPlayer(application)
     }
 
     /** 테스트에서 fake 를 주입한다. */
