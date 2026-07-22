@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- WaveformExporter 가 저장하는 앱 전용 외부 저장소의 waveforms/ 폴더를 공유 대상으로 노출한다. -->
+    <external-files-path name="waveforms" path="waveforms/" />
+</paths>
