@@ -376,7 +376,7 @@ class MissionService:
             success = daily_total_min >= target_min
             counted_for_daily = prior_min < target_min <= daily_total_min
 
-        # 운동 완료: physical_activity_logs 저장 (성공 판정은 앱이 계산해 전송 — seed 참고)
+        # 운동 완료: physical_activity_logs 저장 + 걷기와 같은 '당일 누적' 서버 판정.
         elif data.exercise_detail is not None:
             ed = data.exercise_detail
             await self.repo.add_physical_activity_log(
@@ -393,8 +393,15 @@ class MissionService:
                     sync_status=SyncStatus.SYNCED,
                 )
             )
-            success = bool(data.success)
-            counted_for_daily = success
+            # 운동 성공도 서버가 판정한다: 당일 누적 시간(daily_total_min) >= 목표(분).
+            #   클라이언트 success는 신뢰하지 않는다 — 걷기와 같은 이유다(30초만 보고 success=true 차단).
+            #   같은 운동을 여러 번 해도 되고(반복 허용), 중간에 그만둔 회차는 누적이 덜 차 자연히 걸러진다.
+            #   포인트·카운트는 하루 1회: 목표를 '이번 세션에서 처음 넘긴' 로그에만 지급한다(걷기와 동일).
+            daily_total_min = await self.repo.sum_exercise_minutes_today(user.user_id)
+            target_min = float(template.default_target_value) if template else 0.0
+            prior_min = daily_total_min - float(ed.duration_min or 0)
+            success = daily_total_min >= target_min
+            counted_for_daily = prior_min < target_min <= daily_total_min
         else:
             success = bool(data.success)
             counted_for_daily = success
