@@ -39,7 +39,9 @@ import com.aihealthcare.ah0404.auth.OfflineModeScreen
 import com.aihealthcare.ah0404.exercise.ExerciseVideosScreen
 import com.aihealthcare.ah0404.home.HomeScreen
 import com.aihealthcare.ah0404.mission.MissionScreen
+import com.aihealthcare.ah0404.mission.WalkingMeasureScreen
 import com.aihealthcare.ah0404.network.AppRoute
+import com.aihealthcare.ah0404.network.Mission
 import com.aihealthcare.ah0404.network.AppRouteResolver
 import com.aihealthcare.ah0404.network.AuthFailureCoordinator
 import com.aihealthcare.ah0404.network.JwtTokenInspector
@@ -156,6 +158,16 @@ private val MainTab.icon: ImageVector
 private fun MainContent() {
     var selectedTab by remember { mutableStateOf(MainTab.HOME) }
 
+    // 걷기 측정 화면(전체 화면 오버레이). 미션 목록에서 걷기 미션을 고르면 진입. null = 목록.
+    var walkingMission by remember { mutableStateOf<Mission?>(null) }
+    walkingMission?.let { mission ->
+        WalkingMeasureScreen(
+            mission = mission,
+            onBack = { walkingMission = null },
+        )
+        return
+    }
+
     // 탭 위에 얹히는 서브 화면(프로필/고객센터/운동 영상). null = 탭 화면.
     var subScreen by remember { mutableStateOf<String?>(null) }
     when (subScreen) {
@@ -207,7 +219,10 @@ private fun MainContent() {
                 onOpenExercise = { subScreen = "exercise" },
                 modifier = contentModifier,
             )
-            MainTab.MISSIONS -> MissionScreen(modifier = contentModifier)
+            MainTab.MISSIONS -> MissionScreen(
+                modifier = contentModifier,
+                onStartWalking = { walkingMission = it },
+            )
             MainTab.RECORDS -> RecordScreen(
                 modifier = contentModifier,
             )

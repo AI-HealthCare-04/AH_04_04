@@ -1,5 +1,6 @@
 package com.aihealthcare.ah0404.mission
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,7 +31,7 @@ import com.aihealthcare.ah0404.ui.theme.AigoOnWarningContainer
 import com.aihealthcare.ah0404.ui.theme.AigoWarningContainer
 import com.aihealthcare.ah0404.ui.theme.Dimens
 
-private fun targetUnitLabel(unit: String): String = when (unit) {
+internal fun targetUnitLabel(unit: String): String = when (unit) {
     "steps" -> "걸음"
     "reps" -> "회"
     "minutes" -> "분"
@@ -43,7 +44,8 @@ private fun targetUnitLabel(unit: String): String = when (unit) {
 @Composable
 fun MissionScreen(
     modifier: Modifier = Modifier,
-    vm: MissionViewModel = viewModel()
+    vm: MissionViewModel = viewModel(),
+    onStartWalking: (Mission) -> Unit = {},
 ) {
     val state by vm.uiState.collectAsState()
 
@@ -86,7 +88,13 @@ fun MissionScreen(
                     )
                 }
                 items(s.missions) { mission ->
-                    MissionCard(mission = mission)
+                    MissionCard(
+                        mission = mission,
+                        // 걷기 미션만 측정 화면으로 진입(다른 유형은 후속). 산책 측정 UI 통합 = #90.
+                        onClick = if (mission.missionType == "walking") {
+                            { onStartWalking(mission) }
+                        } else null,
+                    )
                 }
                 item { Spacer(modifier = Modifier.height(8.dp)) }
             }
@@ -95,8 +103,10 @@ fun MissionScreen(
 }
 
 @Composable
-private fun MissionCard(mission: Mission) {
-    AigoCard {
+private fun MissionCard(mission: Mission, onClick: (() -> Unit)? = null) {
+    AigoCard(
+        modifier = if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier,
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -138,6 +148,16 @@ private fun MissionCard(mission: Mission) {
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
+            )
+        }
+
+        if (onClick != null) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "눌러서 측정 시작 →",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
             )
         }
     }

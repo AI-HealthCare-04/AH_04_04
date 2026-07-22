@@ -18,22 +18,22 @@ import com.aihealthcare.ah0404.sensor.WalkingStepDetectorLogic
  *   1) TYPE_ACCELEROMETER 센서를 등록/해제한다(생명주기 안전).
  *   2) 각 샘플을 WalkingStepDetectorLogic.processSample() 에 흘려 걸음 수를 누적.
  *   3) 시작~종료 경과 시간을 SystemClock.elapsedRealtime() 기준으로 측정.
- *   4) 종료 시 실제 걸음/시간을 WalkingFlowUseCase 에 넘겨 서버 흐름을 태운다.
+ *   4) 종료 시 걸음/경과를 **불변 스냅샷으로 고정**해 반환한다.
  *
  *  ⚠️ TYPE_STEP_COUNTER 가 아니라 가속도계 기반이다(ACTIVITY_RECOGNITION 권한 불필요).
+ *  ⚠️ 서버 업로드는 하지 않는다. 실제 미션 로그 생성·멱등 처리·거리 계산은 #91(#105 이후) 소관.
+ *     (기존 데모 하네스 WalkingFlowUseCase 는 guestLogin 으로 전역 토큰을 덮어써 실경로에 태우면
+ *      로그인 세션이 게스트로 교체되므로, #91 에서 인증 유지 계약을 잡기 전까지 연결하지 않는다.)
  *
  *  생명주기 연동(호출부에서 이어줄 것):
  *   - onResume → resume(), onPause → pause() : 화면 벗어나면 센서 해제(누수 방지)
- *   - 측정 종료 → stopAndSubmit() : 센서 해제 + 흐름 실행
- *
- *  UI 관찰(다음 단계): steps / state / elapsedSec() getter 로 현재값을 읽을 수 있다.
+ *   - 측정 종료 → stop() : 센서 해제 + 스냅샷 확정
  * ============================================================================
  */
 class WalkingSession(
     context: Context,
     private val detector: WalkingStepDetectorLogic = WalkingStepDetectorLogic(),
-    private val useCase: WalkingFlowUseCase = WalkingFlowUseCase(),
-) {
+) : WalkingSessionController {
     private val sensorManager =
         context.applicationContext.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     private val accelSensor: Sensor? =
@@ -45,13 +45,13 @@ class WalkingSession(
     private var endElapsedMs = 0L
 
     /** 이 기기가 가속도계를 지원하는가. */
-    val isSensorAvailable: Boolean get() = accelSensor != null
+    override val isSensorAvailable: Boolean get() = accelSensor != null
 
     /** 지금까지 누적된 걸음 수. */
-    val steps: Int get() = detector.count
+    override val steps: Int get() = detector.count
 
     /** 현재 보행 상태(IDLE/WALKING). */
-    val state: WalkingStepDetectorLogic.State get() = detector.state
+    override val state: WalkingStepDetectorLogic.State get() = detector.state
 
     private val listener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent?) {
@@ -70,55 +70,53 @@ class WalkingSession(
      * 측정 시작. 걸음 수/상태를 초기화하고 센서를 등록한다.
      * @return 센서 등록 성공 여부(가속도계 미지원 시 false)
      */
-    fun start(): Boolean {
+    override fun start(): Boolean {
         if (running) return registered
         detector.reset()
         startElapsedMs = SystemClock.elapsedRealtime()
         endElapsedMs = 0L
         running = true
         registerSensor()
-        Log.i(WalkingFlowUseCase.TAG, "세션 시작 (센서 등록=$registered)")
+        if (!registered) {
+            // 가속도계 객체는 있어도 registerListener 가 실패할 수 있다 → 세션을 시작 전으로 롤백.
+            running = false
+            startElapsedMs = 0L
+            Log.w(TAG, "가속도계 등록 실패 → 세션 롤백")
+        } else {
+            Log.i(TAG, "세션 시작")
+        }
         return registered
     }
 
     /** 화면을 벗어날 때(onPause): 센서만 해제하고 누적값/시작시각은 유지. */
-    fun pause() {
+    override fun pause() {
         unregisterSensor()
     }
 
     /** 화면에 돌아올 때(onResume): 측정 중이면 센서 재등록. */
-    fun resume() {
+    override fun resume() {
         if (running) registerSensor()
     }
 
     /** 현재까지의 경과 시간(초). 종료 후에는 종료 시점 기준으로 고정된다. */
-    fun elapsedSec(): Int {
+    override fun elapsedSec(): Int {
         if (startElapsedMs == 0L) return 0
         val end = if (endElapsedMs != 0L) endElapsedMs else SystemClock.elapsedRealtime()
         return ((end - startElapsedMs) / 1000L).toInt()
     }
 
     /**
-     * 측정 종료 → 실제 걸음/경과시간으로 걷기 흐름을 태운다.
-     * (센서 해제 후 WalkingFlowUseCase.runWalkingFlow 실행)
-     * @param missionTemplateId 대상 걷기 미션 템플릿 id
+     * 측정 종료 → 센서 해제 후 걸음/경과 시간을 **불변 스냅샷으로 고정**해 반환한다.
+     * 서버 업로드는 하지 않는다(#91). 재호출해도 종료 시각(endElapsedMs)은 최초 종료 기준으로 고정된다.
      */
-    suspend fun stopAndSubmit(missionTemplateId: Int): WalkingFlowUseCase.Result {
-        endElapsedMs = SystemClock.elapsedRealtime()
+    override fun stop(): WalkingSnapshot {
+        if (endElapsedMs == 0L) endElapsedMs = SystemClock.elapsedRealtime()
         running = false
         unregisterSensor()
 
-        val measuredSteps = detector.count
-        val measuredDurationSec = elapsedSec()
-        Log.i(
-            WalkingFlowUseCase.TAG,
-            "세션 종료 → 실제 steps=$measuredSteps, durationSec=$measuredDurationSec 로 흐름 실행",
-        )
-        return useCase.runWalkingFlow(
-            missionTemplateId = missionTemplateId,
-            steps = measuredSteps,
-            durationSec = measuredDurationSec,
-        )
+        val snapshot = WalkingSnapshot(steps = detector.count, durationSec = elapsedSec())
+        Log.i(TAG, "세션 종료 → steps=${snapshot.steps}, durationSec=${snapshot.durationSec} (제출은 #91)")
+        return snapshot
     }
 
     private fun registerSensor() {
@@ -132,5 +130,9 @@ class WalkingSession(
         if (!registered) return
         sensorManager.unregisterListener(listener)
         registered = false
+    }
+
+    private companion object {
+        const val TAG = "WalkingSession"
     }
 }
