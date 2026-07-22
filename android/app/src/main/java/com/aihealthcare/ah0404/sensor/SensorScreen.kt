@@ -210,8 +210,7 @@ fun StepCounterSection() {
             Spacer(Modifier.height(8.dp))
             // 🟡 [단기 안전 완화 #132] '정상 보행 직후 곧바로 앉기'는 앉는 동작이 걸음으로 오탐돼
             //   과다카운트가 남는 알려진 한계(#89 §5-5, 근본 개선은 #131). 별도 '측정 종료' 버튼이
-            //   없으므로 앉기 전 잠시 멈추도록 안내해 완화한다.
-            //   ⚠️ 카피는 초안 — 팀 확인 필요(#132 "카피 문구 팀 확인").
+            //   없으므로 앉기 전 잠시 멈추도록 안내해 완화한다. 카피는 리뷰(#141) 권장안 반영.
             WalkSitGuidanceNote()
             Spacer(Modifier.height(4.dp))
             AigoSecondaryButton(

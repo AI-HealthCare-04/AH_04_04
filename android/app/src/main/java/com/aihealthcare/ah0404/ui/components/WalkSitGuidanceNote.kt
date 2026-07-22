@@ -23,7 +23,7 @@ import androidx.compose.ui.unit.sp
  * 걷기 측정이 실제로 도는 화면에 배치한다(현재 SensorScreen). 향후 걷기 미션 측정 화면이
  *   구현되면 그 화면에서도 재사용한다.
  *
- * ⚠️ 카피는 초안 — 팀 확인 필요(#132 "카피 문구 팀 확인").
+ * 카피: 리뷰(#141, @Earthworm-jk) 권장안 반영 — "2초 정도 멈춰 선 뒤 천천히" 로 완화 목적을 명확히.
  */
 @Composable
 fun WalkSitGuidanceNote(modifier: Modifier = Modifier) {
@@ -37,7 +37,7 @@ fun WalkSitGuidanceNote(modifier: Modifier = Modifier) {
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(
-                "💡 걷기를 마치면 잠시 멈춘 뒤 앉아 주세요",
+                "💡 걷기를 마치면 2초 정도 멈춰 선 뒤 천천히 앉아 주세요",
                 fontSize = 17.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
