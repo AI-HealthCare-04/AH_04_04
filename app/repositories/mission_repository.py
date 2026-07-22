@@ -3,7 +3,7 @@
 # 사용하는 테이블: mission_templates, mission_logs, meal_logs, game_logs,
 #                  physical_activity_logs, daily_activity_summaries, user_activity_profiles
 # =====================================================================================
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.mysql import insert as mysql_insert
@@ -81,6 +81,20 @@ class MissionRepository:
         self.session.add(mission_log)
         await self.session.flush()  # PK(mission_log_id) 채우기
         return mission_log
+
+    async def find_mission_log_by_device_time(
+        self, user_id: int, mission_template_id: int, created_on_device_at: datetime
+    ) -> MissionLog | None:
+        """같은 수행이 이미 기록돼 있는지 자연 키로 조회 (오프라인 재전송 판별용, #91).
+
+        uq_mission_logs_user_template_device_time 과 같은 조합이다.
+        """
+        stmt = select(MissionLog).where(
+            MissionLog.user_id == user_id,
+            MissionLog.mission_template_id == mission_template_id,
+            MissionLog.created_on_device_at == created_on_device_at,
+        )
+        return await self.session.scalar(stmt)
 
     async def get_mission_log(self, mission_log_id: int, user_id: int) -> MissionLog | None:
         """본인 소유의 미션 로그만 조회 (남의 로그 접근 방지)."""

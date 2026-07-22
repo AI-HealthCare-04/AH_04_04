@@ -1,13 +1,14 @@
 # =====================================================================================
 # Mission Log 라우터
 #   - POST  /api/v1/mission-logs           : 미션 로그 생성 (운동/걷기 시작 or 식사/게임 즉시완료)
+#         201 생성 / 200 이미 기록된 수행의 재전송(#91)
 #   - PATCH /api/v1/mission-logs/{id}       : 미션 로그 수정 (운동 완료 / 걷기 종료)
 #   - GET   /api/v1/mission-logs            : 미션 로그 조회 (일자별)
 # =====================================================================================
 from datetime import date as date_type
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from fastapi import status as http_status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,8 +33,14 @@ async def create_mission_log(
     data: MissionLogCreateRequest,
     user: Annotated[User, Depends(get_request_user)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
+    response: Response,
 ) -> MissionLogCreateResponse:
-    return await MissionService(session).create_mission_log(user=user, data=data)
+    result = await MissionService(session).create_mission_log(user=user, data=data)
+    # 재전송이라 새로 만들지 않았으면 201(Created)이 아니라 200으로 답한다.
+    #   앱은 둘 다 성공으로 보고 outbox 에서 제거하면 된다(#91).
+    if result.deduplicated:
+        response.status_code = http_status.HTTP_200_OK
+    return result
 
 
 @mission_log_router.patch(
