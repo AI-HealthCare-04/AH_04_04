@@ -7,6 +7,8 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Build
 import android.os.SystemClock
 import android.widget.Toast
@@ -23,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -41,6 +44,7 @@ import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
 import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
 import com.aihealthcare.ah0404.ui.components.AigoSegmentedSelector
 import com.aihealthcare.ah0404.ui.components.SegmentOption
+import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -51,16 +55,20 @@ import kotlin.math.sqrt
  *  WaveformCaptureScreen : '보행 직후 앉기' 분리용 원시 3축 파형 수집 화면 (#131, 디버그 전용)
  * ============================================================================
  *
- *  라벨(정상 보행 / 보행 직후 앉기)과 착용 위치를 고르고 [녹화 시작]을 누른 뒤 실제로 걷고/앉으면,
+ *  라벨(정상 보행 / 보행 직후 앉기)과 착용 규격을 고르고 [녹화 시작]을 누른 뒤 실제로 걷고/앉으면,
  *  가속도계 원시 x/y/z 와 그 순간 감지기 상태(magnitude·필터값·상태·걸음 카운트 여부)를 한 행씩 버퍼에 쌓는다.
  *  [정지] 후 [저장 & 공유]로 CSV 를 내보낸다(WaveformExporter). 이 CSV 로 두 동작의 판별 특징을 탐색한다.
  *
  *  데이터 계약(리뷰 #150 반영):
- *   - **앉기 시작 마커**: WALK_THEN_SIT 수집 중 앉기 직전에 [앉기 시작]을 누르면 이후 샘플이 SITTING
- *     구간으로 기록된다 → 보행/앉기 경계(ground truth)를 정지 버튼이 아니라 실시간 마커로 남긴다.
- *   - **시간축은 SensorEvent.timestamp** 기준(첫 샘플=0). 콜백 도착 시각도 함께 남겨 지터를 진단한다.
- *   - **수집 메타**(trial_id·기기·착용 위치)를 매 행에 남겨 시험 간 x/y/z 비교를 가능하게 한다.
- *   - 백그라운드 진입(ON_PAUSE) 시 자동 정지 — 긴 공백이 한 파일에 섞이지 않게 한다.
+ *   - **기기 무접촉 자동 큐**: WALK_THEN_SIT 은 시작 후 정해진 시간(WALK_SECONDS)만큼 걷다가 자동 카운트다운이
+ *     끝나면 **비프음**으로 앉기 신호를 낸다. 그 순간 recorder.markSitting() 이 event=sit_cue 마커를 CSV 에
+ *     찍는다 → **화면 터치 없이** 보행/앉기 경계(ground truth)를 기록해, 주머니/가방 배치에서도 파형이
+ *     오염되지 않는다(Earthworm-jk 블로커1). 비프는 오디오라 가속도계 영향이 작고, 큐 직후 짧은 구간은
+ *     excluded 로 표시돼 학습에서 뺄 수 있다.
+ *   - **구조화 placement 프리셋**: 위치+좌/우+화면방향+상단방향+접힘까지 고정 규격으로 골라, 매 행에 남긴다
+ *     (Earthworm-jk 블로커2). 선택 규격의 배치 안내를 화면에 그대로 띄운다.
+ *   - **시간축은 SensorEvent.timestamp** 기준(첫 샘플=0). 콜백 도착 시각도 함께 남겨 지터를 진단.
+ *   - 백그라운드(ON_PAUSE) 진입 시 자동 정지 + 버퍼 상한 도달 시 자동 정지(수집분 손실 방지).
  *
  *  ⚠️ 감지기(WalkingStepDetectorLogic)는 **읽기 전용으로만** 흘려보낸다 — 여기서 로직/임계값을 바꾸지 않는다.
  *     프로덕션 측정 경로(WalkingSession)와 무관한 독립 수집 화면이라 실사용 흐름에 영향이 없다.
@@ -74,11 +82,13 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
 
     val detector = remember { WalkingStepDetectorLogic() }
     val recorder = remember { WaveformRecorder() }
+    val toneGen = remember { ToneGenerator(AudioManager.STREAM_MUSIC, 100) }
 
     val label = remember { mutableStateOf(WaveformLabel.NORMAL_WALK) }
-    val placement = remember { mutableStateOf(PLACEMENTS.first().value) }
+    val preset = remember { mutableStateOf(PLACEMENT_PRESETS.first()) }
     val recording = remember { mutableStateOf(false) }
     val phase = remember { mutableStateOf(WaveformPhase.WALKING) }
+    val cueCountdown = remember { mutableIntStateOf(0) } // WALK_THEN_SIT 앉기 큐까지 남은 초
     val sampleCount = remember { mutableIntStateOf(0) }
     val stepCount = remember { mutableIntStateOf(0) }
     val walking = remember { mutableStateOf(false) }
@@ -123,15 +133,39 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
                         state = detector.state,
                         count = detector.count,
                         stepCounted = counted,
-                        phase = recorder.phase, // add 가 레코더 현재 phase 로 다시 고정(단일 소스)
+                        // phase/event/excluded 는 recorder.add 가 큐 상태로 다시 고정한다(단일 소스).
                     ),
                 )
                 sampleCount.intValue = recorder.sampleCount
                 stepCount.intValue = detector.count
                 walking.value = detector.state == WalkingStepDetectorLogic.State.WALKING
+                // 버퍼 상한 도달 → recorder 가 자동 정지했으면 화면도 정지 반영(수집분 손실 방지).
+                if (recorder.stoppedByCap && recording.value) {
+                    recording.value = false
+                    Toast.makeText(
+                        context, "샘플 상한 도달 — 자동 정지했습니다. 저장하세요.", Toast.LENGTH_LONG,
+                    ).show()
+                }
             }
 
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+        }
+    }
+
+    // 기기 무접촉 앉기 큐: 녹화 중(WALK_THEN_SIT)이면 WALK_SECONDS 카운트다운 후 비프 + markSitting.
+    LaunchedEffect(recording.value, label.value) {
+        if (recording.value && label.value == WaveformLabel.WALK_THEN_SIT) {
+            var remaining = WALK_SECONDS
+            while (remaining > 0) {
+                cueCountdown.intValue = remaining
+                delay(1000)
+                remaining--
+            }
+            cueCountdown.intValue = 0
+            // 오디오 비프로 신호(가속도계 영향 최소) + 무접촉 마커. 큐 직후 짧은 구간은 recorder 가 excluded 처리.
+            runCatching { toneGen.startTone(ToneGenerator.TONE_PROP_BEEP2, 300) }
+            recorder.markSitting()
+            phase.value = WaveformPhase.SITTING
         }
     }
 
@@ -170,6 +204,10 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
         }
     }
 
+    DisposableEffect(Unit) {
+        onDispose { toneGen.release() }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -190,8 +228,8 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
         }
 
         Text(
-            "라벨·착용 위치를 고르고 [녹화 시작] 후 걸으세요. '보행 직후 앉기'는 앉기 직전 [앉기 시작]을 눌러 " +
-                "경계를 표시합니다. [정지] 후 CSV 를 저장·공유합니다.",
+            "라벨·착용 규격을 고르고 안내대로 휴대폰을 두세요. '보행 직후 앉기'는 [녹화 시작] 후 $WALK_SECONDS" +
+                "초 걷다가 **비프음이 울리면** 그때 앉으면 됩니다(화면 조작 없음). [정지] 후 CSV 를 저장·공유합니다.",
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.outline,
         )
@@ -204,10 +242,15 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
         )
 
         AigoSegmentedSelector(
-            options = PLACEMENTS,
-            selected = placement.value,
-            onSelect = { if (!recording.value) placement.value = it }, // 녹화 중 위치 변경 금지
+            options = PLACEMENT_PRESETS.map { SegmentOption(it, it.chip) },
+            selected = preset.value,
+            onSelect = { if (!recording.value) preset.value = it }, // 녹화 중 규격 변경 금지
             horizontal = true,
+        )
+        Text(
+            "배치: ${preset.value.instruction}",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.outline,
         )
 
         Text(
@@ -218,12 +261,17 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
             else MaterialTheme.colorScheme.outline,
         )
         Text("걸음 ${stepCount.intValue} · 샘플 ${sampleCount.intValue}개", fontSize = 18.sp)
-        if (recording.value) {
+        if (recording.value && label.value == WaveformLabel.WALK_THEN_SIT) {
             Text(
-                text = if (phase.value == WaveformPhase.SITTING) "구간: 앉기(SITTING)" else "구간: 보행(WALKING)",
-                fontSize = 14.sp,
+                text = if (phase.value == WaveformPhase.SITTING) {
+                    "🔔 앉기 신호! 지금 앉으세요 (구간: 앉기)"
+                } else {
+                    "앉기 신호까지 ${cueCountdown.intValue}초 — 계속 걸으세요"
+                },
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
                 color = if (phase.value == WaveformPhase.SITTING) MaterialTheme.colorScheme.tertiary
-                else MaterialTheme.colorScheme.outline,
+                else MaterialTheme.colorScheme.primary,
             )
         }
 
@@ -235,9 +283,10 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
                 onClick = {
                     detector.reset()
                     sensorBaseNs.longValue = -1L // 첫 샘플에서 기준선 재설정
-                    recorder.start(label.value, newMeta(label.value, placement.value))
+                    recorder.start(label.value, newMeta(label.value, preset.value.spec))
                     recording.value = true
                     phase.value = WaveformPhase.WALKING
+                    cueCountdown.intValue = if (label.value == WaveformLabel.WALK_THEN_SIT) WALK_SECONDS else 0
                     sampleCount.intValue = 0
                     stepCount.intValue = 0
                     walking.value = false
@@ -250,20 +299,6 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
                 onClick = {
                     recorder.stop()
                     recording.value = false
-                },
-            )
-        }
-
-        // 보행 직후 앉기 수집에서만, 앉기 구간 전이 전에 노출되는 ground-truth 마커.
-        if (recording.value &&
-            label.value == WaveformLabel.WALK_THEN_SIT &&
-            phase.value == WaveformPhase.WALKING
-        ) {
-            AigoSecondaryButton(
-                text = "▼ 지금 앉기 시작 표시",
-                onClick = {
-                    recorder.markSitting()
-                    phase.value = WaveformPhase.SITTING
                 },
             )
         }
@@ -297,19 +332,38 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
     }
 }
 
-/** 착용 위치·방향 선택지 — 서로 다른 시험의 x/y/z 를 비교하려면 위치가 명시돼야 한다(센서 좌표계는 기기 자연방향 기준). */
-private val PLACEMENTS = listOf(
-    SegmentOption("front_pocket", "앞주머니"),
-    SegmentOption("back_pocket", "뒷주머니"),
-    SegmentOption("hand", "손"),
-    SegmentOption("bag", "가방"),
+/** 녹화 시작 후 앉기 큐(비프)까지 걷는 시간(초). 정상 보행 구간을 충분히 확보한다. */
+private const val WALK_SECONDS = 15
+
+/**
+ * 착용 규격 프리셋 — 각 프리셋은 위치+좌/우+화면방향+상단방향+접힘까지 고정한 PlacementSpec 과
+ * 화면 안내 문구를 함께 갖는다. 서로 다른 시험의 x/y/z 를 비교하려면 이 규격이 명시·고정돼야 한다.
+ */
+private data class PlacementPreset(val spec: PlacementSpec, val chip: String, val instruction: String)
+
+private val PLACEMENT_PRESETS = listOf(
+    PlacementPreset(
+        PlacementSpec("front_pocket_r_in", "front_pocket", "right", "in", "up", "folded"),
+        "앞주머니(안)",
+        "오른쪽 앞주머니 · 화면 몸쪽 · 상단 위 · 접은 상태",
+    ),
+    PlacementPreset(
+        PlacementSpec("front_pocket_r_out", "front_pocket", "right", "out", "up", "folded"),
+        "앞주머니(밖)",
+        "오른쪽 앞주머니 · 화면 바깥쪽 · 상단 위 · 접은 상태",
+    ),
+    PlacementPreset(
+        PlacementSpec("hand_portrait", "hand", "na", "user", "up", "unfolded"),
+        "손(세로)",
+        "손에 세로로 들기 · 화면 사용자쪽 · 상단 위 · 펼친 상태",
+    ),
 )
 
 /**
  * 이번 수집의 메타를 만든다. trial_id 는 라벨+ms 정밀 타임스탬프라 빠른 반복 수집에서도 유일하며,
  * 그대로 파일명이 되어 파일 덮어쓰기를 막는다(리뷰 #150).
  */
-private fun newMeta(label: WaveformLabel, placement: String): CaptureMeta {
+private fun newMeta(label: WaveformLabel, placement: PlacementSpec): CaptureMeta {
     val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
     return CaptureMeta(
         trialId = "${label.id}_$stamp",
