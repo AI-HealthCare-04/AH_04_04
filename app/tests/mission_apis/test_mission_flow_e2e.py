@@ -205,8 +205,10 @@ async def test_exercise_start_then_complete_awards_points(
     assert done_body["counted_for_daily"] is True
     assert done_body["daily_result"] == "success"
     assert done_body["sync_status"] == "synced"
-    assert done_body["daily_total_min"] is None  # 걷기 전용 필드 → 운동은 None
-    assert done_body["daily_total_steps"] is None  # 걷기 전용 필드 → 운동은 None
+    # 운동도 걷기와 같은 '당일 누적 시간' 서버 판정으로 바뀌면서 합산값을 함께 돌려준다.
+    #   (앱이 "목표 10분 중 4분" 같은 진행을 그릴 수 있게 — 예전에는 걷기 전용이라 None 이었다.)
+    assert done_body["daily_total_min"] == 10.0
+    assert done_body["daily_total_steps"] is None  # 걸음은 여전히 걷기 전용
 
     home = (await db_client.get(f"{API}/home", headers=auth)).json()
     assert home["point_balance"]["current_points"] == 15

@@ -188,6 +188,24 @@ class MissionRepository:
         total_min, total_steps = (await self.session.execute(stmt)).one()
         return float(total_min or 0), int(total_steps or 0)
 
+    async def sum_exercise_minutes_today(self, user_id: int) -> float:
+        """오늘 운동 누적 시간(분). 걷기와 같은 '당일 누적' 판정을 위해 서버가 직접 집계한다.
+
+        걷기는 activity_type == WALKING 으로 거를 수 있지만, 운동은 단계별로 activity_type 이
+        갈리므로(seated/standing/…) mission_type == EXERCISE 로 조인해서 센다.
+        """
+        stmt = (
+            select(func.coalesce(func.sum(PhysicalActivityLog.duration_min), 0))
+            .select_from(PhysicalActivityLog)
+            .join(MissionLog, MissionLog.mission_log_id == PhysicalActivityLog.mission_log_id)
+            .where(
+                MissionLog.user_id == user_id,
+                MissionLog.mission_type == MissionType.EXERCISE,
+                PhysicalActivityLog.activity_date == func.current_date(),
+            )
+        )
+        return float(await self.session.scalar(stmt) or 0)
+
     async def lock_user_for_completion(self, user_id: int) -> None:
         """미션 완료 트랜잭션을 사용자 단위로 직렬화한다(동시 요청 race 방지).
 
