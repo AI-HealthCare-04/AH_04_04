@@ -154,7 +154,7 @@ Authorization: Bearer <access_token>
   "mission_type": "meal",
   "status": "completed",
   "success": true,
-  "input_method": "voice",
+  "input_method": "manual",
   "meal_detail": { "protein_foods": ["egg", "tofu"], "protein_meal_count": 1, "raw_text": "계란이랑 두부 먹었어" }
 }
 ```
