@@ -84,7 +84,7 @@ fun MyApplicationTheme(
             typography = Typography,
             shapes = AigoShapes,
         ) {
-            // 크기만 지정한 bare Text 도 기본 글꼴이 Noto Sans KR 가 되도록 provide.
+            // 크기만 지정한 bare Text 도 기본 글꼴이 Pretendard 가 되도록 provide.
             CompositionLocalProvider(
                 LocalTextStyle provides LocalTextStyle.current.copy(fontFamily = AigoFontFamily),
                 content = content,
