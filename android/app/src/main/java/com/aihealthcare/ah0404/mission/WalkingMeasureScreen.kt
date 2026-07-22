@@ -56,9 +56,10 @@ private const val POLL_MS = 300L
  *     — 측정 중 걸음 수 아래에 WalkSitGuidanceNote 를 배치한다.
  *
  *  생명주기 복원(#90 2단계):
- *   - 구성 변경(회전·폰트 크기 변경 등): VM 을 Activity ViewModelStore 에 두어(viewModel())
- *     세션(걸음·활성시간)을 그대로 유지. 진입 상태(어느 미션인지)는 MainActivity 의
- *     rememberSaveable 이 보존한다.
+ *   - 구성 변경(글꼴 크기·다크모드·멀티윈도우·폴더블 접기/펴기·언어 변경 등. 회전은 #135 세로
+ *     고정으로 재생성이 없어 해당 없음): VM 을 Activity ViewModelStore 에 두어(viewModel())
+ *     세션(걸음·활성시간)을 그대로 유지. 진입 상태(어느 미션인지)와 복귀 탭은 MainActivity 의
+ *     rememberSaveable 이 보존한다. → QA 는 "설정 → 디스플레이 → 글꼴 크기 변경"으로 검증할 것.
  *   - 백그라운드/전화: onPause 로 센서·영상 정지 + 경과 시계 동결(드리프트 제거), onResume 자동 재개.
  *   - 화면 이탈(뒤로/완료 후 확인): leave() 로 세션 리셋(센서 해제 + 다음 진입 stale 방지).
  *   - 프로세스 종료 후 측정값 복원은 범위 밖(#91/#105) — 재생성 시 READY 부터 시작.
@@ -73,9 +74,10 @@ fun WalkingMeasureScreen(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    // VM 을 Activity ViewModelStore 에 둔다(viewModel()) → 구성 변경(회전 등)에 세션이 생존한다.
-    // 오버레이는 자체 ViewModelStoreOwner 가 없어 Activity 에 바인딩되므로, 화면을 떠날 때
-    // leave() 가 명시적으로 reset() 을 호출해 (1) 센서 해제 (2) 재진입 시 이전 세션 상태 부활을 막는다.
+    // VM 을 Activity ViewModelStore 에 둔다(viewModel()) → 재생성(글꼴 크기·다크모드 등)에 세션이
+    // 생존한다(회전은 #135 세로 고정으로 재생성 없음). 오버레이는 자체 ViewModelStoreOwner 가 없어
+    // Activity 에 바인딩되므로, 화면을 떠날 때 leave() 가 명시적으로 reset()→session.cancel() 을
+    // 호출해 (1) 센서 해제 (2) 재진입 시 이전 세션 상태 부활 방지 (3) 재측정 가능 상태로 정리한다.
     val vm: WalkingSessionViewModel = viewModel {
         WalkingSessionViewModel(WalkingSession(context.applicationContext))
     }
