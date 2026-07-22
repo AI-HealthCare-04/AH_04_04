@@ -39,17 +39,26 @@
                 <data android:scheme="kakao${KAKAO_NATIVE_APP_KEY}" android:host="oauth" />
             </intent-filter>
         </activity>
+        <!-- 세로 고정: 시니어 대상 세로 전용 UI(가로 레이아웃 없음). 회전 시 Activity 재생성으로
+             걸음수·10분 타이머가 리셋되는 문제 방지(#122). 대형/폴더블 권장 경고는 의도적 결정이라 무시. -->
         <activity
             android:name=".pet.WalkingChallengeActivity"
             android:exported="false"
-            android:theme="@style/Theme.MyApplication" />
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.MyApplication"
+            tools:ignore="LockedOrientationActivity,DiscouragedApi" />
 
+        <!-- 세로 고정: 전 화면이 시니어 대상 세로 전용 UI(가로 레이아웃 없음). 자동회전 시
+             MainActivity 재생성으로 탭·측정 상태(센서 걸음수 등)가 전부 리셋되는 문제 방지(#122).
+             대형/폴더블 권장 경고는 v1의 의도적 결정이라 무시. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.MyApplication"
-            android:windowSoftInputMode="adjustResize">
+            android:windowSoftInputMode="adjustResize"
+            tools:ignore="LockedOrientationActivity,DiscouragedApi">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
