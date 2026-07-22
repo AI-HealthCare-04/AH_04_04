@@ -324,7 +324,7 @@ internal fun buildRiskTrendXFractions(points: List<RiskTrendPoint>): List<Float>
 
     val first = validDays.first()
     val span = validDays.last() - first
-    if (span == 0L) return List(points.size) { 0.5f }
+    if (span == 0L) return points.indices.map { it / points.lastIndex.toFloat() }
     return validDays.map { ((it - first).toDouble() / span).toFloat() }
 }
 

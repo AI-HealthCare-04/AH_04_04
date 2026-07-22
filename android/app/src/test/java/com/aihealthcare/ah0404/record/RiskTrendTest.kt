@@ -113,7 +113,7 @@ class RiskTrendTest {
         assertEquals(listOf(0f, 0.5f, 1f), buildRiskTrendXFractions(invalid))
 
         val sameDay = dated.map { it.copy(createdAt = "2026-07-22T09:00:00+09:00") }
-        assertEquals(listOf(0.5f, 0.5f, 0.5f), buildRiskTrendXFractions(sameDay))
+        assertEquals(listOf(0f, 0.5f, 1f), buildRiskTrendXFractions(sameDay))
     }
 
     @Test
