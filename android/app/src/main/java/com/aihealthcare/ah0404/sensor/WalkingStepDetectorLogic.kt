@@ -8,26 +8,33 @@ import kotlin.math.sqrt
  *  1단계: 규칙적인 가속도 피크가 연속으로 감지되면 "보행 중(WALKING)"으로 판정.
  *  2단계: WALKING 상태일 때만 걸음을 카운트. 확정 순간 웜업 피크를 소급 반영(초기 걸음 누락 방지).
  *
- * 앉았다 일어서기 / 방향 전환 같은 일회성 동작은 피크가 1~2회로 끝나 진입 기준(peaksToStartWalking)에
- * 못 미쳐 카운트되지 않는다.
+ * 앉았다 일어서기(정지 상태) / 방향 전환 같은 일회성·느린 동작은 피크가 1~2회거나 정상 대역 밖 리듬이라
+ * 진입 기준(peaksToStartWalking)에 못 미쳐 카운트되지 않는다.
  *
- * ⚠️ 파라미터는 '런타임 조절 가능'(A-4a 실기기 정확도 측정용) — 앱에서 값을 바꿔가며 오탐/미탐을 잰다.
- * 기본값은 **가설값**이며 실기기 데이터로 확정 예정(팀 결정 2026-07-20). 진입 기준 가설 = 10걸음(≈8~14초).
- * 값이 확정되면 DEFAULT_* 로 고정하고 조절 UI는 정리한다.
+ * ⚠️ 알려진 한계(#89, 3차 실측): '정상 보행 직후 곧바로 앉기'는 앉기 피크 간격이 ≈882ms(68보/분)로
+ *    정상 보행 대역(60~120보/분 = 500~1000ms) 안에 들어와, 간격 게이트만으로는 분리할 수 없다 →
+ *    v1 미보장(과다카운트 발생). 후속 이슈 #131에서 원시 파형 기반 분리 검토. (docs/sensor_walking_gate_a4a.md §5-5)
+ *
+ * 파라미터는 '런타임 조절 가능'(A-4a 실기기 정확도 측정용) — 앱에서 값을 바꿔가며 오탐/미탐을 잰다.
+ * 최소간격·최대간격은 2차 실측(#89, 2026-07-21)으로 확정됨. 진입 기준(10)만 가설값 유지.
  */
 class WalkingStepDetectorLogic {
 
     enum class State { IDLE, WALKING }
 
     companion object {
-        // 튜닝 대상(팀 결정 2026-07-20): 지팡이·보행기 없이 스스로 걷는 '독립 보행' 시니어(≈60~120보/분).
-        //   보행기·지팡이급 초저속·불규칙 보행은 v1 정확도 미보장 — 틀리더라도 '덜 세는 쪽'으로 열화한다
-        //   (과다카운트=거짓 격려 금지). 그래서 임계값·최소간격은 '올리는' 방향이 안전과 상성이 맞다.
-        // ── 기본(가설) 값 — 실기기 측정으로 확정 예정 ─────────────
+        // 대상(팀 결정): 지팡이·보행기 없이 스스로 걷는 '독립 보행' 시니어(정상 대역 ≈60~120보/분).
+        //   초저속·셔플·불규칙 보행은 v1 정확도 미보장 — 틀리면 '덜 세는 쪽'으로 열화(과다카운트=거짓 격려 금지).
+        //   2차 실측(#89, 2026-07-21) 요약: 정상 20보 → 350ms에서 평균 21.0(최적). 250ms는 걸음 내부
+        //   이중봉우리로 과다카운트. 정지 상태 앉았다 일어나기(느린 리듬 ≈47~52보/분)는 max 2000ms에선 걷기로
+        //   오탐(실측 13·10보) → max를 정상 케이던스 대역(간격 ≤1000ms, 2차 조정 900→1000)으로 좁혀 대역 밖
+        //   느린 비보행을 걸러낸다(≈1200ms 간격은 1000ms 초과라 차단).
+        //   ※ 단, '보행 직후 곧바로 앉기'(≈882ms=68보/분)는 이 대역 안이라 간격으로 분리 불가 → v1 미보장(위 알려진 한계).
+        // ── 실측 확정 값(#89) ─────────────────────────────────────
         const val DEFAULT_PEAK_THRESHOLD = 10.5f
-        const val DEFAULT_MIN_PEAK_INTERVAL_MS = 250L // ≈ 최대 240보/분
-        const val DEFAULT_MAX_PEAK_INTERVAL_MS = 2000L // 넘으면 리듬 끊김 → 연속 카운트 리셋
-        const val DEFAULT_PEAKS_TO_START_WALKING = 10 // 가설: 연속 10걸음 확정(3→10, 오전 논의/리서치)
+        const val DEFAULT_MIN_PEAK_INTERVAL_MS = 350L // 실측 확정: 이중봉우리 병합, 진짜 걸음(≈570ms)은 유지
+        const val DEFAULT_MAX_PEAK_INTERVAL_MS = 1000L // 정상 대역 상한(하한 60보/분=1000ms). 대역 밖 느린 비보행(정지 앉기 ≈1200ms)은 차단. 대역 안 '보행 직후 앉기'(≈882ms)는 분리 불가(알려진 한계)
+        const val DEFAULT_PEAKS_TO_START_WALKING = 10 // 가설 유지: 연속 10걸음 확정
         const val DEFAULT_WALKING_TIMEOUT_MS = 2500L // 마지막 피크 후 이 시간 지나면 IDLE 복귀
         const val DEFAULT_LOW_PASS_ALPHA = 0.3f // 높을수록 빠른 반응 / 낮을수록 노이즈 제거
         // ──────────────────────────────────────────────────────────
@@ -102,7 +109,8 @@ class WalkingStepDetectorLogic {
         hasSeenPeak = true
 
         // 1단계: 규칙성 판정 (걷기다운 간격이면 연속 카운트, 아니면 리셋 후 새 시작)
-        consecutivePeaks = if (interval <= maxPeakIntervalMs) consecutivePeaks + 1 else 1
+        val rhythmic = interval <= maxPeakIntervalMs
+        consecutivePeaks = if (rhythmic) consecutivePeaks + 1 else 1
 
         // 2단계: 상태별 카운트
         return when (state) {
@@ -117,8 +125,18 @@ class WalkingStepDetectorLogic {
                 }
             }
             State.WALKING -> {
-                count++
-                true
+                if (rhythmic) {
+                    count++
+                    true
+                } else {
+                    // 리듬이 끊긴 피크(간격 > max=1000ms)는 보행 이탈로 보고 IDLE 복귀, 카운트하지 않음.
+                    //   walkingTimeoutMs(정지) 외에 '대역 밖 느린 다음 피크'도 보행 종료로 처리한다.
+                    //   → 대역 밖(>1000ms) 이탈만 차단할 수 있고, '보행 직후 앉기'처럼 앉기 간격이
+                    //     정상 대역 안(≈882ms)이면 여기서 걸러지지 않는다(v1 알려진 한계, 리뷰 #121).
+                    //   consecutivePeaks 는 위에서 1로 리셋됐으므로 이 피크는 새 웜업의 시작점이 된다(냉시작과 동일).
+                    state = State.IDLE
+                    false
+                }
             }
         }
     }
