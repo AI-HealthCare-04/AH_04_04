@@ -174,24 +174,11 @@ async def seed(session_factory: async_sessionmaker[AsyncSession] = AsyncSessionL
             )
         )
 
-        # 운동 목표 이관: 3회(count) → 10분(minutes).
-        #   원래 의도는 '총 10분 이상'이었는데, 회당 4분이라 3회면 자동 충족된다고 보고 회차로 뒀다.
-        #   그 전제는 '끝까지 했을 때'만 참이라, 시작하자마자 끄기를 3번 해도 성공이 됐다.
-        #   서버 판정을 당일 누적 시간으로 바꾸면서(services/mission.py) 목표도 분으로 맞춘다.
-        #   앱은 target_value/target_unit을 그대로 화면에 쓰므로("목표: 10 분"), 표시와 판정이 일치한다.
-        #   target_unit == COUNT 가드로 이미 이관된 DB에서는 다시 실행되지 않는다(멱등).
-        await session.execute(
-            update(MissionTemplate)
-            .where(
-                MissionTemplate.title == "영상 따라 운동하기",
-                MissionTemplate.target_unit == TargetUnit.COUNT,
-            )
-            .values(
-                default_target_value=10,
-                target_unit=TargetUnit.MINUTES,
-                description="몸풀기·앉아서·서서·마무리 영상을 따라 해요. 하루 10분을 채우면 완료예요. (여러 번 나눠 해도 합산돼요)",
-            )
-        )
+        # 운동 목표 3회(count) → 10분(minutes) 이관은 Alembic 마이그레이션 0010 으로 옮겼다.
+        #   시드는 배포 시 자동 실행되지 않아(수동), 여기 두면 배포 직후 운영 DB 가 잠시 3/count 로 남아
+        #   서버가 '3분'을 목표로 잘못 판정하는 창이 생긴다(리뷰 #159). alembic upgrade 는 배포에 포함되므로,
+        #   이관을 마이그레이션으로 옮기면 배포=이관이 원자적이다. 새 DB 는 아래 MISSION_TEMPLATES 가 곧장
+        #   10/minutes 로 넣으므로 이관이 필요 없다.
 
         # 이름 통일 이관: 옛 title → 새 title (새 이름이 이미 있으면 건너뜀 — 중복 방지 멱등 가드).
         #   mission_logs는 템플릿 id를 참조하므로 title 변경으로 이력이 깨지지 않는다.
