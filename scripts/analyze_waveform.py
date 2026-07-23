@@ -58,6 +58,20 @@ TARGET_SEG = (LABEL_WALK_SIT, "sitting")  # 판별 스코어카드의 양성(오
 
 MIN_SEG_SAMPLES = 20  # 이보다 짧은 세그먼트는 특징이 불안정 → 통계에서 제외(표시)
 
+# ── 실시간형(라벨 비참조) '보행 종료' 진단 파라미터 ──────────────────────────
+# 세그먼트 decay 특징은 앉기 구간을 phase 라벨로 미리 잘라 재므로 '앉으면 멈춘다'가
+# 부분적으로 자명하다. 실시간 감지기는 라벨 경계를 모르므로, 여기서는 phase 를 전혀
+# 안 보고 **벽시계 시간 구간**만으로 전체 스트림을 슬라이딩 윈도우로 훑어 '보행중이다가
+# 말미에 잦아드는가'를 본다. 에너지는 스칼라 std 가 아니라 **3축 동적 벡터 RMS**
+# (윈도우 국소 중력 제거 후 |동적|의 RMS)로 잰다 — 수평 진동까지 잡고 방향 회전에 강함.
+SLIDE_WIN_S = 1.0      # 슬라이딩 윈도우 길이(초)
+SLIDE_HOP_S = 0.5      # 윈도우 이동 간격(초)
+REF_START_S = 1.0      # 보행 기준 구간 시작(초) — 초반 정착 1s 건너뜀
+REF_END_S = 8.0        # 보행 기준 구간 끝(초) — 앉기 큐(15s) 한참 전이라 어느 라벨이든 '초기 활동'
+TAIL_S = 4.0           # 말미 구간 길이(초) — 앉기(마지막 5s) 안쪽
+WALK_REF_MIN_DYN = 1.0  # 기준구간 동적RMS 가 이 미만이면 '애초에 보행 아님'(shuffle/sit_only)
+STOP_RATIO = 0.4        # 말미 동적RMS 가 기준의 이 비율 미만이면 '보행 종료(정지 전환)' 판정
+
 
 # ── 저수준 유틸 ──────────────────────────────────────────────────────────────
 def _f(s):
@@ -173,6 +187,61 @@ def split_phases(rows):
     for r in rows:
         out[r["phase"]].append(r)
     return out
+
+
+# ── 실시간형(라벨 비참조) 보행종료 감쇠 ──────────────────────────────────────
+def windowed_dyn_trace(rows, win_s=SLIDE_WIN_S, hop_s=SLIDE_HOP_S):
+    """전체 스트림을 슬라이딩 윈도우로 훑어 (중심시각초, 동적RMS) 트레이스 반환.
+
+    동적RMS = 윈도우 국소 중력(윈도우 평균 벡터)을 뺀 |동적|의 RMS. 스칼라 magnitude 의
+    std 는 수평 진동을 놓치므로(중력이 지배해 크기가 거의 안 변함 — #131 의 바로 그 함정),
+    3축 벡터로 잰다. phase 라벨을 전혀 참조하지 않는다.
+    """
+    rr = [r for r in rows if not r["_excluded"]]
+    if len(rr) < 4:
+        return []
+    t0 = rr[0]["_t"]
+    dur = (rr[-1]["_t"] - t0) / 1000.0
+    hz = len(rr) / dur if dur > 0 else 50.0
+    win = max(int(win_s * hz), 4)
+    hop = max(int(hop_s * hz), 1)
+    trace = []
+    for s in range(0, len(rr) - win + 1, hop):
+        seg = rr[s:s + win]
+        n = len(seg)
+        gx = sum(r["_x"] for r in seg) / n
+        gy = sum(r["_y"] for r in seg) / n
+        gz = sum(r["_z"] for r in seg) / n
+        e = _rms([math.sqrt((r["_x"] - gx) ** 2 + (r["_y"] - gy) ** 2 + (r["_z"] - gz) ** 2)
+                  for r in seg])
+        tc = (seg[n // 2]["_t"] - t0) / 1000.0
+        trace.append((tc, e))
+    return trace
+
+
+def sliding_stop_features(rows):
+    """phase 라벨을 안 보고 전체 스트림만으로 '보행→정지' 전환을 탐지.
+
+    기준구간(REF_START~REF_END s)과 말미(마지막 TAIL_S s)의 동적RMS 를 비교한다.
+    기준구간이 보행 수준(≥WALK_REF_MIN_DYN)인데 말미가 그 STOP_RATIO 배 미만으로
+    잦아들면 walk_stop=True. 이 신호가 walk_then_sit 에서만 뜨고 normal_walk/shuffle 에서는
+    안 뜨면, '보행 종료 감쇠'가 라벨 없이도(=실시간에도) 관측 가능하다는 뜻이다.
+    """
+    trace = windowed_dyn_trace(rows)
+    if not trace:
+        return None
+    dur = trace[-1][0]
+    ref = [e for (tc, e) in trace if REF_START_S <= tc <= REF_END_S]
+    tail = [e for (tc, e) in trace if tc >= dur - TAIL_S]
+    if not ref or not tail:
+        return None
+    e_ref = statistics.median(ref)
+    e_tail = statistics.median(tail)
+    tail_ratio = (e_tail / e_ref) if e_ref > 1e-6 else float("nan")
+    was_walking = e_ref >= WALK_REF_MIN_DYN
+    walk_stop = was_walking and not math.isnan(tail_ratio) and tail_ratio < STOP_RATIO
+    return {"e_ref": e_ref, "e_tail": e_tail, "tail_ratio": tail_ratio,
+            "was_walking": was_walking, "walk_stop": walk_stop}
 
 
 # ── 통계 헬퍼 ────────────────────────────────────────────────────────────────
@@ -304,6 +373,35 @@ def analyze(trials, participants=None):
                   f"{'유망(|d|≥0.8)' if top[0] >= 0.8 else '단독으론 약함 → 특징 조합/추가센서 검토'}")
     print()
 
+    # ── 3.5 실시간형(라벨 비참조) 보행종료 감쇠 검증 ──
+    # 세그먼트 decay 는 앉기 구간을 라벨로 잘라 재므로 '앉으면 멈춘다'가 자명하다.
+    # 여기서는 phase 를 안 보고 전체 스트림의 시간구간만으로 '보행중→말미 잦아듦'을 본다.
+    print("■ 실시간형 보행종료 감쇠 (phase 라벨 비참조 · 전체 스트림 슬라이딩 윈도우)")
+    print(f"  기준 {REF_START_S:.0f}~{REF_END_S:.0f}s vs 말미 {TAIL_S:.0f}s 동적RMS(3축) 비교. "
+          f"기준≥{WALK_REF_MIN_DYN}(보행) 이고 말미<{STOP_RATIO}×기준 이면 '정지 전환'.")
+    print(f"  {'label':16s} {'e_ref':>7s} {'e_tail':>7s} {'말미/기준':>9s} {'정지전환':>10s}")
+    stop_by_label = {}
+    for lb in ALL_LABELS:
+        feats = [f for f in (sliding_stop_features(t["rows"]) for t in trials if t["label"] == lb) if f]
+        if not feats:
+            continue
+        er = _mean([f["e_ref"] for f in feats])
+        et = _mean([f["e_tail"] for f in feats])
+        tr = _mean([f["tail_ratio"] for f in feats if not math.isnan(f["tail_ratio"])])
+        stops = sum(1 for f in feats if f["walk_stop"])
+        stop_by_label[lb] = (stops, len(feats))
+        print(f"  {lb:16s} {er:7.2f} {et:7.2f} {tr:9.2f} {stops:>7d}/{len(feats)}")
+    ws = stop_by_label.get(LABEL_WALK_SIT, (0, 0))
+    nw = stop_by_label.get(LABEL_NORMAL, (0, 0))
+    sh = stop_by_label.get(LABEL_SHUFFLE, (0, 0))
+    good = ws[1] and ws[0] == ws[1] and nw[0] == 0 and sh[0] == 0
+    print(f"  → {'✅ 실시간형에도 신호 유지' if good else '⚠️ 신호 불명확'}: "
+          f"walk_then_sit 정지전환 {ws[0]}/{ws[1]}(전부여야) · "
+          f"normal_walk {nw[0]}/{nw[1]}·shuffle {sh[0]}/{sh[1]}(0이어야). "
+          + ("→ 라벨 없이도 '보행종료'가 잡히므로 슬라이딩 decay 상태로 판별기 설계 타당."
+             if good else "→ 파라미터/추가 특징 재검토 필요."))
+    print()
+
     # ── 4. 참여자 분할 안내(#166) ──
     print("■ 참여자 단위 분할(#166 데이터 누수 방지)")
     if participants:
@@ -377,9 +475,9 @@ def _synth_file(fp, label, placement, gravity_axis="z"):
     # 보행/서있기/발끌기 구간
     for i in range(walk_s * hz):
         ph = math.sin(2 * math.pi * 1.7 * i / hz)  # ~1.7Hz 스텝
-        if label in (LABEL_NORMAL, LABEL_WALK_SIT):     # 보행: 전후(수평) 진동 큼 + 수직 약간
-            horiz = (1.6 * ph, 0.4 * ph, 0)
-            dyn = _rot(horiz, gravity_axis)
+        if label in (LABEL_NORMAL, LABEL_WALK_SIT):     # 보행: 전후(수평) 진동 큼 + 수직 바운스
+            bounce = 0.9 * math.sin(2 * math.pi * 3.4 * i / hz)  # 뒤꿈치 착지(≈2×스텝) 수직
+            dyn = _rot((1.6 * ph, 0.4 * ph, bounce), gravity_axis)
             step = (i % (hz // 2) == 0)                  # 초당 ~2걸음 카운트
         elif label == LABEL_SHUFFLE:                     # 발끌기: 소진폭 수평
             dyn = _rot((0.3 * ph, 0.2 * ph, 0), gravity_axis)
@@ -460,6 +558,23 @@ def selftest():
     assert vs_sit > vs_walk + 0.2, "앉기 수직지배 특징이 재현 안 됨"
     assert abs(vs_sit_x - vs_sit) < 0.2, "vert_share 가 placement(중력축)에 의존 — 불변성 실패"
     print("\n[✓] 폐기규칙·세그먼트화·vert_share(placement 불변) 모두 통과\n")
+
+    # 실시간형(라벨 비참조) 정지전환: walk_then_sit 만 잡히고 normal 은 안 잡혀야 한다.
+    def stops_for(label):
+        c, tot = 0, 0
+        for t in trials:
+            if t["label"] != label:
+                continue
+            f = sliding_stop_features(t["rows"])
+            if f:
+                tot += 1
+                c += 1 if f["walk_stop"] else 0
+        return c, tot
+    ws_c, ws_tot = stops_for(LABEL_WALK_SIT)
+    nw_c, _ = stops_for(LABEL_NORMAL)
+    assert ws_tot > 0 and ws_c == ws_tot, f"walk_then_sit 정지전환 미탐: {ws_c}/{ws_tot}"
+    assert nw_c == 0, f"normal_walk 에서 정지전환 오탐: {nw_c}"
+    print("[✓] 실시간형(라벨 비참조) 정지전환: walk_then_sit 전부 탐지·normal_walk 0\n")
 
     # 참여자 로그 조인 경로 검증: trial 을 P01/P02 로 매핑한 로그를 써서 읽는다.
     plog = os.path.join(d, "participants.csv")
