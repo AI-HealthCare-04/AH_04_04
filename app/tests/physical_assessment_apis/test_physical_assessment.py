@@ -149,9 +149,9 @@ def test_age_norm_5sts_out_of_range_is_none_easy() -> None:
 
 
 def test_under_65_stays_easy_even_when_very_fast_is_intended_not_a_bug() -> None:
-    # 정책 고정(#155): 65세 미만은 추론 모델 대상 밖이라 난이도도 규준을 잡지 않고 '하'로 수렴한다.
-    #   40세가 매우 빠른 5STS(6초)를 기록해도 EASY 다. 이는 성능 역전이 아니라 '지원 대상 밖 기본값'.
-    #   젊은 연령대 규준을 새로 도입해 이 케이스를 NORMAL 로 바꾸지 말 것(추론·난이도 경계 65세 정렬).
+    # 정책 고정(#155): 앱 대상이 65+ 이고 5STS 규준(Bohannon 65-89)이 그 밖을 외삽하지 않으므로,
+    #   65세 미만은 규준을 잡지 않고 '하'로 수렴한다. 40세가 매우 빠른 5STS(6초)를 기록해도 EASY 다 —
+    #   성능 역전이 아니라 '지원 대상 밖 기본값'. 젊은 연령대 규준을 새로 도입해 NORMAL 로 바꾸지 말 것.
     assert (
         PhysicalAssessmentService._determine_activity_level(
             chair_stand_sec=Decimal("6.0"),  # 매우 빠름
