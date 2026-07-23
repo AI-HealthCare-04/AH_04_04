@@ -202,6 +202,7 @@ fun WalkingMeasureScreen(
 
             WalkingSessionViewModel.Phase.DONE -> DoneContent(
                 ui = ui,
+                goalText = "${mission.targetValue} ${targetUnitLabel(mission.targetUnit)}",
                 onConfirm = leave,
             )
         }
@@ -290,13 +291,19 @@ private fun MeasuringContent(
 @Composable
 private fun DoneContent(
     ui: WalkingSessionViewModel.UiState,
+    goalText: String,
     onConfirm: () -> Unit,
 ) {
-    Text("🎉 걷기 완료!", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+    // '완료/달성'이 아니라 '측정을 마쳤다'로 표기한다. 목표 달성 판정은 서버가 당일 누적으로 하며(#91),
+    //   아직 서버 저장이 연결되지 않아 이 화면은 걸음 수를 단정할 근거가 없다. 0걸음으로 종료해도
+    //   "🎉 걷기 완료!"가 뜨던 문제를 막는다(#161). 측정값은 목표와 나란히 참고로만 보여준다.
+    Text("측정을 마쳤어요", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
     AigoCard {
         ResultRow("걸음 수", "${ui.steps} 걸음")
         Spacer(Modifier.height(Dimens.Space8))
         ResultRow("걸은 시간", formatElapsed(ui.elapsedSec))
+        Spacer(Modifier.height(Dimens.Space8))
+        ResultRow("오늘 목표", goalText)
     }
     // 거리·포인트 반영과 서버 저장은 다음 업데이트(#91)에서 연결된다. 지금은 측정값만 확정해 보여준다.
     Text(
