@@ -126,6 +126,21 @@ class MissionService:
         """같은 수행이 이미 기록돼 있으면 그 로그를 준다(재전송 판별).
 
         created_on_device_at 을 안 보내는 클라이언트는 판별할 근거가 없으므로 항상 None.
+
+        ## 왜 status·payload 를 비교하지 않는가 (안 A 확정, 리뷰 #158)
+          자연 키(user_id, mission_template_id, created_on_device_at) 가 "어느 수행인가"를 유일하게
+          결정한다. 같은 키면 같은 수행으로 보고 status 불문 기존 로그를 그대로 돌려준다.
+
+          status 를 비교하면 '지연 재전송'이 깨진다:
+            POST(in_progress) 성공 → 응답 유실 → 사용자가 측정을 마쳐 PATCH 로 completed →
+            그 뒤 outbox 의 POST(in_progress) 가 뒤늦게 재전송된다.
+          이때 DB 는 completed, 재전송 payload 는 in_progress 라, status 를 비교하면 정상 재전송이
+          409 로 거부된다. 그래서 비교하지 않고 기존(completed) 로그를 200 으로 돌려준다 —
+          앱은 이미 완료된 수행으로 처리하면 된다.
+
+          "서로 다른 수행이 우연히 같은 키" 는 (같은 유저 + 같은 템플릿 + 같은 마이크로초,
+          DATETIME(6)) 라 사실상 불가능하고, 앱이 로컬 수행 생성 시각을 키로 삼아 재전송 때
+          동일 값을 되쏘는 것을 전제로 한다(PR 본문). 이 잔여 리스크를 받는 것이 안 A 의 트레이드오프다.
         """
         if data.created_on_device_at is None:
             return None

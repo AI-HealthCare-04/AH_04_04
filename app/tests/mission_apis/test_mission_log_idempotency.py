@@ -240,3 +240,44 @@ async def test_walking_start_resend_does_not_split_session(
     # 같은 로그를 가리켜야 이어지는 PATCH(걷기 종료)가 한 세션에만 반영된다.
     assert again.json()["mission_log_id"] == first.json()["mission_log_id"]
     assert await _count_logs(db_sessionmaker, user_id) == 1
+
+
+# -------------------------------------------------------------------------------------
+# 7. 지연 재전송 — 완료(PATCH)된 뒤 뒤늦게 도착한 POST 도 409 없이 기존 로그를 돌려준다
+# -------------------------------------------------------------------------------------
+async def test_late_resend_after_completion_returns_existing_not_conflict(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    """리뷰 #158 이 짚은 시나리오를 고정한다.
+
+    POST(in_progress) 성공 → 응답 유실 → 사용자가 측정을 마쳐 PATCH 로 completed →
+    그 뒤 outbox 의 POST(in_progress) 가 뒤늦게 재전송된다.
+    status 를 비교하면 in_progress(재전송) != completed(DB) 로 정상 재전송이 409 가 되지만,
+    안 A 는 자연 키만 보고 기존(completed) 로그를 200 으로 돌려준다.
+    """
+    auth, user_id = await _guest(db_client)
+    template_id = await _seed_template(db_sessionmaker, mission_type=MissionType.WALKING, reward_points=10)
+    start_body = {
+        "mission_template_id": template_id,
+        "mission_type": "walking",
+        "status": "in_progress",
+        "created_on_device_at": DEVICE_TIME,
+    }
+
+    started = await db_client.post(f"{API}/mission-logs", json=start_body, headers=auth)
+    log_id = started.json()["mission_log_id"]
+
+    # 사용자가 측정을 마쳐 완료(PATCH) — DB status 가 completed 가 된다.
+    done = await db_client.patch(
+        f"{API}/mission-logs/{log_id}",
+        json={"status": "completed", "success": True, "walking_detail": {"duration_min": 25, "steps": 3000}},
+        headers=auth,
+    )
+    assert done.status_code == status.HTTP_200_OK
+
+    # 뒤늦게 도착한 POST(in_progress) 재전송 — 409 가 아니라 200 + 기존 completed 로그.
+    late = await db_client.post(f"{API}/mission-logs", json=start_body, headers=auth)
+    assert late.status_code == status.HTTP_200_OK
+    assert late.json()["mission_log_id"] == log_id
+    assert late.json()["status"] == "completed"  # 재전송 payload 의 in_progress 로 덮어쓰지 않는다
+    assert await _count_logs(db_sessionmaker, user_id) == 1
