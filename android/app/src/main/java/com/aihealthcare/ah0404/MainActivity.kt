@@ -139,7 +139,15 @@ class MainActivity : ComponentActivity() {
                             sessionRevision++
                         },
                     )
-                    AppRoute.MAIN -> MainContent()
+                    // 로그아웃(#154): 토큰만 지우고 온보딩 완료 플래그는 보존한다(clearAuthentication).
+                    //   → 라우팅이 LOGIN_REQUIRED 로 가고, 같은 계정 재로그인 시 온보딩을 반복하지 않는다.
+                    //   sessionRevision++ 로 라우팅을 재평가시킨다(인증 실패 자동복구 경로와 같은 방식).
+                    AppRoute.MAIN -> MainContent(
+                        onLogout = {
+                            SessionStore.clearAuthentication(context)
+                            sessionRevision++
+                        },
+                    )
                 }
             }
         }
@@ -183,7 +191,7 @@ private val MainTabSaver: Saver<MainTab, String> = Saver(
 
 @androidx.media3.common.util.UnstableApi
 @Composable
-private fun MainContent() {
+private fun MainContent(onLogout: () -> Unit) {
     // rememberSaveable: 재생성(글꼴 크기·다크모드 등) 후에도 이탈 시 복귀할 탭을 보존한다.
     // 오버레이(walkingMission)만 복원하고 이 탭을 remember 로 두면 홈으로 튄다(#144 블로커 2).
     var selectedTab by rememberSaveable(stateSaver = MainTabSaver) { mutableStateOf(MainTab.HOME) }
@@ -284,6 +292,12 @@ private fun MainContent() {
             MainTab.SETTINGS -> SettingsScreen(
                 onOpenSupport = { subScreen = "support" },
                 onOpenProfile = { subScreen = "profile" },
+                // 로그아웃(#154): 재로그인 후 설정 탭으로 튀지 않게 홈으로 되돌린 뒤,
+                //   상위(MAIN 라우팅 스코프)에 위임한다. 실제 세션 정리·라우팅 재평가는 거기서 한다.
+                onLogout = {
+                    selectedTab = MainTab.HOME
+                    onLogout()
+                },
                 modifier = contentModifier,
             )
         }
