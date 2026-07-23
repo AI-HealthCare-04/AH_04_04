@@ -328,7 +328,9 @@ class WalkingSessionViewModelTest {
 
     @Test
     fun feedback_cues_reactivate_for_a_new_session() {
-        // 새 측정 시작(startMeasuring)에서는 트래커도 초기화돼 다음 세션에서 다시 울린다.
+        // 실제 앱 흐름(화면 이탈 → 재진입 → 새 측정)을 그대로 태워 트래커가 다시 울리는지 본다.
+        // startMeasuring() 은 MEASURING 중이면 가드로 즉시 반환하므로, 새 세션 경계는
+        // leave() 가 부르는 vm.reset()(→ MEASURING 이탈) 이후에만 생긴다(리뷰 #148: CI 블로커).
         val fake = FakeController()
         val vm = WalkingSessionViewModel(fake)
         vm.startMeasuring()
@@ -337,7 +339,8 @@ class WalkingSessionViewModelTest {
         vm.poll()
         assertEquals(listOf(WalkingFeedbackCue.STARTED), vm.drainFeedbackCues(goalSteps = null))
 
-        vm.startMeasuring() // 새 세션 → 신호 재활성
+        vm.reset()          // 화면 이탈 — 실제 앱에서 leave() 가 하는 일(MEASURING 이탈 + 트래커 초기화)
+        vm.startMeasuring() // 새 세션
         fake.state = WalkingStepDetectorLogic.State.WALKING
         fake.steps = 5
         vm.poll()
