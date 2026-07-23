@@ -90,7 +90,23 @@ normal_walk_20260724_101612_310,P01,P01_s1
 > 큐 직후 짧은 정착 구간(±300ms)은 파일 안에서 `excluded=1` 로 표시되므로 **폐기가 아니라
 > 분석에서 자동 제외**된다(파일은 유지). — 스크립트가 알아서 처리한다.
 
-## 7. 수집 후 분석
+## 6-1. 매 파일 즉시 점검 (권장 — '제대로 담겼는지' 바로 확인)
+
+파일 하나를 PC 로 가져와(공유시트 → 드라이브/메일/AirDrop, 또는 `adb pull`) 아래를 돌리면
+**그 CSV 가 분석에 쓸 수 있는지 즉시 판정**된다. 수집 초반에 배치·음량·속도가 맞는지 확인하기 좋다.
+
+```bash
+python scripts/analyze_waveform.py --inspect normal_walk_20260724_101530_842.csv
+```
+
+점검 항목(각 ✅/⚠️/❌): 헤더 23컬럼 · 행수/지속시간/샘플레이트 · 라벨 일관성 ·
+`cue_delivery`(폐기 여부) · phase/sit_cue 마커/excluded · **3축 실제 변동**(센서 미동작 감지) ·
+걸음 카운트 · 시간축 단조성 → 마지막에 **`✅ 분석 사용 가능` / `❌ 재수집`** 종합 판정.
+
+> 참고: `adb pull` 은 platform-tools 필요. 경로는
+> `adb pull /sdcard/Android/data/com.aihealthcare.ah0404/files/waveforms/<파일명>.csv`.
+
+## 7. 수집 후 분석 (전체)
 
 CSV 들을 한 폴더(예: `~/waveforms_raw/`)로 모으고, §5 참여자 로그를 `participants.csv`로 둔 뒤:
 

@@ -139,6 +139,9 @@ python scripts/analyze_waveform.py <CSV들이 든 디렉토리>
 
 # 참여자 단위 교차표까지(권장) — trial_id,participant_id[,session_id] 로그를 함께
 python scripts/analyze_waveform.py <디렉토리> --participants docs/waveform_participants.csv
+
+# 수집 직후 파일 1개가 제대로 담겼는지 즉시 점검(현장 검증 — 현장 가이드 §6-1)
+python scripts/analyze_waveform.py --inspect <파일.csv>
 ```
 
 스크립트가 자동으로 하는 것(§4·§5 규칙 내장):

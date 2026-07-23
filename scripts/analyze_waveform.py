@@ -472,9 +472,114 @@ def selftest():
     assert parts and all(p in ("P01", "P02") for p in parts.values()), "참여자 로그 조인 실패"
     print("[✓] 참여자 로그 조인 경로 통과\n")
 
+    # 단일 파일 점검(--inspect) 경로도 태운다.
+    sample_file = glob.glob(os.path.join(d, "normal_walk_*.csv"))[0]
+    assert inspect(sample_file) is True, "정상 합성 파일이 inspect 에서 FAIL"
+    print("[✓] --inspect 단일 파일 점검 경로 통과\n")
+
     print("=== 합성 데이터에 대한 전체 리포트(형식 확인용) ===\n")
     analyze(trials, parts)
     print("[✓] selftest 통과 — 실제 수집 CSV 로 `python scripts/analyze_waveform.py <디렉토리>` 실행하세요.")
+
+
+# ── 단일 파일 sanity check(--inspect) ────────────────────────────────────────
+def inspect(path):
+    """수집 직후 CSV 1개가 '제대로 담겼는지' 즉시 판정(현장 검증용).
+
+    각 항목을 ✅/⚠️/❌ 로 표시하고 마지막에 '분석 사용 가능/폐기' 종합 판정을 낸다.
+    ❌ 가 하나라도 있으면 그 파일은 재수집 대상이다.
+    """
+    print(f"=== 파일 점검: {os.path.basename(path)} ===\n")
+    ok = True
+
+    # 1) 헤더 스키마(부록 A 23컬럼)
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        fields = (csv.DictReader(f).fieldnames) or []
+    if fields == HEADER:
+        print("  ✅ 헤더: 23컬럼 스키마 일치")
+    else:
+        ok = False
+        print(f"  ❌ 헤더 불일치: {len(fields)}컬럼(기대 {len(HEADER)}) — 앱 버전/파일 손상 확인")
+
+    rows = load_file(path)
+    n = len(rows)
+    if n == 0:
+        print("  ❌ 데이터 행 0개 — 수집 실패\n\n판정: ❌ 사용 불가(재수집)")
+        return
+    dur = (rows[-1]["_t"] - rows[0]["_t"]) / 1000.0
+    hz = n / dur if dur > 0 else 0
+
+    # 2) 행수·지속시간·샘플레이트
+    dur_ok = dur >= 3
+    print(f"  {'✅' if dur_ok else '⚠️'} 샘플 {n}행 · {dur:.1f}초 · ≈{hz:.0f}Hz"
+          + ("" if dur_ok else "  (너무 짧음 — 중단/조기종료 의심)"))
+
+    # 3) 라벨 일관성
+    labels = {r["label"] for r in rows}
+    label = rows[0]["label"]
+    if labels == {label} and label in ALL_LABELS:
+        print(f"  ✅ 라벨: {label} (전 행 일관)")
+    else:
+        ok = False
+        print(f"  ❌ 라벨 이상: {labels}")
+
+    # 4) cue_delivery (§4 폐기 판정)
+    cue = rows[0]["cue_delivery"]
+    if label in CUE_LABELS:
+        if cue == "success":
+            print("  ✅ cue_delivery=success (앉기 큐 전달됨)")
+        else:
+            ok = False
+            print(f"  ❌ cue_delivery={cue} — 비프 미전달 → §4 폐기 대상")
+    else:
+        print(f"  {'✅' if cue == 'na' else '⚠️'} cue_delivery={cue} (큐 없는 라벨은 na 정상)")
+
+    # 5) phase / sit_cue 마커 / excluded
+    phases = Counter(r["phase"] for r in rows)
+    cues = sum(1 for r in rows if r["event"] == "sit_cue")
+    excl = sum(1 for r in rows if r["_excluded"])
+    if label in CUE_LABELS:
+        seg_ok = cues == 1 and phases.get("sitting", 0) > 0
+        print(f"  {'✅' if seg_ok else '⚠️'} 구간: walking {phases.get('walking', 0)} / "
+              f"sitting {phases.get('sitting', 0)} · sit_cue 마커 {cues}개(기대 1) · excluded {excl}")
+    else:
+        seg_ok = phases.get("sitting", 0) == 0 and cues == 0
+        print(f"  {'✅' if seg_ok else '⚠️'} 구간: walking {phases.get('walking', 0)}행"
+              + ("" if seg_ok else " · 큐 없는 라벨인데 sitting/sit_cue 존재"))
+
+    # 6) 원시 3축이 실제로 변동하는가(센서 미동작/폰 고정 감지)
+    sx = statistics.pstdev([r["_x"] for r in rows])
+    sy = statistics.pstdev([r["_y"] for r in rows])
+    sz = statistics.pstdev([r["_z"] for r in rows])
+    mags = [r["_mag"] for r in rows if r["_mag"] is not None]
+    mmean = sum(mags) / len(mags) if mags else 0.0
+    if max(sx, sy, sz) < 0.03:
+        ok = False
+        print(f"  ❌ 3축이 거의 정지: std={sx:.2f}/{sy:.2f}/{sz:.2f} — 센서 미동작/폰 고정 의심")
+    else:
+        print(f"  ✅ 3축 변동: std(x/y/z)={sx:.2f}/{sy:.2f}/{sz:.2f} · |a|평균 {mmean:.2f}(≈9.8 중력)")
+
+    # 7) 걸음 카운트 기록(보행 라벨은 걸음이 잡혀야 자연스러움 — 감지기 특성이라 WARN)
+    steps = sum(1 for r in rows if r["_step"])
+    walking_rows = sum(1 for r in rows if r["state"] == "WALKING")
+    try:
+        last_count = int(rows[-1]["count"])
+    except (ValueError, TypeError):
+        last_count = -1
+    if label in (LABEL_NORMAL, LABEL_WALK_SIT):
+        print(f"  {'✅' if steps > 0 else '⚠️'} 걸음: 감지기 count={last_count} · "
+              f"step_counted {steps}회 · WALKING 상태 {100 * walking_rows // n}%"
+              + ("" if steps > 0 else "  (보행 라벨인데 걸음 0 — 느리거나 배치 문제 가능)"))
+    else:
+        print(f"  · 걸음: count={last_count} · step_counted {steps}회 (앉기/발끌기는 낮은 게 정상)")
+
+    # 8) 시간축 단조 증가
+    ts = [r["_t"] for r in rows]
+    mono = all(ts[i] <= ts[i + 1] for i in range(len(ts) - 1))
+    print(f"  {'✅' if mono else '⚠️'} sensor_elapsed_ms 단조 증가: {'예' if mono else '아니오'}")
+
+    print(f"\n판정: {'✅ 분석에 사용 가능' if ok else '❌ 문제 있음 — 위 ❌ 항목 확인 후 재수집'}")
+    return ok
 
 
 def main():
@@ -482,11 +587,14 @@ def main():
     ap.add_argument("data_dir", nargs="?", help="수집 CSV 들이 든 디렉토리")
     ap.add_argument("--participants", help="trial_id,participant_id[,session_id] 로그 CSV")
     ap.add_argument("--selftest", action="store_true", help="합성 데이터로 파이프라인 자체검증")
+    ap.add_argument("--inspect", metavar="FILE", help="수집 CSV 1개가 제대로 담겼는지 즉시 점검")
     args = ap.parse_args()
 
     if args.selftest:
         selftest()
         return
+    if args.inspect:
+        sys.exit(0 if inspect(args.inspect) else 1)
     if not args.data_dir:
         ap.error("data_dir 를 주거나 --selftest 를 쓰세요.")
     parts = load_participants(args.participants) if args.participants else None
