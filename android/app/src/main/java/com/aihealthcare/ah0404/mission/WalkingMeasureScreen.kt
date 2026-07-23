@@ -301,7 +301,9 @@ private fun DoneContent(
     AigoCard {
         ResultRow("걸음 수", "${ui.steps} 걸음")
         Spacer(Modifier.height(Dimens.Space8))
-        ResultRow("걸은 시간", formatElapsed(ui.elapsedSec))
+        // '걸은 시간'이 아니라 '측정 시간' — 0걸음으로 바로 종료해도 경과 시간은 흐르므로,
+        //   "0걸음인데 걸은 시간 31초"처럼 어긋나 보이지 않게 한다(#161 후속). 걷기 성공 판정은 서버 몫(#91).
+        ResultRow("측정 시간", formatElapsed(ui.elapsedSec))
         Spacer(Modifier.height(Dimens.Space8))
         ResultRow("오늘 목표", goalText)
     }
