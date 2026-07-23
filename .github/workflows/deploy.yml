@@ -13,12 +13,22 @@ name: Deploy
 #     · release 준비 단계 진입  →  branches: [release]
 #     · 최종 진짜 배포          →  branches: [main]
 #     ⚠️ [dev, main] 처럼 여러 개를 동시에 걸지 말 것 — push 마다 중복 배포가 나 실수 위험.
-#     ⚠️ [main] 으로 바꾼 뒤, deploy.yml 이 main 에 처음 올라가는 그 머지 push 는 워크플로를
-#        안 깨울 수 있다(GitHub 특성). 그땐 main 에 빈 커밋 하나 더 push 하면 배포가 돈다.
+#     ✅ 단계 전환 머지 후에는 Actions 탭에서 이 워크플로 실행이 생성됐는지 확인한다.
+#        push 는 그 커밋에 있는 워크플로의 branches 필터로 평가되므로, branches 변경을 포함한
+#        머지 push 자체가 트리거다. 혹시 실행이 안 떴으면 아래 workflow_dispatch 버튼으로 돌린다.
+#        (protected main 에 빈 커밋을 넣는 방식은 쓰지 않는다 — 오염·중복배포를 유발.)
 #  (추적 이슈: #177)
 on:
   push:
     branches: [dev]
+  # 안전한 수동 폴백: push 트리거가 안 걸렸을 때 Actions 탭 "Run workflow" 버튼으로 실행.
+  #   ⚠️ 이 버튼은 워크플로가 "기본 브랜치"에 있어야 화면에 뜬다(GitHub 특성 — push 와 다름).
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "배포 사유 메모(선택). 배포 대상 브랜치는 위 'Use workflow from'에서 선택."
+        required: false
+        default: "수동 폴백 배포"
 
 # 배포가 동시에 두 개 돌면 이미지 태그/마이그레이션이 꼬인다.
 # cancel-in-progress는 false — 진행 중인 배포를 중간에 끊으면
