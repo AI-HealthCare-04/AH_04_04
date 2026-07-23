@@ -172,11 +172,15 @@ class WalkingSessionViewModel(
      *  같은 measurement 를 여러 번 눌러도(재시도) createdOnDeviceAt 이 고정돼 있어 #158 이 중복을 막는다.
      *  성공/실패만 상태로 노출하고, 홈 실적은 홈 진입 시 재조회로 반영된다(별도 push 없음).
      *
+     *  ⚠️ 상태 전이로만 제출한다(리뷰 #172): **Idle→Submitting**(자동 최초 1회)와 **Failed→Submitting**(수동 재시도)
+     *   만 허용한다. Success·Submitting 에서는 즉시 반환해, 완료 화면이 구성 변경(글꼴·다크모드)으로 재구성돼
+     *   LaunchedEffect 가 다시 실행돼도 같은 기록을 재제출하지 않는다.
+     *
      * @param missionTemplateId 어느 걷기 미션인지 — 화면(mission)에서 전달.
      */
     fun submitWalking(missionTemplateId: Int) {
-        val snapshot = uiState.result ?: return          // DONE 스냅샷이 있어야 제출
-        if (submitState == SubmitState.Submitting) return // 중복 제출 방지(연타·재구성)
+        val snapshot = uiState.result ?: return // DONE 스냅샷이 있어야 제출
+        if (submitState != SubmitState.Idle && submitState != SubmitState.Failed) return
         submitState = SubmitState.Submitting
         viewModelScope.launch {
             submitState = try {

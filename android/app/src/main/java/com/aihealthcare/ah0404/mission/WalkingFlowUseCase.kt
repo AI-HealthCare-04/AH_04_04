@@ -99,7 +99,26 @@ class WalkingFlowUseCase(
             )
         )
         val logId = started.missionLogId
-        Log.i(TAG, "② 걷기 시작 OK → mission_log_id=$logId, status=${started.status}")
+        Log.i(TAG, "② 걷기 시작 OK → mission_log_id=$logId, status=${started.status}, deduplicated=${started.deduplicated}")
+
+        // ★ 재전송 조기 종료(리뷰 #172): PATCH 커밋 뒤 응답만 유실돼 재시도가 오면, ②가 자연 키로 이미
+        //   completed 된 로그를 돌려준다. 이때 ③센서·④PATCH 를 다시 하면 센서가 중복되고 PATCH 가 "이미 완료"
+        //   409 로 실패해, 저장은 됐는데 UI 는 계속 실패로 남는다. 이미 completed 면 여기서 성공으로 끝낸다.
+        //   (③④까지의 완전 멱등은 서버 계약 확장이 필요해 post-v1(#105) 로 둔다 — in_progress 재전송의 센서 중복.)
+        if (started.status == "completed") {
+            Log.i(TAG, "② 재전송 감지 — 이미 완료된 기록이라 센서·완료 단계를 건너뛴다(mission_log_id=$logId)")
+            val durationMin = durationSec / 60f
+            val distanceKm = (steps * strideMeters / 1000f).let { (it * 100).roundToInt() / 100f }
+            return Result(
+                missionLogId = logId,
+                steps = steps,
+                durationMin = durationMin,
+                distanceKm = distanceKm,
+                finalStatus = started.status,
+                success = started.success,
+                dailyTotalMin = null, // create 응답엔 누적값이 없다. 홈은 진입 시 재조회로 반영.
+            )
+        }
 
         // ③ 센서 결과 저장 (accelerometer, 측정된 걸음/시간)
         val sensor = api.createSensorSession(

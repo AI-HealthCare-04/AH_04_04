@@ -58,12 +58,14 @@ data class MissionLogCreateRequest(
 @Serializable
 data class MissionLogCreateResponse(
     @SerialName("mission_log_id") val missionLogId: Int,
-    val status: String,
+    val status: String,   // "in_progress" | "completed" — 재전송이 이미 완료된 로그를 돌려주면 "completed"
     val success: Boolean,
     @SerialName("counted_for_daily") val countedForDaily: Boolean,
     @SerialName("daily_limit_reached") val dailyLimitReached: Boolean = false,   // 식사 전용 필드. 걷기 응답엔 없을 수 있어 기본값
     @SerialName("earned_points") val earnedPoints: Int,
     @SerialName("daily_result") val dailyResult: String,                 // none | success | great_success
+    // 재전송이라 새로 만들지 않고 기존 것을 돌려줬는가(#158). true 면 status 가 기존 로그의 상태다.
+    @SerialName("deduplicated") val deduplicated: Boolean = false,
 )
 
 // [요청] 센서 측정 결과 저장. recognition_status 는 백엔드에서 필수(기본값 없음).

@@ -97,9 +97,14 @@ fun WalkingMeasureScreen(
     LaunchedEffect(AppSettings.soundScale) { AppFeedback.tts.setVolume(AppSettings.soundScale) }
 
     // 화면을 완전히 떠날 때: 세션을 리셋(센서 해제 + stale 방지 + 신호 이력 초기화)한 뒤 상위로 이탈.
+    //   ⚠️ 저장 중(Submitting)에는 이탈을 막는다(리뷰 #172). 지금 나가면 reset() 이 스냅샷·자연 키를 버리는데
+    //   업로드 코루틴은 화면 밖에서 계속 돌아, 실패해도 재시도할 데이터가 사라진다. 저장이 끝나거나 실패해
+    //   재시도 가능한 상태가 된 뒤에만 나간다. (BackHandler·확인 버튼이 이 leave 를 공유하므로 둘 다 막힌다)
     val leave = {
-        vm.reset()
-        onBack()
+        if (vm.submitState != WalkingSessionViewModel.SubmitState.Submitting) {
+            vm.reset()
+            onBack()
+        }
     }
 
     // 펫 산책 영상 뷰 — 세션과 같은 화면/상태를 공유. remember 로 유지, 화면 이탈 시 release.
@@ -331,7 +336,12 @@ private fun DoneContent(
         WalkingSessionViewModel.SubmitState.Idle -> Unit
     }
 
-    AigoPrimaryButton(text = "확인", onClick = onConfirm)
+    // 저장 중에는 '확인'을 비활성화한다(리뷰 #172) — 이탈은 leave 가 막지만, 버튼도 흐리게 해 "왜 안 나가지" 혼란을 없앤다.
+    AigoPrimaryButton(
+        text = "확인",
+        onClick = onConfirm,
+        enabled = submitState != WalkingSessionViewModel.SubmitState.Submitting,
+    )
 }
 
 @Composable

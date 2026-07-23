@@ -111,6 +111,23 @@ class WalkingSubmitTest {
     }
 
     @Test
+    fun `성공 후 재호출은 무시된다 - 완료 화면 재구성 시 재제출 방지`() = runTest(dispatcher) {
+        // 리뷰 #172 P1: 완료 화면이 구성 변경(글꼴·다크모드)으로 재구성되면 LaunchedEffect 가 다시 실행돼
+        //   submitWalking 이 또 불릴 수 있다. Success 상태에서는 재제출하지 않아야 한다.
+        val rec = RecordingUploader()
+        val vm = vmWith(rec.uploader, WalkingSnapshot(steps = 800, durationSec = 900))
+
+        vm.submitWalking(missionTemplateId = 7)
+        advanceUntilIdle() // Success
+
+        vm.submitWalking(missionTemplateId = 7) // 재구성으로 재실행됐다고 가정
+        advanceUntilIdle()
+
+        assertEquals("성공 후에는 다시 제출하지 않는다", 1, rec.calls.size)
+        assertEquals(WalkingSessionViewModel.SubmitState.Success, vm.submitState)
+    }
+
+    @Test
     fun `전송 중 재호출은 무시된다 - 중복 제출 방지`() = runTest(dispatcher) {
         val rec = RecordingUploader()
         val vm = vmWith(rec.uploader, WalkingSnapshot(steps = 300, durationSec = 300))
