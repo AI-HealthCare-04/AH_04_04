@@ -485,7 +485,7 @@ def _synth_file(fp, label, placement, gravity_axis="z"):
         else:                                            # sit_only: 서있기(거의 정지)
             dyn = (rnd.uniform(-0.03, 0.03), rnd.uniform(-0.03, 0.03), rnd.uniform(-0.03, 0.03))
             step = False
-        emit("walking", "sit_cue" if False else "", False, dyn, step)
+        emit("walking", "", False, dyn, step)
 
     if has_cue:
         for i in range(sit_s * hz):
@@ -620,7 +620,7 @@ def inspect(path):
     n = len(rows)
     if n == 0:
         print("  ❌ 데이터 행 0개 — 수집 실패\n\n판정: ❌ 사용 불가(재수집)")
-        return
+        return False
     dur = (rows[-1]["_t"] - rows[0]["_t"]) / 1000.0
     hz = n / dur if dur > 0 else 0
 
