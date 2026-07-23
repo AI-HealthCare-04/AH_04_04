@@ -173,3 +173,42 @@ async def test_non_positive_duration_is_rejected(
             headers=auth,
         )
         assert resp.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
+# -------------------------------------------------------------------------------------
+# 6. duration_min 없이 완료 시도 → 400, 완료 상태로 굳지 않아 재시도가 가능해야 한다
+# -------------------------------------------------------------------------------------
+async def test_completion_without_duration_is_rejected_and_retryable(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    """duration_min 없이 완료하면 누적 0·실패로 굳고, 멱등 유니크 때문에 재완료도 409 로 막힌다.
+
+    그래서 완료 상태로 전환하기 '전에' 400 으로 막아야 한다(리뷰 #159). 막은 뒤에는 로그가
+    아직 in_progress 라, 시간을 담아 다시 완료 요청하면 정상 처리돼야 한다.
+    """
+    auth = await _guest(db_client)
+    template_id = await _seed_exercise_template(db_sessionmaker)
+
+    created = await db_client.post(
+        f"{API}/mission-logs",
+        json={"mission_template_id": template_id, "mission_type": "exercise", "status": "in_progress"},
+        headers=auth,
+    )
+    log_id = created.json()["mission_log_id"]
+
+    # duration_min 을 뺀 완료 → 400 (필드 자체는 optional 이라 스키마는 통과, 서비스가 막는다)
+    missing = await db_client.patch(
+        f"{API}/mission-logs/{log_id}",
+        json={"status": "completed", "success": True, "exercise_detail": {"reps": 10}},
+        headers=auth,
+    )
+    assert missing.status_code == status.HTTP_400_BAD_REQUEST
+
+    # 로그가 완료로 굳지 않았으므로, 시간을 담아 다시 완료하면 성공한다.
+    retry = await db_client.patch(
+        f"{API}/mission-logs/{log_id}",
+        json={"status": "completed", "success": True, "exercise_detail": {"duration_min": 12}},
+        headers=auth,
+    )
+    assert retry.status_code == status.HTTP_200_OK
+    assert retry.json()["success"] is True

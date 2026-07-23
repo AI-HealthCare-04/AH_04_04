@@ -322,6 +322,14 @@ class MissionService:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST, detail="운동 완료에는 exercise_detail이 필요합니다."
                 )
+            # 성공 판정이 '당일 누적 시간'이라 duration_min 이 없으면 이 수행은 0분으로 집계된다.
+            #   그대로 COMPLETED 로 넘기면 누적 0·실패로 굳고, 멱등 유니크 때문에 재완료도 409 로 막힌다.
+            #   그래서 완료 상태로 전환하기 '전에' 여기서 막는다(리뷰 #159).
+            if data.exercise_detail.duration_min is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="운동 완료에는 수행 시간(duration_min)이 필요합니다.",
+                )
             if data.walking_detail is not None:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST, detail="운동 미션에는 walking_detail을 보낼 수 없습니다."
@@ -394,13 +402,15 @@ class MissionService:
         # 운동 완료: physical_activity_logs 저장 + 걷기와 같은 '당일 누적' 서버 판정.
         elif data.exercise_detail is not None:
             ed = data.exercise_detail
+            # _validate_completion_detail 에서 운동 완료 시 duration_min 필수를 이미 강제했다.
+            duration_min = ed.duration_min if ed.duration_min is not None else 0.0
             await self.repo.add_physical_activity_log(
                 PhysicalActivityLog(
                     mission_log_id=log.mission_log_id,
                     activity_date=today_kst(),
                     activity_type=ed.activity_type or ActivityType.SEATED_EXERCISE,
                     intensity=ed.intensity,
-                    duration_min=ed.duration_min,
+                    duration_min=duration_min,
                     reps=ed.reps,
                     sets=ed.sets,
                     met_value=ed.met_value,
@@ -412,9 +422,11 @@ class MissionService:
             #   클라이언트 success는 신뢰하지 않는다 — 걷기와 같은 이유다(30초만 보고 success=true 차단).
             #   같은 운동을 여러 번 해도 되고(반복 허용), 중간에 그만둔 회차는 누적이 덜 차 자연히 걸러진다.
             #   포인트·카운트는 하루 1회: 목표를 '이번 세션에서 처음 넘긴' 로그에만 지급한다(걷기와 동일).
+            #   목표 단위는 항상 분(minutes)이다 — 운동 템플릿은 시드·마이그레이션(0010)으로 분으로 통일돼 있고,
+            #   count 등 다른 단위로 운동 템플릿을 추가하면 이 판정이 어긋난다(그때 함께 손봐야 한다).
             daily_total_min = await self.repo.sum_exercise_minutes_today(user.user_id)
             target_min = float(template.default_target_value) if template else 0.0
-            prior_min = daily_total_min - float(ed.duration_min or 0)
+            prior_min = daily_total_min - float(duration_min)
             success = daily_total_min >= target_min
             counted_for_daily = prior_min < target_min <= daily_total_min
         else:
