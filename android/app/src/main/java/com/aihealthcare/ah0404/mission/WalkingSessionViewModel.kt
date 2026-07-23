@@ -4,7 +4,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import com.aihealthcare.ah0404.sensor.WalkingStepDetectorLogic
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlinx.coroutines.launch
+
+/** 걷기 세션 한 건을 서버에 올리는 파이프라인(#91). 재시도·자동재전송(post-v1)이 같은 함수를 부른다. */
+typealias WalkingUploader = suspend (
+    missionTemplateId: Int,
+    steps: Int,
+    durationSec: Int,
+    createdOnDeviceAt: String?,
+) -> Unit
 
 /**
  * ============================================================================
@@ -29,9 +42,17 @@ import com.aihealthcare.ah0404.sensor.WalkingStepDetectorLogic
  */
 class WalkingSessionViewModel(
     private val session: WalkingSessionController,
+    // 서버 제출 파이프라인(#91). 기본은 실경로 구현, 순수 세션 테스트는 fake 를 주입한다.
+    //   ①게스트 로그인을 하지 않는 submitWalkingSession 을 부른다(이미 로그인된 토큰 사용).
+    private val uploader: WalkingUploader = { tid, steps, dur, created ->
+        WalkingFlowUseCase().submitWalkingSession(tid, steps, dur, created)
+    },
 ) : ViewModel() {
 
     enum class Phase { READY, MEASURING, DONE }
+
+    /** 종료 후 서버 제출 상태(#91). Idle=제출 전, Submitting=전송 중, Success=완료, Failed=실패(재시도 가능). */
+    enum class SubmitState { Idle, Submitting, Success, Failed }
 
     data class UiState(
         val phase: Phase = Phase.READY,
@@ -51,6 +72,16 @@ class WalkingSessionViewModel(
 
     var uiState by mutableStateOf(UiState(sensorAvailable = session.isSensorAvailable))
         private set
+
+    /** 서버 제출 상태(#91). 화면이 관찰해 전송 중 로딩·성공·실패(재시도 버튼)를 그린다. */
+    var submitState by mutableStateOf(SubmitState.Idle)
+        private set
+
+    /**
+     * 측정 시작 시각(ISO-8601). #158 자연 키 — 재전송해도 **같은 값**이어야 중복 집계가 막힌다.
+     *   그래서 시작에서 한 번 잡고, 종료·재시도 때 그대로 다시 보낸다. (종료 시각을 쓰면 재시도마다 달라짐)
+     */
+    private var createdOnDeviceAt: String? = null
 
     /**
      * 진동·음성 피드백 신호(#92) 발생 이력을 든 트래커. **화면(remember)이 아니라 VM 수명**에 둔다.
@@ -76,6 +107,8 @@ class WalkingSessionViewModel(
             return
         }
         feedbackTracker.reset() // 새 세션 → 시작/목표 신호 재활성
+        createdOnDeviceAt = nowIso8601() // 이 측정 인스턴스의 자연 키를 시작 시점에 고정(#158)
+        submitState = SubmitState.Idle
         uiState = UiState(phase = Phase.MEASURING, sensorAvailable = true)
     }
 
@@ -121,7 +154,7 @@ class WalkingSessionViewModel(
         if (uiState.phase == Phase.MEASURING) session.pause()
     }
 
-    /** 측정 종료 → 세션 스냅샷을 확정해 DONE 으로. 서버 제출은 없다(#91). MEASURING 에서만 유효. */
+    /** 측정 종료 → 세션 스냅샷을 확정해 DONE 으로. 서버 제출은 submitWalking 이 별도로 한다. MEASURING 에서만 유효. */
     fun finish() {
         if (uiState.phase != Phase.MEASURING) return
         val snapshot = session.stop()
@@ -132,6 +165,32 @@ class WalkingSessionViewModel(
             result = snapshot,
         )
     }
+
+    /**
+     * 확정된 스냅샷을 서버에 제출한다(#91, A안). 종료 후(DONE) 1회 자동 호출되고, 실패 시 사용자가 재시도한다.
+     *
+     *  같은 measurement 를 여러 번 눌러도(재시도) createdOnDeviceAt 이 고정돼 있어 #158 이 중복을 막는다.
+     *  성공/실패만 상태로 노출하고, 홈 실적은 홈 진입 시 재조회로 반영된다(별도 push 없음).
+     *
+     * @param missionTemplateId 어느 걷기 미션인지 — 화면(mission)에서 전달.
+     */
+    fun submitWalking(missionTemplateId: Int) {
+        val snapshot = uiState.result ?: return          // DONE 스냅샷이 있어야 제출
+        if (submitState == SubmitState.Submitting) return // 중복 제출 방지(연타·재구성)
+        submitState = SubmitState.Submitting
+        viewModelScope.launch {
+            submitState = try {
+                uploader(missionTemplateId, snapshot.steps, snapshot.durationSec, createdOnDeviceAt)
+                SubmitState.Success
+            } catch (_: Exception) {
+                SubmitState.Failed // 네트워크·서버 오류 → 화면이 재시도 버튼 노출
+            }
+        }
+    }
+
+    /** 재전송 때 값이 바뀌지 않게 시작 시점에 한 번만 만든다. 마이크로초는 밀리초까지만(백엔드가 그대로 저장). */
+    private fun nowIso8601(): String =
+        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US).format(Date())
 
     /**
      * 세션을 준비 상태로 초기화한다 — 화면을 완전히 떠날 때(뒤로/완료 후 확인) 호출.

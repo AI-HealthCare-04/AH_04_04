@@ -49,6 +49,10 @@ data class MissionLogCreateRequest(
     val status: String,                                    // "in_progress" | "completed"
     // 운동(requires_safety_notice=true)에서만 필요. 걷기 데모에선 null로 두면 전송 안 됨.
     @SerialName("safety_notice_confirmed") val safetyNoticeConfirmed: Boolean? = null,
+    // 기기에서 이 기록(측정)이 만들어진 시각(ISO-8601). 서버가 재전송을 같은 수행으로 알아보는 자연 키(#158).
+    //   재전송 시 반드시 같은 값을 다시 보내야 중복 집계가 막힌다 → 측정 '시작' 시각을 한 번 잡아 고정한다.
+    //   null 이면 서버 유니크에서 제외돼 종전 동작(중복 방지 없음)과 호환.
+    @SerialName("created_on_device_at") val createdOnDeviceAt: String? = null,
 )
 
 @Serializable

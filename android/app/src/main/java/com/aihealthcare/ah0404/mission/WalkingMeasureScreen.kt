@@ -39,6 +39,7 @@ import com.aihealthcare.ah0404.settings.AppSettings
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoHeroCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
+import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
 import com.aihealthcare.ah0404.ui.components.WalkSitGuidanceNote
 import com.aihealthcare.ah0404.ui.theme.Dimens
 import kotlinx.coroutines.delay
@@ -200,11 +201,18 @@ fun WalkingMeasureScreen(
                 onFinish = vm::finish,
             )
 
-            WalkingSessionViewModel.Phase.DONE -> DoneContent(
-                ui = ui,
-                goalText = "${mission.targetValue} ${targetUnitLabel(mission.targetUnit)}",
-                onConfirm = leave,
-            )
+            WalkingSessionViewModel.Phase.DONE -> {
+                // 종료(DONE) 진입 시 서버 제출 1회 자동 시작(#91 A안). 제출 로직은 VM 이 중복을 막고,
+                //   실패하면 아래 DoneContent 가 재시도 버튼을 노출한다. 홈 실적은 홈 진입 시 재조회로 반영.
+                LaunchedEffect(Unit) { vm.submitWalking(mission.missionTemplateId) }
+                DoneContent(
+                    ui = ui,
+                    goalText = "${mission.targetValue} ${targetUnitLabel(mission.targetUnit)}",
+                    submitState = vm.submitState,
+                    onRetry = { vm.submitWalking(mission.missionTemplateId) },
+                    onConfirm = leave,
+                )
+            }
         }
         Spacer(Modifier.height(Dimens.Space8))
     }
@@ -292,11 +300,12 @@ private fun MeasuringContent(
 private fun DoneContent(
     ui: WalkingSessionViewModel.UiState,
     goalText: String,
+    submitState: WalkingSessionViewModel.SubmitState,
+    onRetry: () -> Unit,
     onConfirm: () -> Unit,
 ) {
-    // '완료/달성'이 아니라 '측정을 마쳤다'로 표기한다. 목표 달성 판정은 서버가 당일 누적으로 하며(#91),
-    //   아직 서버 저장이 연결되지 않아 이 화면은 걸음 수를 단정할 근거가 없다. 0걸음으로 종료해도
-    //   "🎉 걷기 완료!"가 뜨던 문제를 막는다(#161). 측정값은 목표와 나란히 참고로만 보여준다.
+    // '완료/달성'이 아니라 '측정을 마쳤다'로 표기한다. 목표 달성 판정은 서버가 당일 누적으로 하므로(#91)
+    //   이 화면은 걸음 수를 단정하지 않는다. 0걸음으로 종료해도 "🎉 걷기 완료!"가 뜨던 문제를 막는다(#161).
     Text("측정을 마쳤어요", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
     AigoCard {
         ResultRow("걸음 수", "${ui.steps} 걸음")
@@ -307,13 +316,31 @@ private fun DoneContent(
         Spacer(Modifier.height(Dimens.Space8))
         ResultRow("오늘 목표", goalText)
     }
-    // 거리·포인트 반영과 서버 저장은 다음 업데이트(#91)에서 연결된다. 지금은 측정값만 확정해 보여준다.
+
+    // 서버 저장 상태(#91). 성공은 조용히 안내, 실패는 재시도 버튼으로 사용자가 다시 시도한다.
+    //   (자동 재전송 outbox 는 post-v1 #105 — v1 은 재시도 버튼으로 처리)
+    when (submitState) {
+        WalkingSessionViewModel.SubmitState.Submitting ->
+            StatusNote("기록을 저장하고 있어요…")
+        WalkingSessionViewModel.SubmitState.Success ->
+            StatusNote("기록을 저장했어요. 홈에서 오늘 활동을 확인할 수 있어요.")
+        WalkingSessionViewModel.SubmitState.Failed -> {
+            StatusNote("기록 저장에 실패했어요. 연결을 확인하고 다시 시도해 주세요.")
+            AigoSecondaryButton(text = "다시 저장", onClick = onRetry)
+        }
+        WalkingSessionViewModel.SubmitState.Idle -> Unit
+    }
+
+    AigoPrimaryButton(text = "확인", onClick = onConfirm)
+}
+
+@Composable
+private fun StatusNote(text: String) {
     Text(
-        text = "기록 저장은 다음 업데이트에서 연결돼요.",
+        text = text,
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    AigoPrimaryButton(text = "확인", onClick = onConfirm)
 }
 
 @Composable

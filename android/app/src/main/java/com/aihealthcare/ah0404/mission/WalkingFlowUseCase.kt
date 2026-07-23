@@ -60,17 +60,42 @@ class WalkingFlowUseCase(
         steps: Int = 1000,
         durationSec: Int = 600,
     ): Result {
-        // ① 게스트 로그인 → 토큰
+        // ① 게스트 로그인 → 토큰. (헤드리스 데모 전용 — 실경로는 이미 로그인된 토큰을 쓰므로 submitWalkingSession 사용)
         val login = api.guestLogin()
         TokenHolder.token = login.accessToken
         Log.i(TAG, "① 게스트 로그인 OK (token ${login.accessToken.take(12)}…)")
+        // 데모는 재전송 검증 대상이 아니라 자연 키를 보내지 않는다(null → 서버 유니크 제외).
+        return submitWalkingSession(missionTemplateId, steps, durationSec, createdOnDeviceAt = null)
+    }
 
-        // ② 걷기 시작 (in_progress)
+    /**
+     * 실경로 제출 파이프라인 — **이미 로그인된 토큰**으로 걷기 세션 한 건을 서버에 올린다(#91).
+     *
+     *  게스트 로그인(①)을 하지 않는다. 실경로는 소셜/게스트로 이미 인증된 상태이고, 여기서 다시
+     *  guestLogin 을 부르면 전역 토큰을 덮어써 계정이 갈린다(#160 과 같은 사고).
+     *
+     *  ② POST in_progress → ③ sensor-sessions → ④ PATCH completed(walking_detail).
+     *  measurement 종료 시 한 번에 태우는 A안(측정 중 로컬만, 종료 시 완료 이벤트) 구현이다.
+     *
+     *  재시도(네트워크 실패 후 사용자가 다시 누름)와 자동 재전송(post-v1 outbox)이 **같은 함수**를
+     *  호출하도록 순수 제출 로직만 담는다 — 호출부(UI/큐)만 달라진다.
+     *
+     * @param createdOnDeviceAt 측정 시작 시각(ISO-8601). 재전송 때 **같은 값**을 넘겨야 #158 자연 키로
+     *   중복 집계가 막힌다. 그래서 이 값은 호출부(VM)가 측정 시작 시 한 번 잡아 고정한 것을 넘긴다.
+     */
+    suspend fun submitWalkingSession(
+        missionTemplateId: Int,
+        steps: Int,
+        durationSec: Int,
+        createdOnDeviceAt: String?,
+    ): Result {
+        // ② 걷기 시작 (in_progress) — 자연 키(created_on_device_at) 동봉
         val started = api.createMissionLog(
             MissionLogCreateRequest(
                 missionTemplateId = missionTemplateId,
                 missionType = "walking",
                 status = "in_progress",
+                createdOnDeviceAt = createdOnDeviceAt,
             )
         )
         val logId = started.missionLogId
