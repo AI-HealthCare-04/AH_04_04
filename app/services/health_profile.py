@@ -4,9 +4,9 @@ from decimal import ROUND_HALF_UP, Decimal
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.utils.clock import now_kst, today_kst
+from app.core.utils.clock import today_kst
 from app.dtos.health_profile import HealthProfileCreateRequest, HealthProfileCreateResponse, HealthProfileResponse
-from app.models.enums import HealthCheckStatus, KidneyStatus, ProteinRestrictionStatus
+from app.models.enums import KidneyStatus, ProteinRestrictionStatus
 from app.models.health import HealthProfile
 from app.models.users import User
 from app.repositories.health_profile_repository import HealthProfileRepository
@@ -47,11 +47,8 @@ class HealthProfileService:
             has_estimated_value=data.has_estimated_value,
         )
         await self.repo.create_profile(profile)
-        # 프로필 저장 = 건강체크 세션의 최종 완료 시점(여기서 STARTED 세션을 확정한다).
-        #   STARTED 세션만 COMPLETED로 원자적으로(같은 커밋) 갱신한다. skip 등 이미 종료된 세션은 건드리지 않는다.
-        if health_check_session is not None and health_check_session.status == HealthCheckStatus.STARTED:
-            health_check_session.status = HealthCheckStatus.COMPLETED
-            health_check_session.completed_at = now_kst()
+        # 프로필 저장은 체력검사 전 단계다. 세션 종료는 명시적인 검사 완료
+        # (PhysicalAssessmentService) 또는 건너뛰기(HealthCheckService)가 담당한다.
         await self.session.commit()
         await self.session.refresh(profile)
         return HealthProfileCreateResponse(
