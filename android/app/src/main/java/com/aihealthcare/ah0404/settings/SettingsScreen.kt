@@ -22,6 +22,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -49,10 +53,13 @@ fun SettingsScreen(
     onBack: (() -> Unit)? = null,
     onOpenSupport: () -> Unit,
     onOpenProfile: () -> Unit,
+    onLogout: () -> Unit = {},
     modifier: Modifier = Modifier,
     vm: SettingsViewModel = viewModel(),
 ) {
     val context = LocalContext.current
+    // 로그아웃 확인 다이얼로그(#154). 시니어 대상이라 실수 방지로 한 번 되묻는다.
+    var showLogoutConfirm by rememberSaveable { mutableStateOf(false) }
     // 진입마다 서버 설정 재조회(리뷰 #68 교훈).
     LaunchedEffect(Unit) { vm.load() }
     // 전역 적용값(글자·소리)을 VM 의 최종 설정값에 항상 동기화(묶음 C-2, 리뷰 #86-1).
@@ -149,6 +156,12 @@ fun SettingsScreen(
                 onClick = onOpenSupport,
             )
 
+            Spacer(Modifier.height(Dimens.Space4))
+            AigoSecondaryButton(
+                text = "로그아웃",
+                onClick = { showLogoutConfirm = true },
+            )
+
             // #131 파형 수집 진입 — 디버그 빌드에서만 노출(릴리스에는 대상 Activity 자체가 없음).
             //   명시 인텐트를 문자열 ComponentName 으로 실행해, debug 소스셋 전용 Activity 를
             //   릴리스에서 컴파일 참조하지 않는다(참조하면 릴리스 빌드가 깨진다).
@@ -178,6 +191,20 @@ fun SettingsScreen(
             confirmText = "확인",
             onConfirm = vm::dismissSaveError,
             onDismissRequest = vm::dismissSaveError,
+        )
+    }
+
+    if (showLogoutConfirm) {
+        AigoDialog(
+            title = "로그아웃",
+            message = "로그아웃할까요? 다시 로그인하면 이어서 사용할 수 있어요.",
+            confirmText = "로그아웃",
+            onConfirm = {
+                showLogoutConfirm = false
+                onLogout()
+            },
+            onDismissRequest = { showLogoutConfirm = false },
+            dismissText = "취소",
         )
     }
 }
