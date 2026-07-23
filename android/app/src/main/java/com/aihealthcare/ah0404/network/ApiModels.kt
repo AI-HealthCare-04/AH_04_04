@@ -49,17 +49,23 @@ data class MissionLogCreateRequest(
     val status: String,                                    // "in_progress" | "completed"
     // 운동(requires_safety_notice=true)에서만 필요. 걷기 데모에선 null로 두면 전송 안 됨.
     @SerialName("safety_notice_confirmed") val safetyNoticeConfirmed: Boolean? = null,
+    // 기기에서 이 기록(측정)이 만들어진 시각(ISO-8601). 서버가 재전송을 같은 수행으로 알아보는 자연 키(#158).
+    //   재전송 시 반드시 같은 값을 다시 보내야 중복 집계가 막힌다 → 측정 '시작' 시각을 한 번 잡아 고정한다.
+    //   null 이면 서버 유니크에서 제외돼 종전 동작(중복 방지 없음)과 호환.
+    @SerialName("created_on_device_at") val createdOnDeviceAt: String? = null,
 )
 
 @Serializable
 data class MissionLogCreateResponse(
     @SerialName("mission_log_id") val missionLogId: Int,
-    val status: String,
+    val status: String,   // "in_progress" | "completed" — 재전송이 이미 완료된 로그를 돌려주면 "completed"
     val success: Boolean,
     @SerialName("counted_for_daily") val countedForDaily: Boolean,
     @SerialName("daily_limit_reached") val dailyLimitReached: Boolean = false,   // 식사 전용 필드. 걷기 응답엔 없을 수 있어 기본값
     @SerialName("earned_points") val earnedPoints: Int,
     @SerialName("daily_result") val dailyResult: String,                 // none | success | great_success
+    // 재전송이라 새로 만들지 않고 기존 것을 돌려줬는가(#158). true 면 status 가 기존 로그의 상태다.
+    @SerialName("deduplicated") val deduplicated: Boolean = false,
 )
 
 // [요청] 센서 측정 결과 저장. recognition_status 는 백엔드에서 필수(기본값 없음).

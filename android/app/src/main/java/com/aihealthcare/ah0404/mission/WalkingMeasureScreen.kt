@@ -39,6 +39,7 @@ import com.aihealthcare.ah0404.settings.AppSettings
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoHeroCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
+import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
 import com.aihealthcare.ah0404.ui.components.WalkSitGuidanceNote
 import com.aihealthcare.ah0404.ui.theme.Dimens
 import kotlinx.coroutines.delay
@@ -96,9 +97,14 @@ fun WalkingMeasureScreen(
     LaunchedEffect(AppSettings.soundScale) { AppFeedback.tts.setVolume(AppSettings.soundScale) }
 
     // 화면을 완전히 떠날 때: 세션을 리셋(센서 해제 + stale 방지 + 신호 이력 초기화)한 뒤 상위로 이탈.
+    //   ⚠️ 저장 중(Submitting)에는 이탈을 막는다(리뷰 #172). 지금 나가면 reset() 이 스냅샷·자연 키를 버리는데
+    //   업로드 코루틴은 화면 밖에서 계속 돌아, 실패해도 재시도할 데이터가 사라진다. 저장이 끝나거나 실패해
+    //   재시도 가능한 상태가 된 뒤에만 나간다. (BackHandler·확인 버튼이 이 leave 를 공유하므로 둘 다 막힌다)
     val leave = {
-        vm.reset()
-        onBack()
+        if (vm.submitState != WalkingSessionViewModel.SubmitState.Submitting) {
+            vm.reset()
+            onBack()
+        }
     }
 
     // 펫 산책 영상 뷰 — 세션과 같은 화면/상태를 공유. remember 로 유지, 화면 이탈 시 release.
@@ -200,11 +206,18 @@ fun WalkingMeasureScreen(
                 onFinish = vm::finish,
             )
 
-            WalkingSessionViewModel.Phase.DONE -> DoneContent(
-                ui = ui,
-                goalText = "${mission.targetValue} ${targetUnitLabel(mission.targetUnit)}",
-                onConfirm = leave,
-            )
+            WalkingSessionViewModel.Phase.DONE -> {
+                // 종료(DONE) 진입 시 서버 제출 1회 자동 시작(#91 A안). 제출 로직은 VM 이 중복을 막고,
+                //   실패하면 아래 DoneContent 가 재시도 버튼을 노출한다. 홈 실적은 홈 진입 시 재조회로 반영.
+                LaunchedEffect(Unit) { vm.submitWalking(mission.missionTemplateId) }
+                DoneContent(
+                    ui = ui,
+                    goalText = "${mission.targetValue} ${targetUnitLabel(mission.targetUnit)}",
+                    submitState = vm.submitState,
+                    onRetry = { vm.submitWalking(mission.missionTemplateId) },
+                    onConfirm = leave,
+                )
+            }
         }
         Spacer(Modifier.height(Dimens.Space8))
     }
@@ -292,11 +305,12 @@ private fun MeasuringContent(
 private fun DoneContent(
     ui: WalkingSessionViewModel.UiState,
     goalText: String,
+    submitState: WalkingSessionViewModel.SubmitState,
+    onRetry: () -> Unit,
     onConfirm: () -> Unit,
 ) {
-    // '완료/달성'이 아니라 '측정을 마쳤다'로 표기한다. 목표 달성 판정은 서버가 당일 누적으로 하며(#91),
-    //   아직 서버 저장이 연결되지 않아 이 화면은 걸음 수를 단정할 근거가 없다. 0걸음으로 종료해도
-    //   "🎉 걷기 완료!"가 뜨던 문제를 막는다(#161). 측정값은 목표와 나란히 참고로만 보여준다.
+    // '완료/달성'이 아니라 '측정을 마쳤다'로 표기한다. 목표 달성 판정은 서버가 당일 누적으로 하므로(#91)
+    //   이 화면은 걸음 수를 단정하지 않는다. 0걸음으로 종료해도 "🎉 걷기 완료!"가 뜨던 문제를 막는다(#161).
     Text("측정을 마쳤어요", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
     AigoCard {
         ResultRow("걸음 수", "${ui.steps} 걸음")
@@ -307,13 +321,36 @@ private fun DoneContent(
         Spacer(Modifier.height(Dimens.Space8))
         ResultRow("오늘 목표", goalText)
     }
-    // 거리·포인트 반영과 서버 저장은 다음 업데이트(#91)에서 연결된다. 지금은 측정값만 확정해 보여준다.
+
+    // 서버 저장 상태(#91). 성공은 조용히 안내, 실패는 재시도 버튼으로 사용자가 다시 시도한다.
+    //   (자동 재전송 outbox 는 post-v1 #105 — v1 은 재시도 버튼으로 처리)
+    when (submitState) {
+        WalkingSessionViewModel.SubmitState.Submitting ->
+            StatusNote("기록을 저장하고 있어요…")
+        WalkingSessionViewModel.SubmitState.Success ->
+            StatusNote("기록을 저장했어요. 홈에서 오늘 활동을 확인할 수 있어요.")
+        WalkingSessionViewModel.SubmitState.Failed -> {
+            StatusNote("기록 저장에 실패했어요. 연결을 확인하고 다시 시도해 주세요.")
+            AigoSecondaryButton(text = "다시 저장", onClick = onRetry)
+        }
+        WalkingSessionViewModel.SubmitState.Idle -> Unit
+    }
+
+    // 저장 중에는 '확인'을 비활성화한다(리뷰 #172) — 이탈은 leave 가 막지만, 버튼도 흐리게 해 "왜 안 나가지" 혼란을 없앤다.
+    AigoPrimaryButton(
+        text = "확인",
+        onClick = onConfirm,
+        enabled = submitState != WalkingSessionViewModel.SubmitState.Submitting,
+    )
+}
+
+@Composable
+private fun StatusNote(text: String) {
     Text(
-        text = "기록 저장은 다음 업데이트에서 연결돼요.",
+        text = text,
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    AigoPrimaryButton(text = "확인", onClick = onConfirm)
 }
 
 @Composable

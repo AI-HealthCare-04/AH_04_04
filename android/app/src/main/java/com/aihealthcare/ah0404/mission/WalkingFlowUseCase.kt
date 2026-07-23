@@ -60,21 +60,65 @@ class WalkingFlowUseCase(
         steps: Int = 1000,
         durationSec: Int = 600,
     ): Result {
-        // ① 게스트 로그인 → 토큰
+        // ① 게스트 로그인 → 토큰. (헤드리스 데모 전용 — 실경로는 이미 로그인된 토큰을 쓰므로 submitWalkingSession 사용)
         val login = api.guestLogin()
         TokenHolder.token = login.accessToken
         Log.i(TAG, "① 게스트 로그인 OK (token ${login.accessToken.take(12)}…)")
+        // 데모는 재전송 검증 대상이 아니라 자연 키를 보내지 않는다(null → 서버 유니크 제외).
+        return submitWalkingSession(missionTemplateId, steps, durationSec, createdOnDeviceAt = null)
+    }
 
-        // ② 걷기 시작 (in_progress)
+    /**
+     * 실경로 제출 파이프라인 — **이미 로그인된 토큰**으로 걷기 세션 한 건을 서버에 올린다(#91).
+     *
+     *  게스트 로그인(①)을 하지 않는다. 실경로는 소셜/게스트로 이미 인증된 상태이고, 여기서 다시
+     *  guestLogin 을 부르면 전역 토큰을 덮어써 계정이 갈린다(#160 과 같은 사고).
+     *
+     *  ② POST in_progress → ③ sensor-sessions → ④ PATCH completed(walking_detail).
+     *  measurement 종료 시 한 번에 태우는 A안(측정 중 로컬만, 종료 시 완료 이벤트) 구현이다.
+     *
+     *  재시도(네트워크 실패 후 사용자가 다시 누름)와 자동 재전송(post-v1 outbox)이 **같은 함수**를
+     *  호출하도록 순수 제출 로직만 담는다 — 호출부(UI/큐)만 달라진다.
+     *
+     * @param createdOnDeviceAt 측정 시작 시각(ISO-8601). 재전송 때 **같은 값**을 넘겨야 #158 자연 키로
+     *   중복 집계가 막힌다. 그래서 이 값은 호출부(VM)가 측정 시작 시 한 번 잡아 고정한 것을 넘긴다.
+     */
+    suspend fun submitWalkingSession(
+        missionTemplateId: Int,
+        steps: Int,
+        durationSec: Int,
+        createdOnDeviceAt: String?,
+    ): Result {
+        // ② 걷기 시작 (in_progress) — 자연 키(created_on_device_at) 동봉
         val started = api.createMissionLog(
             MissionLogCreateRequest(
                 missionTemplateId = missionTemplateId,
                 missionType = "walking",
                 status = "in_progress",
+                createdOnDeviceAt = createdOnDeviceAt,
             )
         )
         val logId = started.missionLogId
-        Log.i(TAG, "② 걷기 시작 OK → mission_log_id=$logId, status=${started.status}")
+        Log.i(TAG, "② 걷기 시작 OK → mission_log_id=$logId, status=${started.status}, deduplicated=${started.deduplicated}")
+
+        // ★ 재전송 조기 종료(리뷰 #172): PATCH 커밋 뒤 응답만 유실돼 재시도가 오면, ②가 자연 키로 이미
+        //   completed 된 로그를 돌려준다. 이때 ③센서·④PATCH 를 다시 하면 센서가 중복되고 PATCH 가 "이미 완료"
+        //   409 로 실패해, 저장은 됐는데 UI 는 계속 실패로 남는다. 이미 completed 면 여기서 성공으로 끝낸다.
+        //   (③④까지의 완전 멱등은 서버 계약 확장이 필요해 post-v1(#105) 로 둔다 — in_progress 재전송의 센서 중복.)
+        if (started.status == "completed") {
+            Log.i(TAG, "② 재전송 감지 — 이미 완료된 기록이라 센서·완료 단계를 건너뛴다(mission_log_id=$logId)")
+            val durationMin = durationSec / 60f
+            val distanceKm = (steps * strideMeters / 1000f).let { (it * 100).roundToInt() / 100f }
+            return Result(
+                missionLogId = logId,
+                steps = steps,
+                durationMin = durationMin,
+                distanceKm = distanceKm,
+                finalStatus = started.status,
+                success = started.success,
+                dailyTotalMin = null, // create 응답엔 누적값이 없다. 홈은 진입 시 재조회로 반영.
+            )
+        }
 
         // ③ 센서 결과 저장 (accelerometer, 측정된 걸음/시간)
         val sensor = api.createSensorSession(
