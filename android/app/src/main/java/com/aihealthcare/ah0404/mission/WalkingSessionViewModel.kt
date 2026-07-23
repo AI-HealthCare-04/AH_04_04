@@ -53,6 +53,14 @@ class WalkingSessionViewModel(
         private set
 
     /**
+     * 진동·음성 피드백 신호(#92) 발생 이력을 든 트래커. **화면(remember)이 아니라 VM 수명**에 둔다.
+     * VM 은 Activity ViewModelStore 에 있어 구성 변경(글꼴 크기·다크모드·멀티윈도우·폴더블 접기/펴기 등)에
+     * 생존하므로, 화면이 재구성돼 세션 상태(confirmed/steps)를 다시 전달해도 STARTED/GOAL_REACHED 가
+     * 재발생하지 않는다(리뷰 #148 블로커 3). 새 세션 시작·이탈 리셋에서만 함께 초기화된다.
+     */
+    private val feedbackTracker = WalkingFeedbackTracker()
+
+    /**
      * 측정 시작.
      *  - 가속도계 미지원 → READY 유지, sensorAvailable=false.
      *  - 지원하나 등록 실패 → READY 유지, startFailed=true (다시 시도 안내). MEASURING 으로 가지 않는다.
@@ -67,8 +75,18 @@ class WalkingSessionViewModel(
             uiState = uiState.copy(sensorAvailable = true, startFailed = true)
             return
         }
+        feedbackTracker.reset() // 새 세션 → 시작/목표 신호 재활성
         uiState = UiState(phase = Phase.MEASURING, sensorAvailable = true)
     }
+
+    /**
+     * 화면이 세션 상태 변화(confirmed/steps) 때 호출 — 이번에 **새로 발생한** 피드백 신호만 반환한다.
+     * 트래커가 VM 수명이라 구성 변경 후 같은 상태를 다시 전달해도 중복되지 않는다.
+     *
+     * @param goalSteps 목표 걸음 수(단위가 걸음일 때만). null/0 이하면 목표 도달 신호를 내지 않는다.
+     */
+    fun drainFeedbackCues(goalSteps: Int?): List<WalkingFeedbackCue> =
+        feedbackTracker.onUpdate(uiState.confirmed, uiState.steps, goalSteps)
 
     /** 화면이 측정 중 동안 주기적으로 호출 — 세션에서 걸음/상태/경과를 읽어 반영한다. */
     fun poll() {
@@ -130,6 +148,7 @@ class WalkingSessionViewModel(
      */
     fun reset() {
         session.cancel()
+        feedbackTracker.reset() // 이탈 시 신호 이력도 초기화(다음 세션에서 다시 울리도록)
         uiState = UiState(sensorAvailable = session.isSensorAvailable)
     }
 

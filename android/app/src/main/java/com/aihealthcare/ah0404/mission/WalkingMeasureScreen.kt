@@ -32,8 +32,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
 import com.aihealthcare.ah0404.R
+import com.aihealthcare.ah0404.feedback.AppFeedback
 import com.aihealthcare.ah0404.network.Mission
 import com.aihealthcare.ah0404.pet.PetWalkingView
+import com.aihealthcare.ah0404.settings.AppSettings
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoHeroCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
@@ -83,7 +85,17 @@ fun WalkingMeasureScreen(
     }
     val ui = vm.uiState
 
-    // 화면을 완전히 떠날 때: 세션을 리셋(센서 해제 + stale 방지)한 뒤 상위로 이탈.
+    // 진동·음성 피드백(#92) — 화면을 보지 않아도 진행을 알 수 있게 핵심 순간에만 신호를 낸다.
+    // 엔진은 앱 공용(#149 AppFeedback)이라 화면은 소비만 한다(release 금지 — 다른 화면 음성이 죽는다).
+    // "언제" 는 세션 VM 의 트래커가 결정(구성 변경에도 생존 → 재발화 없음), "어떻게(진동/TTS)" 는 feedback 이 담당.
+    val feedback: WalkingFeedback = remember { SharedWalkingFeedback(AppFeedback.tts, AppFeedback.haptic) }
+    // 목표 신호는 단위가 걸음일 때만(그 외 걷기 목표는 목표 도달 신호 없음).
+    val goalSteps = mission.targetValue.takeIf { mission.targetUnit == "steps" }
+
+    // 사용자 소리 크기 설정(sound_size)을 TTS 음량에 연동(별도 AudioManager 없음). 설정 변경도 따라간다.
+    LaunchedEffect(AppSettings.soundScale) { AppFeedback.tts.setVolume(AppSettings.soundScale) }
+
+    // 화면을 완전히 떠날 때: 세션을 리셋(센서 해제 + stale 방지 + 신호 이력 초기화)한 뒤 상위로 이탈.
     val leave = {
         vm.reset()
         onBack()
@@ -95,6 +107,14 @@ fun WalkingMeasureScreen(
             setBackground(R.drawable.park_background)
             setPuppyVideo(R.raw.puppy_walk_green)
         }
+    }
+
+    // 세션 상태(확정·걸음)가 바뀔 때마다 새로 발생한 신호만 재생(VM 트래커가 1회로 dedupe).
+    // 트래커가 VM(구성 변경 생존) 수명이라, 회전/글꼴 변경으로 화면이 재구성돼 이 이펙트가 재실행돼도
+    // 같은 cue 가 다시 울리지 않는다(리뷰 #148 블로커 3). 측정 중에만 steps 가 변하므로
+    // 백그라운드(pause)에선 신호가 나지 않는다(#144 와 정합).
+    LaunchedEffect(ui.confirmed, ui.steps) {
+        vm.drainFeedbackCues(goalSteps).forEach(feedback::play)
     }
 
     // 측정 중 동안만 주기 폴링. phase 가 바뀌면 이 이펙트가 재시작돼 루프가 자연히 멈춘다.
@@ -128,6 +148,7 @@ fun WalkingMeasureScreen(
             // 화면 이탈 시 센서 확실히 해제(측정 중 뒤로가기 시 ON_PAUSE가 안 오는 경로 커버).
             vm.onPause()
             petView.release()
+            feedback.stop() // 이 화면의 발화·진동만 중단(공용 엔진은 Application 소유라 release 금지)
         }
     }
 

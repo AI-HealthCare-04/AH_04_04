@@ -307,6 +307,59 @@ class WalkingSessionViewModelTest {
     }
 
     @Test
+    fun feedback_cues_emit_once_and_survive_config_change() {
+        // 리뷰 #148 블로커 3: 트래커가 VM(구성 변경 생존) 수명이라, 같은 세션 상태를 다시 전달해도
+        // (=화면 재구성으로 LaunchedEffect 가 재실행돼도) STARTED/GOAL_REACHED 가 재발생하지 않는다.
+        val fake = FakeController()
+        val vm = WalkingSessionViewModel(fake)
+        vm.startMeasuring()
+
+        fake.state = WalkingStepDetectorLogic.State.WALKING
+        fake.steps = 100
+        vm.poll()
+
+        assertEquals(
+            listOf(WalkingFeedbackCue.STARTED, WalkingFeedbackCue.GOAL_REACHED),
+            vm.drainFeedbackCues(goalSteps = 100),
+        )
+        // 재구성 후 같은 상태 재전달 → 중복 없음.
+        assertEquals(emptyList<WalkingFeedbackCue>(), vm.drainFeedbackCues(goalSteps = 100))
+    }
+
+    @Test
+    fun feedback_cues_reactivate_for_a_new_session() {
+        // 실제 앱 흐름(화면 이탈 → 재진입 → 새 측정)을 그대로 태워 트래커가 다시 울리는지 본다.
+        // startMeasuring() 은 MEASURING 중이면 가드로 즉시 반환하므로, 새 세션 경계는
+        // leave() 가 부르는 vm.reset()(→ MEASURING 이탈) 이후에만 생긴다(리뷰 #148: CI 블로커).
+        val fake = FakeController()
+        val vm = WalkingSessionViewModel(fake)
+        vm.startMeasuring()
+        fake.state = WalkingStepDetectorLogic.State.WALKING
+        fake.steps = 5
+        vm.poll()
+        assertEquals(listOf(WalkingFeedbackCue.STARTED), vm.drainFeedbackCues(goalSteps = null))
+
+        vm.reset()          // 화면 이탈 — 실제 앱에서 leave() 가 하는 일(MEASURING 이탈 + 트래커 초기화)
+        vm.startMeasuring() // 새 세션
+        fake.state = WalkingStepDetectorLogic.State.WALKING
+        fake.steps = 5
+        vm.poll()
+        assertEquals(listOf(WalkingFeedbackCue.STARTED), vm.drainFeedbackCues(goalSteps = null))
+    }
+
+    @Test
+    fun no_goal_cue_when_unit_is_not_steps() {
+        // 목표 단위가 걸음이 아니면(goalSteps=null) 목표 도달 신호를 내지 않는다.
+        val fake = FakeController()
+        val vm = WalkingSessionViewModel(fake)
+        vm.startMeasuring()
+        fake.state = WalkingStepDetectorLogic.State.WALKING
+        fake.steps = 9999
+        vm.poll()
+        assertEquals(listOf(WalkingFeedbackCue.STARTED), vm.drainFeedbackCues(goalSteps = null))
+    }
+
+    @Test
     fun lifecycle_pause_ignored_when_not_measuring() {
         // onResume 과 대칭: 측정 중이 아닐 땐 센서를 건드리지 않는다.
         val fake = FakeController()
