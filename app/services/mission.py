@@ -14,6 +14,7 @@ from datetime import date
 from decimal import Decimal
 
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.clock import today_kst
@@ -59,9 +60,7 @@ class MissionService:
         #   기본 EASY는 홈(dashboard get_home)과 동일 규칙 — 목록·홈 요약의 걷기 노출을 일치시키고,
         #   프로필 없는 사용자(온보딩 직후 등)에게 걷기 3종이 전부 보이던 문제를 막는다.
         #   (레벨 필터는 걷기에만 적용 — repo.get_active_templates 참고)
-        effective_level = (
-            level or await self.repo.get_user_current_level(user.user_id) or ActivityLevel.EASY
-        )
+        effective_level = level or await self.repo.get_user_current_level(user.user_id) or ActivityLevel.EASY
         # 안전 필터: 신장/단백질 제한 사용자에게는 고단백(requires_kidney_check) 미션을 숨긴다.
         latest_profile = await self.health_repo.get_latest_profile(user.user_id)
         exclude_kidney_check = self._should_hide_kidney_missions(latest_profile)
@@ -99,6 +98,60 @@ class MissionService:
                 detail="미션 종류가 템플릿과 일치하지 않습니다.",
             )
 
+        # 오프라인 재전송 방어(#91, #105) — 여기서 먼저 걸러 아래 검증·삽입을 아예 타지 않는다.
+        #   응답을 못 받은 앱이 outbox 로 같은 수행을 다시 보내면, 새 행을 만들지 않고 기존 것을 돌려준다.
+        #   기록이 이미 남아 있으므로 그 사이 프로필이 바뀌어(신장 제한 등) 지금은 거부될 수행이라도
+        #   재전송은 성공해야 한다 — 그래서 안전 필터보다 앞에 둔다.
+        already = await self._find_resent_log(user, data)
+        if already is not None:
+            return await self._existing_log_response(already)
+
+        await self._ensure_can_create(user, data, template)
+
+        try:
+            if data.status == MissionStatus.IN_PROGRESS:
+                return await self._start_mission(user, data, template)
+            return await self._complete_immediately(user, data, template)
+        except IntegrityError:
+            # 위 조회와 삽입 사이에 같은 수행이 들어온 경우(재전송 2건 동시 도착).
+            #   유니크 제약이 두 번째를 막아주므로, 롤백하고 먼저 들어간 것을 돌려준다.
+            #   제약이 없으면 이 경합에서 중복 행이 생긴다 — 조회만으로는 못 막는다.
+            await self.session.rollback()
+            raced = await self._find_resent_log(user, data)
+            if raced is None:
+                raise  # 재전송 경합이 아닌 진짜 무결성 오류 — 삼키지 않는다.
+            return await self._existing_log_response(raced)
+
+    async def _find_resent_log(self, user: User, data: MissionLogCreateRequest) -> MissionLog | None:
+        """같은 수행이 이미 기록돼 있으면 그 로그를 준다(재전송 판별).
+
+        created_on_device_at 을 안 보내는 클라이언트는 판별할 근거가 없으므로 항상 None.
+
+        ## 왜 status·payload 를 비교하지 않는가 (안 A 확정, 리뷰 #158)
+          자연 키(user_id, mission_template_id, created_on_device_at) 가 "어느 수행인가"를 유일하게
+          결정한다. 같은 키면 같은 수행으로 보고 status 불문 기존 로그를 그대로 돌려준다.
+
+          status 를 비교하면 '지연 재전송'이 깨진다:
+            POST(in_progress) 성공 → 응답 유실 → 사용자가 측정을 마쳐 PATCH 로 completed →
+            그 뒤 outbox 의 POST(in_progress) 가 뒤늦게 재전송된다.
+          이때 DB 는 completed, 재전송 payload 는 in_progress 라, status 를 비교하면 정상 재전송이
+          409 로 거부된다. 그래서 비교하지 않고 기존(completed) 로그를 200 으로 돌려준다 —
+          앱은 이미 완료된 수행으로 처리하면 된다.
+
+          "서로 다른 수행이 우연히 같은 키" 는 (같은 유저 + 같은 템플릿 + 같은 마이크로초,
+          DATETIME(6)) 라 사실상 불가능하고, 앱이 로컬 수행 생성 시각을 키로 삼아 재전송 때
+          동일 값을 되쏘는 것을 전제로 한다(PR 본문). 이 잔여 리스크를 받는 것이 안 A 의 트레이드오프다.
+        """
+        if data.created_on_device_at is None:
+            return None
+        return await self.repo.find_mission_log_by_device_time(
+            user_id=user.user_id,
+            mission_template_id=data.mission_template_id,
+            created_on_device_at=data.created_on_device_at,
+        )
+
+    async def _ensure_can_create(self, user: User, data: MissionLogCreateRequest, template: MissionTemplate) -> None:
+        """새 수행을 만들 수 있는 요청인지 검증. 재전송은 이 검증을 타지 않는다."""
         # 안전 차단(단일 원천): 목록 숨김(GET /missions)만으로는 캐시된 목록·직접 호출로 우회되므로,
         # 실제 수행을 만드는 여기서도 동일하게 막는다. GET과 같은 protein_challenge_allowed를 쓰며
         # 프로필 없음은 허용(GET 계약과 동일), False인 경우에만 거부한다(신장/단백질 제한 = 카테고리
@@ -123,9 +176,25 @@ class MissionService:
                 detail="운동/걷기 미션은 시작(in_progress)으로만 생성할 수 있습니다.",
             )
 
-        if data.status == MissionStatus.IN_PROGRESS:
-            return await self._start_mission(user, data, template)
-        return await self._complete_immediately(user, data, template)
+    async def _existing_log_response(self, log: MissionLog) -> MissionLogCreateResponse:
+        """이미 기록된 수행을 그대로 돌려준다(재전송). 새로 만들지도, 값을 바꾸지도 않는다."""
+        # 요약은 로그로부터 다시 계산하는 멱등 연산이라, 재전송으로 값이 흔들리지 않는다.
+        #   앱이 최신 daily_result 를 받도록 여기서도 한 번 갱신한다.
+        daily_result = await self._refresh_daily_summary(log.user_id)
+        await self.session.commit()
+        # 식사 1일 1회 초과였는지 복원 — _complete_immediately 가 세운 조건과 같다.
+        #   재전송에도 같은 안내("이미 제출하셨어요")가 나가야 한다.
+        daily_limit_reached = log.mission_type == MissionType.MEAL and log.success and not log.counted_for_daily
+        return MissionLogCreateResponse(
+            mission_log_id=log.mission_log_id,
+            status=log.status.value,
+            success=log.success,
+            counted_for_daily=log.counted_for_daily,
+            daily_limit_reached=daily_limit_reached,
+            earned_points=log.earned_points,
+            daily_result=daily_result.value,
+            deduplicated=True,
+        )
 
     async def _start_mission(
         self, user: User, data: MissionLogCreateRequest, template: MissionTemplate

@@ -2,7 +2,22 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import JSON, BigInteger, Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, func
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    Date,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -70,6 +85,22 @@ class MissionTemplate(Base, TimestampMixin):
 class MissionLog(Base):
     __tablename__ = "mission_logs"
 
+    # 오프라인 outbox 재전송으로 같은 수행이 두 행이 되는 것을 DB 층에서 막는다(#91, #105).
+    #   키를 새로 만들지 않고, 이미 있던 created_on_device_at(기기에서 그 기록이 만들어진 시각)을
+    #   자연 키로 쓴다 — users(provider, social_id) / terms_agreements(user_id, terms_type) 와 같은 패턴.
+    #     같은 수행의 재전송 → 기기 시각이 같다 → 차단
+    #     컨디션 따라 또 수행   → 기기 시각이 다르다 → 정상 삽입(걷기·운동·게임은 반복 허용)
+    #   created_on_device_at 이 NULL 인 행은 MySQL 이 유니크에서 제외하므로,
+    #   이 값을 보내지 않는 기존 앱·기존 데이터는 영향을 받지 않는다.
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "mission_template_id",
+            "created_on_device_at",
+            name="uq_mission_logs_user_template_device_time",
+        ),
+    )
+
     mission_log_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id"), nullable=False, index=True)
     mission_template_id: Mapped[int] = mapped_column(
@@ -108,7 +139,12 @@ class MissionLog(Base):
     dizziness_reported: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     counted_for_daily: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     earned_points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    created_on_device_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 유니크 키의 일부라 마이크로초까지 보존한다. MySQL DATETIME 은 기본이 초 단위라,
+    #   그대로 두면 같은 초에 시작한 서로 다른 두 수행이 중복으로 오인돼 거부된다.
+    created_on_device_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True).with_variant(mysql.DATETIME(fsp=6), "mysql"),
+        nullable=True,
+    )
     synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

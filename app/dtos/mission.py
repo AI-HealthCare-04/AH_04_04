@@ -95,6 +95,10 @@ class MissionLogCreateResponse(BaseModel):
     daily_limit_reached: bool  # 식사 1일 1회 초과 시 true (팝업 근거)
     earned_points: int
     daily_result: str  # none | success | great_success
+    # 같은 수행이 이미 기록돼 있어 새로 만들지 않고 기존 것을 돌려줬는가(#91).
+    #   오프라인 outbox 가 응답을 못 받고 재전송한 경우다. true 면 HTTP 200(생성 아님)으로 응답한다.
+    #   앱은 이 값을 보고 "전송 성공"으로 처리하고 outbox 에서 제거하면 된다.
+    deduplicated: bool = False
 
 
 # -------------------------------------------------------------------------------------
