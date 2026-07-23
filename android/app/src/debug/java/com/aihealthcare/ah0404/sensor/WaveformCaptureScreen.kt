@@ -56,7 +56,7 @@ import kotlin.math.sqrt
  *  WaveformCaptureScreen : '보행 직후 앉기' 분리용 원시 3축 파형 수집 화면 (#131, 디버그 전용)
  * ============================================================================
  *
- *  라벨(정상 보행 / 보행 직후 앉기)과 착용 규격을 고르고 [녹화 시작]을 누른 뒤 실제로 걷고/앉으면,
+ *  라벨(정상 보행 / 보행 직후 앉기 / 서서 앉기만 / 제자리 발끌기)과 착용 규격을 고르고 [녹화 시작]을 누른 뒤 실제로 걷고/앉으면,
  *  가속도계 원시 x/y/z 와 그 순간 감지기 상태(magnitude·필터값·상태·걸음 카운트 여부)를 한 행씩 버퍼에 쌓는다.
  *  [정지] 후 [저장 & 공유]로 CSV 를 내보낸다(WaveformExporter). 이 CSV 로 두 동작의 판별 특징을 탐색한다.
  *
@@ -155,8 +155,9 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
     }
 
     // 기기 무접촉 고정 프로토콜: 시작 후 화면을 건드리지 않아도 자동 큐·자동 종료까지 진행된다.
-    //   WALK_THEN_SIT: WALK_SECONDS 보행 → 비프 큐(전달 검증) → markSitting → SIT_SECONDS 앉기 → 자동 정지.
-    //   NORMAL_WALK  : 동일 총 길이(WALK_SECONDS+SIT_SECONDS) 보행 → 자동 정지(큐 없음).
+    //   앉기 큐 있는 라벨(hasSitCue): WALK_SECONDS 활동(보행/서있기) → 비프 큐(전달 검증) → markSitting →
+    //     SIT_SECONDS 앉기 → 자동 정지.
+    //   큐 없는 라벨            : 동일 총 길이(WALK_SECONDS+SIT_SECONDS) 활동(보행/제자리) → 자동 정지.
     // 종료도 자동이라, 주머니 배치에서 휴대폰을 꺼내는 조작이 수집 구간에 섞이지 않는다(Earthworm-jk 블로커).
     LaunchedEffect(recording.value) {
         if (!recording.value) return@LaunchedEffect
@@ -165,7 +166,7 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
             recording.value = false
             Toast.makeText(context, "수집 완료 — 저장하세요.", Toast.LENGTH_LONG).show()
         }
-        if (label.value == WaveformLabel.WALK_THEN_SIT) {
+        if (label.value.hasSitCue) {
             countdown(cueCountdown, WALK_SECONDS)
             // 비프 전달 검증: 미디어 음량>0 && startTone 성공이어야 실제로 들린 것. 실패면 markSitting 하지 않고 중단.
             val volume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
@@ -251,8 +252,9 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
         }
 
         Text(
-            "라벨·착용 규격을 고르고 안내대로 휴대폰을 두세요. '보행 직후 앉기'는 [녹화 시작] 후 $WALK_SECONDS" +
-                "초 걷다가 **비프음이 울리면** 그때 앉으면 됩니다(화면 조작 없음). [정지] 후 CSV 를 저장·공유합니다.",
+            "라벨·착용 규격을 고르고 안내대로 휴대폰을 두세요. 앉기 큐가 있는 라벨(보행 직후 앉기·서서 앉기만)은 " +
+                "[녹화 시작] 후 ${WALK_SECONDS}초 뒤 **비프음이 울리면** 그때 앉으면 됩니다(화면 조작 없음). " +
+                "[정지] 후 CSV 를 저장·공유합니다.",
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.outline,
         )
@@ -288,12 +290,12 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
             val isSit = phase.value == WaveformPhase.SITTING
             Text(
                 text = when {
-                    label.value == WaveformLabel.WALK_THEN_SIT && isSit ->
+                    label.value.hasSitCue && isSit ->
                         "🔔 앉기 신호! 지금 앉으세요 — ${cueCountdown.intValue}초 후 자동 종료"
-                    label.value == WaveformLabel.WALK_THEN_SIT ->
-                        "앉기 신호까지 ${cueCountdown.intValue}초 — 계속 걸으세요"
+                    label.value.hasSitCue ->
+                        "앉기 신호까지 ${cueCountdown.intValue}초 — ${label.value.actionHint}"
                     else ->
-                        "수집 종료까지 ${cueCountdown.intValue}초 — 계속 걸으세요"
+                        "수집 종료까지 ${cueCountdown.intValue}초 — ${label.value.actionHint}"
                 },
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Medium,
@@ -335,7 +337,7 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
                     recording.value = true
                     phase.value = WaveformPhase.WALKING
                     cueCountdown.intValue =
-                        if (label.value == WaveformLabel.WALK_THEN_SIT) WALK_SECONDS else WALK_SECONDS + SIT_SECONDS
+                        if (label.value.hasSitCue) WALK_SECONDS else WALK_SECONDS + SIT_SECONDS
                     sampleCount.intValue = 0
                     stepCount.intValue = 0
                     walking.value = false
@@ -382,10 +384,14 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
     }
 }
 
-/** 녹화 시작 후 앉기 큐(비프)까지 걷는 시간(초). 정상 보행 구간을 충분히 확보한다. */
+/**
+ * 녹화 시작 후 앉기 큐(비프)까지의 큐 전 활동 시간(초). 라벨별로 보행/서있기/제자리 등 활동만 다르고
+ * 길이는 공통이라, 서로 다른 시나리오의 파형을 같은 시간 축에서 비교할 수 있다.
+ * (SIT_ONLY 에서는 이 구간이 앉기 전 '서있기 기준선'이 된다.)
+ */
 private const val WALK_SECONDS = 15
 
-/** 앉기 큐 이후 수집하는 시간(초) — 이 시간 뒤 자동 정지. NORMAL_WALK 은 WALK_SECONDS+SIT_SECONDS 총길이. */
+/** 앉기 큐 이후 수집하는 시간(초) — 이 시간 뒤 자동 정지. 큐 없는 라벨은 WALK_SECONDS+SIT_SECONDS 총길이. */
 private const val SIT_SECONDS = 5
 
 /** 1초 단위 카운트다운(초 단위 표시 갱신). 코루틴 취소(정지·pause) 시 즉시 중단된다. */
@@ -433,7 +439,7 @@ private fun newMeta(label: WaveformLabel, placement: PlacementSpec): CaptureMeta
         trialId = "${label.id}_$stamp",
         deviceModel = "${Build.MANUFACTURER} ${Build.MODEL}",
         placement = placement,
-        // WALK_THEN_SIT 은 큐 전달 확인 시 markSitting 이 success 로 갱신. 큐 전 중단이면 pending 으로 남아 걸러진다.
-        cueDelivery = if (label == WaveformLabel.WALK_THEN_SIT) "pending" else "na",
+        // 앉기 큐 라벨은 큐 전달 확인 시 markSitting 이 success 로 갱신. 큐 전 중단이면 pending 으로 남아 걸러진다.
+        cueDelivery = if (label.hasSitCue) "pending" else "na",
     )
 }

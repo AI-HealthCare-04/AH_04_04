@@ -36,21 +36,49 @@ import java.util.Locale
  * ============================================================================
  */
 
-/** 캡처 시나리오 라벨 — 두 동작을 대조해 판별 특징을 찾기 위해 파일·행에 함께 기록한다. */
-enum class WaveformLabel(val id: String, val display: String) {
-    /** 정상 보행만(대조군). */
-    NORMAL_WALK("normal_walk", "정상 보행"),
+/**
+ * 캡처 시나리오 라벨 — 여러 동작을 대조해 '보행 vs 보행 직후 앉기' 판별 특징을 찾기 위해 파일·행에 함께 기록한다.
+ *
+ * 두 축으로 나뉜다:
+ *  - **hasSitCue**: 앉기 큐(비프→markSitting)로 SITTING 구간 경계를 남기는 시나리오인가. '앉기'가 포함된
+ *    라벨(WALK_THEN_SIT·SIT_ONLY)만 true 다. false 인 라벨은 큐 없이 고정 길이로만 수집한다.
+ *  - **대조 목적**: NORMAL_WALK/SHUFFLE 은 오탐을 '일으키지 않아야' 하는 대조군(정상 보행·제자리 발끌기),
+ *    WALK_THEN_SIT 은 오탐 대상(§5-5), SIT_ONLY 는 보행 momentum 없는 순수 앉기 하강 신호의 기준선이다.
+ *
+ * @property id CSV·분석 스크립트가 의존하는 안정 키(변경 금지).
+ * @property display 화면 표시 이름.
+ * @property hasSitCue 앉기 큐 프로토콜 사용 여부(수집 화면의 상태머신 분기 기준).
+ * @property actionHint 큐 전(또는 전체) 구간에 사용자가 할 동작 — 화면 카운트다운 문구에 그대로 쓴다.
+ */
+enum class WaveformLabel(
+    val id: String,
+    val display: String,
+    val hasSitCue: Boolean,
+    val actionHint: String,
+) {
+    /** 정상 보행만(대조군) — 오탐이 나면 안 되는 기준. */
+    NORMAL_WALK("normal_walk", "정상 보행", hasSitCue = false, actionHint = "계속 걸으세요"),
 
     /** 정상 보행 직후 곧바로 앉기(오탐 대상, §5-5). */
-    WALK_THEN_SIT("walk_then_sit", "보행 직후 앉기"),
+    WALK_THEN_SIT("walk_then_sit", "보행 직후 앉기", hasSitCue = true, actionHint = "계속 걸으세요"),
+
+    /** 서 있다가 앉기만(보행 momentum 없는 순수 앉기 하강) — 앉기 신호 자체의 기준선. */
+    SIT_ONLY("sit_only", "서서 앉기만", hasSitCue = true, actionHint = "그대로 서 계세요"),
+
+    /** 제자리 발끌기(작은 진폭의 애매한 움직임, 대조군) — 오탐이 나면 안 되는 기준. */
+    SHUFFLE("shuffle", "제자리 발끌기", hasSitCue = false, actionHint = "제자리 발끌기를 계속하세요"),
 }
 
 /**
- * 한 파일 안의 동작 구간. WALK_THEN_SIT 수집에서 '어디까지 걷고 어디부터 앉았는지'를 표시하는 ground truth.
- * (NORMAL_WALK 은 전 구간 WALKING 으로만 남는다.)
+ * 한 파일 안의 동작 구간 = '큐 전 활동 구간' vs '큐 후 착석 구간'의 ground truth.
+ * 앉기 큐가 있는 라벨(WALK_THEN_SIT·SIT_ONLY)에서만 SITTING 으로 전이한다.
+ *  - WALK_THEN_SIT: WALKING=보행 구간, SITTING=앉기 구간.
+ *  - SIT_ONLY     : WALKING=**서있기 기준선** 구간(걷지 않음), SITTING=앉기 구간. 라벨로 구분되므로
+ *                   phase.id 는 "활동/착석" 의미로 읽는다(=걷는다는 뜻이 아님).
+ *  - NORMAL_WALK/SHUFFLE: 큐가 없어 전 구간 WALKING 으로만 남는다.
  */
 enum class WaveformPhase(val id: String) {
-    /** 걷는 구간(기본). */
+    /** 큐 전 활동 구간(보행·서있기·제자리 등, 기본). */
     WALKING("walking"),
 
     /** 자동 큐(sit_cue) 이후 — 착석 전이 구간. */
