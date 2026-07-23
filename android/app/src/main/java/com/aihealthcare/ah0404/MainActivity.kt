@@ -267,10 +267,13 @@ private fun MainContent() {
             )
             MainTab.MISSIONS -> MissionScreen(
                 modifier = contentModifier,
-                // 유형별 라우팅(#93): 걷기→측정 화면, 그 외→'준비 중'. 기록 POST는 여기서 하지 않는다(#91 단일 지점).
+                // 유형별 라우팅(#93): 걷기→측정 화면, 운동→영상 화면(홈과 동일), 그 외→'준비 중'.
+                //   기록 POST는 여기서 하지 않는다(#91 단일 지점).
                 onMissionClick = { mission ->
                     when (missionDestination(mission.missionType)) {
                         MissionDestination.WALKING -> walkingMission = mission
+                        // 홈의 '영상 따라 운동하기'와 같은 목적지 — 미션 탭만 '준비 중'으로 막던 문제 해소(#162).
+                        MissionDestination.EXERCISE_VIDEOS -> subScreen = "exercise"
                         MissionDestination.COMING_SOON -> comingSoonMission = mission
                     }
                 },

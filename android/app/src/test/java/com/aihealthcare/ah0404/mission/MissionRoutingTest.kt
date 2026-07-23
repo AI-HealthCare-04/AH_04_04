@@ -15,9 +15,16 @@ class MissionRoutingTest {
     }
 
     @Test
-    fun non_walking_types_route_to_coming_soon() {
-        // 운동·식사·게임은 아직 수행 화면이 없다 → '준비 중'. 걷기 경로로 가면 안 된다.
-        listOf("exercise", "meal", "game").forEach { type ->
+    fun exercise_routes_to_video_screen_like_home() {
+        // 운동은 홈의 '영상 따라 운동하기'와 같은 목적지여야 한다 — 미션 탭만 '준비 중'으로
+        //   막히면 같은 미션이 진입 경로에 따라 되기도/안 되기도 한다(#162).
+        assertEquals(MissionDestination.EXERCISE_VIDEOS, missionDestination("exercise"))
+    }
+
+    @Test
+    fun meal_and_game_route_to_coming_soon() {
+        // 식사·게임은 아직 수행 화면이 없다 → '준비 중'. 걷기 경로로 가면 안 된다.
+        listOf("meal", "game").forEach { type ->
             assertEquals(
                 "미션 유형 '$type' 은 준비 중으로 가야 한다",
                 MissionDestination.COMING_SOON,
