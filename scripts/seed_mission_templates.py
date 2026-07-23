@@ -91,11 +91,13 @@ MISSION_TEMPLATES: list[dict] = [
     {
         "mission_type": MissionType.EXERCISE,
         "title": "영상 따라 운동하기",
-        "description": "몸풀기·앉아서·서서·마무리 중 3가지 운동을 해요. (각 4분, 총 10분 이상이면 완료)",
+        # 목표는 '당일 누적 10분'. 회차(3회)로 두면 중간에 끈 회차도 1회로 세어져,
+        #   시작하자마자 끄기 3번으로도 성공이 된다(→ 분 기준으로 이관, 아래 seed() 참고).
+        "description": "몸풀기·앉아서·서서·마무리 영상을 따라 해요. 하루 10분을 채우면 완료예요. (여러 번 나눠 해도 합산돼요)",
         "level": ActivityLevel.NORMAL,
         "display_order": 20,
-        "default_target_value": 3,
-        "target_unit": TargetUnit.COUNT,
+        "default_target_value": 10,
+        "target_unit": TargetUnit.MINUTES,
         "estimated_intensity": Intensity.LOW,
         "requires_safety_notice": True,
         "reward_points": 10,
@@ -172,6 +174,12 @@ async def seed(session_factory: async_sessionmaker[AsyncSession] = AsyncSessionL
             )
         )
 
+        # 운동 목표 3회(count) → 10분(minutes) 이관은 Alembic 마이그레이션 0010 으로 옮겼다.
+        #   시드는 배포 시 자동 실행되지 않아(수동), 여기 두면 배포 직후 운영 DB 가 잠시 3/count 로 남아
+        #   서버가 '3분'을 목표로 잘못 판정하는 창이 생긴다(리뷰 #159). alembic upgrade 는 배포에 포함되므로,
+        #   이관을 마이그레이션으로 옮기면 배포=이관이 원자적이다. 새 DB 는 아래 MISSION_TEMPLATES 가 곧장
+        #   10/minutes 로 넣으므로 이관이 필요 없다.
+
         # 이름 통일 이관: 옛 title → 새 title (새 이름이 이미 있으면 건너뜀 — 중복 방지 멱등 가드).
         #   mission_logs는 템플릿 id를 참조하므로 title 변경으로 이력이 깨지지 않는다.
         existing_titles = set((await session.scalars(select(MissionTemplate.title))).all())
@@ -181,9 +189,7 @@ async def seed(session_factory: async_sessionmaker[AsyncSession] = AsyncSessionL
                 if new_desc is not None:
                     values["description"] = new_desc
                 await session.execute(
-                    update(MissionTemplate)
-                    .where(MissionTemplate.title == old_title)
-                    .values(**values)
+                    update(MissionTemplate).where(MissionTemplate.title == old_title).values(**values)
                 )
                 existing_titles.discard(old_title)
                 existing_titles.add(new_title)
