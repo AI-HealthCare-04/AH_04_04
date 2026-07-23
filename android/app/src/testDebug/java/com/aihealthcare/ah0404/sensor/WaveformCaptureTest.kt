@@ -189,6 +189,45 @@ class WaveformCaptureTest {
         assertTrue(r.toCsv().contains(",walk_then_sit,walking,,0,5,"))
     }
 
+    // ── 라벨 계약 (#131 2단계: 대조군 2종 추가) ──────────────
+
+    @Test
+    fun labels_expose_stable_ids_and_cue_protocol_flags() {
+        // CSV·분석 스크립트가 의존하는 라벨 id 와, 수집 화면 상태머신이 분기하는 큐 여부를 함께 고정한다.
+        assertEquals("normal_walk", WaveformLabel.NORMAL_WALK.id)
+        assertEquals("walk_then_sit", WaveformLabel.WALK_THEN_SIT.id)
+        assertEquals("sit_only", WaveformLabel.SIT_ONLY.id)
+        assertEquals("shuffle", WaveformLabel.SHUFFLE.id)
+
+        // 앉기 큐(비프→SITTING)를 쓰는 건 '앉기'가 포함된 두 라벨뿐 — 대조군(정상 보행·제자리)은 큐가 없다.
+        assertTrue(WaveformLabel.WALK_THEN_SIT.hasSitCue)
+        assertTrue(WaveformLabel.SIT_ONLY.hasSitCue)
+        assertFalse(WaveformLabel.NORMAL_WALK.hasSitCue)
+        assertFalse(WaveformLabel.SHUFFLE.hasSitCue)
+    }
+
+    @Test
+    fun sit_only_marks_the_boundary_with_the_same_cue_path_as_walk_then_sit() {
+        // SIT_ONLY 는 '서있기 기준선' 뒤 앉기 큐로 경계를 남긴다 — WALK_THEN_SIT 과 동일한 레코더 경로.
+        val r = WaveformRecorder()
+        r.start(WaveformLabel.SIT_ONLY, meta)
+        r.add(sample(sensorElapsedMs = 0L)) // 서있기 기준선(WALKING 구간)
+        r.markSitting()
+        r.add(sample(sensorElapsedMs = 1000L)) // 큐 직후 첫 샘플 → sit_cue + SITTING
+        assertEquals(WaveformLabel.SIT_ONLY, r.label)
+        assertEquals(WaveformPhase.WALKING, r.samples[0].phase)
+        assertEquals("sit_cue", r.samples[1].event)
+        assertEquals(WaveformPhase.SITTING, r.samples[1].phase)
+        assertTrue("sit_only 라벨 id 직렬화", r.toCsv().contains(",sit_only,"))
+    }
+
+    @Test
+    fun shuffle_serializes_with_its_own_label_id() {
+        // 제자리 발끌기 — 큐 없이 전 구간 WALKING 으로만 남는다(대조군).
+        val row = WaveformCsv.row(meta, WaveformLabel.SHUFFLE, sample())
+        assertTrue("shuffle 라벨 id·구간: $row", row.contains(",shuffle,walking,"))
+    }
+
     @Test
     fun reset_clears_buffer_recording_phase_and_cue() {
         val r = WaveformRecorder()
