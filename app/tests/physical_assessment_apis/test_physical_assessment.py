@@ -143,8 +143,24 @@ def test_age_norm_5sts_by_age_band() -> None:
 def test_age_norm_5sts_out_of_range_is_none_easy() -> None:
     # 범위 밖·비정상 연령은 안전하게 None(→하): 하한 미만(<65)·음수(미래 생년) (리뷰 #103).
     assert PhysicalAssessmentService._age_norm_5sts(64) is None  # 앱대상·규준 하한 미만
+    assert PhysicalAssessmentService._age_norm_5sts(40) is None  # 젊은 성인도 지원 대상 밖 → None
     assert PhysicalAssessmentService._age_norm_5sts(0) is None
     assert PhysicalAssessmentService._age_norm_5sts(-1) is None  # 미래 생년 → 음수 연령
+
+
+def test_under_65_stays_easy_even_when_very_fast_is_intended_not_a_bug() -> None:
+    # 정책 고정(#155): 65세 미만은 추론 모델 대상 밖이라 난이도도 규준을 잡지 않고 '하'로 수렴한다.
+    #   40세가 매우 빠른 5STS(6초)를 기록해도 EASY 다. 이는 성능 역전이 아니라 '지원 대상 밖 기본값'.
+    #   젊은 연령대 규준을 새로 도입해 이 케이스를 NORMAL 로 바꾸지 말 것(추론·난이도 경계 65세 정렬).
+    assert (
+        PhysicalAssessmentService._determine_activity_level(
+            chair_stand_sec=Decimal("6.0"),  # 매우 빠름
+            age_norm_sec=PhysicalAssessmentService._age_norm_5sts(40),  # 40세 → None
+            pain_reported=False,
+            dizziness_reported=False,
+        )
+        == ActivityLevel.EASY
+    )
 
 
 def test_activity_level_from_5sts_vs_age_norm() -> None:
