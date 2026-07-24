@@ -462,23 +462,37 @@ def analyze(trials, participants=None):
                 unknown += 1
                 continue
             cross[pid][t["label"]] += 1
-        # LOPO 는 참여자 수만으론 부족하다: 각 참여자가 음성(normal_walk)과 양성(walk_then_sit)
-        # 두 클래스를 '모두' 가져야 그 참여자를 held-out 으로 평가할 수 있다.
+        # LOPO 자격은 '파일 라벨 수'가 아니라 '실제 특징이 적재된(MIN_SEG_SAMPLES 통과) 세그먼트'
+        # 기준이어야 한다. 짧거나 excluded 로 빠져 seg_feats 에 안 들어간 세그먼트는 held-out
+        # 평가에 못 쓴다. 그래서 스코어카드 두 클래스(음성 CONTROL_SEG·양성 TARGET_SEG)가
+        # seg_feats 에 실제 적재됐는지를 participant 로 되짚어 판정한다.
+        valid_by_pid = defaultdict(set)  # pid -> {스코어카드 세그먼트 키} 중 유효 적재분
+        for seg_key in (CONTROL_SEG, TARGET_SEG):
+            for fe in seg_feats.get(seg_key, []):
+                spid = participants.get(fe["file"])
+                if spid is not None:
+                    valid_by_pid[spid].add(seg_key)
         eligible = []
         for pid in sorted(cross):
-            has_neg = cross[pid][CONTROL_SEG[0]] > 0
-            has_pos = cross[pid][TARGET_SEG[0]] > 0
+            valids = valid_by_pid.get(pid, set())
+            has_neg, has_pos = CONTROL_SEG in valids, TARGET_SEG in valids
+            # 라벨 trial 은 있는데 유효 세그먼트가 없으면(짧음/제외) 구분해서 경고
+            neg_mark = "O" if has_neg else ("Δ" if cross[pid][CONTROL_SEG[0]] else "X")
+            pos_mark = "O" if has_pos else ("Δ" if cross[pid][TARGET_SEG[0]] else "X")
             dist = ", ".join(f"{lb}:{cross[pid][lb]}" for lb in ALL_LABELS if cross[pid][lb])
             cover = "" if (has_neg and has_pos) else \
-                f"  ⚠️ 클래스 부족(음성 {CONTROL_SEG[0]}:{'O' if has_neg else 'X'}·양성 {TARGET_SEG[0]}:{'O' if has_pos else 'X'})"
+                (f"  ⚠️ 유효세그먼트 부족(음성 {CONTROL_SEG[0]}/{CONTROL_SEG[1]}:{neg_mark}·"
+                 f"양성 {TARGET_SEG[0]}/{TARGET_SEG[1]}:{pos_mark}  [O=유효·Δ=trial있으나세그먼트무효·X=없음])")
             if has_neg and has_pos:
                 eligible.append(pid)
             print(f"  · {pid}: {dist}{cover}")
         if len(eligible) >= 2:
-            print(f"  참여자 {len(cross)}명(양·음성 모두 보유 {len(eligible)}명) → LOPO 가능")
+            subset = "" if len(eligible) == len(cross) else \
+                f" — 단, 유효세그먼트 보유 subset({', '.join(eligible)})만 평가 가능"
+            print(f"  참여자 {len(cross)}명(양·음성 유효세그먼트 모두 보유 {len(eligible)}명) → LOPO 가능{subset}")
         else:
-            print(f"  참여자 {len(cross)}명(양·음성 모두 보유 {len(eligible)}명) → LOPO 불가"
-                  " — 각 참여자가 normal_walk·walk_then_sit 를 모두 가진 참여자 2명 이상 필요")
+            print(f"  참여자 {len(cross)}명(양·음성 유효세그먼트 모두 보유 {len(eligible)}명) → LOPO 불가"
+                  " — 두 클래스 유효 세그먼트를 모두 가진 참여자 2명 이상 필요")
         print("  주의: LOPO 계산 자체는 이 스크립트가 수행하지 않습니다(위 스코어카드는 in-sample 탐색용).")
         if unknown:
             print(f"  ⚠️ 참여자 로그에 없는 trial {unknown}개 — 로그를 채우세요.")
