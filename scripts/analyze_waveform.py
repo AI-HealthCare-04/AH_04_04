@@ -133,6 +133,10 @@ def load_dir(path):
         if label in CUE_LABELS and cue != "success":
             dropped.append((os.path.basename(fp), f"cue_delivery={cue} (§4 폐기)"))
             continue
+        q_ok, q_reasons = trial_quality(rows, label)
+        if not q_ok:
+            dropped.append((os.path.basename(fp), f"품질 게이트 미달 — {' · '.join(q_reasons)} (--inspect 재수집)"))
+            continue
         trials.append({"file": os.path.basename(fp), "label": label, "rows": rows})
     return trials, dropped
 
@@ -147,6 +151,35 @@ def _missing_required_cols(fp):
     if not fields:
         return None
     return REQUIRED_COLS - set(fields)
+
+
+def trial_quality(rows, label):
+    """trial 의 지속시간·구간 품질 게이트. (ok, reasons) 반환.
+
+    inspect() 의 dur/seg 판정과 **동일 기준**(MIN_TOTAL_DUR_S·MIN_SIT_DUR_S·sit_cue 1개)을
+    쓴다. load_dir 이 이 게이트로 분석 포함/제외를 판정하므로, findings 표는 항상
+    `--inspect` 통과 trial 로만 만들어진다(수집 품질과 분석 입력의 일치).
+    """
+    reasons = []
+    if not rows:
+        return False, ["데이터 행 0"]
+    dur = (rows[-1]["_t"] - rows[0]["_t"]) / 1000.0
+    if dur < MIN_TOTAL_DUR_S:
+        reasons.append(f"총 {dur:.1f}s < {MIN_TOTAL_DUR_S:.0f}s(조기종료)")
+    phases = Counter(r["phase"] for r in rows)
+    cues = sum(1 for r in rows if r["event"] == "sit_cue")
+    if label in CUE_LABELS:
+        sit_rows = [r for r in rows if r["phase"] == "sitting"]
+        sit_dur = (sit_rows[-1]["_t"] - sit_rows[0]["_t"]) / 1000.0 if len(sit_rows) >= 2 else 0.0
+        if phases.get("sitting", 0) == 0:
+            reasons.append("sitting 구간 없음")
+        elif sit_dur < MIN_SIT_DUR_S:
+            reasons.append(f"앉기 {sit_dur:.1f}s < {MIN_SIT_DUR_S:.0f}s")
+        if cues != 1:
+            reasons.append(f"sit_cue 마커 {cues}개(기대 1)")
+    elif phases.get("sitting", 0) or cues:
+        reasons.append("큐 없는 라벨인데 sitting/sit_cue 존재")
+    return (not reasons), reasons
 
 
 def load_file(fp):
@@ -447,7 +480,7 @@ def analyze(trials, participants=None):
           f"walk_then_sit 정지전환 {ws[0]}/{ws[1]}(높을수록↑) · "
           f"normal_walk {nw[0]}/{nw[1]}·shuffle {sh[0]}/{sh[1]}(normal 은 0이어야). "
           + ("→ 정상보행을 끊지 않으면서 보행종료를 다수 잡음(적응형 r2). 단 임계 k·창길이는 "
-             "본 수집으로 최종 튜닝(§9)." if (no_undercount and catches)
+             "본 수집으로 최종 튜닝(findings §4/§6)." if (no_undercount and catches)
              else "→ 파라미터/추가 특징 재검토 필요."))
     print()
 
@@ -616,9 +649,19 @@ def selftest():
     with open(decoy, "w", encoding="utf-8", newline="") as f:
         f.write("trial_id,participant_id,session_id\nT1,P01,S1\n")
 
+    # 품질 게이트 검증용: 앉기 구간이 짧은 walk_then_sit 1개(정상 생성 후 sitting 뒷부분 잘라냄).
+    #   → 총/앉기 지속 미달로 load_dir 이 분석에서 제외해야(findings 표에 안 들어감).
+    short = os.path.join(d, "walk_then_sit_shortsit.csv")
+    _synth_file(short, LABEL_WALK_SIT, "prst_z", "z")
+    with open(short, encoding="utf-8") as f:
+        slines = f.read().splitlines()
+    with open(short, "w", encoding="utf-8") as f:  # header + 보행15s(750행) + 앉기 2s(100행)
+        f.write("\n".join(slines[:1 + 750 + 100]) + "\n")
+
     trials, dropped = load_dir(d)
     assert any("§4 폐기" in r for _, r in dropped), "cue 실패 파일이 폐기되지 않음"
     assert any("파형 스키마 아님" in r for _, r in dropped), "비파형 CSV 가 폐기되지 않음(스키마 검증 실패)"
+    assert any("품질 게이트 미달" in r for _, r in dropped), "짧은 앉기 trial 이 품질 게이트에서 제외되지 않음"
     assert len(trials) == n, f"trial 수 불일치: {len(trials)} != {n}"
 
     # 핵심 특징 검증: 앉기(sitting) 세그먼트의 vert_share 가 보행(walking)보다 높아야 한다.

@@ -1,25 +1,25 @@
-participant_id,device_model,trial_id,placement_id,label,n_rows,seg_walking_valid,seg_sitting_valid
-P01,samsung SM-N986N,normal_walk_20260723_164925_251,front_pocket_r_in,normal_walk,2004,Y,-
-P01,samsung SM-N986N,normal_walk_20260723_165553_817,front_pocket_r_out,normal_walk,1990,Y,-
-P01,samsung SM-N986N,normal_walk_20260723_170135_400,hand_portrait,normal_walk,1991,Y,-
-P01,samsung SM-N986N,shuffle_20260723_165358_104,front_pocket_r_in,shuffle,1990,Y,-
-P01,samsung SM-N986N,shuffle_20260723_165923_803,front_pocket_r_out,shuffle,1991,Y,-
-P01,samsung SM-N986N,shuffle_20260723_170308_459,hand_portrait,shuffle,1993,Y,-
-P01,samsung SM-N986N,sit_only_20260723_165304_501,front_pocket_r_in,sit_only,1993,Y,Y
-P01,samsung SM-N986N,sit_only_20260723_165841_840,front_pocket_r_out,sit_only,1991,Y,Y
-P01,samsung SM-N986N,sit_only_20260723_170238_847,hand_portrait,sit_only,1993,Y,Y
-P01,samsung SM-N986N,walk_then_sit_20260723_165204_855,front_pocket_r_in,walk_then_sit,1993,Y,Y
-P01,samsung SM-N986N,walk_then_sit_20260723_165743_912,front_pocket_r_out,walk_then_sit,1993,Y,Y
-P01,samsung SM-N986N,walk_then_sit_20260723_170209_635,hand_portrait,walk_then_sit,1995,Y,Y
-P02,samsung SM-G977N,normal_walk_20260723_173317_891,front_pocket_r_out,normal_walk,1006,Y,-
-P02,samsung SM-G977N,normal_walk_20260723_173433_245,front_pocket_r_in,normal_walk,1006,Y,-
-P02,samsung SM-G977N,normal_walk_20260723_173609_069,hand_portrait,normal_walk,1006,Y,-
-P02,samsung SM-G977N,shuffle_20260723_174212_842,hand_portrait,shuffle,1007,Y,-
-P02,samsung SM-G977N,shuffle_20260723_174449_709,front_pocket_r_out,shuffle,1006,Y,-
-P02,samsung SM-G977N,shuffle_20260723_174518_227,front_pocket_r_in,shuffle,1005,Y,-
-P02,samsung SM-G977N,sit_only_20260723_174000_158,front_pocket_r_in,sit_only,952,Y,Y
-P02,samsung SM-G977N,sit_only_20260723_174050_364,front_pocket_r_out,sit_only,914,Y,Y
-P02,samsung SM-G977N,sit_only_20260723_174124_870,hand_portrait,sit_only,1008,Y,Y
-P02,samsung SM-G977N,walk_then_sit_20260723_173813_829,hand_portrait,walk_then_sit,941,Y,Y
-P02,samsung SM-G977N,walk_then_sit_20260723_173846_625,front_pocket_r_out,walk_then_sit,876,Y,Y
-P02,samsung SM-G977N,walk_then_sit_20260723_173922_140,front_pocket_r_in,walk_then_sit,1005,Y,Y
+participant_id,device_model,trial_id,placement_id,label,n_rows,analysis_included,exclude_reason
+P01,samsung SM-N986N,P01_normal_walk_20260723_164925_251,front_pocket_r_in,normal_walk,2004,Y,
+P01,samsung SM-N986N,P01_normal_walk_20260723_165553_817,front_pocket_r_out,normal_walk,1990,Y,
+P01,samsung SM-N986N,P01_normal_walk_20260723_170135_400,hand_portrait,normal_walk,1991,Y,
+P01,samsung SM-N986N,P01_shuffle_20260723_165358_104,front_pocket_r_in,shuffle,1990,Y,
+P01,samsung SM-N986N,P01_shuffle_20260723_165923_803,front_pocket_r_out,shuffle,1991,Y,
+P01,samsung SM-N986N,P01_shuffle_20260723_170308_459,hand_portrait,shuffle,1993,Y,
+P01,samsung SM-N986N,P01_sit_only_20260723_165304_501,front_pocket_r_in,sit_only,1993,Y,
+P01,samsung SM-N986N,P01_sit_only_20260723_165841_840,front_pocket_r_out,sit_only,1991,Y,
+P01,samsung SM-N986N,P01_sit_only_20260723_170238_847,hand_portrait,sit_only,1993,Y,
+P01,samsung SM-N986N,P01_walk_then_sit_20260723_165204_855,front_pocket_r_in,walk_then_sit,1993,Y,
+P01,samsung SM-N986N,P01_walk_then_sit_20260723_165743_912,front_pocket_r_out,walk_then_sit,1993,Y,
+P01,samsung SM-N986N,P01_walk_then_sit_20260723_170209_635,hand_portrait,walk_then_sit,1995,Y,
+P02,samsung SM-G977N,P02_normal_walk_20260723_173317_891,front_pocket_r_out,normal_walk,1006,Y,
+P02,samsung SM-G977N,P02_normal_walk_20260723_173433_245,front_pocket_r_in,normal_walk,1006,Y,
+P02,samsung SM-G977N,P02_normal_walk_20260723_173609_069,hand_portrait,normal_walk,1006,Y,
+P02,samsung SM-G977N,P02_shuffle_20260723_174212_842,hand_portrait,shuffle,1007,Y,
+P02,samsung SM-G977N,P02_shuffle_20260723_174449_709,front_pocket_r_out,shuffle,1006,Y,
+P02,samsung SM-G977N,P02_shuffle_20260723_174518_227,front_pocket_r_in,shuffle,1005,Y,
+P02,samsung SM-G977N,P02_sit_only_20260723_174000_158,front_pocket_r_in,sit_only,952,N,앉기 3.9s < 4s
+P02,samsung SM-G977N,P02_sit_only_20260723_174050_364,front_pocket_r_out,sit_only,914,N,앉기 3.2s < 4s
+P02,samsung SM-G977N,P02_sit_only_20260723_174124_870,hand_portrait,sit_only,1008,Y,
+P02,samsung SM-G977N,P02_walk_then_sit_20260723_173813_829,hand_portrait,walk_then_sit,941,N,앉기 3.7s < 4s
+P02,samsung SM-G977N,P02_walk_then_sit_20260723_173846_625,front_pocket_r_out,walk_then_sit,876,N,총 17.5s < 18s(조기종료) · 앉기 2.4s < 4s
+P02,samsung SM-G977N,P02_walk_then_sit_20260723_173922_140,front_pocket_r_in,walk_then_sit,1005,Y,
