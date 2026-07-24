@@ -18,6 +18,14 @@ class AuthRoutingTest {
     }
 
     @Test
+    fun tokenInspector_readsPositiveServerUserIdForSessionMigration() {
+        assertEquals(42, JwtTokenInspector.userId(jwt("{\"exp\":2001,\"user_id\":42}")))
+        assertEquals(null, JwtTokenInspector.userId(jwt("{\"exp\":2001,\"user_id\":0}")))
+        assertEquals(null, JwtTokenInspector.userId(jwt("{\"exp\":2001,\"user_id\":\"broken\"}")))
+        assertEquals(null, JwtTokenInspector.userId("not-a-jwt"))
+    }
+
+    @Test
     fun completedUser_withMissingOrMalformedToken_routesToLogin() {
         assertRoute(TokenStatus.MISSING, true, null, AppRoute.LOGIN_REQUIRED)
         assertRoute(TokenStatus.MALFORMED, false, null, AppRoute.LOGIN_REQUIRED)

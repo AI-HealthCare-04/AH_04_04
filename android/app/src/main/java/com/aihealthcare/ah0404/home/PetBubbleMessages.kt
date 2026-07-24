@@ -13,6 +13,8 @@ internal data class PetBubbleContext(
     val todayWalkingSteps: Int,
     val hourOfDay: Int,
     val hasFreshHomeData: Boolean = true,
+    val daysSinceLastVisit: Long? = null,
+    val excludedMessageId: String? = null,
 )
 
 internal data class PetBubbleMessage(
@@ -24,20 +26,26 @@ internal data class PetBubbleMessage(
  * 현재 홈 데이터로 사실임을 확인할 수 있는 문구만 고른다.
  *
  * 먼저 상황을 고르고 그 안에서 문구를 고르므로, 문구가 많은 상황이 선택 확률을
- * 과도하게 차지하지 않는다. 앱 실행 간 중복 방지는 공통 로컬 저장소(#105) 연동 후
- * 확장한다.
+ * 과도하게 차지하지 않는다. 완료된 소셜 사용자는 #145의 작은 사용자별 저장소로 마지막 문구를
+ * 제외하고, KST 달력 날짜로 3일 이상 지나 돌아오면 죄책감을 주지 않는 재방문 문구를 우선한다.
  */
 internal fun selectPetBubbleMessage(
     context: PetBubbleContext,
     randomIndex: (Int) -> Int = { Random.Default.nextInt(it) },
 ): PetBubbleMessage {
+    if ((context.daysSinceLastVisit ?: -1L) >= PET_REVISIT_AFTER_DAYS) {
+        return chooseFromGroups(listOf(revisitMessages), context.excludedMessageId, randomIndex)
+    }
+
     if (context.hasFreshHomeData) {
         val achievementGroups = buildList {
             if (context.completedToday > 0) add(completionMessages(context.completedToday))
             if (context.todayWalkingMin >= 1.0) add(walkingMinuteMessages(context.todayWalkingMin))
             if (context.todayWalkingSteps > 0) add(walkingStepMessages(context.todayWalkingSteps))
         }
-        if (achievementGroups.isNotEmpty()) return chooseFromGroups(achievementGroups, randomIndex)
+        if (achievementGroups.isNotEmpty()) {
+            return chooseFromGroups(achievementGroups, context.excludedMessageId, randomIndex)
+        }
     }
 
     val groups = buildList {
@@ -49,20 +57,32 @@ internal fun selectPetBubbleMessage(
         add(timeGreetingMessages(context.hourOfDay))
         add(generalEncouragementMessages(context.nickname))
     }
-    return chooseFromGroups(groups, randomIndex)
+    return chooseFromGroups(groups, context.excludedMessageId, randomIndex)
 }
 
 internal fun isLateNight(hourOfDay: Int): Boolean = hourOfDay >= 22 || hourOfDay < 6
 
 private fun chooseFromGroups(
     groups: List<List<PetBubbleMessage>>,
+    excludedMessageId: String?,
     randomIndex: (Int) -> Int,
 ): PetBubbleMessage {
-    val group = groups[randomIndex(groups.size).floorMod(groups.size)]
+    val filteredGroups = groups
+        .map { group -> group.filterNot { it.id == excludedMessageId } }
+        .filter { it.isNotEmpty() }
+    val availableGroups = filteredGroups.ifEmpty { groups }
+    val group = availableGroups[randomIndex(availableGroups.size).floorMod(availableGroups.size)]
     return group[randomIndex(group.size).floorMod(group.size)]
 }
 
 private fun Int.floorMod(divisor: Int): Int = ((this % divisor) + divisor) % divisor
+
+private val revisitMessages = listOf(
+    PetBubbleMessage("revisit_welcome", "오랜만이에요! 다시 만나서 반가워요."),
+    PetBubbleMessage("revisit_missed", "잘 지내셨어요? 보고 싶었어요."),
+    PetBubbleMessage("revisit_thanks", "다시 와주셔서 고마워요. 천천히 시작해요."),
+    PetBubbleMessage("revisit_easy_start", "오늘은 쉬운 걸로 하나만 해볼까요?"),
+)
 
 private fun generalEncouragementMessages(nickname: String): List<PetBubbleMessage> = listOf(
     PetBubbleMessage("general_nickname", "${nickname}님, 오늘도 천천히 함께해요!"),

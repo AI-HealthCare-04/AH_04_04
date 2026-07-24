@@ -1,8 +1,10 @@
 package com.aihealthcare.ah0404.network
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 
 enum class TokenStatus {
@@ -26,18 +28,31 @@ object JwtTokenInspector {
     /** 로컬 라우팅 힌트만 판정한다. 토큰의 진짜 유효성은 서버 401 응답이 최종 권위다. */
     fun inspect(token: String, nowEpochSeconds: Long = System.currentTimeMillis() / 1_000): TokenStatus {
         if (token.isBlank()) return TokenStatus.MISSING
-        val parts = token.split('.')
-        if (parts.size != 3 || parts.any(String::isBlank)) return TokenStatus.MALFORMED
-
+        val payload = payload(token) ?: return TokenStatus.MALFORMED
         return runCatching {
-            val payload = decodeBase64Url(parts[1]).toString(Charsets.UTF_8)
-            val exp = Json.parseToJsonElement(payload)
-                .jsonObject["exp"]
+            val exp = payload["exp"]
                 ?.jsonPrimitive
                 ?.longOrNull
                 ?: return TokenStatus.MALFORMED
             if (exp <= nowEpochSeconds) TokenStatus.EXPIRED else TokenStatus.VALID
         }.getOrDefault(TokenStatus.MALFORMED)
+    }
+
+    /** 완료된 기존 로그인 세션을 #145 사용자별 로컬 키로 마이그레이션하기 위한 안정적인 서버 ID. */
+    fun userId(token: String): Int? =
+        payload(token)
+            ?.get("user_id")
+            ?.jsonPrimitive
+            ?.intOrNull
+            ?.takeIf { it > 0 }
+
+    private fun payload(token: String): JsonObject? {
+        val parts = token.split('.')
+        if (parts.size != 3 || parts.any(String::isBlank)) return null
+        return runCatching {
+            val decoded = decodeBase64Url(parts[1]).toString(Charsets.UTF_8)
+            Json.parseToJsonElement(decoded).jsonObject
+        }.getOrNull()
     }
 
     private fun decodeBase64Url(value: String): ByteArray {
