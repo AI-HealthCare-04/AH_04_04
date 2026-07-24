@@ -18,9 +18,11 @@ import androidx.compose.ui.platform.LocalContext
  * 인터넷 사용 가능 여부(라우팅용). **기본(활성) 네트워크**를 추적한다.
  *
  * ⚠️ 이전 버그: `registerNetworkCallback(INTERNET)` + `activeNetwork` 조합에 **`NET_CAPABILITY_VALIDATED`
- *    강제** → **wifi 를 끄고 LTE 로 전환하면 우리 앱만 "인터넷 없음"** 이 됐다(다른 앱은 LTE 로 정상 동작).
- *    원인 (1) 기본 네트워크 전환(wifi→cellular)을 제때 못 잡고, (2) 셀룰러가 아직/영영 VALIDATED 도장을
- *    못 받는 기기·통신사에서 하드 게이트에 걸린다.
+ *    강제** → **wifi 를 끄고 다른 망(셀룰러 LTE·5G 등, 또는 다른 wifi)으로 전환하면 우리 앱만 "인터넷 없음"**
+ *    이 됐다(다른 앱은 그 망으로 정상 동작). LTE 특정 버그가 아니라 **모든 망 전환/검증도장 문제**다
+ *    (재현은 wifi→LTE 로 관측됨).
+ *    원인 (1) 기본 네트워크 전환을 제때 못 잡고, (2) 새 기본 네트워크가 아직/영영 VALIDATED 도장을
+ *    못 받는 기기·통신사·망에서 하드 게이트에 걸린다.
  * → 수정: `registerDefaultNetworkCallback` 으로 **기본 네트워크 전환을 정확히 추적**하고, 판정은
  *    `NET_CAPABILITY_INTERNET`(인터넷 가능 네트워크가 붙어 있는가)만 본다. **VALIDATED(실제 검증 도장)는
  *    강제하지 않는다** — 서버에 실제로 못 닿는 경우는 요청 단계에서 AuthFailure(NETWORK/SERVER)로 잡아
