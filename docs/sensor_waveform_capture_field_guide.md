@@ -84,7 +84,7 @@ normal_walk_20260724_101612_310,P01,P01_s1,20
 ### ⭐ `manual_step_count` — 관찰자가 센 '실제 걸음 수'(정답, #176)
 폰은 실제 걸음 수를 모른다. **감지기 정확도를 채점하려면 사람이 옆에서 센 정답이 필요**하다.
 - **한 명이 걷고, 한 명(또는 본인)이 소리 내어/탈리 카운터로 걸음을 센다.** 끝나면 그 수를 적는다.
-- **보행 라벨 3종(`normal_walk`·`walk_then_sit`·`shuffle`)** 을 채운다(보행 구간 실제 걸음 수). `walk_then_sit` 은 **앉기 전 보행 걸음만** 센다. `shuffle`(발 끌면서 걷기)도 **실제 보행이라 반드시 센다**(#176 과소계수 회복 검증의 핵심).
+- **보행 라벨 3종(`normal_walk`·`walk_then_sit`·`shuffle_walk`)** 을 채운다(보행 구간 실제 걸음 수). `walk_then_sit` 은 **앉기 전 보행 걸음만** 센다. `shuffle_walk`(발 끌면서 걷기)도 **실제 보행이라 반드시 센다**(#176 과소계수 회복 검증의 핵심).
 - `sit_only` 만 **비워둔다**(걸음 계수 대상 아님).
 - 정답이 있어야 `python scripts/analyze_waveform.py <dir> --participants <로그.csv>` 가 **감지 vs 정답 오차%** 를 채점한다(없으면 그 절은 건너뜀).
 
@@ -136,6 +136,6 @@ python scripts/analyze_waveform.py ~/waveforms_raw/ --participants participants.
 - [ ] 걷기를 **느린 고령자 속도**로 했는가? (빠르면 §5-5 재현 실패)
 - [ ] 비프가 나기 **전에** 미리 앉지 않았는가? (경계가 흐려진다)
 - [ ] 매 trial **참여자 로그**에 파일명을 적었는가? (사후 복원 불가)
-- [ ] 보행 라벨 3종(`normal_walk`·`walk_then_sit`·`shuffle`)에서 **실제 걸음 수(정답)** 를 세어 `manual_step_count` 에 적었는가? (#176 채점용)
+- [ ] 보행 라벨 3종(`normal_walk`·`walk_then_sit`·`shuffle_walk`)에서 **실제 걸음 수(정답)** 를 세어 `manual_step_count` 에 적었는가? (#176 채점용)
 - [ ] 첫 진입 시 **활동 인식 권한**을 허용했는가? (HW 만보기 컬럼용, #184/#176 하이브리드)
 - [ ] `서서 앉기만`에서 15초 동안 **걷지 않고 서 있었는가**? (walking=서있기 기준선)

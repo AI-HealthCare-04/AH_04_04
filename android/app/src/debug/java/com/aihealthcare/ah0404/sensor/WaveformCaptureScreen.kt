@@ -145,11 +145,10 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
                 // HW 만보기 두 센서는 같은 리스너로 받아 최신값/이벤트만 갱신하고 반환(가속도 샘플에서 함께 기록).
                 when (event.sensor?.type) {
                     Sensor.TYPE_STEP_COUNTER -> {
-                        if (recorder.isRecording) {
-                            val v = event.values[0].toLong() // 부팅 이후 누적
-                            if (hwCounterBase.longValue < 0L) hwCounterBase.longValue = v
-                            hwCounterLatest.longValue = v
-                        }
+                        // 녹화 여부와 무관하게 최신 누적을 계속 갱신한다. STEP_COUNTER 는 이벤트 지연이
+                        //   최대 ~10초라, base 를 '녹화 중 첫 이벤트'로 잡으면 trial 앞부분 걸음이 통째로
+                        //   소거된다(리뷰 #194 블로커). base 는 녹화 시작 시점의 값으로 잡는다(아래 start).
+                        hwCounterLatest.longValue = event.values[0].toLong() // 부팅 이후 누적
                         return
                     }
                     Sensor.TYPE_STEP_DETECTOR -> {
@@ -174,6 +173,11 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
                 // 감지기에 흘려 걸음 카운트 여부를 얻는다(오탐 지점 표시용). 생산 재현 위해 콜백 시각(cbMs)을 그대로 넘긴다.
                 val counted = detector.processSample(x, y, z, cbMs)
                 // HW 만보기: 녹화 시작 기준 누적 + 직전 accel 이후 감지된 스텝 이벤트(소비 후 리셋).
+                // 폴백: 녹화 시작 전 STEP_COUNTER 이벤트가 한 번도 없어 base 를 못 잡았으면(=−1),
+                //   녹화 중 첫 이벤트 값으로라도 base 를 잡는다(이 경우만 앞부분 손실이 불가피 — 센서 특성).
+                if (hwCounterBase.longValue < 0L && hwCounterLatest.longValue >= 0L) {
+                    hwCounterBase.longValue = hwCounterLatest.longValue
+                }
                 val hwCounter = if (hwCounterBase.longValue >= 0L) {
                     (hwCounterLatest.longValue - hwCounterBase.longValue).toInt()
                 } else {
@@ -393,8 +397,10 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
                 onClick = {
                     detector.reset()
                     sensorBaseNs.longValue = -1L // 첫 샘플에서 기준선 재설정
-                    hwCounterBase.longValue = -1L // HW 만보기 누적도 이번 녹화 기준 0 으로
-                    hwCounterLatest.longValue = -1L
+                    // HW 만보기 base = 녹화 시작 직전의 최신 누적(연속 갱신된 값). 첫 이벤트 지연으로 앞걸음이
+                    //   삼켜지지 않게, latest 는 리셋하지 않고 그대로 둔다. 시작 전 이벤트가 없었으면 −1 →
+                    //   위 listener 폴백이 녹화 중 첫 이벤트로 잡는다.
+                    hwCounterBase.longValue = hwCounterLatest.longValue
                     hwPendingDetector.intValue = 0
                     recorder.start(label.value, newMeta(label.value, preset.value.spec))
                     recording.value = true

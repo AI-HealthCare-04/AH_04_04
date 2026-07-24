@@ -211,7 +211,8 @@ class WaveformCaptureTest {
         assertEquals("normal_walk", WaveformLabel.NORMAL_WALK.id)
         assertEquals("walk_then_sit", WaveformLabel.WALK_THEN_SIT.id)
         assertEquals("sit_only", WaveformLabel.SIT_ONLY.id)
-        assertEquals("shuffle", WaveformLabel.SHUFFLE.id)
+        // 발 끌면서 걷기 = 신 id 'shuffle_walk'(구 'shuffle'=제자리 비보행과 의미 분리, 리뷰 #194).
+        assertEquals("shuffle_walk", WaveformLabel.SHUFFLE.id)
 
         // 앉기 큐(비프→SITTING)를 쓰는 건 '앉기'가 포함된 두 라벨뿐 — 대조군(정상 보행·제자리)은 큐가 없다.
         assertTrue(WaveformLabel.WALK_THEN_SIT.hasSitCue)
@@ -239,7 +240,7 @@ class WaveformCaptureTest {
     fun shuffle_serializes_with_its_own_label_id() {
         // 발 끌면서 걷기(저진폭 보행) — 큐 없이 전 구간 WALKING 으로만 남는다(#176 과소계수 회복 검증 라벨).
         val row = WaveformCsv.row(meta, WaveformLabel.SHUFFLE, sample())
-        assertTrue("shuffle 라벨 id·구간: $row", row.contains(",shuffle,walking,"))
+        assertTrue("shuffle_walk 라벨 id·구간: $row", row.contains(",shuffle_walk,walking,"))
     }
 
     @Test

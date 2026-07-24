@@ -58,10 +58,17 @@ REQUIRED_COLS = {
 LABEL_NORMAL = "normal_walk"
 LABEL_WALK_SIT = "walk_then_sit"
 LABEL_SIT_ONLY = "sit_only"
-LABEL_SHUFFLE = "shuffle"
+# ⚠️ 라벨 id 의미 분리(리뷰 #194 블로커): 새 id 는 'shuffle_walk'(발 끌면서 **걷기** = 저진폭 **보행**).
+#   구 데이터의 'shuffle'(제자리 발끌기 = **비보행** 대조군)과 정답 의미가 정반대라, 같은 id 로 섞으면
+#   파일만으로 프로토콜을 복원할 수 없다. 그래서 신 id 를 새로 쓰고, 구 id 는 '레거시 비보행'으로만 인정한다.
+LABEL_SHUFFLE = "shuffle_walk"        # 신: 발 끌면서 걷기(보행, 걸음 계수 대상)
+LABEL_SHUFFLE_LEGACY = "shuffle"      # 구: 제자리 발끌기(비보행 대조군) — 구 CSV 호환용. 보행 아님.
 CUE_LABELS = {LABEL_WALK_SIT, LABEL_SIT_ONLY}
 ALL_LABELS = [LABEL_NORMAL, LABEL_WALK_SIT, LABEL_SIT_ONLY, LABEL_SHUFFLE]
-# 실제 보행 = 걸음이 세어져야 하는 라벨. SHUFFLE(발 끌면서 걷기)은 저진폭 보행이라 여기 포함(#176).
+# 구 CSV 만 인정하는 레거시 라벨(테이블/보행 계수엔 넣지 않음 — 의미 충돌 방지).
+LEGACY_LABELS = {LABEL_SHUFFLE_LEGACY}
+# 실제 보행 = 걸음이 세어져야 하는 라벨. shuffle_walk(발 끌면서 걷기)은 저진폭 보행이라 여기 포함(#176).
+#   구 'shuffle'(제자리)은 비보행이라 **여기 없음** — 정답 의미가 반대라 절대 섞지 않는다.
 WALKING_LABELS = {LABEL_NORMAL, LABEL_WALK_SIT, LABEL_SHUFFLE}
 
 # 세그먼트 = (label, phase). 관심 대비의 두 축:
@@ -505,9 +512,11 @@ def analyze(trials, participants=None, manual_counts=None):
                 continue
             if t["label"] not in WALKING_LABELS:
                 continue  # 보행 라벨만 채점(sit_only 는 걸음 대상 아님)
+            # det = 보행 구간에서 감지기가 실제 카운트한 걸음(step_counted)을 **직접** 센다(리뷰 #194).
+            #   segment_features 의 steps 는 MIN_SEG_SAMPLES(20) 미만 세그먼트면 None 이 되어, 짧은 보행이
+            #   step_counted 가 있어도 det=0 으로 오분류될 수 있다. 특징 안정성 게이트와 채점을 분리한다.
             walk = split_phases(t["rows"]).get("walking", [])
-            fe = segment_features(walk)
-            det = fe["steps"] if fe else 0
+            det = sum(1 for r in walk if r["_step"] and not r["_excluded"])
             place = (t["rows"][0].get("placement_id") or "?")
             rows_acc.append((tid, t["label"], place, gt, det))
         if not rows_acc:
@@ -520,8 +529,10 @@ def analyze(trials, participants=None, manual_counts=None):
                 errs.append(err)
                 flag = "  ← 큰 오차" if err > 20 else ""
                 print(f"  {place:18s} {lb:13s} {gt:>4d} {det:>4d} {err:>5.0f}%{flag}")
+            # '0-count 과소계수'는 err 프록시(≥99) 대신 det==0 을 직접 센다(리뷰 #194).
+            zero = sum(1 for r in rows_acc if r[4] == 0)
             print(f"  → 채점 {len(errs)} trial · 평균 절대오차 {_mean(errs):.0f}% "
-                  f"(0% 계수 {sum(1 for e in errs if e >= 99)}건 = 과소계수 미해결)")
+                  f"(0-count {zero}건 = 과소계수 미해결)")
         print()
 
     # ── 4. 참여자 분할 안내(#166) ──
@@ -828,6 +839,8 @@ def inspect(path):
     label = rows[0]["label"]
     if labels == {label} and label in ALL_LABELS:
         print(f"  ✅ 라벨: {label} (전 행 일관)")
+    elif labels == {label} and label in LEGACY_LABELS:
+        print(f"  ⚠️ 라벨: {label} (구 스키마 · 비보행 대조군 — 신 'shuffle_walk' 과 의미 다름)")
     else:
         ok = False
         print(f"  ❌ 라벨 이상: {labels}")

@@ -66,8 +66,12 @@ enum class WaveformLabel(
     /** 서 있다가 앉기만(보행 momentum 없는 순수 앉기 하강) — 앉기 신호 자체의 기준선. */
     SIT_ONLY("sit_only", "서서 앉기만", hasSitCue = true, actionHint = "그대로 서 계세요"),
 
-    /** 발 끌면서 걷기(저진폭 보행, 고령 타깃의 끌리는 걸음) — 걸음이 세어져야 하는 보행 라벨(#176 과소계수 회복 검증). */
-    SHUFFLE("shuffle", "발 끌면서 걷기", hasSitCue = false, actionHint = "발을 끌면서 계속 걸으세요"),
+    /**
+     * 발 끌면서 걷기(저진폭 보행, 고령 타깃의 끌리는 걸음) — 걸음이 세어져야 하는 보행 라벨(#176 과소계수 회복 검증).
+     * ⚠️ id 는 구 'shuffle'(제자리 발끌기 = **비보행** 대조군)과 정답 의미가 정반대라, 새 id **`shuffle_walk`** 를 쓴다
+     *    (리뷰 #194 블로커). 같은 id 로 섞으면 파일만으로 프로토콜을 복원할 수 없다.
+     */
+    SHUFFLE("shuffle_walk", "발 끌면서 걷기", hasSitCue = false, actionHint = "발을 끌면서 계속 걸으세요"),
 }
 
 /**
