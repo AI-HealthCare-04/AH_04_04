@@ -61,6 +61,7 @@ import com.aihealthcare.ah0404.profile.ProfileScreen
 import com.aihealthcare.ah0404.record.RecordScreen
 import com.aihealthcare.ah0404.settings.SettingsScreen
 import com.aihealthcare.ah0404.settings.SupportScreen
+import com.aihealthcare.ah0404.ui.components.AigoDialog
 import com.aihealthcare.ah0404.ui.theme.MyApplicationTheme
 
 class MainActivity : ComponentActivity() {
@@ -156,6 +157,7 @@ class MainActivity : ComponentActivity() {
                             SessionStore.clearAuthentication(context)
                             sessionRevision++
                         },
+                        onExit = activity::finish,
                     )
                 }
             }
@@ -198,12 +200,28 @@ private val MainTabSaver: Saver<MainTab, String> = Saver(
     restore = { MainTab.valueOf(it) },
 )
 
+internal enum class MainBackAction {
+    RETURN_HOME,
+    CONFIRM_EXIT,
+}
+
+internal fun mainBackAction(selectedTab: MainTab): MainBackAction =
+    if (selectedTab == MainTab.HOME) {
+        MainBackAction.CONFIRM_EXIT
+    } else {
+        MainBackAction.RETURN_HOME
+    }
+
 @androidx.media3.common.util.UnstableApi
 @Composable
-private fun MainContent(onLogout: () -> Unit) {
+private fun MainContent(
+    onLogout: () -> Unit,
+    onExit: () -> Unit,
+) {
     // rememberSaveable: 재생성(글꼴 크기·다크모드 등) 후에도 이탈 시 복귀할 탭을 보존한다.
     // 오버레이(walkingMission)만 복원하고 이 탭을 remember 로 두면 홈으로 튄다(#144 블로커 2).
     var selectedTab by rememberSaveable(stateSaver = MainTabSaver) { mutableStateOf(MainTab.HOME) }
+    var showExitConfirmation by rememberSaveable { mutableStateOf(false) }
 
     // 걷기 측정 화면(전체 화면 오버레이). 미션 목록에서 걷기 미션을 고르면 진입. null = 목록.
     // rememberSaveable: 재생성(글꼴 크기·다크모드 등) 후에도 측정 화면을 유지한다(세션 값은 VM 이
@@ -251,8 +269,11 @@ private fun MainContent(onLogout: () -> Unit) {
         }
     }
 
-    BackHandler(enabled = selectedTab != MainTab.HOME) {
-        selectedTab = MainTab.HOME
+    BackHandler {
+        when (mainBackAction(selectedTab)) {
+            MainBackAction.RETURN_HOME -> selectedTab = MainTab.HOME
+            MainBackAction.CONFIRM_EXIT -> showExitConfirmation = true
+        }
     }
 
     Scaffold(
@@ -310,5 +331,17 @@ private fun MainContent(onLogout: () -> Unit) {
                 modifier = contentModifier,
             )
         }
+    }
+
+    if (showExitConfirmation) {
+        AigoDialog(
+            title = "앱을 종료할까요?",
+            message = "앱을 종료해도 다음에 다시 이용할 수 있어요.",
+            confirmText = "종료",
+            onConfirm = onExit,
+            dismissText = "계속하기",
+            onDismiss = { showExitConfirmation = false },
+            onDismissRequest = { showExitConfirmation = false },
+        )
     }
 }
