@@ -173,6 +173,34 @@ data class WaveformSample(
 )
 
 /**
+ * HW 만보기(#184/#176 하이브리드) 값 산출의 **순수 로직**(센서 없이 단위 테스트 가능).
+ *
+ * `hw_step_counter` 는 '녹화 시작 기준 누적 걸음'이되, **측정 불가 상태를 음수 sentinel 로 구분**해
+ * '실제 0걸음'과 '측정 불가'를 분석에서 가를 수 있게 한다(리뷰 #194 블로커2). 분석기(analyze_waveform.py)도
+ * 같은 sentinel 을 해석한다.
+ */
+object WaveformHw {
+    const val PERMISSION_DENIED = -2   // ACTIVITY_RECOGNITION 미허용
+    const val SENSOR_ABSENT = -1       // 기기에 TYPE_STEP_COUNTER 없음
+    const val BASELINE_NOT_READY = -3  // 허용·센서 있으나 아직 counter 이벤트 전(기준 누적 미확보)
+
+    /**
+     * 녹화 시작 기준 HW 누적 걸음. 음수면 측정 불가(위 sentinel).
+     * @param permitted ACTIVITY_RECOGNITION 허용 여부
+     * @param sensorPresent TYPE_STEP_COUNTER 센서 존재 여부
+     * @param baseCount 녹화 시작 시점의 누적(미확보면 <0)
+     * @param latestCount 최신 누적(미수신이면 <0)
+     */
+    fun counterSinceStart(permitted: Boolean, sensorPresent: Boolean, baseCount: Long, latestCount: Long): Int =
+        when {
+            !permitted -> PERMISSION_DENIED
+            !sensorPresent -> SENSOR_ABSENT
+            baseCount < 0L || latestCount < 0L -> BASELINE_NOT_READY
+            else -> (latestCount - baseCount).toInt()
+        }
+}
+
+/**
  * 순수 CSV 직렬화. 스프레드시트·파이썬(pandas)에서 바로 열 수 있도록 표준 CSV 로 낸다.
  *
  * ⚠️ 실수 포맷은 **Locale.US 고정**이다. 기기 로케일이 소수점을 콤마(,)로 쓰면 CSV 열이 깨지므로
@@ -302,6 +330,18 @@ class WaveformRecorder {
     /** 녹화만 멈춘다 — 버퍼는 내보내기 위해 남겨둔다. */
     fun stop() {
         isRecording = false
+    }
+
+    /**
+     * 라벨 구간 종료 후 **HW 정산**(리뷰 #194 블로커1): TYPE_STEP_COUNTER 는 이벤트 지연이 최대 ~10초라,
+     * 동작 구간이 끝난 직후 도착하는 늦은 걸음이 마지막 행에 안 잡힐 수 있다. 종료 후 flush 구간에서 확정한
+     * 최종 누적을 **마지막 샘플의 hwStepCounter 에 덮어써** 그 trial 의 HW 최종값으로 남긴다(동작 구간은
+     * 이미 stop 으로 고정 — 가속도 라벨 구간과 HW 정산 구간을 분리한다). 버퍼가 비었으면 아무것도 하지 않는다.
+     */
+    fun finalizeHwCounter(finalValue: Int) {
+        if (_samples.isEmpty()) return
+        val last = _samples.size - 1
+        _samples[last] = _samples[last].copy(hwStepCounter = finalValue)
     }
 
     /** 버퍼까지 완전 초기화(다음 수집 대비). */

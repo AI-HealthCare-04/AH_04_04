@@ -81,6 +81,56 @@ class WaveformCaptureTest {
         assertTrue("hw_step_counter=12, hw_step_detector=1 로 직렬화: $row", row.endsWith(",12,1"))
     }
 
+    // ── HW 만보기 순수 로직 (#194 블로커2: 측정불가 sentinel 구분) ──────────
+
+    @Test
+    fun hw_counter_reports_negative_sentinels_for_unavailable_states() {
+        // 권한 거부 / 센서 부재 / 기준 미준비를 서로 다른 음수 sentinel 로 구분해 '실제 0걸음'과 가른다.
+        assertEquals(
+            WaveformHw.PERMISSION_DENIED,
+            WaveformHw.counterSinceStart(permitted = false, sensorPresent = true, baseCount = 10, latestCount = 20),
+        )
+        assertEquals(
+            WaveformHw.SENSOR_ABSENT,
+            WaveformHw.counterSinceStart(permitted = true, sensorPresent = false, baseCount = 10, latestCount = 20),
+        )
+        assertEquals(
+            WaveformHw.BASELINE_NOT_READY,
+            WaveformHw.counterSinceStart(permitted = true, sensorPresent = true, baseCount = -1, latestCount = 20),
+        )
+        assertEquals(
+            WaveformHw.BASELINE_NOT_READY,
+            WaveformHw.counterSinceStart(permitted = true, sensorPresent = true, baseCount = 10, latestCount = -1),
+        )
+    }
+
+    @Test
+    fun hw_counter_returns_steps_since_start_when_available() {
+        // 허용·센서 있고 기준 확보되면 '녹화 시작 기준 누적'(latest−base).
+        assertEquals(
+            12,
+            WaveformHw.counterSinceStart(permitted = true, sensorPresent = true, baseCount = 1000, latestCount = 1012),
+        )
+        assertEquals(
+            0,
+            WaveformHw.counterSinceStart(permitted = true, sensorPresent = true, baseCount = 1000, latestCount = 1000),
+        )
+    }
+
+    @Test
+    fun finalize_hw_counter_overwrites_last_row_and_noops_on_empty() {
+        val r = WaveformRecorder()
+        r.finalizeHwCounter(9) // 빈 버퍼 → no-op (예외 없음)
+        r.start(WaveformLabel.NORMAL_WALK, meta)
+        r.add(sample(sensorElapsedMs = 0L, hwStepCounter = 3))
+        r.add(sample(sensorElapsedMs = 20L, hwStepCounter = 5))
+        r.stop()
+        // 종료 후 flush 로 확정된 최종 HW 를 마지막 행에 덮어쓴다(지연 이벤트 반영).
+        r.finalizeHwCounter(8)
+        assertEquals(3, r.samples[0].hwStepCounter) // 이전 행은 그대로
+        assertEquals(8, r.samples[1].hwStepCounter) // 마지막 행만 최종값으로
+    }
+
     @Test
     fun meta_commas_are_sanitized_to_spaces() {
         // placement/device 등에 콤마가 섞여도 열이 밀리지 않게 공백으로 치환한다.

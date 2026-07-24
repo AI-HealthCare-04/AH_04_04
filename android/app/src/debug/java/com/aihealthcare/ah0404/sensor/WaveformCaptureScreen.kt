@@ -117,25 +117,14 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
     val stepCounterSensor = remember { sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER) }
     val stepDetectorSensor = remember { sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR) }
 
-    // TYPE_STEP_* 는 ACTIVITY_RECOGNITION(위험 권한, API29+) 없이는 이벤트가 오지 않는다. 화면 진입 시 요청.
-    //   거부돼도 hw_* 컬럼이 0 으로 남을 뿐 수집 자체는 정상(그레이스풀 열화).
-    val permLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        if (!granted) {
-            Toast.makeText(
-                context, "활동 인식 권한 없음 — HW 만보기 컬럼은 0 으로 기록됩니다(가속도 수집은 정상).",
-                Toast.LENGTH_LONG,
-            ).show()
-        }
-    }
-    LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.ACTIVITY_RECOGNITION) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            permLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
-        }
+    // ACTIVITY_RECOGNITION(위험 권한, API29+) 허용 여부. API28 이하는 권한 불필요라 true.
+    //   step sensor 는 이 권한이 있어야만 등록해도 이벤트가 온다 → 허용될 때만 등록하고, 새로 허용되면 재등록.
+    val hwPermitted = remember {
+        mutableStateOf(
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+                ContextCompat.checkSelfPermission(context, Manifest.permission.ACTIVITY_RECOGNITION) ==
+                PackageManager.PERMISSION_GRANTED,
+        )
     }
 
     val listener = remember {
@@ -175,14 +164,18 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
                 // HW 만보기: 녹화 시작 기준 누적 + 직전 accel 이후 감지된 스텝 이벤트(소비 후 리셋).
                 // 폴백: 녹화 시작 전 STEP_COUNTER 이벤트가 한 번도 없어 base 를 못 잡았으면(=−1),
                 //   녹화 중 첫 이벤트 값으로라도 base 를 잡는다(이 경우만 앞부분 손실이 불가피 — 센서 특성).
-                if (hwCounterBase.longValue < 0L && hwCounterLatest.longValue >= 0L) {
+                if (hwPermitted.value && stepCounterSensor != null &&
+                    hwCounterBase.longValue < 0L && hwCounterLatest.longValue >= 0L
+                ) {
                     hwCounterBase.longValue = hwCounterLatest.longValue
                 }
-                val hwCounter = if (hwCounterBase.longValue >= 0L) {
-                    (hwCounterLatest.longValue - hwCounterBase.longValue).toInt()
-                } else {
-                    0
-                }
+                // 측정 불가(권한거부/센서부재/기준미준비)는 음수 sentinel 로 기록해 '실제 0걸음'과 구분(리뷰 #194).
+                val hwCounter = WaveformHw.counterSinceStart(
+                    permitted = hwPermitted.value,
+                    sensorPresent = stepCounterSensor != null,
+                    baseCount = hwCounterBase.longValue,
+                    latestCount = hwCounterLatest.longValue,
+                )
                 val hwDetected = hwPendingDetector.intValue > 0
                 hwPendingDetector.intValue = 0
                 recorder.add(
@@ -223,8 +216,19 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
     // 종료도 자동이라, 주머니 배치에서 휴대폰을 꺼내는 조작이 수집 구간에 섞이지 않는다(Earthworm-jk 블로커).
     LaunchedEffect(recording.value) {
         if (!recording.value) return@LaunchedEffect
-        val autoStop = {
+        // 종료 = 라벨 구간 고정(stop) → HW 정산 flush(지연 이벤트 수신) → 최종 HW 를 마지막 행에 확정 → UI 정지.
+        //   flush 동안 recording.value 는 true 로 두어 이 코루틴이 취소되지 않게 한다(가속도는 stop 으로 이미 종료).
+        suspend fun autoStopWithHwFlush() {
             recorder.stop()
+            delay(HW_FLUSH_MS)
+            recorder.finalizeHwCounter(
+                WaveformHw.counterSinceStart(
+                    permitted = hwPermitted.value,
+                    sensorPresent = stepCounterSensor != null,
+                    baseCount = hwCounterBase.longValue,
+                    latestCount = hwCounterLatest.longValue,
+                ),
+            )
             recording.value = false
             Toast.makeText(context, "수집 완료 — 저장하세요.", Toast.LENGTH_LONG).show()
         }
@@ -248,19 +252,48 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
             recorder.markSitting()
             phase.value = WaveformPhase.SITTING
             countdown(cueCountdown, SIT_SECONDS) // 앉기 구간 수집
-            if (recording.value) autoStop()
+            if (recording.value) autoStopWithHwFlush()
         } else {
             countdown(cueCountdown, WALK_SECONDS + SIT_SECONDS)
-            if (recording.value) autoStop()
+            if (recording.value) autoStopWithHwFlush()
         }
     }
 
-    // 가속도 + HW 만보기 두 센서를 같은 리스너로 등록/해제한다(HW 는 있을 때만).
+    // HW step sensor 는 **ACTIVITY_RECOGNITION 허용 시에만** 등록한다(미허용이면 등록해도 이벤트가 안 옴).
+    val registerStepSensors = {
+        if (hwPermitted.value) {
+            stepCounterSensor?.let { sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_FASTEST) }
+            stepDetectorSensor?.let { sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_FASTEST) }
+        }
+    }
+    // 가속도 + (허용 시)HW 만보기 두 센서를 같은 리스너로 등록/해제한다.
     val registerSensors = {
         sensorManager.registerListener(listener, accelSensor, SensorManager.SENSOR_DELAY_GAME)
-        stepCounterSensor?.let { sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_FASTEST) }
-        stepDetectorSensor?.let { sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_FASTEST) }
+        registerStepSensors()
     }
+
+    // 권한 요청 — 화면 진입 시 1회. **허용되면 즉시 step sensor 재등록**(진입 당시 미허용이었어도 이벤트 수신 보장).
+    //   거부되면 hw_* 는 sentinel(PERMISSION_DENIED)로 기록돼 '실제 0걸음'과 구분된다(가속도 수집은 정상).
+    val permLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        hwPermitted.value = granted
+        if (granted) {
+            registerStepSensors()
+        } else {
+            Toast.makeText(
+                context,
+                "활동 인식 권한 없음 — HW 만보기는 '측정 불가'로 기록됩니다(가속도 수집은 정상).",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+    LaunchedEffect(Unit) {
+        if (!hwPermitted.value) {
+            permLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
+        }
+    }
+
     DisposableEffect(lifecycleOwner) {
         var observer: LifecycleEventObserver? = null
         if (accelSensor != null) {
@@ -341,6 +374,17 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.outline,
         )
+
+        // HW 만보기 미사용 안내(#194 하이브리드) — 권한 거부/센서 부재면 hw_* 는 '측정 불가'로 기록된다.
+        //   가속도 수집(핵심)은 정상이므로 녹화는 막지 않는다.
+        val hwNote = when {
+            stepCounterSensor == null -> "⚠️ 이 기기엔 HW 만보기 센서가 없습니다 — hw_* 는 '측정 불가'로 기록(가속도는 정상)."
+            !hwPermitted.value -> "⚠️ 활동 인식 권한 미허용 — hw_* 는 '측정 불가'로 기록(가속도는 정상). 권한을 허용하면 HW 비교값이 기록됩니다."
+            else -> null
+        }
+        hwNote?.let {
+            Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+        }
 
         Text(
             text = if (walking.value) "🚶 걷는 중" else "⏸ 멈춤",
@@ -462,6 +506,13 @@ private const val WALK_SECONDS = 15
 
 /** 앉기 큐 이후 수집하는 시간(초) — 이 시간 뒤 자동 정지. 큐 없는 라벨은 WALK_SECONDS+SIT_SECONDS 총길이. */
 private const val SIT_SECONDS = 5
+
+/**
+ * 라벨 구간 종료 후 HW 만보기 정산(flush) 시간(ms) — TYPE_STEP_COUNTER 지연 이벤트를 잠깐 더 받아 최종
+ * 누적을 마지막 행에 확정한다(리뷰 #194 블로커1). 동작 구간(가속도)은 이미 stop 으로 고정돼 라벨 경계는
+ * 바뀌지 않는다. 지연 최악(~10초)을 다 못 덮을 수 있으나, 연속 보행에선 대개 1~2초 내 보고돼 실용적이다.
+ */
+private const val HW_FLUSH_MS = 2500L
 
 /** 1초 단위 카운트다운(초 단위 표시 갱신). 코루틴 취소(정지·pause) 시 즉시 중단된다. */
 private suspend fun countdown(state: MutableIntState, seconds: Int) {
