@@ -27,10 +27,11 @@ class WaveformCaptureTest {
         magnitude: Float = 0f, filtered: Float = 9.8f,
         state: WalkingStepDetectorLogic.State = WalkingStepDetectorLogic.State.IDLE,
         count: Int = 0, stepCounted: Boolean = false,
-        hwStepCounter: Int = 0, hwStepDetected: Boolean = false,
+        hwStepCounter: Int = 0, hwStepDetected: Boolean = false, hwStepDetectorTotal: Int = 0,
     ) = WaveformSample(
         sensorElapsedMs, callbackElapsedMs, x, y, z, magnitude, filtered, state, count, stepCounted,
         hwStepCounter = hwStepCounter, hwStepDetected = hwStepDetected,
+        hwStepDetectorTotal = hwStepDetectorTotal,
     )
 
     // ── CSV 포맷 ─────────────────────────────────────────────
@@ -41,7 +42,7 @@ class WaveformCaptureTest {
             "trial_id,device_model,placement_id,position,side,screen_facing,top_direction,fold_state," +
                 "cue_delivery,label,phase,event,excluded,sensor_elapsed_ms,callback_elapsed_ms," +
                 "x,y,z,magnitude,filtered_mag,state,count,step_counted," +
-                "hw_step_counter,hw_step_detector",
+                "hw_step_counter,hw_step_detector,hw_step_detector_total",
             WaveformCsv.HEADER,
         )
     }
@@ -54,31 +55,32 @@ class WaveformCaptureTest {
             magnitude = 9.9f, filtered = 10.5f,
             state = WalkingStepDetectorLogic.State.WALKING,
             count = 7, stepCounted = true,
-            hwStepCounter = 6, hwStepDetected = true,
+            hwStepCounter = 6, hwStepDetected = true, hwStepDetectorTotal = 5,
         ).copy(phase = WaveformPhase.SITTING, event = "sit_cue", excluded = true)
         val row = WaveformCsv.row(meta.copy(cueDelivery = "success"), WaveformLabel.WALK_THEN_SIT, s)
         assertEquals(
             "t1,samsung SM-F766N,front_pocket_r_in,front_pocket,right,in,up,folded," +
                 "success,walk_then_sit,sitting,sit_cue,1,1200,1234," +
-                "0.50000,-1.25000,9.80000,9.90000,10.50000,WALKING,7,1,6,1",
+                "0.50000,-1.25000,9.80000,9.90000,10.50000,WALKING,7,1,6,1,5",
             row,
         )
     }
 
     @Test
     fun step_counted_false_serializes_as_zero() {
-        // 뒤 3필드 = step_counted, hw_step_counter, hw_step_detector (모두 0).
+        // 뒤 4필드 = step_counted, hw_step_counter, hw_step_detector, hw_step_detector_total (모두 0).
         val row = WaveformCsv.row(meta, WaveformLabel.NORMAL_WALK, sample(stepCounted = false))
-        assertTrue("step_counted 는 0 이어야 한다: $row", row.endsWith(",0,0,0"))
+        assertTrue("step_counted 는 0 이어야 한다: $row", row.endsWith(",0,0,0,0"))
     }
 
     @Test
-    fun hw_step_columns_serialize_counter_and_detector() {
-        // HW 만보기(#184/#176 하이브리드): 누적 카운터 값 + 스텝 감지 이벤트(0/1)를 끝 두 컬럼에 기록.
+    fun hw_step_columns_serialize_counter_detector_and_total() {
+        // HW 만보기(#184/#176 하이브리드): 누적 카운터 + 스텝 감지 이벤트(0/1) + 감지기 누적 총계를 끝 세 컬럼에 기록.
         val row = WaveformCsv.row(
-            meta, WaveformLabel.SHUFFLE, sample(hwStepCounter = 12, hwStepDetected = true),
+            meta, WaveformLabel.SHUFFLE,
+            sample(hwStepCounter = 12, hwStepDetected = true, hwStepDetectorTotal = 9),
         )
-        assertTrue("hw_step_counter=12, hw_step_detector=1 로 직렬화: $row", row.endsWith(",12,1"))
+        assertTrue("hw_step_counter=12, detector=1, total=9 로 직렬화: $row", row.endsWith(",12,1,9"))
     }
 
     // ── HW 만보기 순수 로직 (#194 블로커2: 측정불가 sentinel 구분) ──────────
@@ -118,17 +120,62 @@ class WaveformCaptureTest {
     }
 
     @Test
-    fun finalize_hw_counter_overwrites_last_row_and_noops_on_empty() {
+    fun finalize_hw_walk_end_overwrites_last_row_and_noops_on_empty() {
         val r = WaveformRecorder()
-        r.finalizeHwCounter(9) // 빈 버퍼 → no-op (예외 없음)
+        r.finalizeHwWalkEnd(9, 4) // 빈 버퍼 → no-op (예외 없음)
         r.start(WaveformLabel.NORMAL_WALK, meta)
         r.add(sample(sensorElapsedMs = 0L, hwStepCounter = 3))
         r.add(sample(sensorElapsedMs = 20L, hwStepCounter = 5))
         r.stop()
-        // 종료 후 flush 로 확정된 최종 HW 를 마지막 행에 덮어쓴다(지연 이벤트 반영).
-        r.finalizeHwCounter(8)
+        // 종료 후 flush 로 확정된 최종 HW(누적·감지기 총계)를 마지막 walking 행에 덮어쓴다(지연 이벤트 반영).
+        r.finalizeHwWalkEnd(8, 7)
         assertEquals(3, r.samples[0].hwStepCounter) // 이전 행은 그대로
-        assertEquals(8, r.samples[1].hwStepCounter) // 마지막 행만 최종값으로
+        assertEquals(0, r.samples[0].hwStepDetectorTotal)
+        assertEquals(8, r.samples[1].hwStepCounter) // 마지막 walking 행만 최종값으로
+        assertEquals(7, r.samples[1].hwStepDetectorTotal)
+    }
+
+    @Test
+    fun finalize_hw_walk_end_targets_last_walking_row_not_trailing_sitting() {
+        // walk_then_sit 은 trial 마지막 행이 phase=sitting 이고, 분석기는 sitting 을 빼고 '마지막 walking 행'을
+        //   읽는다 → finalize 도 그 행에 써야 값이 정확도표에서 읽힌다(리뷰 #194 블로커2, walk_then_sit + 지연 counter).
+        val r = WaveformRecorder()
+        r.start(WaveformLabel.WALK_THEN_SIT, meta)
+        r.add(sample(sensorElapsedMs = 0L, hwStepCounter = 2))   // walking
+        r.add(sample(sensorElapsedMs = 20L, hwStepCounter = 4))  // walking (마지막 walking 행)
+        r.markSitting()
+        r.add(sample(sensorElapsedMs = 1000L)) // sitting (trial 마지막 행)
+        r.stop()
+        r.finalizeHwWalkEnd(6, 5) // 보행 종료 시점 누적을 flush 로 확정
+        assertEquals(WaveformPhase.WALKING, r.samples[1].phase)
+        assertEquals(6, r.samples[1].hwStepCounter)       // 마지막 walking 행에 확정
+        assertEquals(5, r.samples[1].hwStepDetectorTotal)
+        assertEquals(WaveformPhase.SITTING, r.samples[2].phase)
+        assertEquals(0, r.samples[2].hwStepCounter)       // 뒤따르는 sitting 행은 건드리지 않음
+    }
+
+    @Test
+    fun attributes_to_walk_only_within_frozen_walk_end() {
+        // 보행 종료 시점(walkEnd) 이내 이벤트만 참조에 귀속 — 종료 후 정착 중 걸음(ts>walkEnd)은 제외(블로커3).
+        assertTrue(WaveformHw.attributesToWalk(eventTsNs = 900, walkEndNs = 1000))
+        assertTrue(WaveformHw.attributesToWalk(eventTsNs = 1000, walkEndNs = 1000)) // 경계 포함
+        assertFalse(WaveformHw.attributesToWalk(eventTsNs = 1200, walkEndNs = 1000)) // 종료 후
+        assertFalse(WaveformHw.attributesToWalk(eventTsNs = 900, walkEndNs = -1))     // walkEnd 미확정
+    }
+
+    @Test
+    fun detector_total_reports_sentinels_when_unavailable() {
+        // 감지기 총계도 counter 와 같은 sentinel 로 '측정 불가'를 '실제 0'과 구분(BASELINE 은 없음 — 0 도 유효).
+        assertEquals(
+            WaveformHw.PERMISSION_DENIED,
+            WaveformHw.detectorTotal(permitted = false, sensorPresent = true, count = 5),
+        )
+        assertEquals(
+            WaveformHw.SENSOR_ABSENT,
+            WaveformHw.detectorTotal(permitted = true, sensorPresent = false, count = 5),
+        )
+        assertEquals(0, WaveformHw.detectorTotal(permitted = true, sensorPresent = true, count = 0))
+        assertEquals(5, WaveformHw.detectorTotal(permitted = true, sensorPresent = true, count = 5))
     }
 
     @Test

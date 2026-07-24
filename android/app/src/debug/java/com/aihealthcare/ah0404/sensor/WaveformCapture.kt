@@ -164,12 +164,19 @@ data class WaveformSample(
     /** 큐 직후 정착 구간(비프·자세전환)이라 학습에서 배제 권장인가. */
     val excluded: Boolean = false,
     /**
-     * HW 만보기(TYPE_STEP_COUNTER) 누적 걸음 — **녹화 시작 기준 0**(하이브리드 비교, #184/#176).
-     * 권한 미허용/센서 없음/아직 첫 이벤트 전이면 0. 참값·감지기와 나란히 비교하려는 것.
+     * HW 만보기(TYPE_STEP_COUNTER) 누적 걸음 — **녹화 시작 기준**(하이브리드 비교, #184/#176).
+     * **음수면 측정 불가 sentinel**(WaveformHw): 권한거부 −2 / 센서없음 −1 / 기준미준비 −3 → '실제 0걸음'과 구분.
+     * 보행 종료 후 정산(finalizeHwWalkEnd)이 **마지막 walking 행**에 보행 종료 시점(walkEnd) 누적을 확정한다.
      */
     val hwStepCounter: Int = 0,
-    /** 이 샘플 직전에 HW 걸음 감지기(TYPE_STEP_DETECTOR) 이벤트가 있었는가(스텝 이벤트 0/1). */
+    /** 이 샘플 직전에 HW 걸음 감지기(TYPE_STEP_DETECTOR) 이벤트가 있었는가(스텝 이벤트 0/1, 녹화 중 실시간 스트림). */
     val hwStepDetected: Boolean = false,
+    /**
+     * HW 걸음 감지기(TYPE_STEP_DETECTOR)의 **보행 종료 시점까지 누적 이벤트 수** — 기본 0, **마지막 walking 행에만**
+     * finalizeHwWalkEnd 로 확정한다(정산 flush 중 도착한 지연 이벤트까지 포함, 리뷰 #194 블로커1). 음수면 측정 불가 sentinel.
+     * 실시간 0/1 스트림(hwStepDetected)을 한 Boolean 으로 접으면 flush 중 복수 이벤트 개수가 사라지므로 별도 누적으로 보존한다.
+     */
+    val hwStepDetectorTotal: Int = 0,
 )
 
 /**
@@ -198,6 +205,26 @@ object WaveformHw {
             baseCount < 0L || latestCount < 0L -> BASELINE_NOT_READY
             else -> (latestCount - baseCount).toInt()
         }
+
+    /**
+     * HW 이벤트(event.timestamp)가 **보행 종료 시점(walkEndNs) 이내**에 발생했는가 — 종료 후 정산 flush 중
+     * 도착한 지연 보고라도, 그 걸음이 보행 구간 안에서 일어난 것만 참조에 넣기 위한 시각 귀속 판정(리뷰 #194 블로커3).
+     * TYPE_STEP_COUNTER/DETECTOR 의 timestamp 는 '걸음이 일어난 시각'이라, 보고가 늦어도 시각으로 귀속할 수 있다.
+     * walkEndNs 미확정(<0)이면 false.
+     */
+    fun attributesToWalk(eventTsNs: Long, walkEndNs: Long): Boolean =
+        walkEndNs >= 0L && eventTsNs in 0L..walkEndNs
+
+    /**
+     * HW 걸음 감지기 누적 이벤트 수 — 측정 불가면 counter 와 같은 sentinel 로 표현해 '실제 0'과 구분(리뷰 #194).
+     * detector 는 0 부터 즉시 세므로 BASELINE_NOT_READY 는 없다(허용·센서만 있으면 0 도 유효한 실측값).
+     */
+    fun detectorTotal(permitted: Boolean, sensorPresent: Boolean, count: Int): Int =
+        when {
+            !permitted -> PERMISSION_DENIED
+            !sensorPresent -> SENSOR_ABSENT
+            else -> count
+        }
 }
 
 /**
@@ -211,7 +238,7 @@ object WaveformCsv {
         "trial_id,device_model,placement_id,position,side,screen_facing,top_direction,fold_state," +
             "cue_delivery,label,phase,event,excluded,sensor_elapsed_ms,callback_elapsed_ms," +
             "x,y,z,magnitude,filtered_mag,state,count,step_counted," +
-            "hw_step_counter,hw_step_detector"
+            "hw_step_counter,hw_step_detector,hw_step_detector_total"
 
     /** CSV 셀 안의 콤마·개행을 공백으로 치환(따옴표 이스케이프 없이 단순 CSV 유지). */
     private fun cell(s: String): String = s.replace(',', ' ').replace('\n', ' ').replace('\r', ' ')
@@ -220,7 +247,7 @@ object WaveformCsv {
         val p = meta.placement
         return String.format(
             Locale.US,
-            "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%d,%d,%d,%.5f,%.5f,%.5f,%.5f,%.5f,%s,%d,%d,%d,%d",
+            "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%d,%d,%d,%.5f,%.5f,%.5f,%.5f,%.5f,%s,%d,%d,%d,%d,%d",
             cell(meta.trialId), cell(meta.deviceModel),
             cell(p.id), cell(p.position), cell(p.side), cell(p.screenFacing),
             cell(p.topDirection), cell(p.foldState),
@@ -234,6 +261,7 @@ object WaveformCsv {
             if (s.stepCounted) 1 else 0,
             s.hwStepCounter,
             if (s.hwStepDetected) 1 else 0,
+            s.hwStepDetectorTotal,
         )
     }
 
@@ -333,15 +361,24 @@ class WaveformRecorder {
     }
 
     /**
-     * 라벨 구간 종료 후 **HW 정산**(리뷰 #194 블로커1): TYPE_STEP_COUNTER 는 이벤트 지연이 최대 ~10초라,
-     * 동작 구간이 끝난 직후 도착하는 늦은 걸음이 마지막 행에 안 잡힐 수 있다. 종료 후 flush 구간에서 확정한
-     * 최종 누적을 **마지막 샘플의 hwStepCounter 에 덮어써** 그 trial 의 HW 최종값으로 남긴다(동작 구간은
-     * 이미 stop 으로 고정 — 가속도 라벨 구간과 HW 정산 구간을 분리한다). 버퍼가 비었으면 아무것도 하지 않는다.
+     * 라벨 구간 종료 후 **HW 정산**(리뷰 #194 블로커1·2·3): TYPE_STEP_COUNTER/DETECTOR 는 보고 지연이 최대
+     * ~10초라, 동작 구간이 끝난 직후 도착하는 늦은 걸음이 잡히지 않을 수 있다. 종료 후 flush 구간에서 확정한
+     * **보행 종료 시점 누적(counter)·감지기 총 이벤트(detectorTotal)** 를 **마지막 walking 행**에 덮어쓴다.
+     *
+     * ⚠️ **마지막 walking 행** 인 이유(리뷰 #194 블로커2): walk_then_sit 의 trial 마지막 행은 phase=sitting 인데,
+     *    분석기(hw_final_counter)는 sitting 을 빼고 **마지막 walking 행**을 읽는다. trial 맨 끝 행에 쓰면 그 값이
+     *    walk_then_sit 정확도표에서 무시되므로, 분석기가 읽는 바로 그 행(마지막 walking)에 확정한다. walking 행이
+     *    하나도 없으면 마지막 행에 쓴다. 가속도 라벨 구간은 이미 stop 으로 고정돼 경계는 바뀌지 않는다.
+     *    버퍼가 비었으면 아무것도 하지 않는다.
      */
-    fun finalizeHwCounter(finalValue: Int) {
+    fun finalizeHwWalkEnd(counter: Int, detectorTotal: Int) {
         if (_samples.isEmpty()) return
-        val last = _samples.size - 1
-        _samples[last] = _samples[last].copy(hwStepCounter = finalValue)
+        val walkIdx = _samples.indexOfLast { it.phase == WaveformPhase.WALKING }
+        val target = if (walkIdx >= 0) walkIdx else _samples.size - 1
+        _samples[target] = _samples[target].copy(
+            hwStepCounter = counter,
+            hwStepDetectorTotal = detectorTotal,
+        )
     }
 
     /** 버퍼까지 완전 초기화(다음 수집 대비). */

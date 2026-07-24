@@ -7,7 +7,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
+import android.hardware.SensorEventListener2
 import android.hardware.SensorManager
 import android.media.AudioManager
 import android.media.ToneGenerator
@@ -108,7 +108,14 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
     // HW 만보기 하이브리드 비교(#184/#176): TYPE_STEP_COUNTER 누적(녹화 시작 기준 0)·TYPE_STEP_DETECTOR 이벤트.
     val hwCounterBase = remember { mutableLongStateOf(-1L) }   // 녹화 시작 시 첫 누적값
     val hwCounterLatest = remember { mutableLongStateOf(-1L) }
-    val hwPendingDetector = remember { mutableIntStateOf(0) }  // 직전 accel 샘플 이후 감지된 스텝 이벤트 수
+    val hwPendingDetector = remember { mutableIntStateOf(0) }  // 직전 accel 샘플 이후 감지된 스텝 이벤트 수(실시간 0/1 스트림)
+
+    // HW 종료 정산(리뷰 #194 블로커1·2·3): 지연 보고를 '보행 종료 시점(walkEnd)'에 시각 귀속해 확정한다.
+    val walkEndSensorNs = remember { mutableLongStateOf(-1L) }   // 마지막 walking 샘플의 SensorEvent.timestamp(ns)
+    val hwCounterWalkEnd = remember { mutableLongStateOf(-1L) }  // walkEnd 이내 마지막 counter 누적값
+    val hwDetectorWalkEnd = remember { mutableIntStateOf(0) }    // walkEnd 이내 감지기 이벤트 총수(flush 지연분 포함)
+    val hwSettling = remember { mutableStateOf(false) }          // 정산 중(UI '움직이지 마세요')
+    val hwFlushDone = remember { mutableStateOf(false) }         // sensorManager.flush 완료(onFlushCompleted) 신호
 
     val sensorManager = remember {
         context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -128,7 +135,7 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
     }
 
     val listener = remember {
-        object : SensorEventListener {
+        object : SensorEventListener2 {
             override fun onSensorChanged(event: SensorEvent?) {
                 event ?: return
                 // HW 만보기 두 센서는 같은 리스너로 받아 최신값/이벤트만 갱신하고 반환(가속도 샘플에서 함께 기록).
@@ -138,10 +145,20 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
                         //   최대 ~10초라, base 를 '녹화 중 첫 이벤트'로 잡으면 trial 앞부분 걸음이 통째로
                         //   소거된다(리뷰 #194 블로커). base 는 녹화 시작 시점의 값으로 잡는다(아래 start).
                         hwCounterLatest.longValue = event.values[0].toLong() // 부팅 이후 누적
+                        // 보행 종료(walkEnd) 이내 이벤트만 walkEnd 누적으로 확정. monotonic 이라 조건 충족 시
+                        //   최신값이 곧 walkEnd 시점 누적. 정산 flush 중 도착한 지연 보고도 여기서 귀속된다(블로커3).
+                        if (WaveformHw.attributesToWalk(event.timestamp, walkEndSensorNs.longValue)) {
+                            hwCounterWalkEnd.longValue = event.values[0].toLong()
+                        }
                         return
                     }
                     Sensor.TYPE_STEP_DETECTOR -> {
-                        if (recorder.isRecording) hwPendingDetector.intValue += 1
+                        if (recorder.isRecording) hwPendingDetector.intValue += 1 // 실시간 0/1 스트림용
+                        // 보행 종료 이내 이벤트는 녹화 종료 후 flush 중에도 계속 누적 — 종료 직전/정산 중 지연
+                        //   detector 이벤트를 개수째 보존한다(리뷰 #194 블로커1).
+                        if (WaveformHw.attributesToWalk(event.timestamp, walkEndSensorNs.longValue)) {
+                            hwDetectorWalkEnd.intValue += 1
+                        }
                         return
                     }
                 }
@@ -156,6 +173,9 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
                     sensorBaseNs.longValue = tsNs
                     callbackBaseMs.longValue = cbMs
                 }
+                // 보행 종료 시각 후보 — WALKING phase 동안만 전진하고, 앉기 큐(markSitting→SITTING) 시점이나
+                //   stop(isRecording=false 로 여기 도달 안 함) 에 자동 동결된다 → walkEnd = 마지막 walking 샘플 ts.
+                if (recorder.phase == WaveformPhase.WALKING) walkEndSensorNs.longValue = tsNs
                 val sensorElapsed = (tsNs - sensorBaseNs.longValue) / 1_000_000L
                 val callbackElapsed = cbMs - callbackBaseMs.longValue
                 val magnitude = sqrt(x * x + y * y + z * z)
@@ -206,6 +226,12 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
             }
 
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
+            // sensorManager.flush() 로 FIFO 강제 배출이 끝났다는 신호 — 정산 대기를 조기 종료한다(블로커3).
+            //   FIFO 없는 센서면 flush 가 false 를 반환해 이 콜백이 안 올 수 있어, 대기엔 지연 상한 타임아웃도 둔다.
+            override fun onFlushCompleted(sensor: Sensor?) {
+                hwFlushDone.value = true
+            }
         }
     }
 
@@ -216,19 +242,37 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
     // 종료도 자동이라, 주머니 배치에서 휴대폰을 꺼내는 조작이 수집 구간에 섞이지 않는다(Earthworm-jk 블로커).
     LaunchedEffect(recording.value) {
         if (!recording.value) return@LaunchedEffect
-        // 종료 = 라벨 구간 고정(stop) → HW 정산 flush(지연 이벤트 수신) → 최종 HW 를 마지막 행에 확정 → UI 정지.
-        //   flush 동안 recording.value 는 true 로 두어 이 코루틴이 취소되지 않게 한다(가속도는 stop 으로 이미 종료).
+        // 종료 = 라벨 구간 고정(stop, walkEnd 동결) → HW 정산 flush(지연 이벤트 수신·시각 귀속) → 최종 HW 를
+        //   마지막 walking 행에 확정 → UI 정지. flush 동안 recording.value 는 true 로 두어 이 코루틴이 취소되지
+        //   않게 한다(가속도는 stop 으로 이미 종료). 값 정확성은 attributesToWalk(시각 귀속)가 보장하고,
+        //   대기는 '지연 보고 수신'만 담당 — flush 완료 신호나 문서상 지연 상한 중 먼저 오는 쪽까지 기다린다.
         suspend fun autoStopWithHwFlush() {
-            recorder.stop()
-            delay(HW_FLUSH_MS)
-            recorder.finalizeHwCounter(
-                WaveformHw.counterSinceStart(
+            recorder.stop() // walkEndSensorNs 동결(이후 accel 은 isRecording=false 로 walkEnd 갱신 안 함)
+            hwSettling.value = true
+            hwFlushDone.value = false
+            // 센서 FIFO 강제 배출 → onFlushCompleted 로 완료 신호(가능 시 조기 종료). 미지원이면 false.
+            val flushAsked = runCatching {
+                if (hwPermitted.value && stepCounterSensor != null) sensorManager.flush(listener) else false
+            }.getOrDefault(false)
+            var waited = 0L
+            while (waited < HW_FLUSH_TIMEOUT_MS && !(flushAsked && hwFlushDone.value)) {
+                delay(HW_FLUSH_POLL_MS)
+                waited += HW_FLUSH_POLL_MS
+            }
+            recorder.finalizeHwWalkEnd(
+                counter = WaveformHw.counterSinceStart(
                     permitted = hwPermitted.value,
                     sensorPresent = stepCounterSensor != null,
                     baseCount = hwCounterBase.longValue,
-                    latestCount = hwCounterLatest.longValue,
+                    latestCount = hwCounterWalkEnd.longValue, // walkEnd 시점 누적(종료 후 걸음 제외)
+                ),
+                detectorTotal = WaveformHw.detectorTotal(
+                    permitted = hwPermitted.value,
+                    sensorPresent = stepDetectorSensor != null,
+                    count = hwDetectorWalkEnd.intValue,
                 ),
             )
+            hwSettling.value = false
             recording.value = false
             Toast.makeText(context, "수집 완료 — 저장하세요.", Toast.LENGTH_LONG).show()
         }
@@ -412,6 +456,16 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
             )
         }
 
+        // HW 정산 중 안내 — 지연 보고를 받는 동안 추가 걸음이 섞이지 않게 정지를 유도(리뷰 #194 블로커3).
+        if (hwSettling.value) {
+            Text(
+                "🧮 만보기 정산 중 · 움직이지 마세요 …",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.tertiary,
+            )
+        }
+
         Spacer(Modifier.height(4.dp))
 
         if (!recording.value) {
@@ -446,6 +500,12 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
                     //   위 listener 폴백이 녹화 중 첫 이벤트로 잡는다.
                     hwCounterBase.longValue = hwCounterLatest.longValue
                     hwPendingDetector.intValue = 0
+                    // HW 종료 정산 상태 초기화 — walkEnd·귀속 누적을 새 trial 기준으로 리셋.
+                    walkEndSensorNs.longValue = -1L
+                    hwCounterWalkEnd.longValue = -1L
+                    hwDetectorWalkEnd.intValue = 0
+                    hwSettling.value = false
+                    hwFlushDone.value = false
                     recorder.start(label.value, newMeta(label.value, preset.value.spec))
                     recording.value = true
                     phase.value = WaveformPhase.WALKING
@@ -508,11 +568,15 @@ private const val WALK_SECONDS = 15
 private const val SIT_SECONDS = 5
 
 /**
- * 라벨 구간 종료 후 HW 만보기 정산(flush) 시간(ms) — TYPE_STEP_COUNTER 지연 이벤트를 잠깐 더 받아 최종
- * 누적을 마지막 행에 확정한다(리뷰 #194 블로커1). 동작 구간(가속도)은 이미 stop 으로 고정돼 라벨 경계는
- * 바뀌지 않는다. 지연 최악(~10초)을 다 못 덮을 수 있으나, 연속 보행에선 대개 1~2초 내 보고돼 실용적이다.
+ * HW 정산 대기 상한(ms) — TYPE_STEP_COUNTER/DETECTOR 의 **문서상 최대 지연(~10초)** 을 덮는 천장(리뷰
+ * #194 블로커3). 정산 값 자체는 attributesToWalk(이벤트 timestamp 를 보행 종료 시점에 귀속)로 정확하고,
+ * 이 대기는 '지연 보고를 수신'하기 위한 것이다. 대개는 flush() 완료 신호(onFlushCompleted)로 훨씬 일찍
+ * 끝나고, FIFO 미지원 기기에서만 이 상한까지 기다린다. 정산 중에는 UI 로 '움직이지 마세요'를 표시한다.
  */
-private const val HW_FLUSH_MS = 2500L
+private const val HW_FLUSH_TIMEOUT_MS = 11_000L
+
+/** 정산 대기 폴링 간격(ms) — flush 완료/상한 도달을 이 주기로 확인한다. */
+private const val HW_FLUSH_POLL_MS = 100L
 
 /** 1초 단위 카운트다운(초 단위 표시 갱신). 코루틴 취소(정지·pause) 시 즉시 중단된다. */
 private suspend fun countdown(state: MutableIntState, seconds: Int) {

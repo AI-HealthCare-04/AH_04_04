@@ -185,11 +185,14 @@ python scripts/analyze_waveform.py --inspect <파일.csv>
 trial_id,device_model,placement_id,position,side,screen_facing,top_direction,fold_state,
 cue_delivery,label,phase,event,excluded,sensor_elapsed_ms,callback_elapsed_ms,
 x,y,z,magnitude,filtered_mag,state,count,step_counted,
-hw_step_counter,hw_step_detector
+hw_step_counter,hw_step_detector,hw_step_detector_total
 ```
 
-- `hw_step_counter`(HW 만보기 누적, 녹화 시작 기준 0)·`hw_step_detector`(HW 스텝 이벤트 0/1)는 **3차 수집부터**
-  추가된 하이브리드 비교 컬럼(#184/#176). 구 CSV(23컬럼)도 분석 도구가 그대로 처리한다.
+- `hw_step_counter`(HW 만보기 누적, 녹화 시작 기준)·`hw_step_detector`(HW 스텝 이벤트 0/1 실시간 스트림)·
+  `hw_step_detector_total`(보행 종료까지 감지기 누적 이벤트, **마지막 walking 행에 정산 확정**)은 **3차 수집부터**
+  추가된 하이브리드 비교 컬럼(#184/#176). 구 CSV(23·25컬럼)도 분석 도구가 그대로 처리한다.
+- ⚠️ HW 컬럼이 **음수**면 '실제 0걸음'이 아니라 **측정 불가 sentinel**이다: 권한거부 `−2` / 센서없음 `−1` / 기준미준비 `−3`.
+  분석기(`hw_final_counter`/`hw_final_detector`)는 sitting 행을 빼고 **마지막 walking 행**의 값을 그 trial 의 HW 참조값으로 읽는다.
 - 시간축은 `sensor_elapsed_ms`(SensorEvent.timestamp 기준, 첫 샘플 = 0)를 기본으로, `callback_elapsed_ms`
   (콜백 도착)와의 차이로 스케줄링 지터를 진단한다.
 - `phase` 는 '큐 전 활동 / 큐 후 착석' 의미다(`sit_only` 의 walking 은 서있기 기준선 = 걷는다는 뜻이 아님).

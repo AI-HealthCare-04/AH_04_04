@@ -39,12 +39,16 @@ HEADER = (
     "trial_id,device_model,placement_id,position,side,screen_facing,top_direction,fold_state,"
     "cue_delivery,label,phase,event,excluded,sensor_elapsed_ms,callback_elapsed_ms,"
     "x,y,z,magnitude,filtered_mag,state,count,step_counted,"
-    "hw_step_counter,hw_step_detector"
+    "hw_step_counter,hw_step_detector,hw_step_detector_total"
 ).split(",")
 
-# 하위호환: hw_step_* 2컬럼은 3차 수집(#184/#176 하이브리드)부터 추가됐다. 1~2차 CSV(23컬럼)도
-# 그대로 분석·점검되도록, 헤더 검사는 신(25)·구(23) 둘 다 허용한다.
-HEADER_LEGACY = HEADER[:-2]
+# 하위호환(헤더 3버전 허용): hw_step_* 는 3차 수집(#184/#176 하이브리드)부터 추가됐다.
+#   26컬럼(현행) = +hw_step_detector_total(보행 종료까지 감지기 누적, 리뷰 #194 블로커1)
+#   25컬럼(HW2)  = hw_step_counter,hw_step_detector 까지(총계 컬럼 전)
+#   23컬럼(구)   = hw_step_* 전부 없음(1~2차)
+# DictReader 는 파일 자체 헤더로 파싱하므로 없는 컬럼은 .get 이 None → 분석은 자연히 하위호환된다.
+HEADER_HW2 = HEADER[:-1]
+HEADER_LEGACY = HEADER[:-3]
 
 # HW 만보기 측정불가 sentinel(앱 WaveformHw 와 동일). 음수면 '실제 0걸음'이 아니라 측정 불가.
 HW_PERMISSION_DENIED = -2
@@ -59,6 +63,23 @@ def hw_final_counter(rows):
     src = walk or rows
     for r in reversed(src):
         v = r.get("hw_step_counter")
+        if v is None or v == "":
+            return None
+        try:
+            return int(float(v))
+        except ValueError:
+            return None
+    return None
+
+
+def hw_final_detector(rows):
+    """보행 구간(walking) 마지막 행의 hw_step_detector_total(26컬럼~). 컬럼 없으면 None(25컬럼 이하).
+    보행 종료까지 감지된 HW 걸음 이벤트 총수 — 종료 정산 flush 중 지연 이벤트까지 마지막 walking 행에 확정된다.
+    음수면 측정불가(sentinel). counter 와 짝을 이루는 HW 하이브리드 참조값."""
+    walk = [r for r in rows if r.get("phase") != "sitting"]
+    src = walk or rows
+    for r in reversed(src):
+        v = r.get("hw_step_detector_total")
         if v is None or v == "":
             return None
         try:
@@ -554,20 +575,22 @@ def analyze(trials, participants=None, manual_counts=None):
             walk = split_phases(t["rows"]).get("walking", [])
             det = sum(1 for r in walk if r["_step"] and not r["_excluded"])
             place = (t["rows"][0].get("placement_id") or "?")
-            hw = hw_final_counter(t["rows"])  # HW 만보기 최종 누적(하이브리드 비교, 없으면 None)
-            rows_acc.append((tid, t["label"], place, gt, det, hw))
+            hw = hw_final_counter(t["rows"])   # HW counter 최종 누적(하이브리드, 없으면 None)
+            hwd = hw_final_detector(t["rows"])  # HW detector 총 이벤트(26컬럼~, 없으면 None)
+            rows_acc.append((tid, t["label"], place, gt, det, hw, hwd))
         if not rows_acc:
             print("  (정답 있는 보행 trial 없음 — manual_step_count 를 채우세요)")
         else:
-            # 하이브리드 비교표: 정답 vs 감지(#89) vs HW 만보기 (리뷰 #194 menteur ②).
-            print(f"  {'배치':18s} {'라벨':13s} {'정답':>4s} {'감지':>4s} {'HW':>8s} {'오차%':>6s}")
+            # 하이브리드 비교표: 정답 vs 감지(#89) vs HW counter vs HW detector (리뷰 #194 menteur ②·블로커1).
+            print(f"  {'배치':18s} {'라벨':13s} {'정답':>4s} {'감지':>4s} {'HWcnt':>8s} {'HWdet':>8s} {'오차%':>6s}")
             errs = []
-            for tid, lb, place, gt, det, hw in rows_acc:
+            for tid, lb, place, gt, det, hw, hwd in rows_acc:
                 err = abs(det - gt) / gt * 100.0
                 errs.append(err)
                 flag = "  ← 큰 오차" if err > 20 else ""
                 hw_s = hw_label(hw) if (hw is None or hw < 0) else str(hw)
-                print(f"  {place:18s} {lb:13s} {gt:>4d} {det:>4d} {hw_s:>8s} {err:>5.0f}%{flag}")
+                hwd_s = hw_label(hwd) if (hwd is None or hwd < 0) else str(hwd)
+                print(f"  {place:18s} {lb:13s} {gt:>4d} {det:>4d} {hw_s:>8s} {hwd_s:>8s} {err:>5.0f}%{flag}")
             # '0-count 과소계수'는 err 프록시(≥99) 대신 det==0 을 직접 센다(리뷰 #194).
             zero = sum(1 for r in rows_acc if r[4] == 0)
             print(f"  → 채점 {len(errs)} trial · 평균 절대오차 {_mean(errs):.0f}% "
@@ -692,7 +715,7 @@ def _synth_file(fp, label, placement, gravity_axis="z"):
             "success" if has_cue else "na", label, phase, event, 1 if excluded else 0,
             t, t, round(x, 5), round(y, 5), round(z, 5), round(mag, 5), round(mag, 5),
             state, 0, 1 if step else 0,
-            0, 0,  # hw_step_counter, hw_step_detector (합성은 0)
+            0, 0, 0,  # hw_step_counter, hw_step_detector, hw_step_detector_total (합성은 0)
         ]))
         t += dt
 
@@ -847,16 +870,19 @@ def inspect(path):
     print(f"=== 파일 점검: {os.path.basename(path)} ===\n")
     ok = True
 
-    # 1) 헤더 스키마(부록 A) — 신(25컬럼, hw_step_* 포함)·구(23컬럼) 둘 다 허용
+    # 1) 헤더 스키마(부록 A) — 26컬럼(현행)·25컬럼(HW2)·23컬럼(구) 셋 다 허용(하위호환)
     with open(path, encoding="utf-8-sig", newline="") as f:
         fields = (csv.DictReader(f).fieldnames) or []
     if fields == HEADER:
-        print(f"  ✅ 헤더: {len(HEADER)}컬럼 스키마 일치(HW 만보기 포함)")
+        print(f"  ✅ 헤더: {len(HEADER)}컬럼 스키마 일치(HW 만보기 · detector 총계 포함)")
+    elif fields == HEADER_HW2:
+        print(f"  ✅ 헤더: {len(HEADER_HW2)}컬럼 스키마 일치(HW 만보기 · detector 총계 컬럼 전)")
     elif fields == HEADER_LEGACY:
         print(f"  ✅ 헤더: {len(HEADER_LEGACY)}컬럼 스키마 일치(구 버전 · HW 만보기 없음)")
     else:
         ok = False
-        print(f"  ❌ 헤더 불일치: {len(fields)}컬럼(기대 {len(HEADER_LEGACY)} 또는 {len(HEADER)}) — 앱 버전/파일 손상 확인")
+        print(f"  ❌ 헤더 불일치: {len(fields)}컬럼"
+              f"(기대 {len(HEADER_LEGACY)}/{len(HEADER_HW2)}/{len(HEADER)}) — 앱 버전/파일 손상 확인")
 
     rows = load_file(path)
     n = len(rows)
@@ -945,13 +971,18 @@ def inspect(path):
     #      "권한 거부/센서 부재로 120 trial 다 돌고서야 hw 전부 0 발견"을 수집 직후에 잡는다(리뷰 #194).
     if "hw_step_counter" in (rows[0] or {}):
         hw = hw_final_counter(rows)
-        hw_evt = sum(1 for r in rows if (r.get("hw_step_detector") or "0") == "1")
+        hwd = hw_final_detector(rows)  # 26컬럼~: 보행 종료까지 감지기 누적(flush 지연분 포함). 없으면 None.
+        # 감지기 총계 표시값 — 26컬럼이면 확정 총계, 25컬럼이면 per-sample 이벤트 합으로 근사.
+        evt_sum = sum(1 for r in rows if (r.get("hw_step_detector") or "0") == "1")
+        det_shown = hwd if hwd is not None else evt_sum
+        det_zero = (det_shown is None) or (det_shown <= 0)
         if hw is not None and hw < 0:
             print(f"  ⚠️ HW 만보기 측정 불가({hw_label(hw)}) — 권한/센서 확인(가속도 수집은 유효)")
-        elif label in WALKING_LABELS and (hw or 0) <= 0 and hw_evt == 0:
+        elif label in WALKING_LABELS and (hw or 0) <= 0 and det_zero:
             print("  ⚠️ HW 만보기 0 — 권한/센서 확인(보행인데 HW 걸음·이벤트 0)")
         else:
-            print(f"  ✅ HW 만보기: counter={hw} · detector 이벤트 {hw_evt}회")
+            det_s = hw_label(det_shown) if (isinstance(det_shown, int) and det_shown < 0) else str(det_shown)
+            print(f"  ✅ HW 만보기: counter={hw} · detector 총 {det_s}회")
 
     # 8) 시간축 단조 증가
     ts = [r["_t"] for r in rows]
