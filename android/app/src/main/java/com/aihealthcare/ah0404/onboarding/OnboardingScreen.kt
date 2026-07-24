@@ -384,6 +384,8 @@ private fun ProfileStep(vm: OnboardingViewModel) {
 
 @Composable
 private fun AssessmentStep(vm: OnboardingViewModel) {
+    val chairStandSeconds = parseChairStandSeconds(vm.chairStandSec)
+    val showInputError = vm.chairStandSec.isNotBlank() && chairStandSeconds == null
     StepScaffold(
         title = "간단 체력 검사",
         subtitle = "어려우면 건너뛰어도 괜찮아요. 나중에 언제든 할 수 있어요.",
@@ -394,16 +396,23 @@ private fun AssessmentStep(vm: OnboardingViewModel) {
                 vm.chairStandSec,
                 { vm.chairStandSec = it },
                 "예: 12.5",
+                isError = showInputError,
                 keyboardType = KeyboardType.Decimal,
             )
+            if (showInputError) {
+                Text(
+                    text = "0보다 큰 숫자를 입력해 주세요.",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
         },
         footer = {
             Column(verticalArrangement = Arrangement.spacedBy(Dimens.Space12)) {
                 AigoPrimaryButton(
                     text = "검사 완료",
-                    onClick = {
-                        vm.submitAssessment(vm.chairStandSec.toDoubleOrNull())
-                    },
+                    onClick = { chairStandSeconds?.let(vm::submitAssessment) },
+                    enabled = chairStandSeconds != null,
                 )
                 AigoSecondaryButton(text = "건너뛰기", onClick = vm::skipAssessment)
             }
