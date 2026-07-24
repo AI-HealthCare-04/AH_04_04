@@ -1,7 +1,10 @@
 package com.aihealthcare.ah0404.auth
 
 import android.app.Activity
+import android.content.Context
 import android.util.Base64
+import android.util.Log
+import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
@@ -22,8 +25,35 @@ data class ProviderCredential(val idToken: String, val nonce: String)
 class SignInCancelledException : Exception()
 
 object SocialSignInClients {
+    private const val TAG = "SocialSignIn"
+
     val googleConfigured: Boolean get() = BuildConfig.GOOGLE_WEB_CLIENT_ID.isNotBlank()
     val kakaoConfigured: Boolean get() = BuildConfig.KAKAO_NATIVE_APP_KEY.isNotBlank()
+
+    /**
+     * 로그아웃 시 공급자(Google/Kakao) credential 상태를 해제한다(#187).
+     *  - Google: [CredentialManager.clearCredentialState] — 다음 로그인에서 계정 자동선택을 막는다.
+     *  - Kakao: [UserApiClient.logout] — 카카오 세션 토큰만 폐기한다(연결 자체를 끊는 `unlink` 는 하지 않음).
+     * 한 폰으로 여러 명이 번갈아 쓰는 시연에서 앞사람의 계정이 다음 사람에게 자동 선택되지 않게 하려는 것이다.
+     * 어느 한쪽이 실패해도 앱 로그아웃은 이어져야 하므로 예외는 삼켜 로그만 남긴다(둘은 서로 독립적으로 시도).
+     */
+    suspend fun signOutProviders(context: Context) {
+        if (googleConfigured) {
+            runCatching {
+                CredentialManager.create(context).clearCredentialState(
+                    ClearCredentialStateRequest(ClearCredentialStateRequest.TYPE_CLEAR_CREDENTIAL_STATE),
+                )
+            }.onFailure { Log.w(TAG, "Google credential 해제 실패", it) }
+        }
+        if (kakaoConfigured) {
+            suspendCancellableCoroutine { continuation ->
+                UserApiClient.instance.logout { error ->
+                    if (error != null) Log.w(TAG, "Kakao 로그아웃 실패", error)
+                    if (continuation.isActive) continuation.resume(Unit)
+                }
+            }
+        }
+    }
 
     suspend fun google(activity: Activity): ProviderCredential {
         check(googleConfigured) { "Google OAuth client ID가 설정되지 않았습니다." }
