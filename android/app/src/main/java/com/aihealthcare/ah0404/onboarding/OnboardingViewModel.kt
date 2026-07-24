@@ -30,6 +30,10 @@ internal fun previousOnboardingStep(step: OnbStep): OnbStep? = when (step) {
     -> null
 }
 
+/** "검사 완료"로 제출 가능한 5STS 시간. 공백·숫자 아님·0 이하·비유한 값은 건너뛰기와 구분해 거부한다. */
+internal fun parseChairStandSeconds(input: String): Double? =
+    input.trim().toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }
+
 /**
  * 키·몸무게 '모름' 시 성별·연령대 추정치 (cm, kg). 상수 표 — 나중에 교체 가능.
  *   남 65–74: 166/65 · 75+: 163/62   /   여 65–74: 153/56 · 75+: 150/53
@@ -260,10 +264,10 @@ class OnboardingViewModel(
         predictAndFinish()
     }
 
-    /** S4 → 체력검사 값 제출 후 결과로. 밴드는 5STS 단독(#102), 6m 미전송(#109). */
-    fun submitAssessment(chairStandSec: Double?) = launchStep("체력검사 제출") {
+    /** S4 → 유효한 체력검사 값 제출 후 결과로. 스킵은 skipAssessment() 경로만 사용한다. */
+    fun submitAssessment(chairStandSec: Double) = launchStep("체력검사 제출") {
         val body = PhysicalAssessmentRequest(
-            chairStandSkipped = chairStandSec == null,
+            chairStandSkipped = false,
             chairStand5TimeSec = chairStandSec,
             sessionId = sessionId,
         )
