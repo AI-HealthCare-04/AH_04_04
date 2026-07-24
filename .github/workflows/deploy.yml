@@ -58,9 +58,10 @@ jobs:
 
     steps:
       # 수동(workflow_dispatch)은 UI Branch 드롭다운·API 로 임의 ref 를 고를 수 있다.
-      # dev 에 머지 안 된 기능 브랜치를 골라 PR 승인·필수 CI 를 우회한 채 배포하는 걸 막는다.
-      # 허용 대상은 git-flow 통합/릴리스 브랜치(dev/release/main)뿐 — 이들은 모두 PR·CI 를 거친다.
-      # 단계 전환 시 위 push `branches:` 와 함께 이 목록도 유지한다.
+      # PR 승인·필수 CI 를 우회한 채 배포하는 걸 막기 위해, **현재 자동 트리거 브랜치(위 push `branches:`)와
+      # 정확히 같은 하나만** 허용한다. 지금은 dev. (아직 존재/보호되지 않는 release·main 을 미리 열어두면
+      # 보호 안 된 브랜치를 만들어 우회 배포할 수 있으므로 열지 않는다.)
+      # 🔴 단계 전환 시 위 push `branches:` 와 이 값을 **함께** 바꾼다([dev]→[release]→[main], 추적 #177).
       # (ref 는 env 로 받아 셸에 직접 보간하지 않는다 — 브랜치명 인젝션 방지.)
       - name: 배포 ref 검증 (workflow_dispatch 오남용 방지)
         if: github.event_name == 'workflow_dispatch'
@@ -68,10 +69,10 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
         run: |
           case "$REF_NAME" in
-            dev|release|main)
+            dev)
               echo "허용된 배포 브랜치: $REF_NAME" ;;
             *)
-              echo "::error::수동 배포는 dev/release/main 에서만 허용됩니다(선택: $REF_NAME). 기능 브랜치는 dev 에 머지 후 배포하세요."
+              echo "::error::수동 배포는 현재 배포 브랜치(dev)에서만 허용됩니다(선택: $REF_NAME). 다른 브랜치는 dev 에 머지 후 배포하세요."
               exit 1 ;;
           esac
 
