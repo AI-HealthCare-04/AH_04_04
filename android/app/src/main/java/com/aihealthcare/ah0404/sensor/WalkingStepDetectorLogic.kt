@@ -12,8 +12,12 @@ import kotlin.math.sqrt
  * 진입 기준(peaksToStartWalking)에 못 미쳐 카운트되지 않는다.
  *
  * ⚠️ 알려진 한계(#89, 3차 실측): '정상 보행 직후 곧바로 앉기'는 앉기 피크 간격이 ≈882ms(68보/분)로
- *    정상 보행 대역(60~120보/분 = 500~1000ms) 안에 들어와, 간격 게이트만으로는 분리할 수 없다 →
- *    v1 미보장(과다카운트 발생). 후속 이슈 #131에서 원시 파형 기반 분리 검토. (docs/sensor_walking_gate_a4a.md §5-5)
+ *    정상 보행 대역(60~120보/분 = 500~1000ms) 안에 들어와, **간격 게이트만으로는 분리할 수 없다**.
+ *    (docs/sensor_walking_gate_a4a.md §5-5)
+ * → #131 보완: 간격이 아니라 **에너지**로 가르는 적응형 정지판정 게이트(WalkStopGateLogic)를 붙였다.
+ *    앉으면 지속 동적에너지가 그 세션 보행 기준선의 40% 미만으로 붕괴하므로, isCountingFrozen 동안 카운트를
+ *    동결해 앉기 과다카운트를 억제한다(간격이 대역 안이어도). 정상 보행은 말미 에너지가 유지돼 동결 안 됨
+ *    → 과소계수(진짜 걸음 끊김) 위험 0. 최종 수치 수용은 실측/온디바이스 회귀로 확인(findings §7).
  *
  * 감지 파라미터는 실측(#89)으로 확정돼 DEFAULT_* 로 고정된다 — A-4a 런타임 튜닝 UI(TuneRow)는 #133에서 제거.
  * var 로 두는 이유는 회귀 테스트에서 경계값·이중봉우리 버그를 재현하려 값을 바꿔 검증하기 때문이다.
@@ -49,6 +53,16 @@ class WalkingStepDetectorLogic {
     var walkingTimeoutMs: Long = DEFAULT_WALKING_TIMEOUT_MS
     var lowPassAlpha: Float = DEFAULT_LOW_PASS_ALPHA
 
+    // #131: '보행 직후 앉기' 과다카운트 억제용 적응형 정지판정 게이트. isStopped 동안 카운트 동결.
+    //   간격(정상 대역 안 ≈882ms)으로 못 가르는 앉기를, '자기 보행 기준선 대비 말미 에너지 붕괴'로 잡는다.
+    //   정상 보행은 말미 에너지가 기준선과 비슷해 정지로 안 뜨므로 과소계수(진짜 걸음 끊김) 위험이 없다(findings §4).
+    val stopGate = WalkStopGateLogic()
+    var stopGateEnabled: Boolean = true
+
+    /** 디버그/로깅용: 적응형 게이트가 현재 '정지(앉기)'로 보고 카운트를 동결 중인가. */
+    val isCountingFrozen: Boolean
+        get() = stopGateEnabled && stopGate.isStopped
+
     var filteredMagnitude = 9.8f
         private set
     var state = State.IDLE
@@ -82,6 +96,9 @@ class WalkingStepDetectorLogic {
      * @return 이번 샘플에서 걸음이 카운트됐으면 true
      */
     fun processSample(x: Float, y: Float, z: Float, timestampMs: Long): Boolean {
+        // 적응형 정지판정 게이트에 원시 3축을 흘려보낸다(#89 피크 로직과 독립). 카운트 동결 판정에만 쓴다.
+        if (stopGateEnabled) stopGate.processSample(x, y, z, timestampMs)
+
         val rawMagnitude = sqrt(x * x + y * y + z * z)
         filteredMagnitude =
             lowPassAlpha * rawMagnitude + (1f - lowPassAlpha) * filteredMagnitude
@@ -113,12 +130,17 @@ class WalkingStepDetectorLogic {
         val rhythmic = interval <= maxPeakIntervalMs
         consecutivePeaks = if (rhythmic) consecutivePeaks + 1 else 1
 
+        // #131: 적응형 게이트가 '정지(앉기)'로 보면 카운트 동결. 상태/피크 추적은 그대로 두고 카운트만 막는다
+        //   → 재보행 시 에너지가 되살아나면 게이트가 자동 해제돼 다시 센다. 정상 보행은 애초에 정지로 안 뜬다.
+        val frozen = stopGateEnabled && stopGate.isStopped
+
         // 2단계: 상태별 카운트
         return when (state) {
             State.IDLE -> {
                 if (consecutivePeaks >= peaksToStartWalking) {
                     // 게이트 진입: 웜업 동안 모은 피크를 소급 카운트 (걸음 누락 방지)
                     state = State.WALKING
+                    if (frozen) return false      // 앉기 중 재확정된 리듬은 카운트하지 않음
                     count += peaksToStartWalking
                     true
                 } else {
@@ -127,6 +149,7 @@ class WalkingStepDetectorLogic {
             }
             State.WALKING -> {
                 if (rhythmic) {
+                    if (frozen) return false      // 앉는 동안(에너지 붕괴)은 대역 안 피크여도 카운트 동결
                     count++
                     true
                 } else {
@@ -153,5 +176,6 @@ class WalkingStepDetectorLogic {
         lastPeakTimeMs = 0L
         firstPeakTimeMs = 0L
         hasSeenPeak = false
+        stopGate.reset()
     }
 }
