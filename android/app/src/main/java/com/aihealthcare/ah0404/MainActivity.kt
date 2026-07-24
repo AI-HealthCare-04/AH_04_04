@@ -48,6 +48,7 @@ import com.aihealthcare.ah0404.mission.missionDestination
 import com.aihealthcare.ah0404.network.AppRoute
 import com.aihealthcare.ah0404.network.Mission
 import com.aihealthcare.ah0404.network.AppRouteResolver
+import com.aihealthcare.ah0404.network.AuthFailure
 import com.aihealthcare.ah0404.network.AuthFailureCoordinator
 import com.aihealthcare.ah0404.network.JwtTokenInspector
 import com.aihealthcare.ah0404.network.SessionStore
@@ -97,9 +98,14 @@ class MainActivity : ComponentActivity() {
                 }
                 val route = if (demoMode) {
                     AppRoute.MAIN
-                } else if (WalkingOverlay.active && tokenStatus == TokenStatus.VALID) {
-                    // #188: 걷기 측정 중엔 네트워크가 끊겨도 OFFLINE 로 튕기지 않는다(측정 지속, 저장만 재시도 #91).
-                    //   토큰이 유효할 때만 — 만료/미인증이면 정상 라우팅으로 넘겨 재로그인 처리.
+                } else if (
+                    WalkingOverlay.active &&
+                    tokenStatus == TokenStatus.VALID &&
+                    authFailure != AuthFailure.UNAUTHORIZED
+                ) {
+                    // #188: 걷기 측정 중엔 **네트워크 단절만** 우회해 OFFLINE 로 안 튕긴다(측정 지속, 저장만 재시도 #91).
+                    //   단 인증 만료(401=UNAUTHORIZED)는 가로채지 않고 정상 라우팅으로 넘긴다 → LOGIN_REQUIRED 재로그인
+                    //   (지영 리뷰 #189: 네트워크 실패와 401 을 구분). 토큰 만료(EXPIRED)도 VALID 가 아니라 여기서 제외됨.
                     AppRoute.MAIN
                 } else {
                     AppRouteResolver.resolve(
