@@ -21,6 +21,15 @@ import kotlinx.coroutines.launch
 /** 온보딩 단계. 화면 라우팅의 기준. */
 enum class OnbStep { WELCOME, TERMS, PROFILE, ASSESSMENT, RESULT }
 
+internal fun previousOnboardingStep(step: OnbStep): OnbStep? = when (step) {
+    OnbStep.TERMS -> OnbStep.WELCOME
+    OnbStep.PROFILE -> OnbStep.TERMS
+    OnbStep.ASSESSMENT -> OnbStep.PROFILE
+    OnbStep.WELCOME,
+    OnbStep.RESULT,
+    -> null
+}
+
 /**
  * 키·몸무게 '모름' 시 성별·연령대 추정치 (cm, kg). 상수 표 — 나중에 교체 가능.
  *   남 65–74: 166/65 · 75+: 163/62   /   여 65–74: 153/56 · 75+: 150/53
@@ -114,10 +123,12 @@ class OnboardingViewModel(
     var strengthExercise by mutableStateOf<Boolean?>(null)
     var kidneyStatus by mutableStateOf("unknown")
     var proteinStatus by mutableStateOf("unknown")
+    var chairStandSec by mutableStateOf("")
 
     // 결과
     private var sessionId: Int? = null
     private var profileId: Int? = null
+    private var lastSubmittedProfile: HealthProfileRequest? = null
     var bmi by mutableStateOf<Double?>(null); private set
     var result by mutableStateOf<RiskPredictionResponse?>(null); private set
 
@@ -162,6 +173,8 @@ class OnboardingViewModel(
         heightEstimated = false; weightEstimated = false
         walkingPractice = null; strengthExercise = null
         kidneyStatus = "unknown"; proteinStatus = "unknown"
+        chairStandSec = ""
+        lastSubmittedProfile = null
     }
 
     private suspend fun loadTerms() {
@@ -190,7 +203,9 @@ class OnboardingViewModel(
             terms.map { Agreement(it.termsType, it.version, agreed.contains(it.termsType)) },
         )
         api.agreeTerms(body)
-        sessionId = api.createSession().sessionId
+        if (sessionId == null) {
+            sessionId = api.createSession().sessionId
+        }
         step = OnbStep.PROFILE
     }
 
@@ -230,9 +245,12 @@ class OnboardingViewModel(
             // 키·몸무게 중 하나라도 '모름' 추정치면 true(둘 다 실제 입력이면 false).
             hasEstimatedValue = hasEstimatedValue,
         )
-        val resp = api.createHealthProfile(body)
-        profileId = resp.profileId
-        bmi = resp.bmi
+        if (body != lastSubmittedProfile) {
+            val resp = api.createHealthProfile(body)
+            profileId = resp.profileId
+            bmi = resp.bmi
+            lastSubmittedProfile = body
+        }
         step = OnbStep.ASSESSMENT
     }
 
@@ -261,6 +279,18 @@ class OnboardingViewModel(
     }
 
     fun dismissError() { error = null }
+
+    /**
+     * 입력값과 이미 저장된 서버 상태는 유지하고 화면 단계만 되돌린다.
+     * RESULT는 세션이 완료된 상태이므로 화면 호스트에서 종료 확인을 담당한다.
+     */
+    fun goBack(): Boolean {
+        if (loading) return false
+        val previous = previousOnboardingStep(step) ?: return false
+        error = null
+        step = previous
+        return true
+    }
 
     // ── 내부 유틸 ──────────────────────────────────────────────
     // 실패 시 error 를 설정하고 step 은 그대로 둔다(재시도는 사용자가 같은 버튼을 다시 눌러 수행).

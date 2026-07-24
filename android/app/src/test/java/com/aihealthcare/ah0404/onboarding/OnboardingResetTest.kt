@@ -28,6 +28,7 @@ class OnboardingResetTest {
         vm.strengthExercise = false
         vm.kidneyStatus = "dialysis"
         vm.proteinStatus = "restricted"
+        vm.chairStandSec = "12.5"
 
         vm.resetToWelcome()
 
@@ -42,6 +43,7 @@ class OnboardingResetTest {
         assertNull(vm.strengthExercise)
         assertEquals("unknown", vm.kidneyStatus)
         assertEquals("unknown", vm.proteinStatus)
+        assertEquals("", vm.chairStandSec)
     }
 
     @Test

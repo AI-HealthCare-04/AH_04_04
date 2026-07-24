@@ -1,5 +1,6 @@
 package com.aihealthcare.ah0404.auth
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -10,9 +11,14 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.aihealthcare.ah0404.BuildConfig
+import com.aihealthcare.ah0404.ui.components.AigoDialog
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
 import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
 import com.aihealthcare.ah0404.ui.theme.Dimens
@@ -22,6 +28,7 @@ fun LoginRequiredScreen(
     onGoogleLogin: () -> Unit,
     onKakaoLogin: () -> Unit,
     onRetry: () -> Unit,
+    onExit: () -> Unit,
     onResetSession: () -> Unit = {},
     loading: SocialProvider? = null,
     message: String? = null,
@@ -29,6 +36,8 @@ fun LoginRequiredScreen(
     kakaoEnabled: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
+    var showExitConfirmation by remember { mutableStateOf(false) }
+    BackHandler { showExitConfirmation = true }
     GateLayout(
         title = "다시 로그인이 필요해요",
         message = "안전하게 계속하려면 간편로그인으로 본인 확인을 해 주세요.",
@@ -62,10 +71,27 @@ fun LoginRequiredScreen(
             )
         }
     }
+    if (showExitConfirmation) {
+        AigoDialog(
+            title = "앱을 종료할까요?",
+            message = "로그인을 마친 뒤 서비스를 계속 이용할 수 있어요.",
+            confirmText = "종료",
+            onConfirm = onExit,
+            dismissText = "계속하기",
+            onDismiss = { showExitConfirmation = false },
+            onDismissRequest = { showExitConfirmation = false },
+        )
+    }
 }
 
 @Composable
-fun OfflineModeScreen(onRetry: () -> Unit, modifier: Modifier = Modifier) {
+fun OfflineModeScreen(
+    onRetry: () -> Unit,
+    onExit: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var showExitConfirmation by remember { mutableStateOf(false) }
+    BackHandler { showExitConfirmation = true }
     GateLayout(
         title = "인터넷 연결이 없어요",
         message = "서버에는 연결하지 않고, 저장된 미션만 사용할 수 있는 오프라인 모드예요.",
@@ -78,6 +104,17 @@ fun OfflineModeScreen(onRetry: () -> Unit, modifier: Modifier = Modifier) {
         )
         Spacer(Modifier.height(Dimens.Space16))
         AigoPrimaryButton(text = "연결 다시 확인", onClick = onRetry)
+    }
+    if (showExitConfirmation) {
+        AigoDialog(
+            title = "앱을 종료할까요?",
+            message = "인터넷 연결을 확인한 뒤 다시 시도할 수 있어요.",
+            confirmText = "종료",
+            onConfirm = onExit,
+            dismissText = "계속하기",
+            onDismiss = { showExitConfirmation = false },
+            onDismissRequest = { showExitConfirmation = false },
+        )
     }
 }
 
