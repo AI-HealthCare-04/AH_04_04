@@ -59,11 +59,17 @@ object JwtTokenInspector {
 }
 
 object AppRouteResolver {
+    /**
+     * @param walkingActive 걷기 측정 오버레이가 열려 있는가(#188). true 면 **네트워크/서버 단절로 OFFLINE 로
+     *   튕기지 않는다**(측정은 센서만 쓰므로 오프라인에서도 이어져야 하고, 저장 실패만 재시도 #91). 단
+     *   인증만료(UNAUTHORIZED)·토큰 만료/부재는 여전히 재로그인 경로로 보낸다(측정 중 무한 MAIN 방지).
+     */
     fun resolve(
         onboardingCompleted: Boolean,
         tokenStatus: TokenStatus,
         networkAvailable: Boolean,
         failure: AuthFailure?,
+        walkingActive: Boolean = false,
     ): AppRoute {
         if (!onboardingCompleted) return AppRoute.ONBOARDING
         if (failure == AuthFailure.UNAUTHORIZED) return AppRoute.LOGIN_REQUIRED
@@ -78,7 +84,10 @@ object AppRouteResolver {
             }
 
             TokenStatus.VALID -> {
-                if (!networkAvailable || failure == AuthFailure.NETWORK || failure == AuthFailure.SERVER) {
+                // #188: 측정 중엔 네트워크/서버 단절을 우회해 MAIN 유지(UNAUTHORIZED 는 위에서 이미 처리됨).
+                if (walkingActive) {
+                    AppRoute.MAIN
+                } else if (!networkAvailable || failure == AuthFailure.NETWORK || failure == AuthFailure.SERVER) {
                     AppRoute.OFFLINE
                 } else {
                     AppRoute.MAIN

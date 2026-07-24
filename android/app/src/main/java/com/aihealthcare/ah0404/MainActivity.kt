@@ -64,6 +64,15 @@ import com.aihealthcare.ah0404.settings.SupportScreen
 import com.aihealthcare.ah0404.ui.components.AigoDialog
 import com.aihealthcare.ah0404.ui.theme.MyApplicationTheme
 
+/**
+ * 걷기 측정 오버레이가 열려 있는가(#188). 열려 있는 동안엔 네트워크가 끊겨도 OFFLINE 로 튕기지 않는다:
+ * 걷기 측정은 센서만 쓰므로 오프라인에서도 이어져야 하고(야외 음영지역), 인터넷은 마지막 저장에만 필요해
+ * 저장 실패만 재시도(#91)로 처리한다. 오버레이 진입/이탈에 맞춰 MainContent 가 갱신한다.
+ */
+private object WalkingOverlay {
+    var active by mutableStateOf(false)
+}
+
 class MainActivity : ComponentActivity() {
     @androidx.media3.common.util.UnstableApi
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -96,6 +105,8 @@ class MainActivity : ComponentActivity() {
                         tokenStatus = tokenStatus,
                         networkAvailable = networkAvailable,
                         failure = authFailure,
+                        // #188: 걷기 측정 중이면 네트워크 단절로 OFFLINE 로 안 튕긴다(로직은 resolver 가 처리 — 테스트 가능).
+                        walkingActive = WalkingOverlay.active,
                     )
                 }
 
@@ -128,10 +139,6 @@ class MainActivity : ComponentActivity() {
                         onKakaoLogin = {
                             authLoginViewModel.signIn(SocialProvider.KAKAO, activity) { _ -> sessionRevision++ }
                         },
-                        onRetry = {
-                            AuthFailureCoordinator.retryTransientFailure()
-                            sessionRevision++
-                        },
                         onExit = activity::finish,
                         onResetSession = {
                             SessionStore.resetSession(context)
@@ -149,13 +156,15 @@ class MainActivity : ComponentActivity() {
                         },
                         onExit = activity::finish,
                     )
-                    // 로그아웃(#154): 토큰만 지우고 온보딩 완료 플래그는 보존한다(clearAuthentication).
-                    //   → 라우팅이 LOGIN_REQUIRED 로 가고, 같은 계정 재로그인 시 온보딩을 반복하지 않는다.
-                    //   sessionRevision++ 로 라우팅을 재평가시킨다(인증 실패 자동복구 경로와 같은 방식).
+                    // 로그아웃(#154, #187): 앱 토큰 + 공급자(Google/Kakao) credential 을 해제한다.
+                    //   공급자 해제는 viewModelScope 에서 돌아 리라우팅으로 화면이 떠나도 완료된다(#187).
+                    //   토큰만 지우고 온보딩 완료 플래그는 보존 → 같은 계정 재로그인 시 온보딩을 반복하지 않는다.
+                    //   해제가 끝나면 sessionRevision++ 로 라우팅을 재평가(→ LOGIN_REQUIRED)시킨다.
+                    //   ⚠️ 위 LaunchedEffect(L103)의 stale-token 자동정리는 같은 사용자 재로그인 편의를 위해
+                    //      공급자 credential 을 일부러 유지한다(명시적 로그아웃일 때만 공급자까지 해제).
                     AppRoute.MAIN -> MainContent(
                         onLogout = {
-                            SessionStore.clearAuthentication(context)
-                            sessionRevision++
+                            authLoginViewModel.signOut { sessionRevision++ }
                         },
                         onExit = activity::finish,
                     )
@@ -229,6 +238,9 @@ private fun MainContent(
     var walkingMission by rememberSaveable(stateSaver = MissionStateSaver) {
         mutableStateOf<Mission?>(null)
     }
+    // #188: 걷기 측정 오버레이가 열려 있는 동안 라우팅이 OFFLINE 로 튕기지 않게 상태를 알린다.
+    //   (구성 변경으로 walkingMission 이 복원돼도 여기서 다시 동기화된다.)
+    LaunchedEffect(walkingMission) { WalkingOverlay.active = walkingMission != null }
     walkingMission?.let { mission ->
         WalkingMeasureScreen(
             mission = mission,

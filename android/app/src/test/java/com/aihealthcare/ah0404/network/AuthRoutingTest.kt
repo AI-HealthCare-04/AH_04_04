@@ -47,6 +47,32 @@ class AuthRoutingTest {
         assertEquals(AppRoute.ONBOARDING, route)
     }
 
+    @Test
+    fun walkingActive_bypassesOfflineOnNetworkFailure_butNotAuthOrTokenIssues() {
+        // #188: 걷기 측정 중엔 네트워크/서버 단절로 OFFLINE 로 튕기지 않고 MAIN 유지(측정 지속, 저장만 재시도 #91).
+        assertEquals(AppRoute.MAIN, resolveWalking(TokenStatus.VALID, online = false, failure = null))
+        assertEquals(AppRoute.MAIN, resolveWalking(TokenStatus.VALID, online = true, failure = AuthFailure.NETWORK))
+        assertEquals(AppRoute.MAIN, resolveWalking(TokenStatus.VALID, online = true, failure = AuthFailure.SERVER))
+
+        // 그러나 인증만료(401)는 측정 중이어도 가로채지 않고 재로그인으로 보낸다.
+        assertEquals(AppRoute.LOGIN_REQUIRED, resolveWalking(TokenStatus.VALID, online = true, failure = AuthFailure.UNAUTHORIZED))
+        // 토큰 만료/부재도 측정 중 우회 대상이 아니다(재로그인 필요).
+        assertEquals(AppRoute.LOGIN_REQUIRED, resolveWalking(TokenStatus.EXPIRED, online = true, failure = null))
+        assertEquals(AppRoute.LOGIN_REQUIRED, resolveWalking(TokenStatus.MISSING, online = false, failure = null))
+
+        // 측정 중이 아니면(기본 false) 기존 동작 유지: VALID + 오프라인 → OFFLINE.
+        assertRoute(TokenStatus.VALID, false, null, AppRoute.OFFLINE)
+    }
+
+    private fun resolveWalking(tokenStatus: TokenStatus, online: Boolean, failure: AuthFailure?): AppRoute =
+        AppRouteResolver.resolve(
+            onboardingCompleted = true,
+            tokenStatus = tokenStatus,
+            networkAvailable = online,
+            failure = failure,
+            walkingActive = true,
+        )
+
     private fun assertRoute(
         tokenStatus: TokenStatus,
         online: Boolean,
