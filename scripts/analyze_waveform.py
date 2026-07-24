@@ -41,6 +41,14 @@ HEADER = (
     "x,y,z,magnitude,filtered_mag,state,count,step_counted"
 ).split(",")
 
+# 분석이 직접 인덱싱하는 필수 컬럼(부분집합). 폴더에 참여자 매핑 CSV나 스키마가 다른
+# 파일이 섞여 있어도 여기서 걸러 폐기하고, 파형 CSV 만 load_file 로 넘긴다(KeyError 방지).
+REQUIRED_COLS = {
+    "trial_id", "cue_delivery", "label", "phase", "event", "excluded",
+    "sensor_elapsed_ms", "x", "y", "z", "magnitude", "filtered_mag",
+    "state", "count", "step_counted",
+}
+
 # 라벨(= WaveformLabel.id). 앉기 큐가 있는 라벨만 cue_delivery=success 를 요구한다.
 LABEL_NORMAL = "normal_walk"
 LABEL_WALK_SIT = "walk_then_sit"
@@ -58,19 +66,32 @@ TARGET_SEG = (LABEL_WALK_SIT, "sitting")  # 판별 스코어카드의 양성(오
 
 MIN_SEG_SAMPLES = 20  # 이보다 짧은 세그먼트는 특징이 불안정 → 통계에서 제외(표시)
 
+# inspect() 지속시간 검증 — 프로토콜: 활동 15s + 앉기 5s = 20s(큐 라벨), 비큐 라벨 20s.
+# dur>=3 만 보면 거의 모든 조기종료가 '사용 가능'으로 통과하므로 라벨 기대치에 허용오차를 준다.
+PROTOCOL_TOTAL_S = 20.0
+MIN_TOTAL_DUR_S = 18.0   # 총 지속(초) 하한 = 프로토콜의 90% (조기종료 감지)
+MIN_SIT_DUR_S = 4.0      # 앉기 구간(초) 하한 = 5s 프로토콜의 80% (부족한 sitting 감지)
+
 # ── 실시간형(라벨 비참조) '보행 종료' 진단 파라미터 ──────────────────────────
 # 세그먼트 decay 특징은 앉기 구간을 phase 라벨로 미리 잘라 재므로 '앉으면 멈춘다'가
 # 부분적으로 자명하다. 실시간 감지기는 라벨 경계를 모르므로, 여기서는 phase 를 전혀
 # 안 보고 **벽시계 시간 구간**만으로 전체 스트림을 슬라이딩 윈도우로 훑어 '보행중이다가
 # 말미에 잦아드는가'를 본다. 에너지는 스칼라 std 가 아니라 **3축 동적 벡터 RMS**
 # (윈도우 국소 중력 제거 후 |동적|의 RMS)로 잰다 — 수평 진동까지 잡고 방향 회전에 강함.
+#
+# ★ 판정은 **절대 문턱이 아니라 각 trial 자신의 보행 기준선(e_ref) 대비 상대비**다
+#   (tail_ratio = e_tail/e_ref). 기기·사람이 바뀌어도 자기 기준선으로 정규화되므로
+#   §9(다인 재설계) 의 '적응 기준선' 방향과 같다. 다만 말미 창은 **마지막 2초**로 잡는다:
+#   초기(4초) 설계는 '앉는 순간 임팩트 스파이크+정착 과정'을 같이 물어(=r4) 정지 포착이
+#   1/6 에 그쳤고, 완전히 정착하는 **마지막 2초**(=r2) 로 바꾸면 5/6 로 올라가며 LOPO
+#   총오류가 6→3 으로 줄었다(pilot_findings §9, 합본 24 trial). 그래서 아래 TAIL_S=2.0.
 SLIDE_WIN_S = 1.0      # 슬라이딩 윈도우 길이(초)
 SLIDE_HOP_S = 0.5      # 윈도우 이동 간격(초)
 REF_START_S = 1.0      # 보행 기준 구간 시작(초) — 초반 정착 1s 건너뜀
 REF_END_S = 8.0        # 보행 기준 구간 끝(초) — 앉기 큐(15s) 한참 전이라 어느 라벨이든 '초기 활동'
-TAIL_S = 4.0           # 말미 구간 길이(초) — 앉기(마지막 5s) 안쪽
+TAIL_S = 2.0           # 말미 구간 길이(초) — §9 채택안 r2. 앉기 임팩트 스파이크를 피해 정착부만
 WALK_REF_MIN_DYN = 1.0  # 기준구간 동적RMS 가 이 미만이면 '애초에 보행 아님'(shuffle/sit_only)
-STOP_RATIO = 0.4        # 말미 동적RMS 가 기준의 이 비율 미만이면 '보행 종료(정지 전환)' 판정
+STOP_RATIO = 0.4        # 말미 동적RMS 가 기준의 이 비율(k) 미만이면 '보행 종료(정지 전환)' 판정
 
 
 # ── 저수준 유틸 ──────────────────────────────────────────────────────────────
@@ -95,6 +116,14 @@ def load_dir(path):
         sys.exit(f"CSV 가 없습니다: {path}/*.csv")
     trials, dropped = [], []
     for fp in files:
+        missing = _missing_required_cols(fp)
+        if missing is None:
+            dropped.append((os.path.basename(fp), "읽기 실패/빈 헤더"))
+            continue
+        if missing:
+            dropped.append((os.path.basename(fp),
+                            f"파형 스키마 아님 — 필수 컬럼 없음: {','.join(sorted(missing))} (participants CSV 등)"))
+            continue
         rows = load_file(fp)
         if not rows:
             dropped.append((os.path.basename(fp), "빈 파일/헤더만"))
@@ -106,6 +135,18 @@ def load_dir(path):
             continue
         trials.append({"file": os.path.basename(fp), "label": label, "rows": rows})
     return trials, dropped
+
+
+def _missing_required_cols(fp):
+    """파일 헤더를 읽어 부족한 필수 컬럼 set 을 반환. 읽기 실패면 None, 정상이면 빈 set."""
+    try:
+        with open(fp, encoding="utf-8-sig", newline="") as f:
+            fields = csv.DictReader(f).fieldnames
+    except OSError:
+        return None
+    if not fields:
+        return None
+    return REQUIRED_COLS - set(fields)
 
 
 def load_file(fp):
@@ -223,9 +264,11 @@ def sliding_stop_features(rows):
     """phase 라벨을 안 보고 전체 스트림만으로 '보행→정지' 전환을 탐지.
 
     기준구간(REF_START~REF_END s)과 말미(마지막 TAIL_S s)의 동적RMS 를 비교한다.
-    기준구간이 보행 수준(≥WALK_REF_MIN_DYN)인데 말미가 그 STOP_RATIO 배 미만으로
-    잦아들면 walk_stop=True. 이 신호가 walk_then_sit 에서만 뜨고 normal_walk/shuffle 에서는
-    안 뜨면, '보행 종료 감쇠'가 라벨 없이도(=실시간에도) 관측 가능하다는 뜻이다.
+    tail_ratio = e_tail/e_ref 는 **그 trial 자기 기준선 대비 상대비**(적응형)라 기기·사람에
+    무관하다. 기준구간이 보행 수준(≥WALK_REF_MIN_DYN)인데 말미가 그 STOP_RATIO(k) 배 미만으로
+    잦아들면 walk_stop=True. TAIL_S=2.0(§9 r2) 로 앉기 임팩트 스파이크를 피한다.
+    이 신호가 walk_then_sit 에서만 뜨고 normal_walk/shuffle 에서는 안 뜨면, '보행 종료
+    감쇠'가 라벨 없이도(=실시간에도) 관측 가능하다는 뜻이다.
     """
     trace = windowed_dyn_trace(rows)
     if not trace:
@@ -350,6 +393,8 @@ def analyze(trials, participants=None):
     pos_segs = seg_feats.get(TARGET_SEG, [])
     print(f"■ 판별 스코어카드 — 음성={CONTROL_SEG[0]}/{CONTROL_SEG[1]} (n={len(neg_segs)}) "
           f"vs 양성={TARGET_SEG[0]}/{TARGET_SEG[1]} (n={len(pos_segs)})")
+    print("  ⚠️ 탐색용(in-sample): 아래 '추천 임계'는 전체 데이터에서 고르고 같은 데이터로 평가한 "
+          "값이라 낙관 편향이 있습니다. 운영 임계로 쓰지 말고, 실제 검증은 참여자 단위 LOPO(아래)로.")
     if not neg_segs or not pos_segs:
         print("  두 그룹 중 하나가 비어 스코어카드를 낼 수 없습니다(수집 후 재실행).")
     else:
@@ -376,9 +421,9 @@ def analyze(trials, participants=None):
     # ── 3.5 실시간형(라벨 비참조) 보행종료 감쇠 검증 ──
     # 세그먼트 decay 는 앉기 구간을 라벨로 잘라 재므로 '앉으면 멈춘다'가 자명하다.
     # 여기서는 phase 를 안 보고 전체 스트림의 시간구간만으로 '보행중→말미 잦아듦'을 본다.
-    print("■ 실시간형 보행종료 감쇠 (phase 라벨 비참조 · 전체 스트림 슬라이딩 윈도우)")
-    print(f"  기준 {REF_START_S:.0f}~{REF_END_S:.0f}s vs 말미 {TAIL_S:.0f}s 동적RMS(3축) 비교. "
-          f"기준≥{WALK_REF_MIN_DYN}(보행) 이고 말미<{STOP_RATIO}×기준 이면 '정지 전환'.")
+    print("■ 실시간형 보행종료 감쇠 (phase 라벨 비참조 · 전체 스트림 슬라이딩 윈도우 · 적응형 r2)")
+    print(f"  각 trial 자기 기준선({REF_START_S:.0f}~{REF_END_S:.0f}s 동적RMS) 대비 말미 {TAIL_S:.0f}s 상대비. "
+          f"기준≥{WALK_REF_MIN_DYN}(보행) 이고 말미<{STOP_RATIO}×기준(k) 이면 '정지 전환'(§9 채택안).")
     print(f"  {'label':16s} {'e_ref':>7s} {'e_tail':>7s} {'말미/기준':>9s} {'정지전환':>10s}")
     stop_by_label = {}
     for lb in ALL_LABELS:
@@ -394,12 +439,16 @@ def analyze(trials, participants=None):
     ws = stop_by_label.get(LABEL_WALK_SIT, (0, 0))
     nw = stop_by_label.get(LABEL_NORMAL, (0, 0))
     sh = stop_by_label.get(LABEL_SHUFFLE, (0, 0))
-    good = ws[1] and ws[0] == ws[1] and nw[0] == 0 and sh[0] == 0
-    print(f"  → {'✅ 실시간형에도 신호 유지' if good else '⚠️ 신호 불명확'}: "
-          f"walk_then_sit 정지전환 {ws[0]}/{ws[1]}(전부여야) · "
-          f"normal_walk {nw[0]}/{nw[1]}·shuffle {sh[0]}/{sh[1]}(0이어야). "
-          + ("→ 라벨 없이도 '보행종료'가 잡히므로 슬라이딩 decay 상태로 판별기 설계 타당."
-             if good else "→ 파라미터/추가 특징 재검토 필요."))
+    # 판정 기준: 과소계수(정상보행을 정지로 오판) 0 이 최우선. walk_then_sit 정지전환은
+    # 높을수록 좋지만 100% 를 요구하지 않는다(헐렁한 주머니 잔진동 trial 은 물리적으로 애매).
+    no_undercount = nw[0] == 0                    # 정상보행 정지 오판 0 (진짜 걸음 안 끊음)
+    catches = ws[1] and ws[0] >= math.ceil(ws[1] * 0.6)  # 오탐 대상 정지 다수 포착
+    print(f"  → {'✅ 과소계수 0·정지 다수 포착' if (no_undercount and catches) else '⚠️ 재검토'}: "
+          f"walk_then_sit 정지전환 {ws[0]}/{ws[1]}(높을수록↑) · "
+          f"normal_walk {nw[0]}/{nw[1]}·shuffle {sh[0]}/{sh[1]}(normal 은 0이어야). "
+          + ("→ 정상보행을 끊지 않으면서 보행종료를 다수 잡음(적응형 r2). 단 임계 k·창길이는 "
+             "본 수집으로 최종 튜닝(§9)." if (no_undercount and catches)
+             else "→ 파라미터/추가 특징 재검토 필요."))
     print()
 
     # ── 4. 참여자 분할 안내(#166) ──
@@ -413,10 +462,24 @@ def analyze(trials, participants=None):
                 unknown += 1
                 continue
             cross[pid][t["label"]] += 1
+        # LOPO 는 참여자 수만으론 부족하다: 각 참여자가 음성(normal_walk)과 양성(walk_then_sit)
+        # 두 클래스를 '모두' 가져야 그 참여자를 held-out 으로 평가할 수 있다.
+        eligible = []
         for pid in sorted(cross):
+            has_neg = cross[pid][CONTROL_SEG[0]] > 0
+            has_pos = cross[pid][TARGET_SEG[0]] > 0
             dist = ", ".join(f"{lb}:{cross[pid][lb]}" for lb in ALL_LABELS if cross[pid][lb])
-            print(f"  · {pid}: {dist}")
-        print(f"  참여자 {len(cross)}명 → leave-one-participant-out {'가능' if len(cross) >= 2 else '불가(1명, 추가 수집 필요)'}")
+            cover = "" if (has_neg and has_pos) else \
+                f"  ⚠️ 클래스 부족(음성 {CONTROL_SEG[0]}:{'O' if has_neg else 'X'}·양성 {TARGET_SEG[0]}:{'O' if has_pos else 'X'})"
+            if has_neg and has_pos:
+                eligible.append(pid)
+            print(f"  · {pid}: {dist}{cover}")
+        if len(eligible) >= 2:
+            print(f"  참여자 {len(cross)}명(양·음성 모두 보유 {len(eligible)}명) → LOPO 가능")
+        else:
+            print(f"  참여자 {len(cross)}명(양·음성 모두 보유 {len(eligible)}명) → LOPO 불가"
+                  " — 각 참여자가 normal_walk·walk_then_sit 를 모두 가진 참여자 2명 이상 필요")
+        print("  주의: LOPO 계산 자체는 이 스크립트가 수행하지 않습니다(위 스코어카드는 in-sample 탐색용).")
         if unknown:
             print(f"  ⚠️ 참여자 로그에 없는 trial {unknown}개 — 로그를 채우세요.")
     else:
@@ -446,7 +509,9 @@ def _synth_file(fp, label, placement, gravity_axis="z"):
     올바르게 뽑는지 검증하기 위한 것. 실제 파형이 아니라 특성만 흉내낸다.
     """
     import random
-    rnd = random.Random(hash((fp, label)) & 0xFFFF)
+    import zlib
+    # 결정적 시드: PYTHONHASHSEED 로 랜덤화되는 hash() 대신, 파일명(안정적)+라벨의 CRC32.
+    rnd = random.Random(zlib.crc32(f"{os.path.basename(fp)}|{label}".encode()))
     g = {"x": (9.8, 0, 0), "y": (0, 9.8, 0), "z": (0, 0, 9.8)}[gravity_axis]
     hz, dt = 50, 20  # 50Hz
     rows = [",".join(HEADER)]
@@ -532,8 +597,14 @@ def selftest():
     with open(bad, "w", encoding="utf-8") as f:
         f.write(txt)
 
+    # 스키마 검증용: 파형이 아닌 CSV(참여자 매핑 유사) 1개 — load_dir 가 KeyError 없이 폐기해야 함
+    decoy = os.path.join(d, "aaa_not_waveform_mapping.csv")
+    with open(decoy, "w", encoding="utf-8", newline="") as f:
+        f.write("trial_id,participant_id,session_id\nT1,P01,S1\n")
+
     trials, dropped = load_dir(d)
     assert any("§4 폐기" in r for _, r in dropped), "cue 실패 파일이 폐기되지 않음"
+    assert any("파형 스키마 아님" in r for _, r in dropped), "비파형 CSV 가 폐기되지 않음(스키마 검증 실패)"
     assert len(trials) == n, f"trial 수 불일치: {len(trials)} != {n}"
 
     # 핵심 특징 검증: 앉기(sitting) 세그먼트의 vert_share 가 보행(walking)보다 높아야 한다.
@@ -611,7 +682,7 @@ def inspect(path):
     with open(path, encoding="utf-8-sig", newline="") as f:
         fields = (csv.DictReader(f).fieldnames) or []
     if fields == HEADER:
-        print("  ✅ 헤더: 23컬럼 스키마 일치")
+        print(f"  ✅ 헤더: {len(HEADER)}컬럼 스키마 일치")
     else:
         ok = False
         print(f"  ❌ 헤더 불일치: {len(fields)}컬럼(기대 {len(HEADER)}) — 앱 버전/파일 손상 확인")
@@ -624,10 +695,12 @@ def inspect(path):
     dur = (rows[-1]["_t"] - rows[0]["_t"]) / 1000.0
     hz = n / dur if dur > 0 else 0
 
-    # 2) 행수·지속시간·샘플레이트
-    dur_ok = dur >= 3
-    print(f"  {'✅' if dur_ok else '⚠️'} 샘플 {n}행 · {dur:.1f}초 · ≈{hz:.0f}Hz"
-          + ("" if dur_ok else "  (너무 짧음 — 중단/조기종료 의심)"))
+    # 2) 행수·지속시간·샘플레이트 — 프로토콜 20s 대비 조기종료 판정(최종 ok 에 반영)
+    dur_ok = dur >= MIN_TOTAL_DUR_S
+    if not dur_ok:
+        ok = False
+    print(f"  {'✅' if dur_ok else '❌'} 샘플 {n}행 · {dur:.1f}초 · ≈{hz:.0f}Hz"
+          + ("" if dur_ok else f"  (프로토콜 {PROTOCOL_TOTAL_S:.0f}s 미달 {MIN_TOTAL_DUR_S:.0f}s — 중단/조기종료 → 재수집)"))
 
     # 3) 라벨 일관성
     labels = {r["label"] for r in rows}
@@ -649,18 +722,24 @@ def inspect(path):
     else:
         print(f"  {'✅' if cue == 'na' else '⚠️'} cue_delivery={cue} (큐 없는 라벨은 na 정상)")
 
-    # 5) phase / sit_cue 마커 / excluded
+    # 5) phase / sit_cue 마커 / excluded / 앉기 구간 최소 길이 (최종 ok 에 반영)
     phases = Counter(r["phase"] for r in rows)
     cues = sum(1 for r in rows if r["event"] == "sit_cue")
     excl = sum(1 for r in rows if r["_excluded"])
     if label in CUE_LABELS:
-        seg_ok = cues == 1 and phases.get("sitting", 0) > 0
-        print(f"  {'✅' if seg_ok else '⚠️'} 구간: walking {phases.get('walking', 0)} / "
-              f"sitting {phases.get('sitting', 0)} · sit_cue 마커 {cues}개(기대 1) · excluded {excl}")
+        sit_rows = [r for r in rows if r["phase"] == "sitting"]
+        sit_dur = (sit_rows[-1]["_t"] - sit_rows[0]["_t"]) / 1000.0 if len(sit_rows) >= 2 else 0.0
+        sit_dur_ok = sit_dur >= MIN_SIT_DUR_S
+        seg_ok = cues == 1 and phases.get("sitting", 0) > 0 and sit_dur_ok
+        print(f"  {'✅' if seg_ok else '❌'} 구간: walking {phases.get('walking', 0)} / "
+              f"sitting {phases.get('sitting', 0)}행({sit_dur:.1f}s) · sit_cue 마커 {cues}개(기대 1) · excluded {excl}"
+              + ("" if sit_dur_ok else f"  (앉기 {MIN_SIT_DUR_S:.0f}s 미만 — 재수집)"))
     else:
         seg_ok = phases.get("sitting", 0) == 0 and cues == 0
-        print(f"  {'✅' if seg_ok else '⚠️'} 구간: walking {phases.get('walking', 0)}행"
+        print(f"  {'✅' if seg_ok else '❌'} 구간: walking {phases.get('walking', 0)}행"
               + ("" if seg_ok else " · 큐 없는 라벨인데 sitting/sit_cue 존재"))
+    if not seg_ok:
+        ok = False
 
     # 6) 원시 3축이 실제로 변동하는가(센서 미동작/폰 고정 감지)
     sx = statistics.pstdev([r["_x"] for r in rows])
