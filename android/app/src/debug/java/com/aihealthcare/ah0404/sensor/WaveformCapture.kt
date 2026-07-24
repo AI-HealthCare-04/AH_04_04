@@ -225,6 +225,22 @@ object WaveformHw {
             !sensorPresent -> SENSOR_ABSENT
             else -> count
         }
+
+    /**
+     * 녹화 시작 기준 base 누적 — **시작 시각(startNs) 이내(ts ≤ start)** 이벤트의 누적만 base 로 인정한다(리뷰 #194 블로커3).
+     * 직전 trial 저장·휴대폰 재배치의 준비 동작 걸음이 최대 ~10초 지연 파이프라인에 남아 있어도, 그 걸음(ts ≤ start)이
+     * base 에 포함돼 최종 diff 에서 상쇄된다. 최신값이 아직 없거나(음수) 최신 이벤트의 시각이 start 이후면 유효 base 아님(-1).
+     */
+    fun baseAtStart(latestValue: Long, latestTsNs: Long, startNs: Long): Long =
+        if (latestValue >= 0L && startNs >= 0L && latestTsNs in 0L..startNs) latestValue else -1L
+
+    /**
+     * 종료 정산용 walkEnd 누적 — 보행 종료 이내 counter 이벤트가 **한 번도 없었으면(-1)** 유효한 base 로 폴백한다
+     * (리뷰 #194 블로커1). 이번 수집은 '실제 0걸음/과소계수'를 재는 것이므로, base 가 유효하면 새 이벤트가 없어도
+     * 최종은 base 와 같아야 하고 결과는 **0**이어야 한다(측정 불가 sentinel 이 아니라). base 도 없으면 -1(측정 불가) 유지.
+     */
+    fun resolveWalkEndCount(walkEndCount: Long, baseCount: Long): Long =
+        if (walkEndCount >= 0L) walkEndCount else baseCount
 }
 
 /**

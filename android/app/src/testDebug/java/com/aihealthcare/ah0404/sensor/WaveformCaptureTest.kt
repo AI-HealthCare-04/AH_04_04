@@ -179,6 +179,61 @@ class WaveformCaptureTest {
     }
 
     @Test
+    fun base_at_start_only_accepts_events_at_or_before_start() {
+        // 시작 시각 이내(ts≤start) 최신 누적만 base 로 인정 — 준비 동작 걸음을 base 에 넣어 최종 diff 에서 상쇄(블로커3).
+        assertEquals(100L, WaveformHw.baseAtStart(latestValue = 100, latestTsNs = 5, startNs = 10)) // 시작 전 이벤트
+        assertEquals(100L, WaveformHw.baseAtStart(latestValue = 100, latestTsNs = 10, startNs = 10)) // 경계 포함
+        assertEquals(-1L, WaveformHw.baseAtStart(latestValue = 100, latestTsNs = 15, startNs = 10))  // 시작 후 → 아직 base 아님
+        assertEquals(-1L, WaveformHw.baseAtStart(latestValue = -1, latestTsNs = 5, startNs = 10))    // 최신값 없음
+        assertEquals(-1L, WaveformHw.baseAtStart(latestValue = 100, latestTsNs = 5, startNs = -1))   // 시작 미확정
+    }
+
+    @Test
+    fun resolve_walk_end_falls_back_to_base_so_real_zero_is_zero_not_sentinel() {
+        // 보행 종료 이내 counter 이벤트가 없었으면(-1) 유효 base 로 폴백 → 실제 0걸음은 sentinel 이 아니라 0 (블로커1).
+        assertEquals(50L, WaveformHw.resolveWalkEndCount(walkEndCount = 50, baseCount = 100)) // 이벤트 있으면 그대로
+        assertEquals(100L, WaveformHw.resolveWalkEndCount(walkEndCount = -1, baseCount = 100)) // 없으면 base 폴백
+        assertEquals(-1L, WaveformHw.resolveWalkEndCount(walkEndCount = -1, baseCount = -1))   // base 도 없으면 -1 유지
+        // base 유효 + walkEnd 이벤트 0 → 최종 counter 는 0 (BASELINE_NOT_READY 아님).
+        val base = 100L
+        assertEquals(
+            0,
+            WaveformHw.counterSinceStart(
+                permitted = true, sensorPresent = true,
+                baseCount = base, latestCount = WaveformHw.resolveWalkEndCount(-1L, base),
+            ),
+        )
+        // base 도 미확보면 종료 정산도 측정 불가로 정직하게 남는다.
+        assertEquals(
+            WaveformHw.BASELINE_NOT_READY,
+            WaveformHw.counterSinceStart(
+                permitted = true, sensorPresent = true,
+                baseCount = -1L, latestCount = WaveformHw.resolveWalkEndCount(-1L, -1L),
+            ),
+        )
+    }
+
+    @Test
+    fun finalize_hw_walk_end_records_zero_for_real_zero_step_walk() {
+        // 실기기 시나리오: base 유효(100)·보행 중 새 counter 이벤트 0(HW 과소계수/실제 0) → 마지막 walking 행 = 0.
+        val r = WaveformRecorder()
+        r.start(WaveformLabel.SHUFFLE, meta)
+        r.add(sample(sensorElapsedMs = 0L))
+        r.add(sample(sensorElapsedMs = 20L))
+        r.stop()
+        val base = 100L
+        r.finalizeHwWalkEnd(
+            counter = WaveformHw.counterSinceStart(
+                permitted = true, sensorPresent = true,
+                baseCount = base, latestCount = WaveformHw.resolveWalkEndCount(-1L, base),
+            ),
+            detectorTotal = WaveformHw.detectorTotal(permitted = true, sensorPresent = true, count = 0),
+        )
+        assertEquals(0, r.samples[1].hwStepCounter)        // -3 이 아니라 0
+        assertEquals(0, r.samples[1].hwStepDetectorTotal)
+    }
+
+    @Test
     fun meta_commas_are_sanitized_to_spaces() {
         // placement/device 등에 콤마가 섞여도 열이 밀리지 않게 공백으로 치환한다.
         val dirty = meta.copy(trialId = "t,1", deviceModel = "a,b")
