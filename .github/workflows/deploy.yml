@@ -5,11 +5,23 @@ name: Deploy
 # 로컬 대신 러너에서 빌드하므로 EC2(프리티어)의 OOM/디스크 부족 위험이 없고,
 # 러너가 x86이라 --platform linux/amd64 크로스빌드도 필요 없다.
 
-# git-flow에 따라 실제 릴리즈인 main 머지에서만 배포한다.
-# dev(기능 통합 테스트)와 release(배포 전 확인)는 배포하지 않는다.
+# ── 자동배포 트리거: git-flow 단계에 맞춰 "한 브랜치"에만 건다 ──────────────────
+#  지금(개발·통합 테스트 단계): dev 에 머지되면 EC2(스테이징 서버)에 자동 배포 → 팀 실기기 테스트.
+#  서버가 1대뿐이라 이 서버를 "테스트 서버"로 쓰고, main 은 최종 배포에만 쓴다.
+#
+#  🔴 TODO — 단계가 넘어갈 때 아래 `branches:` 한 줄만 바꾼다 (담당: 배포 소유자 menteur-Ran, 추적 #177)
+#     · release 준비 단계 진입  →  branches: [release]
+#     · 최종 진짜 배포          →  branches: [main]
+#     ⚠️ [dev, main] 처럼 여러 개를 동시에 걸지 말 것 — push 마다 중복 배포가 나 실수 위험.
+#     ✅ 단계 전환 머지 후에는 Actions 탭에서 이 워크플로 실행이 생성됐는지 확인한다.
+#        push 는 그 커밋에 있는 워크플로의 branches 필터로 평가되므로, branches 변경을 포함한
+#        머지 push 자체가 트리거다. (protected main 에 빈 커밋을 넣는 방식은 쓰지 않는다.)
+#     ℹ️ 수동 실행(workflow_dispatch)은 두지 않는다: 이 저장소 기본 브랜치가 main 인데 main 에
+#        deploy.yml 이 없어 "Run workflow" 버튼이 뜨지 않는다(dispatch 는 기본 브랜치 워크플로만 받음).
+#        수동 배포가 필요하면 기본 브랜치에 dispatcher 를 두는 별도 PR 로 실제 활성화 경로를 마련한다.
 on:
   push:
-    branches: [main]
+    branches: [dev]
 
 # 배포가 동시에 두 개 돌면 이미지 태그/마이그레이션이 꼬인다.
 # cancel-in-progress는 false — 진행 중인 배포를 중간에 끊으면
