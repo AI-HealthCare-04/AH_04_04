@@ -54,6 +54,12 @@ class OnboardingViewModel(
     var loading by mutableStateOf(false); private set
     var error by mutableStateOf<String?>(null); private set
 
+    /**
+     * 이 온보딩이 게스트('체험으로 시작하기')인가(#153). 완료 시 영속화 여부를 가른다:
+     *   게스트면 토큰·완료 플래그를 디스크에 남기지 않는다(한 폰 다인 시연 잔존 방지).
+     */
+    var isGuest by mutableStateOf(false); private set
+
     // 약관
     var terms by mutableStateOf<List<Term>>(emptyList()); private set
     var agreed by mutableStateOf<Set<String>>(emptySet()); private set
@@ -119,14 +125,16 @@ class OnboardingViewModel(
 
     /** S0 → 체험 사용자의 게스트 로그인 후 약관 목록 로드. 기존 소셜 토큰은 덮어쓰지 않는다. */
     fun start() = launchStep("시작") {
+        isGuest = true // 게스트 온보딩 — 완료해도 디스크에 안 남긴다(#153).
         if (TokenHolder.token.isBlank()) {
             TokenHolder.token = api.guestLogin().accessToken
         }
         loadTerms()
     }
 
-    /** 소셜 로그인 성공 후 같은 온보딩 흐름을 이어간다. */
+    /** 소셜 로그인(미완료 계정) 성공 후 같은 온보딩 흐름을 이어간다. 완료 시 영속화 대상(#153). */
     fun continueAuthenticated() = launchStep("로그인") {
+        isGuest = false
         loadTerms()
     }
 

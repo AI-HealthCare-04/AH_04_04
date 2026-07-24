@@ -50,11 +50,15 @@ import com.aihealthcare.ah0404.ui.theme.Dimens
 /**
  * 온보딩 흐름 호스트 — 역할분담 §3-정인, 작업순서 §4-②.
  *  S0 진입 → S1 약관 → S3 프로필 → S4 체력검사(or 스킵) → S5 결과(disclaimer 필수).
- *  완료 시 onComplete() 로 메인 화면 진입.
+ *  완료 시 onComplete(isGuest) 로 메인 화면 진입(#153: 게스트면 영속화 스킵).
+ *
+ *  @param onComplete 온보딩 완주(결과 → 홈). isGuest 를 넘겨 영속화 여부를 호출부가 가른다.
+ *  @param onReroute 이미 완료된 소셜 계정이 로그인함 → 온보딩을 건너뛰고 홈으로 라우팅 재평가(#153).
  */
 @Composable
 fun OnboardingScreen(
-    onComplete: () -> Unit,
+    onComplete: (isGuest: Boolean) -> Unit,
+    onReroute: () -> Unit,
     onBrowseDemo: () -> Unit,
     modifier: Modifier = Modifier,
     vm: OnboardingViewModel = viewModel(),
@@ -62,6 +66,12 @@ fun OnboardingScreen(
 ) {
     val activity = LocalContext.current as Activity
     val authState by authVm.state.collectAsState()
+    // 소셜 로그인 결과 분기(#153): 완료 계정은 약관을 건너뛰고 홈으로, 미완료 계정은 온보딩(약관)을 이어감.
+    val onSocialLogin: (SocialProvider) -> Unit = { provider ->
+        authVm.signIn(provider, activity) { completed ->
+            if (completed) onReroute() else vm.continueAuthenticated()
+        }
+    }
     Box(
         modifier
             .fillMaxSize()
@@ -71,12 +81,8 @@ fun OnboardingScreen(
             OnbStep.WELCOME -> WelcomeStep(
                 vm = vm,
                 authState = authState,
-                onGoogleLogin = {
-                    authVm.signIn(SocialProvider.GOOGLE, activity, vm::continueAuthenticated)
-                },
-                onKakaoLogin = {
-                    authVm.signIn(SocialProvider.KAKAO, activity, vm::continueAuthenticated)
-                },
+                onGoogleLogin = { onSocialLogin(SocialProvider.GOOGLE) },
+                onKakaoLogin = { onSocialLogin(SocialProvider.KAKAO) },
                 onSkipToDemo = onBrowseDemo,
             )
             OnbStep.TERMS -> TermsStep(vm)
@@ -359,7 +365,7 @@ private fun AssessmentStep(vm: OnboardingViewModel) {
 }
 
 @Composable
-private fun ResultStep(vm: OnboardingViewModel, onComplete: () -> Unit) {
+private fun ResultStep(vm: OnboardingViewModel, onComplete: (isGuest: Boolean) -> Unit) {
     val r = vm.result
     val (emoji, title) = when (r?.careStage) {
         "good" -> "👍" to "아주 좋아요!"
@@ -378,7 +384,7 @@ private fun ResultStep(vm: OnboardingViewModel, onComplete: () -> Unit) {
             MedicalDisclaimer(text = r?.disclaimer ?: MEDICAL_DISCLAIMER_DEFAULT)
         },
         footer = {
-            AigoPrimaryButton(text = "홈으로 시작하기", onClick = onComplete)
+            AigoPrimaryButton(text = "홈으로 시작하기", onClick = { onComplete(vm.isGuest) })
         },
     )
 }

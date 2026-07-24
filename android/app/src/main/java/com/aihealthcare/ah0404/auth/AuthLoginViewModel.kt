@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.aihealthcare.ah0404.network.AuthSession
 import com.aihealthcare.ah0404.network.OnbEnums
 import com.aihealthcare.ah0404.network.OnboardingApi
 import com.aihealthcare.ah0404.network.SessionStore
@@ -28,7 +29,11 @@ class AuthLoginViewModel(application: Application) : AndroidViewModel(applicatio
     private val mutableState = MutableStateFlow(AuthLoginUiState())
     val state: StateFlow<AuthLoginUiState> = mutableState.asStateFlow()
 
-    fun signIn(provider: SocialProvider, activity: Activity, onSuccess: () -> Unit) {
+    /**
+     * 소셜 로그인. 성공 시 [onResult] 로 **온보딩 완료 여부**를 넘겨, 호출부가 라우팅을 분기한다(#153).
+     *   완료 → 홈으로(약관 건너뜀), 미완료 → 온보딩(약관)을 이어감.
+     */
+    fun signIn(provider: SocialProvider, activity: Activity, onResult: (completed: Boolean) -> Unit) {
         if (mutableState.value.loading != null) return
         viewModelScope.launch {
             mutableState.value = AuthLoginUiState(loading = provider)
@@ -42,13 +47,15 @@ class AuthLoginViewModel(application: Application) : AndroidViewModel(applicatio
                     SocialProvider.GOOGLE -> api.loginGoogle(request)
                     SocialProvider.KAKAO -> api.loginKakao(request)
                 }
-                SessionStore.saveAuthentication(
+                val user = response.user
+                val completed = user.onboardingStatus == OnbEnums.COMPLETED
+                // 영속화 정책은 SessionStore 한곳에서 강제한다(#153): 게스트·미완료는 메모리만, 완료 소셜만 디스크.
+                SessionStore.applyLogin(
                     getApplication(),
-                    response.accessToken,
-                    onboardingCompleted = response.user.onboardingStatus == OnbEnums.COMPLETED,
+                    AuthSession(response.accessToken, user.isGuest, completed, user.userId),
                 )
                 mutableState.value = AuthLoginUiState()
-                onSuccess()
+                onResult(completed)
             } catch (_: SignInCancelledException) {
                 mutableState.value = AuthLoginUiState(message = "로그인을 취소했어요.")
             } catch (_: IOException) {
