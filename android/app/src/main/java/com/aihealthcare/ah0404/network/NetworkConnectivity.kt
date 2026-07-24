@@ -41,13 +41,14 @@ fun rememberNetworkAvailable(): State<Boolean> {
         val mainHandler = Handler(Looper.getMainLooper())
         val callback = object : ConnectivityManager.NetworkCallback() {
             // 새 기본 네트워크가 붙는 순간(오프라인 시작 → 연결, wifi→cellular 전환 등). onCapabilitiesChanged 가
-            // 늘 뒤따르지만, API 24~25 에서 그 도착을 놓칠 수 있어 여기서도 명시적으로 처리한다(지영 리뷰 #185).
+            // 늘 뒤따르지만, API 24~25 에서 그 도착을 놓칠 수 있어 여기서도 처리한다(지영 리뷰 #185).
+            //   ⚠️ 여기서 getNetworkCapabilities 동기 조회는 하지 않는다 — 이 시점엔 caps 가 아직 안 실려
+            //   레이스가 된다(공식 문서). 기본 네트워크가 붙었으면 '사용 가능'으로 두고, INTERNET 유무 정밀
+            //   판정은 뒤따르는 onCapabilitiesChanged 에 맡긴다(그게 늦거나 누락돼도 최소한 온라인으로 잡힘).
             override fun onAvailable(network: Network) {
                 mainHandler.post {
-                    val ok = connectivityManager.getNetworkCapabilities(network)
-                        ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
-                    available.value = ok
-                    if (ok) AuthFailureCoordinator.onNetworkAvailable()
+                    available.value = true
+                    AuthFailureCoordinator.onNetworkAvailable()
                 }
             }
 
