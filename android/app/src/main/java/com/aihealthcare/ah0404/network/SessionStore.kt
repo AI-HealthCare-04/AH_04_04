@@ -30,6 +30,7 @@ object SessionStore {
     private const val PREFS = "aigo_session"
     private const val KEY_TOKEN = "access_token"
     private const val KEY_ONBOARDED = "onboarding_completed"
+    private const val KEY_USER_ID = "user_id"
 
     /**
      * 라우팅 게이트(#153): "이번 세션이 온보딩을 마쳤는가". 시작 시 [restore] 로 디스크값을 실어오고,
@@ -40,14 +41,44 @@ object SessionStore {
     var sessionOnboarded: Boolean = false
         private set
 
+    /**
+     * 사용자별 경량 로컬 상태(#145)의 키로 쓸 **완료된 소셜 계정의 서버 user_id**.
+     * 게스트·미완료 세션·로그아웃 상태에서는 null이라 로컬 상태를 영속화하지 않는다.
+     */
+    @Volatile
+    var persistentUserId: Int? = null
+        private set
+
+    private var currentUserId: Int? = null
+
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     /** 앱 시작 시: 저장된 토큰 + 완료 플래그를 메모리로 복원. */
     fun restore(context: Context) {
         val p = prefs(context)
-        TokenHolder.token = p.getString(KEY_TOKEN, null).orEmpty()
-        sessionOnboarded = p.getBoolean(KEY_ONBOARDED, false)
+        val token = p.getString(KEY_TOKEN, null).orEmpty()
+        val onboarded = p.getBoolean(KEY_ONBOARDED, false)
+        val storedUserId = runCatching {
+            p.getInt(KEY_USER_ID, -1).takeIf { it > 0 }
+        }.getOrElse {
+            p.edit().remove(KEY_USER_ID).apply()
+            null
+        }
+        // #145 마이그레이션: #153 이전 설치에는 user_id 키가 없으므로, 이미 서버 로그인으로 받은
+        // JWT의 안정적인 user_id claim을 한 번 읽어 새 키로 옮긴다. 토큰 원문 자체를 저장 키로 쓰지는 않는다.
+        val restoredUserId = if (token.isNotBlank() && onboarded) {
+            storedUserId ?: JwtTokenInspector.userId(token)
+        } else {
+            null
+        }
+        TokenHolder.token = token
+        sessionOnboarded = onboarded
+        currentUserId = restoredUserId
+        persistentUserId = restoredUserId
+        if (restoredUserId != null && storedUserId == null) {
+            p.edit().putInt(KEY_USER_ID, restoredUserId).apply()
+        }
     }
 
     /** 디스크 캐시 값(계정 전환 검증·테스트용). 라우팅은 [sessionOnboarded] 를 쓴다. */
@@ -61,13 +92,16 @@ object SessionStore {
      */
     fun applyLogin(context: Context, session: AuthSession) {
         TokenHolder.token = session.accessToken
+        currentUserId = session.userId?.takeIf { it > 0 }
         val eligible = !session.isGuest && session.onboardingCompleted
         sessionOnboarded = eligible
+        persistentUserId = currentUserId.takeIf { eligible }
         val editor = prefs(context).edit()
         if (eligible) {
             editor.putString(KEY_TOKEN, session.accessToken).putBoolean(KEY_ONBOARDED, true)
+            persistentUserId?.let { editor.putInt(KEY_USER_ID, it) } ?: editor.remove(KEY_USER_ID)
         } else {
-            editor.remove(KEY_TOKEN).putBoolean(KEY_ONBOARDED, false)
+            editor.remove(KEY_TOKEN).remove(KEY_USER_ID).putBoolean(KEY_ONBOARDED, false)
         }
         editor.apply()
         AuthFailureCoordinator.onAuthenticated()
@@ -80,10 +114,14 @@ object SessionStore {
     fun markOnboarded(context: Context, isGuest: Boolean) {
         sessionOnboarded = true
         if (!isGuest) {
-            prefs(context).edit()
+            persistentUserId = currentUserId
+            val editor = prefs(context).edit()
                 .putString(KEY_TOKEN, TokenHolder.token)
                 .putBoolean(KEY_ONBOARDED, true)
-                .apply()
+            persistentUserId?.let { editor.putInt(KEY_USER_ID, it) } ?: editor.remove(KEY_USER_ID)
+            editor.apply()
+        } else {
+            persistentUserId = null
         }
         AuthFailureCoordinator.onAuthenticated()
     }
@@ -94,8 +132,10 @@ object SessionStore {
      * (로그아웃은 완료된 소셜 계정에서만 도달하므로 완료 플래그 보존이 안전하다.)
      */
     fun clearAuthentication(context: Context) {
-        prefs(context).edit().remove(KEY_TOKEN).apply()
+        prefs(context).edit().remove(KEY_TOKEN).remove(KEY_USER_ID).apply()
         TokenHolder.token = ""
+        currentUserId = null
+        persistentUserId = null
     }
 
     /**
@@ -106,6 +146,8 @@ object SessionStore {
         prefs(context).edit().clear().apply()
         TokenHolder.token = ""
         sessionOnboarded = false
+        currentUserId = null
+        persistentUserId = null
         AuthFailureCoordinator.onAuthenticated()
     }
 }

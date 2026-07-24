@@ -116,6 +116,54 @@ class PetBubbleMessagesTest {
         }
     }
 
+    @Test
+    fun returningAfterThreeKstCalendarDays_usesSupportiveRevisitMessage() {
+        val message = selectPetBubbleMessage(
+            context(daysSinceLastVisit = 3),
+            choosing(0, 0),
+        )
+
+        assertEquals("revisit_welcome", message.id)
+        assertEquals("오랜만이에요! 다시 만나서 반가워요.", message.text)
+    }
+
+    @Test
+    fun returningBeforeThreeDays_keepsNormalHomeMessage() {
+        val message = selectPetBubbleMessage(
+            context(daysSinceLastVisit = 2, hourOfDay = 12),
+            choosing(0, 0),
+        )
+
+        assertEquals("afternoon_easy", message.id)
+    }
+
+    @Test
+    fun previousMessage_isExcludedAcrossAppRelaunches() {
+        val message = selectPetBubbleMessage(
+            context(
+                daysSinceLastVisit = 0,
+                excludedMessageId = "afternoon_easy",
+                hourOfDay = 12,
+            ),
+            choosing(0, 0),
+        )
+
+        assertEquals("afternoon_hello", message.id)
+    }
+
+    @Test
+    fun previousRevisitMessage_isNotRepeated() {
+        val message = selectPetBubbleMessage(
+            context(
+                daysSinceLastVisit = 7,
+                excludedMessageId = "revisit_welcome",
+            ),
+            choosing(0, 0),
+        )
+
+        assertEquals("revisit_missed", message.id)
+    }
+
     private fun context(
         completedToday: Int = 0,
         availableMeal: Int = 0,
@@ -125,6 +173,8 @@ class PetBubbleMessagesTest {
         todayWalkingSteps: Int = 0,
         hourOfDay: Int = 12,
         hasFreshHomeData: Boolean = true,
+        daysSinceLastVisit: Long? = null,
+        excludedMessageId: String? = null,
     ) = PetBubbleContext(
         nickname = "정인",
         completedToday = completedToday,
@@ -135,6 +185,8 @@ class PetBubbleMessagesTest {
         todayWalkingSteps = todayWalkingSteps,
         hourOfDay = hourOfDay,
         hasFreshHomeData = hasFreshHomeData,
+        daysSinceLastVisit = daysSinceLastVisit,
+        excludedMessageId = excludedMessageId,
     )
 
     private fun choosing(vararg indices: Int): (Int) -> Int {

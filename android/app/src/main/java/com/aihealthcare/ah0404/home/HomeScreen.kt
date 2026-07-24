@@ -29,8 +29,10 @@ import androidx.compose.runtime.remember
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.aihealthcare.ah0404.network.SessionStore
 import com.aihealthcare.ah0404.pet.PetIdle
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
@@ -143,13 +145,20 @@ private fun HomeContent(
     onOpenExercise: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current.applicationContext
+    val visitStore = remember(context) { PetBubbleVisitStore(context) }
+    val persistentUserId = SessionStore.persistentUserId
     val hourOfDay by produceState(initialValue = currentHourOfDay()) {
         while (true) {
             delay(60_000L)
             value = currentHourOfDay()
         }
     }
-    val bubbleMessage = remember(ui, refreshError, hourOfDay) {
+    val todayEpochDay = kstEpochDay()
+    val previousVisit = remember(persistentUserId, todayEpochDay) {
+        persistentUserId?.let(visitStore::read)
+    }
+    val bubbleMessage = remember(ui, refreshError, hourOfDay, previousVisit, todayEpochDay) {
         selectPetBubbleMessage(
             PetBubbleContext(
                 nickname = ui.nickname,
@@ -161,8 +170,17 @@ private fun HomeContent(
                 todayWalkingSteps = ui.todayWalkingSteps,
                 hourOfDay = hourOfDay,
                 hasFreshHomeData = !refreshError,
+                daysSinceLastVisit = daysSinceLastVisit(previousVisit?.lastVisitEpochDay, todayEpochDay),
+                excludedMessageId = previousVisit?.lastMessageId,
             ),
         )
+    }
+    // 완료된 소셜 계정만 user_id별로 저장한다. 게스트·미완료·로그아웃 상태(null)는 앱 재실행에 남기지 않는다.
+    // 저장 실패는 화면을 막지 않으며 다음 실행에서 기본 선택으로 안전하게 폴백한다.
+    LaunchedEffect(persistentUserId, todayEpochDay, bubbleMessage.id) {
+        persistentUserId?.let { userId ->
+            visitStore.write(userId, PetBubbleVisitState(todayEpochDay, bubbleMessage.id))
+        }
     }
     // 스크롤 콘텐츠 위에 마스코트 펫을 '고정 오버레이'로 얹는다.
     //   PetIdleView 는 GLSurfaceView(setZOrderOnTop) 라 스크롤 Column 안에 넣으면 떠서 깨지므로,

@@ -73,6 +73,7 @@ class SessionStoreInstrumentedTest {
         SessionStore.restore(context)
         assertTrue(SessionStore.isOnboarded(context))
         assertEquals("social-token", TokenHolder.token)
+        assertEquals(7, SessionStore.persistentUserId)
     }
 
     /** #153 증상 ①: 미완료 소셜(약관 전) 토큰은 메모리에만 두고 디스크에 쓰지 않는다. */
@@ -91,6 +92,7 @@ class SessionStoreInstrumentedTest {
         SessionStore.restore(context)
         assertFalse(SessionStore.isOnboarded(context))
         assertEquals("", TokenHolder.token)
+        assertEquals(null, SessionStore.persistentUserId)
     }
 
     /** #153 증상 ②: 게스트 로그인 토큰은 어떤 경로로도 디스크에 남지 않는다. */
@@ -107,6 +109,7 @@ class SessionStoreInstrumentedTest {
         SessionStore.restore(context)
         assertFalse(SessionStore.isOnboarded(context))
         assertEquals("", TokenHolder.token)
+        assertEquals(null, SessionStore.persistentUserId)
     }
 
     /** #153 계정 전환: 완료 소셜 뒤 게스트로 로그인하면 이전 계정 잔재(토큰·플래그)가 지워진다. */
@@ -131,14 +134,32 @@ class SessionStoreInstrumentedTest {
 
     @Test
     fun clearAuthentication_preservesOnboardingCompletion() {
-        TokenHolder.token = "saved-token"
-        SessionStore.markOnboarded(context, isGuest = false)
+        SessionStore.applyLogin(
+            context,
+            AuthSession("saved-token", isGuest = false, onboardingCompleted = true, userId = 12),
+        )
 
         SessionStore.clearAuthentication(context)
         SessionStore.restore(context)
 
         assertTrue(SessionStore.isOnboarded(context))
         assertEquals("", TokenHolder.token)
+        assertEquals(null, SessionStore.persistentUserId)
+    }
+
+    @Test
+    fun restore_corruptedUserId_fallsBackWithoutCrashing() {
+        context.getSharedPreferences("aigo_session", Context.MODE_PRIVATE)
+            .edit()
+            .putString("access_token", "not-a-jwt")
+            .putBoolean("onboarding_completed", true)
+            .putString("user_id", "broken")
+            .commit()
+
+        SessionStore.restore(context)
+
+        assertTrue(SessionStore.sessionOnboarded)
+        assertEquals(null, SessionStore.persistentUserId)
     }
 
     @Test
