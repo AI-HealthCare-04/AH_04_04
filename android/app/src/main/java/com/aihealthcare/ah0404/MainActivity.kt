@@ -89,7 +89,9 @@ class MainActivity : ComponentActivity() {
                     AppRoute.MAIN
                 } else {
                     AppRouteResolver.resolve(
-                        onboardingCompleted = SessionStore.isOnboarded(context),
+                        // 라우팅 게이트는 메모리 세션(#153): 게스트 완주는 이번 세션만 MAIN(디스크엔 무영속),
+                        //   소셜 완료만 재실행에도 유지된다. 시작 시 restore() 가 디스크값으로 초기화한다.
+                        onboardingCompleted = SessionStore.sessionOnboarded,
                         tokenStatus = tokenStatus,
                         networkAvailable = networkAvailable,
                         failure = authFailure,
@@ -105,20 +107,24 @@ class MainActivity : ComponentActivity() {
 
                 when (route) {
                     AppRoute.ONBOARDING -> OnboardingScreen(
-                        onComplete = {
-                            SessionStore.markOnboarded(context)
+                        // 완주(결과 → 홈): 게스트면 디스크 무영속, 소셜이면 토큰+완료 저장(#153).
+                        onComplete = { isGuest ->
+                            SessionStore.markOnboarded(context, isGuest)
                             sessionRevision++
                         },
+                        // 이미 완료된 소셜 계정 로그인 → applyLogin 이 게이트를 세웠으니 라우팅만 재평가(→ 홈).
+                        onReroute = { sessionRevision++ },
                         onBrowseDemo = {
                             demoMode = true
                         },
                     )
                     AppRoute.LOGIN_REQUIRED -> LoginRequiredScreen(
                         onGoogleLogin = {
-                            authLoginViewModel.signIn(SocialProvider.GOOGLE, activity) { sessionRevision++ }
+                            // 재로그인은 완료된 소셜 계정만 도달 → applyLogin 이 저장·게이트 처리, 라우팅만 재평가.
+                            authLoginViewModel.signIn(SocialProvider.GOOGLE, activity) { _ -> sessionRevision++ }
                         },
                         onKakaoLogin = {
-                            authLoginViewModel.signIn(SocialProvider.KAKAO, activity) { sessionRevision++ }
+                            authLoginViewModel.signIn(SocialProvider.KAKAO, activity) { _ -> sessionRevision++ }
                         },
                         onRetry = {
                             AuthFailureCoordinator.retryTransientFailure()
