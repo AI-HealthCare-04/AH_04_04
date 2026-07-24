@@ -1,6 +1,7 @@
 package com.aihealthcare.ah0404.mission
 
 import android.util.Log
+import com.aihealthcare.ah0404.BuildConfig
 import com.aihealthcare.ah0404.network.MissionApi
 import com.aihealthcare.ah0404.network.MissionLogCreateRequest
 import com.aihealthcare.ah0404.network.MissionLogUpdateRequest
@@ -89,6 +90,11 @@ class WalkingFlowUseCase(
         durationSec: Int,
         createdOnDeviceAt: String?,
     ): Result {
+        // DEBUG 전용(#91 1-B): 설정 토글로 '다음 저장 1회 실패'가 무장돼 있으면 서버 호출 전에 실패시켜
+        //   재시도 버튼을 실기기로 확인한다. 무장은 1회성이라 [다시 저장](2번째)은 정상 진행된다.
+        if (BuildConfig.DEBUG && WalkingDebug.consumeFailOnce()) {
+            throw java.io.IOException("디버그: 걷기 저장 강제 실패(#91 재시도 확인)")
+        }
         // ② 걷기 시작 (in_progress) — 자연 키(created_on_device_at) 동봉
         val started = api.createMissionLog(
             MissionLogCreateRequest(

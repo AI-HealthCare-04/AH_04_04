@@ -180,6 +180,13 @@ fun SettingsScreen(
                         }
                     },
                 )
+                // #91 1-B: '다음 저장 1회 실패'를 무장해 걷기 저장 실패 → [다시 저장] 재시도를 실기기로 확인.
+                Spacer(Modifier.height(Dimens.Space4))
+                ToggleRow(
+                    "🔧 다음 걷기저장 1회 실패 (디버그 · #91)",
+                    checked = com.aihealthcare.ah0404.mission.WalkingDebug.failNextSaveArmed,
+                    onChange = { com.aihealthcare.ah0404.mission.WalkingDebug.failNextSaveArmed = it },
+                )
             }
         }
     }
