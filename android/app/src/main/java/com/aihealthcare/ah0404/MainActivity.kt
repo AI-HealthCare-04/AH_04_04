@@ -127,10 +127,6 @@ class MainActivity : ComponentActivity() {
                         onKakaoLogin = {
                             authLoginViewModel.signIn(SocialProvider.KAKAO, activity) { _ -> sessionRevision++ }
                         },
-                        onRetry = {
-                            AuthFailureCoordinator.retryTransientFailure()
-                            sessionRevision++
-                        },
                         onExit = activity::finish,
                         onResetSession = {
                             SessionStore.resetSession(context)

@@ -27,7 +27,6 @@ import com.aihealthcare.ah0404.ui.theme.Dimens
 fun LoginRequiredScreen(
     onGoogleLogin: () -> Unit,
     onKakaoLogin: () -> Unit,
-    onRetry: () -> Unit,
     onExit: () -> Unit,
     onResetSession: () -> Unit = {},
     loading: SocialProvider? = null,
@@ -58,8 +57,9 @@ fun LoginRequiredScreen(
             Spacer(Modifier.height(Dimens.Space12))
             Text(message, color = MaterialTheme.colorScheme.error)
         }
-        Spacer(Modifier.height(Dimens.Space12))
-        AigoSecondaryButton(text = "상태 다시 확인", onClick = onRetry)
+        // "상태 다시 확인"(retry) 버튼은 제거함(#187 후속): 이 화면은 토큰 문제(로그아웃·만료·401)로만
+        //   도달하고, 일시적 네트워크/서버 실패는 OFFLINE 화면으로 가 거기 "연결 다시 확인"이 처리한다.
+        //   여기서 retry 는 어떤 경우에도 화면을 벗어나게 못 해(no-op) 시니어에게 혼란만 줬다.
         // [DEBUG 전용] 키 미설정 개발 빌드에서 LOGIN_REQUIRED 고립 방지용 탈출구(#119).
         //   세션을 초기화해 온보딩(시작화면)으로 복귀시킨다. 릴리스 빌드에는 노출하지 않는다.
         if (BuildConfig.DEBUG) {
