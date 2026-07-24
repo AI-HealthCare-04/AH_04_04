@@ -93,9 +93,9 @@ class PhysicalAssessmentService:
             return None
         health_check_session = await self.health_check_repo.get_session(session_id, user_id)
         if health_check_session is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Health check session not found.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="세션을 찾을 수 없습니다.")
         if health_check_session.status != HealthCheckStatus.STARTED:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Health check session is already finished.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="이미 종료된 세션입니다.")
         return health_check_session
 
     @staticmethod

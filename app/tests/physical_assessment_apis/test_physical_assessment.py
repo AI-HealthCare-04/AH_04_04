@@ -314,6 +314,25 @@ async def test_create_assessment_rejects_finished_session() -> None:
     assert session.committed is False
 
 
+async def test_create_assessment_rejects_missing_session() -> None:
+    service, assessment_repo, _, session = _service()
+    service.health_check_repo = _FakeHealthCheckRepository(None)  # type: ignore[assignment]
+
+    with pytest.raises(HTTPException) as exc:
+        await service.create_assessment(
+            cast(User, SimpleNamespace(user_id=1)),
+            PhysicalAssessmentCreateRequest(
+                session_id=999,
+                chair_stand_5_time_sec=Decimal("11.2"),
+            ),
+        )
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "세션을 찾을 수 없습니다."
+    assert assessment_repo.created is None
+    assert session.committed is False
+
+
 async def test_create_assessment_slow_5sts_sets_easy() -> None:
     # 연령대 평균 초과(느림) → 하.
     service, _, _, _ = _service()
