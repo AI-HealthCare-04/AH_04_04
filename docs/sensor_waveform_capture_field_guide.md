@@ -64,21 +64,28 @@
 | 앞주머니(밖) | 10 | 10 | 10 | 10 |
 | 손(세로) | 10 | 10 | 10 | 10 |
 
-## 5. 참여자 로그 (⚠️ 필수 — #166 데이터 누수 방지)
+## 5. 참여자 로그 + 정답 걸음 수 (⚠️ 필수)
 
 CSV 스키마엔 참여자 컬럼이 없다(프로토콜 부록 A). 그래서 **별도 시트**에 매 trial 을 기록한다.
-저장 시 뜨는 **파일명이 그대로 `trial_id`**다.
+저장 시 뜨는 **파일명이 그대로 `trial_id`**다. 템플릿: [`waveform_answer_sheet_template.csv`](waveform_answer_sheet_template.csv).
 
 ```
-trial_id,participant_id,session_id
-walk_then_sit_20260724_101530_842,P01,P01_s1
-normal_walk_20260724_101612_310,P01,P01_s1
+trial_id,participant_id,session_id,manual_step_count
+walk_then_sit_20260724_101530_842,P01,P01_s1,18
+normal_walk_20260724_101612_310,P01,P01_s1,20
 ...
 ```
 - **참여자 여러 명** 확보 — 1~2명이면 참여자 단위 분할(leave-one-participant-out)이 무의미하다.
 - **session_id**: 같은 사람이라도 다른 날/다른 착복 상태면 세션을 나눈다(`P01_s1`, `P01_s2`).
 - 저장 위치: `Android/data/com.aihealthcare.ah0404/files/waveforms/` 의
   `<label>_<yyyyMMdd_HHmmss_SSS>.csv`.
+
+### ⭐ `manual_step_count` — 관찰자가 센 '실제 걸음 수'(정답, #176)
+폰은 실제 걸음 수를 모른다. **감지기 정확도를 채점하려면 사람이 옆에서 센 정답이 필요**하다.
+- **한 명이 걷고, 한 명(또는 본인)이 소리 내어/탈리 카운터로 걸음을 센다.** 끝나면 그 수를 적는다.
+- **`normal_walk`·`walk_then_sit` 만** 채운다(보행 구간 실제 걸음 수). `walk_then_sit` 은 **앉기 전 보행 걸음만** 센다.
+- `sit_only`·`shuffle` 은 **비워둔다**(걸음 계수 대상 아님).
+- 정답이 있어야 `python scripts/analyze_waveform.py <dir> --participants <로그.csv>` 가 **감지 vs 정답 오차%** 를 채점한다(없으면 그 절은 건너뜀).
 
 ## 6. 폐기 (수집 즉시 — 오염 데이터 배제)
 
@@ -123,4 +130,5 @@ python scripts/analyze_waveform.py ~/waveforms_raw/ --participants participants.
 - [ ] 걷기를 **느린 고령자 속도**로 했는가? (빠르면 §5-5 재현 실패)
 - [ ] 비프가 나기 **전에** 미리 앉지 않았는가? (경계가 흐려진다)
 - [ ] 매 trial **참여자 로그**에 파일명을 적었는가? (사후 복원 불가)
+- [ ] `normal_walk`·`walk_then_sit` 에서 **실제 걸음 수(정답)** 를 세어 `manual_step_count` 에 적었는가? (#176 채점용)
 - [ ] `서서 앉기만`에서 15초 동안 **걷지 않고 서 있었는가**? (walking=서있기 기준선)

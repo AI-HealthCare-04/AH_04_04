@@ -369,7 +369,7 @@ FEATURES = [
 ]
 
 
-def analyze(trials, participants=None):
+def analyze(trials, participants=None, manual_counts=None):
     # trial 단위로 세그먼트 특징 계산 → (label, phase)별 리스트에 적재.
     seg_feats = defaultdict(list)  # (label, phase) -> [feat dict]
     per_label = Counter()
@@ -484,6 +484,39 @@ def analyze(trials, participants=None):
              else "→ 파라미터/추가 특징 재검토 필요."))
     print()
 
+    # ── 3.9 정확도(정답 대비) — #176 손/느린보행 과소계수 채점 ──
+    # 관찰자 육안 정답(manual_step_count)이 로그에 있으면, 보행 라벨의 '보행 구간 감지 걸음'을
+    # 정답과 비교해 오차를 낸다. 정답 없으면 이 절은 건너뛴다(현행 감지기 출력끼리 비교하면
+    # P01·손 배치에서 0을 내는 불량이 기준이 되어 무의미하기 때문 — #176 방법론 블로커).
+    if manual_counts:
+        print("■ 정확도(관찰자 정답 대비) — #176 과소계수 채점")
+        rows_acc = []
+        for t in trials:
+            tid = t["rows"][0]["trial_id"]
+            gt = manual_counts.get(t["file"]) or manual_counts.get(tid)
+            if gt is None or gt <= 0:
+                continue
+            if t["label"] not in (LABEL_NORMAL, LABEL_WALK_SIT):
+                continue  # 보행이 있는 라벨만 채점(sit_only/shuffle 은 걸음 대상 아님)
+            walk = split_phases(t["rows"]).get("walking", [])
+            fe = segment_features(walk)
+            det = fe["steps"] if fe else 0
+            place = (t["rows"][0].get("placement_id") or "?")
+            rows_acc.append((tid, t["label"], place, gt, det))
+        if not rows_acc:
+            print("  (정답 있는 보행 trial 없음 — manual_step_count 를 채우세요)")
+        else:
+            print(f"  {'배치':18s} {'라벨':13s} {'정답':>4s} {'감지':>4s} {'오차%':>6s}")
+            errs = []
+            for tid, lb, place, gt, det in rows_acc:
+                err = abs(det - gt) / gt * 100.0
+                errs.append(err)
+                flag = "  ← 큰 오차" if err > 20 else ""
+                print(f"  {place:18s} {lb:13s} {gt:>4d} {det:>4d} {err:>5.0f}%{flag}")
+            print(f"  → 채점 {len(errs)} trial · 평균 절대오차 {_mean(errs):.0f}% "
+                  f"(0% 계수 {sum(1 for e in errs if e >= 99)}건 = 과소계수 미해결)")
+        print()
+
     # ── 4. 참여자 분할 안내(#166) ──
     print("■ 참여자 단위 분할(#166 데이터 누수 방지)")
     if participants:
@@ -545,6 +578,27 @@ def load_participants(path):
             if tid and pid:
                 m[tid] = pid
                 m[tid + ".csv"] = pid  # 파일명으로도 매칭
+    return m
+
+
+def load_manual_counts(path):
+    """participants 로그의 선택 컬럼 manual_step_count(관찰자 육안 정답) → {trial_id: int}.
+
+    #176: 감지기 정확도를 채점하려면 '실제 사람이 센 걸음 수' 정답이 필요하다(CSV 에는 없음).
+    빈 칸/비숫자는 건너뛴다(정답 없는 trial 은 채점에서 제외)."""
+    m = {}
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        for r in csv.DictReader(f):
+            tid = (r.get("trial_id") or "").strip()
+            raw = (r.get("manual_step_count") or "").strip()
+            if not (tid and raw):
+                continue
+            try:
+                n = int(float(raw))
+            except ValueError:
+                continue
+            m[tid] = n
+            m[tid + ".csv"] = n
     return m
 
 
@@ -849,6 +903,7 @@ def main():
     if not args.data_dir:
         ap.error("data_dir 를 주거나 --selftest 를 쓰세요.")
     parts = load_participants(args.participants) if args.participants else None
+    manual = load_manual_counts(args.participants) if args.participants else None
     trials, dropped = load_dir(args.data_dir)
     if dropped:
         print(f"■ 폐기된 파일 {len(dropped)}개 (§4)")
@@ -857,7 +912,7 @@ def main():
         print()
     if not trials:
         sys.exit("남은 trial 이 없습니다(모두 폐기됨). cue_delivery/수집 상태를 확인하세요.")
-    analyze(trials, parts)
+    analyze(trials, parts, manual)
 
 
 if __name__ == "__main__":
