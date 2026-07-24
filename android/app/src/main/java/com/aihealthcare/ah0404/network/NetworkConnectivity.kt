@@ -40,6 +40,17 @@ fun rememberNetworkAvailable(): State<Boolean> {
     DisposableEffect(connectivityManager) {
         val mainHandler = Handler(Looper.getMainLooper())
         val callback = object : ConnectivityManager.NetworkCallback() {
+            // 새 기본 네트워크가 붙는 순간(오프라인 시작 → 연결, wifi→cellular 전환 등). onCapabilitiesChanged 가
+            // 늘 뒤따르지만, API 24~25 에서 그 도착을 놓칠 수 있어 여기서도 명시적으로 처리한다(지영 리뷰 #185).
+            override fun onAvailable(network: Network) {
+                mainHandler.post {
+                    val ok = connectivityManager.getNetworkCapabilities(network)
+                        ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+                    available.value = ok
+                    if (ok) AuthFailureCoordinator.onNetworkAvailable()
+                }
+            }
+
             // 기본 네트워크의 능력이 바뀌거나(붙음) 다른 네트워크(wifi→cellular)로 전환되면 새 기본 네트워크로 호출된다.
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
                 mainHandler.post {
