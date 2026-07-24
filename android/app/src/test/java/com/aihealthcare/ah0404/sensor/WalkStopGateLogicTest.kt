@@ -81,4 +81,19 @@ class WalkStopGateLogicTest {
         feed(startMs = t, secs = 8.0, amp = 2.5f)           // 재보행
         assertFalse("재보행하면 말미 에너지가 되살아나 정지 해제(다시 카운트 가능)", gate.isStopped)
     }
+
+    @Test
+    fun `장시간 앉아 있어도 재보행 없이는 동결이 유지된다(기준선 latch)`() {
+        var t = feed(startMs = 0L, secs = 15.0, amp = 2.5f) // 보행
+        t = feed(startMs = t, secs = 2.5, amp = 0.15f)      // 앉기 → 정지 진입
+        assertTrue("앉기 직후 정지 진입", gate.isStopped)
+        // 8초 더 앉아 있음(누적 10초+ = baseline 구간까지 저에너지가 차는 7초 경계를 넘김).
+        //   기준선이 latch 안 되면 여기서 b<walkRefMinDyn 이 되어 재보행 없이 풀린다(리뷰 블로커).
+        for (k in 1..8) {
+            t = feed(startMs = t, secs = 1.0, amp = 0.15f)
+            assertTrue("앉은 지 ${2.5 + k}s 경과에도 재보행 없이 동결이 유지되어야 한다(latch)", gate.isStopped)
+        }
+        feed(startMs = t, secs = 8.0, amp = 2.5f)           // 실제 재보행
+        assertFalse("실제 재보행일 때만 동결 해제", gate.isStopped)
+    }
 }

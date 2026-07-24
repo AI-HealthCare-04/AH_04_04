@@ -19,7 +19,11 @@ import kotlin.math.sqrt
  *     (= '그 세션 자신의 보행 수준'. 고정 절대문턱이 아니라 세션마다 적응).
  *   - tail   E = 마지막 TAIL(2초) 윈도우 동적RMS 의 중앙값 (**2초** — 앉는 순간 임팩트 스파이크를 피하고
  *                완전히 정착한 구간만 본다. 4초 창은 스파이크를 물어 정지 포착이 낮았다: findings §4).
- *   - 정지 = **B ≥ WALK_REF_MIN_DYN**(애초에 보행 중이었고) 이고 **E < STOP_RATIO·B**(말미가 기준선의 40% 미만).
+ *   - 정지 진입 = **B ≥ WALK_REF_MIN_DYN**(애초에 보행 중이었고) 이고 **E < STOP_RATIO·B**(말미가 기준선의 40% 미만).
+ *   - **기준선 latch**: 정지 진입 시 B 를 그 순간 값으로 고정하고 정지 중엔 갱신하지 않는다. (안 그러면 오래
+ *     앉아 baseline 구간까지 저에너지가 되어 B 가 흘러내려 재보행 없이 풀린다.) findings §7 '보행 확정 구간 기준선'.
+ *   - 정지 해제(재보행) = 말미 E 가 **RESUME_RATIO·B 이상**으로 되살아날 때만. 진입(0.4)보다 높은 0.6 =
+ *     히스테리시스로 경계 채터링/조기 해제 방지. 즉 '재보행이 확정될 때까지' 동결이 유지된다.
  *
  * 실측 검증(pilot_findings §4, 품질통과 20 trial): 정상보행 정지오판 0/6(진짜 걸음 안 끊음=과소계수 위험 0),
  * walk_then_sit 정지 포착 4/4. n=20·참여자 2 라 **설계 방향**이며 파라미터(k·창)는 본 수집(120 trial)에서 확정한다.
@@ -36,6 +40,7 @@ class WalkStopGateLogic {
         const val DEFAULT_BASE_SPAN_MS = 5000L     // 기준선 구간 폭(말미 직전 구간)
         const val DEFAULT_WALK_REF_MIN_DYN = 1.0f  // 기준선이 이 미만이면 '애초에 보행 아님'(정지판정 안 함)
         const val DEFAULT_STOP_RATIO = 0.4f        // 말미 < k×기준선 이면 정지(k)
+        const val DEFAULT_RESUME_RATIO = 0.6f      // 정지 해제(재보행) 문턱: 말미 ≥ 이 비율×latch기준선. 진입(0.4)보다 높게 = 히스테리시스
         const val MIN_WINDOWS_BASE = 3             // 기준선 최소 윈도우 수(부족하면 웜업 → 정지판정 보류)
         const val MIN_WINDOWS_TAIL = 2             // 말미 최소 윈도우 수
     }
@@ -46,16 +51,21 @@ class WalkStopGateLogic {
     var baseSpanMs = DEFAULT_BASE_SPAN_MS
     var walkRefMinDyn = DEFAULT_WALK_REF_MIN_DYN
     var stopRatio = DEFAULT_STOP_RATIO
+    var resumeRatio = DEFAULT_RESUME_RATIO
 
     /** '보행 중이었는데 말미가 잦아들어 정지로 전환'했으면 true. 웜업/보행중엔 false. */
     var isStopped = false
         private set
 
-    /** 디버그: 마지막 판정에 쓴 기준선/말미 동적RMS (없으면 NaN). */
+    /** 디버그: 마지막 판정에 쓴 기준선/말미 동적RMS (없으면 NaN). 정지 중 baseline 은 latch 값. */
     var baseline = Float.NaN
         private set
     var tailEnergy = Float.NaN
         private set
+
+    // 보행 기준선. **보행 중에만 갱신**하고, 정지(isStopped) 진입 시 그 값으로 latch 해 동결한다.
+    // 정지 중에는 기준선이 저에너지로 흘러내리지 않으므로, 오래 앉아 있어도(>7s) 재보행 없이 풀리지 않는다.
+    private var baselineWalk = Float.NaN
 
     // 최근 win 구간 샘플 버퍼(윈도우 RMS 계산용)
     private val sT = ArrayDeque<Long>()
@@ -132,14 +142,27 @@ class WalkStopGateLogic {
                 te > baseStart -> base.add(e)   // (baseStart, tailStart]
             }
         }
-        if (tail.size < MIN_WINDOWS_TAIL || base.size < MIN_WINDOWS_BASE) {
-            baseline = Float.NaN; tailEnergy = Float.NaN; isStopped = false
+        if (tail.size < MIN_WINDOWS_TAIL) {
+            tailEnergy = Float.NaN            // 말미 표본 부족 → 현재 판정 유지(섣불리 해제하지 않음)
             return
         }
-        val b = median(base)
         val e = median(tail)
-        baseline = b; tailEnergy = e
-        isStopped = b >= walkRefMinDyn && e < stopRatio * b
+        tailEnergy = e
+        if (!isStopped) {
+            // 보행 중: 기준선을 계속 갱신하고, 말미가 기준선의 stopRatio 미만으로 붕괴하면 정지 진입(기준선 latch).
+            if (base.size >= MIN_WINDOWS_BASE) baselineWalk = median(base)
+            baseline = baselineWalk
+            if (!baselineWalk.isNaN() && baselineWalk >= walkRefMinDyn && e < stopRatio * baselineWalk) {
+                isStopped = true
+            }
+        } else {
+            // 정지 중: baselineWalk 는 동결(갱신 안 함). 말미 에너지가 resumeRatio×latch기준선 이상으로
+            // '되살아나야'(=실제 재보행) 해제한다. 히스테리시스(0.4 진입 / 0.6 해제)로 경계 채터링 방지.
+            baseline = baselineWalk
+            if (!baselineWalk.isNaN() && e >= resumeRatio * baselineWalk) {
+                isStopped = false
+            }
+        }
     }
 
     private fun median(v: List<Float>): Float {
@@ -152,6 +175,7 @@ class WalkStopGateLogic {
         isStopped = false
         baseline = Float.NaN
         tailEnergy = Float.NaN
+        baselineWalk = Float.NaN
         sT.clear(); sX.clear(); sY.clear(); sZ.clear()
         wEnd.clear(); wRms.clear()
         nextHopAtMs = Long.MIN_VALUE
