@@ -5,7 +5,6 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.runtime.Composable
@@ -15,6 +14,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 
+/**
+ * 인터넷 사용 가능 여부(라우팅용). **기본(활성) 네트워크**를 추적한다.
+ *
+ * ⚠️ 이전 버그: `registerNetworkCallback(INTERNET)` + `activeNetwork` 조합에 **`NET_CAPABILITY_VALIDATED`
+ *    강제** → **wifi 를 끄고 LTE 로 전환하면 우리 앱만 "인터넷 없음"** 이 됐다(다른 앱은 LTE 로 정상 동작).
+ *    원인 (1) 기본 네트워크 전환(wifi→cellular)을 제때 못 잡고, (2) 셀룰러가 아직/영영 VALIDATED 도장을
+ *    못 받는 기기·통신사에서 하드 게이트에 걸린다.
+ * → 수정: `registerDefaultNetworkCallback` 으로 **기본 네트워크 전환을 정확히 추적**하고, 판정은
+ *    `NET_CAPABILITY_INTERNET`(인터넷 가능 네트워크가 붙어 있는가)만 본다. **VALIDATED(실제 검증 도장)는
+ *    강제하지 않는다** — 서버에 실제로 못 닿는 경우는 요청 단계에서 AuthFailure(NETWORK/SERVER)로 잡아
+ *    OFFLINE 으로 보내므로, 여기서 미리 막을 필요가 없다.
+ */
 @SuppressLint("MissingPermission")
 @Composable
 fun rememberNetworkAvailable(): State<Boolean> {
@@ -22,42 +33,36 @@ fun rememberNetworkAvailable(): State<Boolean> {
     val connectivityManager = remember {
         context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     }
-    val available = remember { mutableStateOf(connectivityManager.isNetworkAvailable()) }
+    val available = remember { mutableStateOf(connectivityManager.hasInternet()) }
 
     DisposableEffect(connectivityManager) {
         val mainHandler = Handler(Looper.getMainLooper())
         val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                mainHandler.post {
-                    available.value = connectivityManager.isNetworkAvailable()
-                    if (available.value) AuthFailureCoordinator.onNetworkAvailable()
-                }
-            }
-
-            override fun onLost(network: Network) {
-                mainHandler.post { available.value = connectivityManager.isNetworkAvailable() }
-            }
-
+            // 기본 네트워크의 능력이 바뀌거나(붙음) 다른 네트워크(wifi→cellular)로 전환되면 새 기본 네트워크로 호출된다.
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
                 mainHandler.post {
-                    available.value = connectivityManager.isNetworkAvailable()
-                    if (available.value) AuthFailureCoordinator.onNetworkAvailable()
+                    val ok = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    available.value = ok
+                    if (ok) AuthFailureCoordinator.onNetworkAvailable()
                 }
             }
+
+            // 기본 네트워크가 사라지고 **대체 네트워크가 없을 때만** 호출된다(= 진짜 오프라인).
+            // wifi→cellular 전환은 새 기본 네트워크로 onCapabilitiesChanged 가 오지 onLost 가 오지 않는다.
+            override fun onLost(network: Network) {
+                mainHandler.post { available.value = false }
+            }
         }
-        val request = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .build()
-        connectivityManager.registerNetworkCallback(request, callback)
+        connectivityManager.registerDefaultNetworkCallback(callback)
         onDispose { connectivityManager.unregisterNetworkCallback(callback) }
     }
 
     return available
 }
 
+/** 현재 기본 네트워크가 인터넷 가능 네트워크인가(초기값용). 실제 서버 도달 여부는 요청이 최종 판정. */
 @SuppressLint("MissingPermission")
-private fun ConnectivityManager.isNetworkAvailable(): Boolean {
+private fun ConnectivityManager.hasInternet(): Boolean {
     val capabilities = getNetworkCapabilities(activeNetwork) ?: return false
-    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
 }
