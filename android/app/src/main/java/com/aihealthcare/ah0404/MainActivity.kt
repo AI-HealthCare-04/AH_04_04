@@ -138,10 +138,6 @@ class MainActivity : ComponentActivity() {
                         onKakaoLogin = {
                             authLoginViewModel.signIn(SocialProvider.KAKAO, activity) { _ -> sessionRevision++ }
                         },
-                        onRetry = {
-                            AuthFailureCoordinator.retryTransientFailure()
-                            sessionRevision++
-                        },
                         onExit = activity::finish,
                         onResetSession = {
                             SessionStore.resetSession(context)
@@ -159,13 +155,15 @@ class MainActivity : ComponentActivity() {
                         },
                         onExit = activity::finish,
                     )
-                    // 로그아웃(#154): 토큰만 지우고 온보딩 완료 플래그는 보존한다(clearAuthentication).
-                    //   → 라우팅이 LOGIN_REQUIRED 로 가고, 같은 계정 재로그인 시 온보딩을 반복하지 않는다.
-                    //   sessionRevision++ 로 라우팅을 재평가시킨다(인증 실패 자동복구 경로와 같은 방식).
+                    // 로그아웃(#154, #187): 앱 토큰 + 공급자(Google/Kakao) credential 을 해제한다.
+                    //   공급자 해제는 viewModelScope 에서 돌아 리라우팅으로 화면이 떠나도 완료된다(#187).
+                    //   토큰만 지우고 온보딩 완료 플래그는 보존 → 같은 계정 재로그인 시 온보딩을 반복하지 않는다.
+                    //   해제가 끝나면 sessionRevision++ 로 라우팅을 재평가(→ LOGIN_REQUIRED)시킨다.
+                    //   ⚠️ 위 LaunchedEffect(L103)의 stale-token 자동정리는 같은 사용자 재로그인 편의를 위해
+                    //      공급자 credential 을 일부러 유지한다(명시적 로그아웃일 때만 공급자까지 해제).
                     AppRoute.MAIN -> MainContent(
                         onLogout = {
-                            SessionStore.clearAuthentication(context)
-                            sessionRevision++
+                            authLoginViewModel.signOut { sessionRevision++ }
                         },
                     )
                 }

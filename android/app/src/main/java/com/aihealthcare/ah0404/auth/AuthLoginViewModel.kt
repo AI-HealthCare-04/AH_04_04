@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import retrofit2.HttpException
 
 enum class SocialProvider { GOOGLE, KAKAO }
@@ -71,6 +72,23 @@ class AuthLoginViewModel(application: Application) : AndroidViewModel(applicatio
             } catch (_: Exception) {
                 mutableState.value = AuthLoginUiState(message = "로그인에 실패했어요. 다시 시도해 주세요.")
             }
+        }
+    }
+
+    /**
+     * 로그아웃(#187). 앱 토큰뿐 아니라 **공급자(Google/Kakao) credential 도 해제**해, 한 폰 다인 시연에서
+     * 다음 사람이 앞사람 계정으로 자동 로그인되지 않게 한다.
+     *
+     * 공급자 해제는 네트워크/콜백을 타므로 [viewModelScope](구성 변경·리라우팅에도 생존)에서 돌린다 —
+     * 호출부의 컴포지션 스코프에서 실행하면 [onDone] 리라우팅으로 화면이 떠나는 순간 취소될 수 있다.
+     * 공급자가 멈춰도 로그아웃은 완료돼야 하므로 3초로 상한을 두고, 성패와 무관하게 로컬 세션을 정리한 뒤
+     * [onDone] 으로 라우팅 재평가를 호출부에 맡긴다.
+     */
+    fun signOut(onDone: () -> Unit) {
+        viewModelScope.launch {
+            withTimeoutOrNull(3_000) { SocialSignInClients.signOutProviders(getApplication()) }
+            SessionStore.clearAuthentication(getApplication())
+            onDone()
         }
     }
 }
