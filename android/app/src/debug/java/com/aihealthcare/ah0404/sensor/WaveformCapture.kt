@@ -42,8 +42,9 @@ import java.util.Locale
  * 두 축으로 나뉜다:
  *  - **hasSitCue**: 앉기 큐(비프→markSitting)로 SITTING 구간 경계를 남기는 시나리오인가. '앉기'가 포함된
  *    라벨(WALK_THEN_SIT·SIT_ONLY)만 true 다. false 인 라벨은 큐 없이 고정 길이로만 수집한다.
- *  - **대조 목적**: NORMAL_WALK/SHUFFLE 은 오탐을 '일으키지 않아야' 하는 대조군(정상 보행·제자리 발끌기),
- *    WALK_THEN_SIT 은 오탐 대상(§5-5), SIT_ONLY 는 보행 momentum 없는 순수 앉기 하강 신호의 기준선이다.
+ *  - **보행 계수 대상**: NORMAL_WALK(정상 보행)·SHUFFLE(발 끌면서 걷기)은 **걸음이 세어져야 하는** 보행 라벨이다.
+ *    SHUFFLE 은 저진폭 보행(고령 타깃의 끌리는 걸음)으로 #176 과소계수 회복 검증용이다.
+ *    WALK_THEN_SIT 은 앉기 과다카운트(오탐) 대상(§5-5), SIT_ONLY 는 보행 momentum 없는 순수 앉기 하강의 기준선이다.
  *
  * @property id CSV·분석 스크립트가 의존하는 안정 키(변경 금지).
  * @property display 화면 표시 이름.
@@ -65,8 +66,8 @@ enum class WaveformLabel(
     /** 서 있다가 앉기만(보행 momentum 없는 순수 앉기 하강) — 앉기 신호 자체의 기준선. */
     SIT_ONLY("sit_only", "서서 앉기만", hasSitCue = true, actionHint = "그대로 서 계세요"),
 
-    /** 제자리 발끌기(작은 진폭의 애매한 움직임, 대조군) — 오탐이 나면 안 되는 기준. */
-    SHUFFLE("shuffle", "제자리 발끌기", hasSitCue = false, actionHint = "제자리 발끌기를 계속하세요"),
+    /** 발 끌면서 걷기(저진폭 보행, 고령 타깃의 끌리는 걸음) — 걸음이 세어져야 하는 보행 라벨(#176 과소계수 회복 검증). */
+    SHUFFLE("shuffle", "발 끌면서 걷기", hasSitCue = false, actionHint = "발을 끌면서 계속 걸으세요"),
 }
 
 /**
@@ -75,7 +76,7 @@ enum class WaveformLabel(
  *  - WALK_THEN_SIT: WALKING=보행 구간, SITTING=앉기 구간.
  *  - SIT_ONLY     : WALKING=**서있기 기준선** 구간(걷지 않음), SITTING=앉기 구간. 라벨로 구분되므로
  *                   phase.id 는 "활동/착석" 의미로 읽는다(=걷는다는 뜻이 아님).
- *  - NORMAL_WALK/SHUFFLE: 큐가 없어 전 구간 WALKING 으로만 남는다.
+ *  - NORMAL_WALK/SHUFFLE: 큐가 없어 전 구간 WALKING 으로만 남는다(둘 다 실제 보행 = 걸음 계수 대상).
  */
 enum class WaveformPhase(val id: String) {
     /** 큐 전 활동 구간(보행·서있기·제자리 등, 기본). */
@@ -158,6 +159,13 @@ data class WaveformSample(
     val event: String = "",
     /** 큐 직후 정착 구간(비프·자세전환)이라 학습에서 배제 권장인가. */
     val excluded: Boolean = false,
+    /**
+     * HW 만보기(TYPE_STEP_COUNTER) 누적 걸음 — **녹화 시작 기준 0**(하이브리드 비교, #184/#176).
+     * 권한 미허용/센서 없음/아직 첫 이벤트 전이면 0. 참값·감지기와 나란히 비교하려는 것.
+     */
+    val hwStepCounter: Int = 0,
+    /** 이 샘플 직전에 HW 걸음 감지기(TYPE_STEP_DETECTOR) 이벤트가 있었는가(스텝 이벤트 0/1). */
+    val hwStepDetected: Boolean = false,
 )
 
 /**
@@ -170,7 +178,8 @@ object WaveformCsv {
     const val HEADER =
         "trial_id,device_model,placement_id,position,side,screen_facing,top_direction,fold_state," +
             "cue_delivery,label,phase,event,excluded,sensor_elapsed_ms,callback_elapsed_ms," +
-            "x,y,z,magnitude,filtered_mag,state,count,step_counted"
+            "x,y,z,magnitude,filtered_mag,state,count,step_counted," +
+            "hw_step_counter,hw_step_detector"
 
     /** CSV 셀 안의 콤마·개행을 공백으로 치환(따옴표 이스케이프 없이 단순 CSV 유지). */
     private fun cell(s: String): String = s.replace(',', ' ').replace('\n', ' ').replace('\r', ' ')
@@ -179,7 +188,7 @@ object WaveformCsv {
         val p = meta.placement
         return String.format(
             Locale.US,
-            "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%d,%d,%d,%.5f,%.5f,%.5f,%.5f,%.5f,%s,%d,%d",
+            "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%d,%d,%d,%.5f,%.5f,%.5f,%.5f,%.5f,%s,%d,%d,%d,%d",
             cell(meta.trialId), cell(meta.deviceModel),
             cell(p.id), cell(p.position), cell(p.side), cell(p.screenFacing),
             cell(p.topDirection), cell(p.foldState),
@@ -191,6 +200,8 @@ object WaveformCsv {
             s.state.name,
             s.count,
             if (s.stepCounted) 1 else 0,
+            s.hwStepCounter,
+            if (s.hwStepDetected) 1 else 0,
         )
     }
 

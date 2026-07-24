@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- #184/#176 하이브리드 비교: HW 만보기(TYPE_STEP_COUNTER/DETECTOR) 이벤트 수신용. 디버그 수집 도구 전용. -->
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+
     <application android:networkSecurityConfig="@xml/network_security_config">
 
         <!-- #131 파형 수집(디버그 전용): 설정 화면의 BuildConfig.DEBUG 게이트에서만 실행. exported=false. -->

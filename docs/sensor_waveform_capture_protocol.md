@@ -33,11 +33,12 @@
 | 정상 보행 | `normal_walk` | ✗ | 총 20초 계속 걷기 | 대조군 — 오탐이 **나면 안 되는** 기준 |
 | 보행 직후 앉기 | `walk_then_sit` | ✓ | 15초 걷기 → 비프 → 앉기 5초 | **오탐 대상**(§5-5) |
 | 서서 앉기만 | `sit_only` | ✓ | 15초 서있기 → 비프 → 앉기 5초 | 보행 momentum 없는 **순수 앉기 하강**의 기준선 |
-| 제자리 발끌기 | `shuffle` | ✗ | 총 20초 제자리 발끌기 | 대조군 — 작은 진폭의 애매한 움직임 |
+| 발 끌면서 걷기 | `shuffle` | ✗ | 총 20초 발 끌면서 걷기 | **저진폭 보행**(고령 타깃) — 걸음 계수 대상(#176) |
 
 - `sit_only` 는 앉기 신호 자체의 축·진폭 프로파일을, `walk_then_sit` 과 겹쳐 봄으로써 "보행이 섞였을 때
   앉기 신호가 어떻게 달라지는가"를 분리한다.
-- `shuffle` 은 "보행은 아니지만 작게 흔들리는" 움직임이 정상 보행 판별에 끼치는 영향을 본다.
+- `shuffle`(발 끌면서 걷기)은 **저진폭 보행**이라 현행 감지기가 과소계수한다(#176). 걸음이 세어져야 하는
+  보행 라벨이므로 `manual_step_count`(실제 걸음 수) 를 함께 기록해 정확도를 채점한다.
 
 ### 2-2. 배치 (`PlacementSpec` 프리셋 3종)
 
@@ -66,7 +67,7 @@
 2. 라벨·배치 프리셋 선택 → 안내대로 휴대폰을 둔다.
 3. `● 녹화 시작` 후 **화면을 건드리지 않는다.**
    - 앉기 큐 라벨(`walk_then_sit`·`sit_only`): 15초 뒤 **비프**가 울리면 그때 앉는다 → 5초 뒤 자동 정지.
-   - 큐 없는 라벨(`normal_walk`·`shuffle`): 20초 동작 후 자동 정지.
+   - 큐 없는 라벨(`normal_walk`·`shuffle`=발 끌면서 걷기): 20초 동작 후 자동 정지.
 4. `저장 & 공유 (CSV)` 로 파일을 내보낸다(파일명 = `<label>_<yyyyMMdd_HHmmss_SSS>.csv`).
 
 > **비프 전달 검증:** 앉기 큐 라벨은 큐 순간 "미디어 음량 > 0 && startTone 성공"을 확인한 경우에만
@@ -183,9 +184,12 @@ python scripts/analyze_waveform.py --inspect <파일.csv>
 ```
 trial_id,device_model,placement_id,position,side,screen_facing,top_direction,fold_state,
 cue_delivery,label,phase,event,excluded,sensor_elapsed_ms,callback_elapsed_ms,
-x,y,z,magnitude,filtered_mag,state,count,step_counted
+x,y,z,magnitude,filtered_mag,state,count,step_counted,
+hw_step_counter,hw_step_detector
 ```
 
+- `hw_step_counter`(HW 만보기 누적, 녹화 시작 기준 0)·`hw_step_detector`(HW 스텝 이벤트 0/1)는 **3차 수집부터**
+  추가된 하이브리드 비교 컬럼(#184/#176). 구 CSV(23컬럼)도 분석 도구가 그대로 처리한다.
 - 시간축은 `sensor_elapsed_ms`(SensorEvent.timestamp 기준, 첫 샘플 = 0)를 기본으로, `callback_elapsed_ms`
   (콜백 도착)와의 차이로 스케줄링 지터를 진단한다.
 - `phase` 는 '큐 전 활동 / 큐 후 착석' 의미다(`sit_only` 의 walking 은 서있기 기준선 = 걷는다는 뜻이 아님).

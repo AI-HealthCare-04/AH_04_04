@@ -27,8 +27,10 @@ class WaveformCaptureTest {
         magnitude: Float = 0f, filtered: Float = 9.8f,
         state: WalkingStepDetectorLogic.State = WalkingStepDetectorLogic.State.IDLE,
         count: Int = 0, stepCounted: Boolean = false,
+        hwStepCounter: Int = 0, hwStepDetected: Boolean = false,
     ) = WaveformSample(
         sensorElapsedMs, callbackElapsedMs, x, y, z, magnitude, filtered, state, count, stepCounted,
+        hwStepCounter = hwStepCounter, hwStepDetected = hwStepDetected,
     )
 
     // ── CSV 포맷 ─────────────────────────────────────────────
@@ -38,7 +40,8 @@ class WaveformCaptureTest {
         assertEquals(
             "trial_id,device_model,placement_id,position,side,screen_facing,top_direction,fold_state," +
                 "cue_delivery,label,phase,event,excluded,sensor_elapsed_ms,callback_elapsed_ms," +
-                "x,y,z,magnitude,filtered_mag,state,count,step_counted",
+                "x,y,z,magnitude,filtered_mag,state,count,step_counted," +
+                "hw_step_counter,hw_step_detector",
             WaveformCsv.HEADER,
         )
     }
@@ -51,20 +54,31 @@ class WaveformCaptureTest {
             magnitude = 9.9f, filtered = 10.5f,
             state = WalkingStepDetectorLogic.State.WALKING,
             count = 7, stepCounted = true,
+            hwStepCounter = 6, hwStepDetected = true,
         ).copy(phase = WaveformPhase.SITTING, event = "sit_cue", excluded = true)
         val row = WaveformCsv.row(meta.copy(cueDelivery = "success"), WaveformLabel.WALK_THEN_SIT, s)
         assertEquals(
             "t1,samsung SM-F766N,front_pocket_r_in,front_pocket,right,in,up,folded," +
                 "success,walk_then_sit,sitting,sit_cue,1,1200,1234," +
-                "0.50000,-1.25000,9.80000,9.90000,10.50000,WALKING,7,1",
+                "0.50000,-1.25000,9.80000,9.90000,10.50000,WALKING,7,1,6,1",
             row,
         )
     }
 
     @Test
     fun step_counted_false_serializes_as_zero() {
+        // 뒤 3필드 = step_counted, hw_step_counter, hw_step_detector (모두 0).
         val row = WaveformCsv.row(meta, WaveformLabel.NORMAL_WALK, sample(stepCounted = false))
-        assertTrue("step_counted 는 0 이어야 한다: $row", row.endsWith(",0"))
+        assertTrue("step_counted 는 0 이어야 한다: $row", row.endsWith(",0,0,0"))
+    }
+
+    @Test
+    fun hw_step_columns_serialize_counter_and_detector() {
+        // HW 만보기(#184/#176 하이브리드): 누적 카운터 값 + 스텝 감지 이벤트(0/1)를 끝 두 컬럼에 기록.
+        val row = WaveformCsv.row(
+            meta, WaveformLabel.SHUFFLE, sample(hwStepCounter = 12, hwStepDetected = true),
+        )
+        assertTrue("hw_step_counter=12, hw_step_detector=1 로 직렬화: $row", row.endsWith(",12,1"))
     }
 
     @Test
@@ -223,7 +237,7 @@ class WaveformCaptureTest {
 
     @Test
     fun shuffle_serializes_with_its_own_label_id() {
-        // 제자리 발끌기 — 큐 없이 전 구간 WALKING 으로만 남는다(대조군).
+        // 발 끌면서 걷기(저진폭 보행) — 큐 없이 전 구간 WALKING 으로만 남는다(#176 과소계수 회복 검증 라벨).
         val row = WaveformCsv.row(meta, WaveformLabel.SHUFFLE, sample())
         assertTrue("shuffle 라벨 id·구간: $row", row.contains(",shuffle,walking,"))
     }

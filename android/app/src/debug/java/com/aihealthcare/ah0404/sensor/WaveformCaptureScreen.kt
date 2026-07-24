@@ -2,7 +2,9 @@
 
 package com.aihealthcare.ah0404.sensor
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -12,6 +14,8 @@ import android.media.ToneGenerator
 import android.os.Build
 import android.os.SystemClock
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -39,6 +43,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
@@ -100,15 +105,58 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
     val sensorBaseNs = remember { mutableLongStateOf(-1L) }
     val callbackBaseMs = remember { mutableLongStateOf(0L) }
 
+    // HW 만보기 하이브리드 비교(#184/#176): TYPE_STEP_COUNTER 누적(녹화 시작 기준 0)·TYPE_STEP_DETECTOR 이벤트.
+    val hwCounterBase = remember { mutableLongStateOf(-1L) }   // 녹화 시작 시 첫 누적값
+    val hwCounterLatest = remember { mutableLongStateOf(-1L) }
+    val hwPendingDetector = remember { mutableIntStateOf(0) }  // 직전 accel 샘플 이후 감지된 스텝 이벤트 수
+
     val sensorManager = remember {
         context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     }
     val accelSensor = remember { sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) }
+    val stepCounterSensor = remember { sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER) }
+    val stepDetectorSensor = remember { sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR) }
+
+    // TYPE_STEP_* 는 ACTIVITY_RECOGNITION(위험 권한, API29+) 없이는 이벤트가 오지 않는다. 화면 진입 시 요청.
+    //   거부돼도 hw_* 컬럼이 0 으로 남을 뿐 수집 자체는 정상(그레이스풀 열화).
+    val permLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (!granted) {
+            Toast.makeText(
+                context, "활동 인식 권한 없음 — HW 만보기 컬럼은 0 으로 기록됩니다(가속도 수집은 정상).",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACTIVITY_RECOGNITION) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            permLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
+        }
+    }
 
     val listener = remember {
         object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent?) {
                 event ?: return
+                // HW 만보기 두 센서는 같은 리스너로 받아 최신값/이벤트만 갱신하고 반환(가속도 샘플에서 함께 기록).
+                when (event.sensor?.type) {
+                    Sensor.TYPE_STEP_COUNTER -> {
+                        if (recorder.isRecording) {
+                            val v = event.values[0].toLong() // 부팅 이후 누적
+                            if (hwCounterBase.longValue < 0L) hwCounterBase.longValue = v
+                            hwCounterLatest.longValue = v
+                        }
+                        return
+                    }
+                    Sensor.TYPE_STEP_DETECTOR -> {
+                        if (recorder.isRecording) hwPendingDetector.intValue += 1
+                        return
+                    }
+                }
                 if (!recorder.isRecording) return
                 val x = event.values[0]
                 val y = event.values[1]
@@ -125,6 +173,14 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
                 val magnitude = sqrt(x * x + y * y + z * z)
                 // 감지기에 흘려 걸음 카운트 여부를 얻는다(오탐 지점 표시용). 생산 재현 위해 콜백 시각(cbMs)을 그대로 넘긴다.
                 val counted = detector.processSample(x, y, z, cbMs)
+                // HW 만보기: 녹화 시작 기준 누적 + 직전 accel 이후 감지된 스텝 이벤트(소비 후 리셋).
+                val hwCounter = if (hwCounterBase.longValue >= 0L) {
+                    (hwCounterLatest.longValue - hwCounterBase.longValue).toInt()
+                } else {
+                    0
+                }
+                val hwDetected = hwPendingDetector.intValue > 0
+                hwPendingDetector.intValue = 0
                 recorder.add(
                     WaveformSample(
                         sensorElapsedMs = sensorElapsed,
@@ -135,6 +191,8 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
                         state = detector.state,
                         count = detector.count,
                         stepCounted = counted,
+                        hwStepCounter = hwCounter,
+                        hwStepDetected = hwDetected,
                         // phase/event/excluded 는 recorder.add 가 큐 상태로 다시 고정한다(단일 소스).
                     ),
                 )
@@ -193,14 +251,18 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
         }
     }
 
+    // 가속도 + HW 만보기 두 센서를 같은 리스너로 등록/해제한다(HW 는 있을 때만).
+    val registerSensors = {
+        sensorManager.registerListener(listener, accelSensor, SensorManager.SENSOR_DELAY_GAME)
+        stepCounterSensor?.let { sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_FASTEST) }
+        stepDetectorSensor?.let { sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_FASTEST) }
+    }
     DisposableEffect(lifecycleOwner) {
         var observer: LifecycleEventObserver? = null
         if (accelSensor != null) {
             observer = LifecycleEventObserver { _, event ->
                 when (event) {
-                    Lifecycle.Event.ON_RESUME -> sensorManager.registerListener(
-                        listener, accelSensor, SensorManager.SENSOR_DELAY_GAME,
-                    )
+                    Lifecycle.Event.ON_RESUME -> registerSensors()
                     Lifecycle.Event.ON_PAUSE -> {
                         sensorManager.unregisterListener(listener)
                         // 백그라운드 공백이 한 파일에 섞이지 않게 자동 정지(리뷰 #150).
@@ -217,9 +279,7 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
             }
             lifecycleOwner.lifecycle.addObserver(observer)
             if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
-                sensorManager.registerListener(
-                    listener, accelSensor, SensorManager.SENSOR_DELAY_GAME,
-                )
+                registerSensors()
             }
         }
         onDispose {
@@ -333,6 +393,9 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
                 onClick = {
                     detector.reset()
                     sensorBaseNs.longValue = -1L // 첫 샘플에서 기준선 재설정
+                    hwCounterBase.longValue = -1L // HW 만보기 누적도 이번 녹화 기준 0 으로
+                    hwCounterLatest.longValue = -1L
+                    hwPendingDetector.intValue = 0
                     recorder.start(label.value, newMeta(label.value, preset.value.spec))
                     recording.value = true
                     phase.value = WaveformPhase.WALKING

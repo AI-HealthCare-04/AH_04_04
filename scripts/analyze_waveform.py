@@ -38,8 +38,13 @@ from collections import Counter, defaultdict
 HEADER = (
     "trial_id,device_model,placement_id,position,side,screen_facing,top_direction,fold_state,"
     "cue_delivery,label,phase,event,excluded,sensor_elapsed_ms,callback_elapsed_ms,"
-    "x,y,z,magnitude,filtered_mag,state,count,step_counted"
+    "x,y,z,magnitude,filtered_mag,state,count,step_counted,"
+    "hw_step_counter,hw_step_detector"
 ).split(",")
+
+# 하위호환: hw_step_* 2컬럼은 3차 수집(#184/#176 하이브리드)부터 추가됐다. 1~2차 CSV(23컬럼)도
+# 그대로 분석·점검되도록, 헤더 검사는 신(25)·구(23) 둘 다 허용한다.
+HEADER_LEGACY = HEADER[:-2]
 
 # 분석이 직접 인덱싱하는 필수 컬럼(부분집합). 폴더에 참여자 매핑 CSV나 스키마가 다른
 # 파일이 섞여 있어도 여기서 걸러 폐기하고, 파형 CSV 만 load_file 로 넘긴다(KeyError 방지).
@@ -56,6 +61,8 @@ LABEL_SIT_ONLY = "sit_only"
 LABEL_SHUFFLE = "shuffle"
 CUE_LABELS = {LABEL_WALK_SIT, LABEL_SIT_ONLY}
 ALL_LABELS = [LABEL_NORMAL, LABEL_WALK_SIT, LABEL_SIT_ONLY, LABEL_SHUFFLE]
+# 실제 보행 = 걸음이 세어져야 하는 라벨. SHUFFLE(발 끌면서 걷기)은 저진폭 보행이라 여기 포함(#176).
+WALKING_LABELS = {LABEL_NORMAL, LABEL_WALK_SIT, LABEL_SHUFFLE}
 
 # 세그먼트 = (label, phase). 관심 대비의 두 축:
 #  - 오탐 대상  : (walk_then_sit, sitting)  ← 여기서 step 이 잘못 세어진다(§5-5)
@@ -496,8 +503,8 @@ def analyze(trials, participants=None, manual_counts=None):
             gt = manual_counts.get(t["file"]) or manual_counts.get(tid)
             if gt is None or gt <= 0:
                 continue
-            if t["label"] not in (LABEL_NORMAL, LABEL_WALK_SIT):
-                continue  # 보행이 있는 라벨만 채점(sit_only/shuffle 은 걸음 대상 아님)
+            if t["label"] not in WALKING_LABELS:
+                continue  # 보행 라벨만 채점(sit_only 는 걸음 대상 아님)
             walk = split_phases(t["rows"]).get("walking", [])
             fe = segment_features(walk)
             det = fe["steps"] if fe else 0
@@ -635,6 +642,7 @@ def _synth_file(fp, label, placement, gravity_axis="z"):
             "success" if has_cue else "na", label, phase, event, 1 if excluded else 0,
             t, t, round(x, 5), round(y, 5), round(z, 5), round(mag, 5), round(mag, 5),
             state, 0, 1 if step else 0,
+            0, 0,  # hw_step_counter, hw_step_detector (합성은 0)
         ]))
         t += dt
 
@@ -789,14 +797,16 @@ def inspect(path):
     print(f"=== 파일 점검: {os.path.basename(path)} ===\n")
     ok = True
 
-    # 1) 헤더 스키마(부록 A 23컬럼)
+    # 1) 헤더 스키마(부록 A) — 신(25컬럼, hw_step_* 포함)·구(23컬럼) 둘 다 허용
     with open(path, encoding="utf-8-sig", newline="") as f:
         fields = (csv.DictReader(f).fieldnames) or []
     if fields == HEADER:
-        print(f"  ✅ 헤더: {len(HEADER)}컬럼 스키마 일치")
+        print(f"  ✅ 헤더: {len(HEADER)}컬럼 스키마 일치(HW 만보기 포함)")
+    elif fields == HEADER_LEGACY:
+        print(f"  ✅ 헤더: {len(HEADER_LEGACY)}컬럼 스키마 일치(구 버전 · HW 만보기 없음)")
     else:
         ok = False
-        print(f"  ❌ 헤더 불일치: {len(fields)}컬럼(기대 {len(HEADER)}) — 앱 버전/파일 손상 확인")
+        print(f"  ❌ 헤더 불일치: {len(fields)}컬럼(기대 {len(HEADER_LEGACY)} 또는 {len(HEADER)}) — 앱 버전/파일 손상 확인")
 
     rows = load_file(path)
     n = len(rows)
@@ -871,12 +881,13 @@ def inspect(path):
         last_count = int(rows[-1]["count"])
     except (ValueError, TypeError):
         last_count = -1
-    if label in (LABEL_NORMAL, LABEL_WALK_SIT):
-        print(f"  {'✅' if steps > 0 else '⚠️'} 걸음: 감지기 count={last_count} · "
-              f"step_counted {steps}회 · WALKING 상태 {100 * walking_rows // n}%"
-              + ("" if steps > 0 else "  (보행 라벨인데 걸음 0 — 느리거나 배치 문제 가능)"))
+    if label in WALKING_LABELS:
+        # 현행 감지기는 느린/저진폭 보행(발 끌기 포함)을 과소계수한다(#176) → 걸음 0 이어도 '수집 실패'는
+        # 아니다. 원시 3축 변동이 위(6번)에서 정상이면 파형은 유효하고, 정답(manual_step_count)으로 채점한다.
+        print(f"  · 걸음: 감지기 count={last_count} · step_counted {steps}회 · WALKING {100 * walking_rows // n}%"
+              + ("" if steps > 0 else "  (현행 감지기 0 — 느린/발끌기 보행은 #176 과소계수, 파형은 유효)"))
     else:
-        print(f"  · 걸음: count={last_count} · step_counted {steps}회 (앉기/발끌기는 낮은 게 정상)")
+        print(f"  · 걸음: count={last_count} · step_counted {steps}회 (순수 앉기는 낮은 게 정상)")
 
     # 8) 시간축 단조 증가
     ts = [r["_t"] for r in rows]
