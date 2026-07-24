@@ -138,6 +138,32 @@ class OnboardingViewModel(
         loadTerms()
     }
 
+    /**
+     * 이전 온보딩 잔여 상태를 시작(WELCOME)으로 초기화한다(#153 후속 — 무한루프 방지).
+     *
+     * WELCOME 이후 단계는 토큰(게스트/소셜)이 있어야 도달한다. 그런데 로그아웃·세션리셋으로 토큰이
+     * 사라진 채 이 VM(Activity 수명)에 이전 step(예: RESULT)이 남으면, '홈으로 시작하기'가 토큰 없는
+     * 완료로 처리돼 라우팅이 LOGIN_REQUIRED 로 튕기고, 리셋하면 다시 그 stale 화면이 떠 무한루프가 난다.
+     * 화면 진입 시 '토큰 없음 + step≠WELCOME' 이면 호출해 한 폰 다인 시연의 이전 입력(PII 포함)까지 비운다.
+     */
+    fun resetToWelcome() {
+        step = OnbStep.WELCOME
+        error = null
+        isGuest = false
+        terms = emptyList()
+        agreed = emptySet()
+        sessionId = null
+        profileId = null
+        bmi = null
+        result = null
+        birthYear = ""; birthMonth = ""; birthDay = ""
+        sex = null
+        heightCm = ""; weightKg = ""; waistCm = ""
+        heightEstimated = false; weightEstimated = false
+        walkingPractice = null; strengthExercise = null
+        kidneyStatus = "unknown"; proteinStatus = "unknown"
+    }
+
     private suspend fun loadTerms() {
         terms = api.getTerms().terms
         step = OnbStep.TERMS

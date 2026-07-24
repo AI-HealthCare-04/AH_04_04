@@ -19,6 +19,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -35,6 +36,7 @@ import com.aihealthcare.ah0404.auth.AuthLoginUiState
 import com.aihealthcare.ah0404.auth.AuthLoginViewModel
 import com.aihealthcare.ah0404.auth.SocialProvider
 import com.aihealthcare.ah0404.auth.SocialSignInClients
+import com.aihealthcare.ah0404.network.TokenHolder
 import com.aihealthcare.ah0404.ui.components.AigoCheckboxRow
 import com.aihealthcare.ah0404.ui.components.AigoDialog
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
@@ -66,6 +68,14 @@ fun OnboardingScreen(
 ) {
     val activity = LocalContext.current as Activity
     val authState by authVm.state.collectAsState()
+    // 화면 진입 시 stale 상태 복구(#153 후속): 토큰이 없는데(로그아웃·세션리셋) 이 Activity-수명 VM 에
+    //   이전 온보딩 step(예: RESULT)이 남아 있으면 WELCOME 으로 되돌린다. 안 그러면 '홈으로 시작하기'가
+    //   토큰 없는 완료로 처리돼 LOGIN_REQUIRED ↔ 리셋 사이를 도는 무한루프가 생긴다.
+    LaunchedEffect(Unit) {
+        if (TokenHolder.token.isBlank() && vm.step != OnbStep.WELCOME) {
+            vm.resetToWelcome()
+        }
+    }
     // 소셜 로그인 결과 분기(#153): 완료 계정은 약관을 건너뛰고 홈으로, 미완료 계정은 온보딩(약관)을 이어감.
     val onSocialLogin: (SocialProvider) -> Unit = { provider ->
         authVm.signIn(provider, activity) { completed ->
