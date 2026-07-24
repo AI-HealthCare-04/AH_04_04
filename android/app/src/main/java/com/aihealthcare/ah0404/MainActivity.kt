@@ -117,6 +117,7 @@ class MainActivity : ComponentActivity() {
                         onBrowseDemo = {
                             demoMode = true
                         },
+                        onExit = activity::finish,
                     )
                     AppRoute.LOGIN_REQUIRED -> LoginRequiredScreen(
                         onGoogleLogin = {
@@ -130,6 +131,7 @@ class MainActivity : ComponentActivity() {
                             AuthFailureCoordinator.retryTransientFailure()
                             sessionRevision++
                         },
+                        onExit = activity::finish,
                         onResetSession = {
                             SessionStore.resetSession(context)
                             sessionRevision++
@@ -144,6 +146,7 @@ class MainActivity : ComponentActivity() {
                             AuthFailureCoordinator.retryTransientFailure()
                             sessionRevision++
                         },
+                        onExit = activity::finish,
                     )
                     // 로그아웃(#154): 토큰만 지우고 온보딩 완료 플래그는 보존한다(clearAuthentication).
                     //   → 라우팅이 LOGIN_REQUIRED 로 가고, 같은 계정 재로그인 시 온보딩을 반복하지 않는다.

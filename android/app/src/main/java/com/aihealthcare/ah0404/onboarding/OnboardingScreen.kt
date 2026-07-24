@@ -1,6 +1,7 @@
 package com.aihealthcare.ah0404.onboarding
 
 import android.app.Activity
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -62,6 +63,7 @@ fun OnboardingScreen(
     onComplete: (isGuest: Boolean) -> Unit,
     onReroute: () -> Unit,
     onBrowseDemo: () -> Unit,
+    onExit: () -> Unit,
     modifier: Modifier = Modifier,
     vm: OnboardingViewModel = viewModel(),
     authVm: AuthLoginViewModel = viewModel(),
@@ -76,11 +78,17 @@ fun OnboardingScreen(
             vm.resetToWelcome()
         }
     }
+    var showExitConfirmation by remember { mutableStateOf(false) }
     // 소셜 로그인 결과 분기(#153): 완료 계정은 약관을 건너뛰고 홈으로, 미완료 계정은 온보딩(약관)을 이어감.
     val onSocialLogin: (SocialProvider) -> Unit = { provider ->
         authVm.signIn(provider, activity) { completed ->
             if (completed) onReroute() else vm.continueAuthenticated()
         }
+    }
+    // 로딩 중에도 BackHandler를 등록해 시스템 기본 뒤로가기(Activity 종료)로 전파되지 않게 한다.
+    BackHandler {
+        if (vm.loading || authState.loading != null) return@BackHandler
+        if (!vm.goBack()) showExitConfirmation = true
     }
     Box(
         modifier
@@ -116,6 +124,22 @@ fun OnboardingScreen(
                 onDismissRequest = vm::dismissError,
             )
         }
+
+        if (showExitConfirmation) {
+            AigoDialog(
+                title = "앱을 종료할까요?",
+                message = if (vm.step == OnbStep.RESULT) {
+                    "결과 화면을 닫고 앱을 종료할까요?"
+                } else {
+                    "입력 중인 온보딩을 나가면 다시 이어서 진행할 수 없어요."
+                },
+                confirmText = "종료",
+                onConfirm = onExit,
+                dismissText = "계속하기",
+                onDismiss = { showExitConfirmation = false },
+                onDismissRequest = { showExitConfirmation = false },
+            )
+        }
     }
 }
 
@@ -124,6 +148,7 @@ fun OnboardingScreen(
 private fun StepScaffold(
     title: String,
     subtitle: String? = null,
+    onBack: (() -> Unit)? = null,
     content: @Composable () -> Unit,
     footer: @Composable () -> Unit,
 ) {
@@ -139,6 +164,11 @@ private fun StepScaffold(
             verticalArrangement = Arrangement.spacedBy(Dimens.ElementGap),
         ) {
             Spacer(Modifier.height(Dimens.Space8))
+            if (onBack != null) {
+                TextButton(onClick = onBack) {
+                    Text("← 이전")
+                }
+            }
             Text(title, style = MaterialTheme.typography.headlineLarge)
             if (subtitle != null) {
                 Text(
@@ -210,6 +240,7 @@ private fun TermsStep(vm: OnboardingViewModel) {
     StepScaffold(
         title = "약관 동의",
         subtitle = "서비스 이용을 위해 아래 약관에 동의해 주세요.",
+        onBack = { vm.goBack() },
         content = {
             AigoTonalButton(text = "전체 동의", onClick = vm::agreeAll)
             Spacer(Modifier.height(Dimens.Space8))
@@ -272,6 +303,7 @@ private fun ProfileStep(vm: OnboardingViewModel) {
     StepScaffold(
         title = "건강 프로필",
         subtitle = "맞춤 미션을 위해 기본 정보를 알려주세요.",
+        onBack = { vm.goBack() },
         content = {
             Text("생년월일", style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(Dimens.Space8)) {
@@ -352,20 +384,25 @@ private fun ProfileStep(vm: OnboardingViewModel) {
 
 @Composable
 private fun AssessmentStep(vm: OnboardingViewModel) {
-    var chairStand by remember { mutableStateOf("") }
     StepScaffold(
         title = "간단 체력 검사",
         subtitle = "어려우면 건너뛰어도 괜찮아요. 나중에 언제든 할 수 있어요.",
+        onBack = { vm.goBack() },
         content = {
             Text("의자에서 5번 앉았다 일어서기 (초)", style = MaterialTheme.typography.titleMedium)
-            AigoTextField(chairStand, { chairStand = it }, "예: 12.5", keyboardType = KeyboardType.Decimal)
+            AigoTextField(
+                vm.chairStandSec,
+                { vm.chairStandSec = it },
+                "예: 12.5",
+                keyboardType = KeyboardType.Decimal,
+            )
         },
         footer = {
             Column(verticalArrangement = Arrangement.spacedBy(Dimens.Space12)) {
                 AigoPrimaryButton(
                     text = "검사 완료",
                     onClick = {
-                        vm.submitAssessment(chairStand.toDoubleOrNull())
+                        vm.submitAssessment(vm.chairStandSec.toDoubleOrNull())
                     },
                 )
                 AigoSecondaryButton(text = "건너뛰기", onClick = vm::skipAssessment)
