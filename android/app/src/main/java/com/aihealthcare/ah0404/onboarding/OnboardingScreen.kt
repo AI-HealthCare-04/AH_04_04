@@ -85,7 +85,9 @@ fun OnboardingScreen(
             if (completed) onReroute() else vm.continueAuthenticated()
         }
     }
-    BackHandler(enabled = !vm.loading && authState.loading == null) {
+    // 로딩 중에도 BackHandler를 등록해 시스템 기본 뒤로가기(Activity 종료)로 전파되지 않게 한다.
+    BackHandler {
+        if (vm.loading || authState.loading != null) return@BackHandler
         if (!vm.goBack()) showExitConfirmation = true
     }
     Box(
