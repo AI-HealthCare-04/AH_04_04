@@ -48,12 +48,10 @@ import com.aihealthcare.ah0404.mission.missionDestination
 import com.aihealthcare.ah0404.network.AppRoute
 import com.aihealthcare.ah0404.network.Mission
 import com.aihealthcare.ah0404.network.AppRouteResolver
-import com.aihealthcare.ah0404.network.AuthFailure
 import com.aihealthcare.ah0404.network.AuthFailureCoordinator
 import com.aihealthcare.ah0404.network.JwtTokenInspector
 import com.aihealthcare.ah0404.network.SessionStore
 import com.aihealthcare.ah0404.network.TokenHolder
-import com.aihealthcare.ah0404.network.TokenStatus
 import com.aihealthcare.ah0404.network.rememberNetworkAvailable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -98,15 +96,6 @@ class MainActivity : ComponentActivity() {
                 }
                 val route = if (demoMode) {
                     AppRoute.MAIN
-                } else if (
-                    WalkingOverlay.active &&
-                    tokenStatus == TokenStatus.VALID &&
-                    authFailure != AuthFailure.UNAUTHORIZED
-                ) {
-                    // #188: 걷기 측정 중엔 **네트워크 단절만** 우회해 OFFLINE 로 안 튕긴다(측정 지속, 저장만 재시도 #91).
-                    //   단 인증 만료(401=UNAUTHORIZED)는 가로채지 않고 정상 라우팅으로 넘긴다 → LOGIN_REQUIRED 재로그인
-                    //   (지영 리뷰 #189: 네트워크 실패와 401 을 구분). 토큰 만료(EXPIRED)도 VALID 가 아니라 여기서 제외됨.
-                    AppRoute.MAIN
                 } else {
                     AppRouteResolver.resolve(
                         // 라우팅 게이트는 메모리 세션(#153): 게스트 완주는 이번 세션만 MAIN(디스크엔 무영속),
@@ -115,6 +104,8 @@ class MainActivity : ComponentActivity() {
                         tokenStatus = tokenStatus,
                         networkAvailable = networkAvailable,
                         failure = authFailure,
+                        // #188: 걷기 측정 중이면 네트워크 단절로 OFFLINE 로 안 튕긴다(로직은 resolver 가 처리 — 테스트 가능).
+                        walkingActive = WalkingOverlay.active,
                     )
                 }
 
