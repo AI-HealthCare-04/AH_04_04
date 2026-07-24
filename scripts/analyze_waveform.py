@@ -38,8 +38,63 @@ from collections import Counter, defaultdict
 HEADER = (
     "trial_id,device_model,placement_id,position,side,screen_facing,top_direction,fold_state,"
     "cue_delivery,label,phase,event,excluded,sensor_elapsed_ms,callback_elapsed_ms,"
-    "x,y,z,magnitude,filtered_mag,state,count,step_counted"
+    "x,y,z,magnitude,filtered_mag,state,count,step_counted,"
+    "hw_step_counter,hw_step_detector,hw_step_detector_total"
 ).split(",")
+
+# 하위호환(헤더 3버전 허용): hw_step_* 는 3차 수집(#184/#176 하이브리드)부터 추가됐다.
+#   26컬럼(현행) = +hw_step_detector_total(보행 종료까지 감지기 누적, 리뷰 #194 블로커1)
+#   25컬럼(HW2)  = hw_step_counter,hw_step_detector 까지(총계 컬럼 전)
+#   23컬럼(구)   = hw_step_* 전부 없음(1~2차)
+# DictReader 는 파일 자체 헤더로 파싱하므로 없는 컬럼은 .get 이 None → 분석은 자연히 하위호환된다.
+HEADER_HW2 = HEADER[:-1]
+HEADER_LEGACY = HEADER[:-3]
+
+# HW 만보기 측정불가 sentinel(앱 WaveformHw 와 동일). 음수면 '실제 0걸음'이 아니라 측정 불가.
+HW_PERMISSION_DENIED = -2
+HW_SENSOR_ABSENT = -1
+HW_BASELINE_NOT_READY = -3
+
+
+def hw_final_counter(rows):
+    """보행 구간(walking) 마지막 행의 hw_step_counter(3차 하이브리드 컬럼). 컬럼 없으면 None.
+    음수면 측정불가(sentinel). trial 의 HW 최종 누적을 대표값으로 쓴다(flush 로 마지막 행에 확정됨)."""
+    walk = [r for r in rows if r.get("phase") != "sitting"]
+    src = walk or rows
+    for r in reversed(src):
+        v = r.get("hw_step_counter")
+        if v is None or v == "":
+            return None
+        try:
+            return int(float(v))
+        except ValueError:
+            return None
+    return None
+
+
+def hw_final_detector(rows):
+    """보행 구간(walking) 마지막 행의 hw_step_detector_total(26컬럼~). 컬럼 없으면 None(25컬럼 이하).
+    보행 종료까지 감지된 HW 걸음 이벤트 총수 — 종료 정산 flush 중 지연 이벤트까지 마지막 walking 행에 확정된다.
+    음수면 측정불가(sentinel). counter 와 짝을 이루는 HW 하이브리드 참조값."""
+    walk = [r for r in rows if r.get("phase") != "sitting"]
+    src = walk or rows
+    for r in reversed(src):
+        v = r.get("hw_step_detector_total")
+        if v is None or v == "":
+            return None
+        try:
+            return int(float(v))
+        except ValueError:
+            return None
+    return None
+
+
+def hw_label(v):
+    """hw_step_counter 정수값 → 사람이 읽는 라벨."""
+    if v is None:
+        return "n/a(구스키마)"
+    return {HW_PERMISSION_DENIED: "권한거부", HW_SENSOR_ABSENT: "센서없음",
+            HW_BASELINE_NOT_READY: "기준미준비"}.get(v, str(v))
 
 # 분석이 직접 인덱싱하는 필수 컬럼(부분집합). 폴더에 참여자 매핑 CSV나 스키마가 다른
 # 파일이 섞여 있어도 여기서 걸러 폐기하고, 파형 CSV 만 load_file 로 넘긴다(KeyError 방지).
@@ -53,9 +108,18 @@ REQUIRED_COLS = {
 LABEL_NORMAL = "normal_walk"
 LABEL_WALK_SIT = "walk_then_sit"
 LABEL_SIT_ONLY = "sit_only"
-LABEL_SHUFFLE = "shuffle"
+# ⚠️ 라벨 id 의미 분리(리뷰 #194 블로커): 새 id 는 'shuffle_walk'(발 끌면서 **걷기** = 저진폭 **보행**).
+#   구 데이터의 'shuffle'(제자리 발끌기 = **비보행** 대조군)과 정답 의미가 정반대라, 같은 id 로 섞으면
+#   파일만으로 프로토콜을 복원할 수 없다. 그래서 신 id 를 새로 쓰고, 구 id 는 '레거시 비보행'으로만 인정한다.
+LABEL_SHUFFLE = "shuffle_walk"        # 신: 발 끌면서 걷기(보행, 걸음 계수 대상)
+LABEL_SHUFFLE_LEGACY = "shuffle"      # 구: 제자리 발끌기(비보행 대조군) — 구 CSV 호환용. 보행 아님.
 CUE_LABELS = {LABEL_WALK_SIT, LABEL_SIT_ONLY}
 ALL_LABELS = [LABEL_NORMAL, LABEL_WALK_SIT, LABEL_SIT_ONLY, LABEL_SHUFFLE]
+# 구 CSV 만 인정하는 레거시 라벨(테이블/보행 계수엔 넣지 않음 — 의미 충돌 방지).
+LEGACY_LABELS = {LABEL_SHUFFLE_LEGACY}
+# 실제 보행 = 걸음이 세어져야 하는 라벨. shuffle_walk(발 끌면서 걷기)은 저진폭 보행이라 여기 포함(#176).
+#   구 'shuffle'(제자리)은 비보행이라 **여기 없음** — 정답 의미가 반대라 절대 섞지 않는다.
+WALKING_LABELS = {LABEL_NORMAL, LABEL_WALK_SIT, LABEL_SHUFFLE}
 
 # 세그먼트 = (label, phase). 관심 대비의 두 축:
 #  - 오탐 대상  : (walk_then_sit, sitting)  ← 여기서 step 이 잘못 세어진다(§5-5)
@@ -369,7 +433,7 @@ FEATURES = [
 ]
 
 
-def analyze(trials, participants=None):
+def analyze(trials, participants=None, manual_counts=None):
     # trial 단위로 세그먼트 특징 계산 → (label, phase)별 리스트에 적재.
     seg_feats = defaultdict(list)  # (label, phase) -> [feat dict]
     per_label = Counter()
@@ -390,6 +454,11 @@ def analyze(trials, participants=None):
             print(f"  · {lb:14s} {per_label[lb]:3d} trial")
     if short_segs:
         print(f"  (표본 <{MIN_SEG_SAMPLES} 라 제외된 세그먼트: {short_segs}개)")
+    # 레거시 라벨(구 shuffle=비보행)은 신 의미와 섞지 않으려 표에서 제외됨을 명시(리뷰 #194 — 조용히 사라짐 방지).
+    legacy = {lb: c for lb, c in per_label.items() if lb not in ALL_LABELS}
+    if legacy:
+        det = ", ".join(f"{lb}:{c}" for lb, c in sorted(legacy.items()))
+        print(f"  ⚠️ 레거시 라벨 {sum(legacy.values())}개 표에서 제외({det}) — 구 스키마라 신 의미와 분리(WALKING_LABELS 아님)")
     print()
 
     # ── 1. 오탐 현황: walk_then_sit 의 앉기 구간에서 몇 걸음이 잘못 세어지나(§5-5 재현) ──
@@ -472,17 +541,61 @@ def analyze(trials, participants=None):
     ws = stop_by_label.get(LABEL_WALK_SIT, (0, 0))
     nw = stop_by_label.get(LABEL_NORMAL, (0, 0))
     sh = stop_by_label.get(LABEL_SHUFFLE, (0, 0))
-    # 판정 기준: 과소계수(정상보행을 정지로 오판) 0 이 최우선. walk_then_sit 정지전환은
-    # 높을수록 좋지만 100% 를 요구하지 않는다(헐렁한 주머니 잔진동 trial 은 물리적으로 애매).
-    no_undercount = nw[0] == 0                    # 정상보행 정지 오판 0 (진짜 걸음 안 끊음)
+    # 판정 기준: 과소계수(**실제 보행**을 정지로 오판) 0 이 최우선. shuffle_walk(발 끌면서 걷기)도 실제
+    # 보행이고, 2차 실측에서 게이트 정지 오판이 정확히 저진폭 보행에서 났으므로 shuffle_walk 정지 오판 0
+    # 이야말로 가장 중요한 과소계수 신호다(리뷰 #194). walk_then_sit 정지전환은 높을수록 좋지만 100%
+    # 를 요구하지 않는다(헐렁한 주머니 잔진동 trial 은 물리적으로 애매).
+    no_undercount = nw[0] == 0 and sh[0] == 0     # 정상 보행 + 발끌기 보행 모두 정지 오판 0
     catches = ws[1] and ws[0] >= math.ceil(ws[1] * 0.6)  # 오탐 대상 정지 다수 포착
     print(f"  → {'✅ 과소계수 0·정지 다수 포착' if (no_undercount and catches) else '⚠️ 재검토'}: "
           f"walk_then_sit 정지전환 {ws[0]}/{ws[1]}(높을수록↑) · "
-          f"normal_walk {nw[0]}/{nw[1]}·shuffle {sh[0]}/{sh[1]}(normal 은 0이어야). "
-          + ("→ 정상보행을 끊지 않으면서 보행종료를 다수 잡음(적응형 r2). 단 임계 k·창길이는 "
+          f"normal_walk {nw[0]}/{nw[1]}·shuffle_walk {sh[0]}/{sh[1]}(normal·shuffle_walk 은 0이어야). "
+          + ("→ 실제 보행(정상·발끌기)을 끊지 않으면서 보행종료를 다수 잡음(적응형 r2). 단 임계 k·창길이는 "
              "본 수집으로 최종 튜닝(findings §4/§6)." if (no_undercount and catches)
-             else "→ 파라미터/추가 특징 재검토 필요."))
+             else "→ 파라미터/추가 특징 재검토 필요(특히 shuffle_walk 정지 오판)."))
     print()
+
+    # ── 3.9 정확도(정답 대비) — #176 손/느린보행 과소계수 채점 ──
+    # 관찰자 육안 정답(manual_step_count)이 로그에 있으면, 보행 라벨의 '보행 구간 감지 걸음'을
+    # 정답과 비교해 오차를 낸다. 정답 없으면 이 절은 건너뛴다(현행 감지기 출력끼리 비교하면
+    # P01·손 배치에서 0을 내는 불량이 기준이 되어 무의미하기 때문 — #176 방법론 블로커).
+    if manual_counts:
+        print("■ 정확도(관찰자 정답 대비) — #176 과소계수 채점")
+        rows_acc = []
+        for t in trials:
+            tid = t["rows"][0]["trial_id"]
+            gt = manual_counts.get(t["file"]) or manual_counts.get(tid)
+            if gt is None or gt <= 0:
+                continue
+            if t["label"] not in WALKING_LABELS:
+                continue  # 보행 라벨만 채점(sit_only 는 걸음 대상 아님)
+            # det = 보행 구간에서 감지기가 실제 카운트한 걸음(step_counted)을 **직접** 센다(리뷰 #194).
+            #   segment_features 의 steps 는 MIN_SEG_SAMPLES(20) 미만 세그먼트면 None 이 되어, 짧은 보행이
+            #   step_counted 가 있어도 det=0 으로 오분류될 수 있다. 특징 안정성 게이트와 채점을 분리한다.
+            walk = split_phases(t["rows"]).get("walking", [])
+            det = sum(1 for r in walk if r["_step"] and not r["_excluded"])
+            place = (t["rows"][0].get("placement_id") or "?")
+            hw = hw_final_counter(t["rows"])   # HW counter 최종 누적(하이브리드, 없으면 None)
+            hwd = hw_final_detector(t["rows"])  # HW detector 총 이벤트(26컬럼~, 없으면 None)
+            rows_acc.append((tid, t["label"], place, gt, det, hw, hwd))
+        if not rows_acc:
+            print("  (정답 있는 보행 trial 없음 — manual_step_count 를 채우세요)")
+        else:
+            # 하이브리드 비교표: 정답 vs 감지(#89) vs HW counter vs HW detector (리뷰 #194 menteur ②·블로커1).
+            print(f"  {'배치':18s} {'라벨':13s} {'정답':>4s} {'감지':>4s} {'HWcnt':>8s} {'HWdet':>8s} {'오차%':>6s}")
+            errs = []
+            for tid, lb, place, gt, det, hw, hwd in rows_acc:
+                err = abs(det - gt) / gt * 100.0
+                errs.append(err)
+                flag = "  ← 큰 오차" if err > 20 else ""
+                hw_s = hw_label(hw) if (hw is None or hw < 0) else str(hw)
+                hwd_s = hw_label(hwd) if (hwd is None or hwd < 0) else str(hwd)
+                print(f"  {place:18s} {lb:13s} {gt:>4d} {det:>4d} {hw_s:>8s} {hwd_s:>8s} {err:>5.0f}%{flag}")
+            # '0-count 과소계수'는 err 프록시(≥99) 대신 det==0 을 직접 센다(리뷰 #194).
+            zero = sum(1 for r in rows_acc if r[4] == 0)
+            print(f"  → 채점 {len(errs)} trial · 평균 절대오차 {_mean(errs):.0f}% "
+                  f"(0-count {zero}건 = 과소계수 미해결)")
+        print()
 
     # ── 4. 참여자 분할 안내(#166) ──
     print("■ 참여자 단위 분할(#166 데이터 누수 방지)")
@@ -548,6 +661,27 @@ def load_participants(path):
     return m
 
 
+def load_manual_counts(path):
+    """participants 로그의 선택 컬럼 manual_step_count(관찰자 육안 정답) → {trial_id: int}.
+
+    #176: 감지기 정확도를 채점하려면 '실제 사람이 센 걸음 수' 정답이 필요하다(CSV 에는 없음).
+    빈 칸/비숫자는 건너뛴다(정답 없는 trial 은 채점에서 제외)."""
+    m = {}
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        for r in csv.DictReader(f):
+            tid = (r.get("trial_id") or "").strip()
+            raw = (r.get("manual_step_count") or "").strip()
+            if not (tid and raw):
+                continue
+            try:
+                n = int(float(raw))
+            except ValueError:
+                continue
+            m[tid] = n
+            m[tid + ".csv"] = n
+    return m
+
+
 # ── 합성 데이터 자체검증(--selftest) ─────────────────────────────────────────
 def _synth_file(fp, label, placement, gravity_axis="z"):
     """합성 CSV 1개 생성. 보행=수평(전후) 진동, 앉기=수직(중력축) 하강 임팩트.
@@ -581,6 +715,7 @@ def _synth_file(fp, label, placement, gravity_axis="z"):
             "success" if has_cue else "na", label, phase, event, 1 if excluded else 0,
             t, t, round(x, 5), round(y, 5), round(z, 5), round(mag, 5), round(mag, 5),
             state, 0, 1 if step else 0,
+            0, 0, 0,  # hw_step_counter, hw_step_detector, hw_step_detector_total (합성은 0)
         ]))
         t += dt
 
@@ -735,14 +870,19 @@ def inspect(path):
     print(f"=== 파일 점검: {os.path.basename(path)} ===\n")
     ok = True
 
-    # 1) 헤더 스키마(부록 A 23컬럼)
+    # 1) 헤더 스키마(부록 A) — 26컬럼(현행)·25컬럼(HW2)·23컬럼(구) 셋 다 허용(하위호환)
     with open(path, encoding="utf-8-sig", newline="") as f:
         fields = (csv.DictReader(f).fieldnames) or []
     if fields == HEADER:
-        print(f"  ✅ 헤더: {len(HEADER)}컬럼 스키마 일치")
+        print(f"  ✅ 헤더: {len(HEADER)}컬럼 스키마 일치(HW 만보기 · detector 총계 포함)")
+    elif fields == HEADER_HW2:
+        print(f"  ✅ 헤더: {len(HEADER_HW2)}컬럼 스키마 일치(HW 만보기 · detector 총계 컬럼 전)")
+    elif fields == HEADER_LEGACY:
+        print(f"  ✅ 헤더: {len(HEADER_LEGACY)}컬럼 스키마 일치(구 버전 · HW 만보기 없음)")
     else:
         ok = False
-        print(f"  ❌ 헤더 불일치: {len(fields)}컬럼(기대 {len(HEADER)}) — 앱 버전/파일 손상 확인")
+        print(f"  ❌ 헤더 불일치: {len(fields)}컬럼"
+              f"(기대 {len(HEADER_LEGACY)}/{len(HEADER_HW2)}/{len(HEADER)}) — 앱 버전/파일 손상 확인")
 
     rows = load_file(path)
     n = len(rows)
@@ -764,6 +904,8 @@ def inspect(path):
     label = rows[0]["label"]
     if labels == {label} and label in ALL_LABELS:
         print(f"  ✅ 라벨: {label} (전 행 일관)")
+    elif labels == {label} and label in LEGACY_LABELS:
+        print(f"  ⚠️ 라벨: {label} (구 스키마 · 비보행 대조군 — 신 'shuffle_walk' 과 의미 다름)")
     else:
         ok = False
         print(f"  ❌ 라벨 이상: {labels}")
@@ -817,12 +959,30 @@ def inspect(path):
         last_count = int(rows[-1]["count"])
     except (ValueError, TypeError):
         last_count = -1
-    if label in (LABEL_NORMAL, LABEL_WALK_SIT):
-        print(f"  {'✅' if steps > 0 else '⚠️'} 걸음: 감지기 count={last_count} · "
-              f"step_counted {steps}회 · WALKING 상태 {100 * walking_rows // n}%"
-              + ("" if steps > 0 else "  (보행 라벨인데 걸음 0 — 느리거나 배치 문제 가능)"))
+    if label in WALKING_LABELS:
+        # 현행 감지기는 느린/저진폭 보행(발 끌기 포함)을 과소계수한다(#176) → 걸음 0 이어도 '수집 실패'는
+        # 아니다. 원시 3축 변동이 위(6번)에서 정상이면 파형은 유효하고, 정답(manual_step_count)으로 채점한다.
+        print(f"  · 걸음: 감지기 count={last_count} · step_counted {steps}회 · WALKING {100 * walking_rows // n}%"
+              + ("" if steps > 0 else "  (현행 감지기 0 — 느린/발끌기 보행은 #176 과소계수, 파형은 유효)"))
     else:
-        print(f"  · 걸음: count={last_count} · step_counted {steps}회 (앉기/발끌기는 낮은 게 정상)")
+        print(f"  · 걸음: count={last_count} · step_counted {steps}회 (순수 앉기는 낮은 게 정상)")
+
+    # 7-1) HW 만보기 확인(3차 하이브리드) — 보행 라벨인데 최종 0 & 이벤트 0 이면 권한/센서 문제 조기 경고.
+    #      "권한 거부/센서 부재로 120 trial 다 돌고서야 hw 전부 0 발견"을 수집 직후에 잡는다(리뷰 #194).
+    if "hw_step_counter" in (rows[0] or {}):
+        hw = hw_final_counter(rows)
+        hwd = hw_final_detector(rows)  # 26컬럼~: 보행 종료까지 감지기 누적(flush 지연분 포함). 없으면 None.
+        # 감지기 총계 표시값 — 26컬럼이면 확정 총계, 25컬럼이면 per-sample 이벤트 합으로 근사.
+        evt_sum = sum(1 for r in rows if (r.get("hw_step_detector") or "0") == "1")
+        det_shown = hwd if hwd is not None else evt_sum
+        det_zero = (det_shown is None) or (det_shown <= 0)
+        if hw is not None and hw < 0:
+            print(f"  ⚠️ HW 만보기 측정 불가({hw_label(hw)}) — 권한/센서 확인(가속도 수집은 유효)")
+        elif label in WALKING_LABELS and (hw or 0) <= 0 and det_zero:
+            print("  ⚠️ HW 만보기 0 — 권한/센서 확인(보행인데 HW 걸음·이벤트 0)")
+        else:
+            det_s = hw_label(det_shown) if (isinstance(det_shown, int) and det_shown < 0) else str(det_shown)
+            print(f"  ✅ HW 만보기: counter={hw} · detector 총 {det_s}회")
 
     # 8) 시간축 단조 증가
     ts = [r["_t"] for r in rows]
@@ -849,6 +1009,7 @@ def main():
     if not args.data_dir:
         ap.error("data_dir 를 주거나 --selftest 를 쓰세요.")
     parts = load_participants(args.participants) if args.participants else None
+    manual = load_manual_counts(args.participants) if args.participants else None
     trials, dropped = load_dir(args.data_dir)
     if dropped:
         print(f"■ 폐기된 파일 {len(dropped)}개 (§4)")
@@ -857,7 +1018,7 @@ def main():
         print()
     if not trials:
         sys.exit("남은 trial 이 없습니다(모두 폐기됨). cue_delivery/수집 상태를 확인하세요.")
-    analyze(trials, parts)
+    analyze(trials, parts, manual)
 
 
 if __name__ == "__main__":

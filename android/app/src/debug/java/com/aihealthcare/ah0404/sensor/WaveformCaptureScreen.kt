@@ -2,7 +2,9 @@
 
 package com.aihealthcare.ah0404.sensor
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -12,6 +14,8 @@ import android.media.ToneGenerator
 import android.os.Build
 import android.os.SystemClock
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -39,6 +43,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
@@ -100,15 +105,71 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
     val sensorBaseNs = remember { mutableLongStateOf(-1L) }
     val callbackBaseMs = remember { mutableLongStateOf(0L) }
 
+    // HW 만보기 하이브리드 비교(#184/#176): TYPE_STEP_COUNTER 누적(녹화 시작 기준 0)·TYPE_STEP_DETECTOR 이벤트.
+    val hwCounterBase = remember { mutableLongStateOf(-1L) }   // 녹화 시작 시 첫 누적값
+    val hwCounterLatest = remember { mutableLongStateOf(-1L) }
+    val hwPendingDetector = remember { mutableIntStateOf(0) }  // 직전 accel 샘플 이후 감지된 스텝 이벤트 수(실시간 0/1 스트림)
+
+    // HW 종료 정산(리뷰 #194 블로커1·2·3): 지연 보고를 '시작(start)~보행 종료(walkEnd)' 시각창에 귀속해 확정한다.
+    val startSensorNs = remember { mutableLongStateOf(-1L) }      // 녹화 시작 시각(elapsedRealtimeNanos) — base 하한
+    val hwCounterLatestTsNs = remember { mutableLongStateOf(-1L) } // 최신 counter 이벤트의 시각(base 시각귀속용)
+    val walkEndSensorNs = remember { mutableLongStateOf(-1L) }   // 마지막 walking 샘플의 SensorEvent.timestamp(ns)
+    val hwCounterWalkEnd = remember { mutableLongStateOf(-1L) }  // walkEnd 이내 마지막 counter 누적값
+    val hwDetectorWalkEnd = remember { mutableIntStateOf(0) }    // (start,walkEnd] 이내 감지기 이벤트 총수(지연분 포함)
+    val hwSettling = remember { mutableStateOf(false) }          // 정산 중(UI '움직이지 마세요')
+
     val sensorManager = remember {
         context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     }
     val accelSensor = remember { sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) }
+    val stepCounterSensor = remember { sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER) }
+    val stepDetectorSensor = remember { sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR) }
+
+    // ACTIVITY_RECOGNITION(위험 권한, API29+) 허용 여부. API28 이하는 권한 불필요라 true.
+    //   step sensor 는 이 권한이 있어야만 등록해도 이벤트가 온다 → 허용될 때만 등록하고, 새로 허용되면 재등록.
+    val hwPermitted = remember {
+        mutableStateOf(
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+                ContextCompat.checkSelfPermission(context, Manifest.permission.ACTIVITY_RECOGNITION) ==
+                PackageManager.PERMISSION_GRANTED,
+        )
+    }
 
     val listener = remember {
         object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent?) {
                 event ?: return
+                // HW 만보기 두 센서는 같은 리스너로 받아 최신값/이벤트만 갱신하고 반환(가속도 샘플에서 함께 기록).
+                when (event.sensor?.type) {
+                    Sensor.TYPE_STEP_COUNTER -> {
+                        val v = event.values[0].toLong() // 부팅 이후 누적
+                        // 녹화 여부와 무관하게 최신 누적/시각을 계속 갱신(base 시각귀속·per-sample 표시용).
+                        hwCounterLatest.longValue = v
+                        hwCounterLatestTsNs.longValue = event.timestamp
+                        // base(시작 기준): 시작 시각(start) 이내 이벤트만 base 로 확정 → 준비 동작 걸음(지연 보고 포함)을
+                        //   base 에 넣어 최종 diff 에서 상쇄한다(리뷰 #194 블로커3). monotonic 이라 최신값이 곧 그 시점 누적.
+                        if (startSensorNs.longValue >= 0L && event.timestamp in 0L..startSensorNs.longValue) {
+                            hwCounterBase.longValue = v
+                        }
+                        // walkEnd(종료 기준): 보행 종료 이내 이벤트만 walkEnd 누적으로 확정. 정산 대기 중 도착한
+                        //   지연 보고도 여기서 귀속된다(리뷰 #194 블로커1·2).
+                        if (WaveformHw.attributesToWalk(event.timestamp, walkEndSensorNs.longValue)) {
+                            hwCounterWalkEnd.longValue = v
+                        }
+                        return
+                    }
+                    Sensor.TYPE_STEP_DETECTOR -> {
+                        if (recorder.isRecording) hwPendingDetector.intValue += 1 // 실시간 0/1 스트림용
+                        // (start, walkEnd] 이내 이벤트만 누적 — 준비 동작(ts≤start)·종료 후(ts>walkEnd) 제외(블로커1·3).
+                        //   녹화 종료 후 정산 대기 중 도착한 지연 이벤트도 이 창 안이면 개수째 보존한다.
+                        if (event.timestamp > startSensorNs.longValue &&
+                            WaveformHw.attributesToWalk(event.timestamp, walkEndSensorNs.longValue)
+                        ) {
+                            hwDetectorWalkEnd.intValue += 1
+                        }
+                        return
+                    }
+                }
                 if (!recorder.isRecording) return
                 val x = event.values[0]
                 val y = event.values[1]
@@ -120,11 +181,25 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
                     sensorBaseNs.longValue = tsNs
                     callbackBaseMs.longValue = cbMs
                 }
+                // 보행 종료 시각 후보 — WALKING phase 동안만 전진하고, 앉기 큐(markSitting→SITTING) 시점이나
+                //   stop(isRecording=false 로 여기 도달 안 함) 에 자동 동결된다 → walkEnd = 마지막 walking 샘플 ts.
+                if (recorder.phase == WaveformPhase.WALKING) walkEndSensorNs.longValue = tsNs
                 val sensorElapsed = (tsNs - sensorBaseNs.longValue) / 1_000_000L
                 val callbackElapsed = cbMs - callbackBaseMs.longValue
                 val magnitude = sqrt(x * x + y * y + z * z)
                 // 감지기에 흘려 걸음 카운트 여부를 얻는다(오탐 지점 표시용). 생산 재현 위해 콜백 시각(cbMs)을 그대로 넘긴다.
                 val counted = detector.processSample(x, y, z, cbMs)
+                // 측정 불가(권한거부/센서부재/기준미준비)는 음수 sentinel 로 기록해 '실제 0걸음'과 구분(리뷰 #194).
+                //   base 는 시각귀속(start 이내 이벤트)으로만 잡는다 — 녹화 중 첫 이벤트를 base 로 삼는 폴백은
+                //   앞부분 걸음을 삼키므로 쓰지 않고, 유효 base 를 못 잡으면 정직하게 BASELINE_NOT_READY 로 남긴다.
+                val hwCounter = WaveformHw.counterSinceStart(
+                    permitted = hwPermitted.value,
+                    sensorPresent = stepCounterSensor != null,
+                    baseCount = hwCounterBase.longValue,
+                    latestCount = hwCounterLatest.longValue,
+                )
+                val hwDetected = hwPendingDetector.intValue > 0
+                hwPendingDetector.intValue = 0
                 recorder.add(
                     WaveformSample(
                         sensorElapsedMs = sensorElapsed,
@@ -135,6 +210,8 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
                         state = detector.state,
                         count = detector.count,
                         stepCounted = counted,
+                        hwStepCounter = hwCounter,
+                        hwStepDetected = hwDetected,
                         // phase/event/excluded 는 recorder.add 가 큐 상태로 다시 고정한다(단일 소스).
                     ),
                 )
@@ -161,8 +238,33 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
     // 종료도 자동이라, 주머니 배치에서 휴대폰을 꺼내는 조작이 수집 구간에 섞이지 않는다(Earthworm-jk 블로커).
     LaunchedEffect(recording.value) {
         if (!recording.value) return@LaunchedEffect
-        val autoStop = {
-            recorder.stop()
+        // 종료 = 라벨 구간 고정(stop, walkEnd 동결) → HW 정산 대기(지연 보고 수신) → 최종 HW 를 마지막 walking
+        //   행에 확정 → UI 정지. 대기 동안 recording.value 는 true 로 두어 이 코루틴이 취소되지 않게 한다(가속도는
+        //   stop 으로 이미 종료). 값 정확성은 시각 귀속(base·walkEnd 창)이 보장하고, 대기는 STEP_COUNTER 의
+        //   **문서상 최대 보고 지연(~10초)** 을 실제로 기다려 지연 보고 '수신'을 보장한다(리뷰 #194 블로커2).
+        suspend fun autoStopWithHwFlush() {
+            recorder.stop() // walkEndSensorNs 동결(이후 accel 은 isRecording=false 로 walkEnd 갱신 안 함)
+            hwSettling.value = true
+            // best-effort: FIFO 배출을 앞당긴다(정확성은 아래 상한 대기+시각 귀속이 보장 — flush 완료로 조기 종료하지
+            //   않는다. flush 완료 신호는 FIFO 배출만 뜻할 뿐 STEP_COUNTER 고유의 보고 지연 완료를 증명하지 못한다).
+            runCatching { if (hwPermitted.value && stepCounterSensor != null) sensorManager.flush(listener) }
+            delay(HW_SETTLE_MS)
+            val base = hwCounterBase.longValue
+            recorder.finalizeHwWalkEnd(
+                counter = WaveformHw.counterSinceStart(
+                    permitted = hwPermitted.value,
+                    sensorPresent = stepCounterSensor != null,
+                    baseCount = base,
+                    // walkEnd 이벤트가 없었으면(-1) 유효 base 로 폴백 → 실제 0걸음은 sentinel 이 아니라 0 (블로커1).
+                    latestCount = WaveformHw.resolveWalkEndCount(hwCounterWalkEnd.longValue, base),
+                ),
+                detectorTotal = WaveformHw.detectorTotal(
+                    permitted = hwPermitted.value,
+                    sensorPresent = stepDetectorSensor != null,
+                    count = hwDetectorWalkEnd.intValue,
+                ),
+            )
+            hwSettling.value = false
             recording.value = false
             Toast.makeText(context, "수집 완료 — 저장하세요.", Toast.LENGTH_LONG).show()
         }
@@ -186,10 +288,45 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
             recorder.markSitting()
             phase.value = WaveformPhase.SITTING
             countdown(cueCountdown, SIT_SECONDS) // 앉기 구간 수집
-            if (recording.value) autoStop()
+            if (recording.value) autoStopWithHwFlush()
         } else {
             countdown(cueCountdown, WALK_SECONDS + SIT_SECONDS)
-            if (recording.value) autoStop()
+            if (recording.value) autoStopWithHwFlush()
+        }
+    }
+
+    // HW step sensor 는 **ACTIVITY_RECOGNITION 허용 시에만** 등록한다(미허용이면 등록해도 이벤트가 안 옴).
+    val registerStepSensors = {
+        if (hwPermitted.value) {
+            stepCounterSensor?.let { sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_FASTEST) }
+            stepDetectorSensor?.let { sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_FASTEST) }
+        }
+    }
+    // 가속도 + (허용 시)HW 만보기 두 센서를 같은 리스너로 등록/해제한다.
+    val registerSensors = {
+        sensorManager.registerListener(listener, accelSensor, SensorManager.SENSOR_DELAY_GAME)
+        registerStepSensors()
+    }
+
+    // 권한 요청 — 화면 진입 시 1회. **허용되면 즉시 step sensor 재등록**(진입 당시 미허용이었어도 이벤트 수신 보장).
+    //   거부되면 hw_* 는 sentinel(PERMISSION_DENIED)로 기록돼 '실제 0걸음'과 구분된다(가속도 수집은 정상).
+    val permLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        hwPermitted.value = granted
+        if (granted) {
+            registerStepSensors()
+        } else {
+            Toast.makeText(
+                context,
+                "활동 인식 권한 없음 — HW 만보기는 '측정 불가'로 기록됩니다(가속도 수집은 정상).",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+    LaunchedEffect(Unit) {
+        if (!hwPermitted.value) {
+            permLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
         }
     }
 
@@ -198,9 +335,7 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
         if (accelSensor != null) {
             observer = LifecycleEventObserver { _, event ->
                 when (event) {
-                    Lifecycle.Event.ON_RESUME -> sensorManager.registerListener(
-                        listener, accelSensor, SensorManager.SENSOR_DELAY_GAME,
-                    )
+                    Lifecycle.Event.ON_RESUME -> registerSensors()
                     Lifecycle.Event.ON_PAUSE -> {
                         sensorManager.unregisterListener(listener)
                         // 백그라운드 공백이 한 파일에 섞이지 않게 자동 정지(리뷰 #150).
@@ -217,9 +352,7 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
             }
             lifecycleOwner.lifecycle.addObserver(observer)
             if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
-                sensorManager.registerListener(
-                    listener, accelSensor, SensorManager.SENSOR_DELAY_GAME,
-                )
+                registerSensors()
             }
         }
         onDispose {
@@ -278,6 +411,17 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
             color = MaterialTheme.colorScheme.outline,
         )
 
+        // HW 만보기 미사용 안내(#194 하이브리드) — 권한 거부/센서 부재면 hw_* 는 '측정 불가'로 기록된다.
+        //   가속도 수집(핵심)은 정상이므로 녹화는 막지 않는다.
+        val hwNote = when {
+            stepCounterSensor == null -> "⚠️ 이 기기엔 HW 만보기 센서가 없습니다 — hw_* 는 '측정 불가'로 기록(가속도는 정상)."
+            !hwPermitted.value -> "⚠️ 활동 인식 권한 미허용 — hw_* 는 '측정 불가'로 기록(가속도는 정상). 권한을 허용하면 HW 비교값이 기록됩니다."
+            else -> null
+        }
+        hwNote?.let {
+            Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+        }
+
         Text(
             text = if (walking.value) "🚶 걷는 중" else "⏸ 멈춤",
             fontSize = 16.sp,
@@ -301,6 +445,16 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
                 fontWeight = FontWeight.Medium,
                 color = if (isSit) MaterialTheme.colorScheme.tertiary
                 else MaterialTheme.colorScheme.primary,
+            )
+        }
+
+        // HW 정산 중 안내 — 지연 보고를 받는 동안 추가 걸음이 섞이지 않게 정지를 유도(리뷰 #194 블로커3).
+        if (hwSettling.value) {
+            Text(
+                "🧮 만보기 정산 중 · 움직이지 마세요 …",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.tertiary,
             )
         }
 
@@ -333,6 +487,20 @@ fun WaveformCaptureScreen(modifier: Modifier = Modifier) {
                 onClick = {
                     detector.reset()
                     sensorBaseNs.longValue = -1L // 첫 샘플에서 기준선 재설정
+                    // HW 종료 정산 상태 초기화 — 시작 시각을 기준으로 base·walkEnd·귀속 누적을 새 trial 로 리셋.
+                    //   base 는 '시작 시각 이내(ts≤start) 최신 누적'만 인정한다. 준비 동작 걸음이 ~10초 지연
+                    //   파이프라인에 남아 있어도(ts≤start) base 에 들어가 최종 diff 에서 상쇄된다(리뷰 #194 블로커3).
+                    startSensorNs.longValue = SystemClock.elapsedRealtimeNanos()
+                    hwCounterBase.longValue = WaveformHw.baseAtStart(
+                        latestValue = hwCounterLatest.longValue,
+                        latestTsNs = hwCounterLatestTsNs.longValue,
+                        startNs = startSensorNs.longValue,
+                    )
+                    hwPendingDetector.intValue = 0
+                    walkEndSensorNs.longValue = -1L
+                    hwCounterWalkEnd.longValue = -1L
+                    hwDetectorWalkEnd.intValue = 0
+                    hwSettling.value = false
                     recorder.start(label.value, newMeta(label.value, preset.value.spec))
                     recording.value = true
                     phase.value = WaveformPhase.WALKING
@@ -393,6 +561,15 @@ private const val WALK_SECONDS = 15
 
 /** 앉기 큐 이후 수집하는 시간(초) — 이 시간 뒤 자동 정지. 큐 없는 라벨은 WALK_SECONDS+SIT_SECONDS 총길이. */
 private const val SIT_SECONDS = 5
+
+/**
+ * HW 정산 대기(ms) — `TYPE_STEP_COUNTER` 의 **문서상 최대 보고 지연(~10초)** 을 실제로 기다린다(리뷰 #194
+ * 블로커2). 정산 값 자체는 시각 귀속(base·walkEnd 창)으로 정확하지만, 지연 보고가 **도착**하는 것까지는
+ * 이 대기가 보장해야 한다. flush() 완료 신호는 FIFO 배출만 뜻할 뿐 이 보고 지연 완료를 증명하지 못하므로
+ * 조기 종료에 쓰지 않는다(그래서 상한까지 실제 대기). 정산 중에는 UI 로 '움직이지 마세요'를 표시한다.
+ * (FASTEST 등록이라 실제로는 훨씬 일찍 들어오지만, 비교 원본의 무결성을 위해 문서상 상한을 준수한다.)
+ */
+private const val HW_SETTLE_MS = 10_000L
 
 /** 1초 단위 카운트다운(초 단위 표시 갱신). 코루틴 취소(정지·pause) 시 즉시 중단된다. */
 private suspend fun countdown(state: MutableIntState, seconds: Int) {

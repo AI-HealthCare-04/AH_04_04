@@ -42,8 +42,9 @@ import java.util.Locale
  * 두 축으로 나뉜다:
  *  - **hasSitCue**: 앉기 큐(비프→markSitting)로 SITTING 구간 경계를 남기는 시나리오인가. '앉기'가 포함된
  *    라벨(WALK_THEN_SIT·SIT_ONLY)만 true 다. false 인 라벨은 큐 없이 고정 길이로만 수집한다.
- *  - **대조 목적**: NORMAL_WALK/SHUFFLE 은 오탐을 '일으키지 않아야' 하는 대조군(정상 보행·제자리 발끌기),
- *    WALK_THEN_SIT 은 오탐 대상(§5-5), SIT_ONLY 는 보행 momentum 없는 순수 앉기 하강 신호의 기준선이다.
+ *  - **보행 계수 대상**: NORMAL_WALK(정상 보행)·SHUFFLE(발 끌면서 걷기)은 **걸음이 세어져야 하는** 보행 라벨이다.
+ *    SHUFFLE 은 저진폭 보행(고령 타깃의 끌리는 걸음)으로 #176 과소계수 회복 검증용이다.
+ *    WALK_THEN_SIT 은 앉기 과다카운트(오탐) 대상(§5-5), SIT_ONLY 는 보행 momentum 없는 순수 앉기 하강의 기준선이다.
  *
  * @property id CSV·분석 스크립트가 의존하는 안정 키(변경 금지).
  * @property display 화면 표시 이름.
@@ -65,8 +66,12 @@ enum class WaveformLabel(
     /** 서 있다가 앉기만(보행 momentum 없는 순수 앉기 하강) — 앉기 신호 자체의 기준선. */
     SIT_ONLY("sit_only", "서서 앉기만", hasSitCue = true, actionHint = "그대로 서 계세요"),
 
-    /** 제자리 발끌기(작은 진폭의 애매한 움직임, 대조군) — 오탐이 나면 안 되는 기준. */
-    SHUFFLE("shuffle", "제자리 발끌기", hasSitCue = false, actionHint = "제자리 발끌기를 계속하세요"),
+    /**
+     * 발 끌면서 걷기(저진폭 보행, 고령 타깃의 끌리는 걸음) — 걸음이 세어져야 하는 보행 라벨(#176 과소계수 회복 검증).
+     * ⚠️ id 는 구 'shuffle'(제자리 발끌기 = **비보행** 대조군)과 정답 의미가 정반대라, 새 id **`shuffle_walk`** 를 쓴다
+     *    (리뷰 #194 블로커). 같은 id 로 섞으면 파일만으로 프로토콜을 복원할 수 없다.
+     */
+    SHUFFLE("shuffle_walk", "발 끌면서 걷기", hasSitCue = false, actionHint = "발을 끌면서 계속 걸으세요"),
 }
 
 /**
@@ -75,7 +80,7 @@ enum class WaveformLabel(
  *  - WALK_THEN_SIT: WALKING=보행 구간, SITTING=앉기 구간.
  *  - SIT_ONLY     : WALKING=**서있기 기준선** 구간(걷지 않음), SITTING=앉기 구간. 라벨로 구분되므로
  *                   phase.id 는 "활동/착석" 의미로 읽는다(=걷는다는 뜻이 아님).
- *  - NORMAL_WALK/SHUFFLE: 큐가 없어 전 구간 WALKING 으로만 남는다.
+ *  - NORMAL_WALK/SHUFFLE: 큐가 없어 전 구간 WALKING 으로만 남는다(둘 다 실제 보행 = 걸음 계수 대상).
  */
 enum class WaveformPhase(val id: String) {
     /** 큐 전 활동 구간(보행·서있기·제자리 등, 기본). */
@@ -158,7 +163,85 @@ data class WaveformSample(
     val event: String = "",
     /** 큐 직후 정착 구간(비프·자세전환)이라 학습에서 배제 권장인가. */
     val excluded: Boolean = false,
+    /**
+     * HW 만보기(TYPE_STEP_COUNTER) 누적 걸음 — **녹화 시작 기준**(하이브리드 비교, #184/#176).
+     * **음수면 측정 불가 sentinel**(WaveformHw): 권한거부 −2 / 센서없음 −1 / 기준미준비 −3 → '실제 0걸음'과 구분.
+     * 보행 종료 후 정산(finalizeHwWalkEnd)이 **마지막 walking 행**에 보행 종료 시점(walkEnd) 누적을 확정한다.
+     */
+    val hwStepCounter: Int = 0,
+    /** 이 샘플 직전에 HW 걸음 감지기(TYPE_STEP_DETECTOR) 이벤트가 있었는가(스텝 이벤트 0/1, 녹화 중 실시간 스트림). */
+    val hwStepDetected: Boolean = false,
+    /**
+     * HW 걸음 감지기(TYPE_STEP_DETECTOR)의 **보행 종료 시점까지 누적 이벤트 수** — 기본 0, **마지막 walking 행에만**
+     * finalizeHwWalkEnd 로 확정한다(정산 flush 중 도착한 지연 이벤트까지 포함, 리뷰 #194 블로커1). 음수면 측정 불가 sentinel.
+     * 실시간 0/1 스트림(hwStepDetected)을 한 Boolean 으로 접으면 flush 중 복수 이벤트 개수가 사라지므로 별도 누적으로 보존한다.
+     */
+    val hwStepDetectorTotal: Int = 0,
 )
+
+/**
+ * HW 만보기(#184/#176 하이브리드) 값 산출의 **순수 로직**(센서 없이 단위 테스트 가능).
+ *
+ * `hw_step_counter` 는 '녹화 시작 기준 누적 걸음'이되, **측정 불가 상태를 음수 sentinel 로 구분**해
+ * '실제 0걸음'과 '측정 불가'를 분석에서 가를 수 있게 한다(리뷰 #194 블로커2). 분석기(analyze_waveform.py)도
+ * 같은 sentinel 을 해석한다.
+ */
+object WaveformHw {
+    const val PERMISSION_DENIED = -2   // ACTIVITY_RECOGNITION 미허용
+    const val SENSOR_ABSENT = -1       // 기기에 TYPE_STEP_COUNTER 없음
+    const val BASELINE_NOT_READY = -3  // 허용·센서 있으나 아직 counter 이벤트 전(기준 누적 미확보)
+
+    /**
+     * 녹화 시작 기준 HW 누적 걸음. 음수면 측정 불가(위 sentinel).
+     * @param permitted ACTIVITY_RECOGNITION 허용 여부
+     * @param sensorPresent TYPE_STEP_COUNTER 센서 존재 여부
+     * @param baseCount 녹화 시작 시점의 누적(미확보면 <0)
+     * @param latestCount 최신 누적(미수신이면 <0)
+     */
+    fun counterSinceStart(permitted: Boolean, sensorPresent: Boolean, baseCount: Long, latestCount: Long): Int =
+        when {
+            !permitted -> PERMISSION_DENIED
+            !sensorPresent -> SENSOR_ABSENT
+            baseCount < 0L || latestCount < 0L -> BASELINE_NOT_READY
+            else -> (latestCount - baseCount).toInt()
+        }
+
+    /**
+     * HW 이벤트(event.timestamp)가 **보행 종료 시점(walkEndNs) 이내**에 발생했는가 — 종료 후 정산 flush 중
+     * 도착한 지연 보고라도, 그 걸음이 보행 구간 안에서 일어난 것만 참조에 넣기 위한 시각 귀속 판정(리뷰 #194 블로커3).
+     * TYPE_STEP_COUNTER/DETECTOR 의 timestamp 는 '걸음이 일어난 시각'이라, 보고가 늦어도 시각으로 귀속할 수 있다.
+     * walkEndNs 미확정(<0)이면 false.
+     */
+    fun attributesToWalk(eventTsNs: Long, walkEndNs: Long): Boolean =
+        walkEndNs >= 0L && eventTsNs in 0L..walkEndNs
+
+    /**
+     * HW 걸음 감지기 누적 이벤트 수 — 측정 불가면 counter 와 같은 sentinel 로 표현해 '실제 0'과 구분(리뷰 #194).
+     * detector 는 0 부터 즉시 세므로 BASELINE_NOT_READY 는 없다(허용·센서만 있으면 0 도 유효한 실측값).
+     */
+    fun detectorTotal(permitted: Boolean, sensorPresent: Boolean, count: Int): Int =
+        when {
+            !permitted -> PERMISSION_DENIED
+            !sensorPresent -> SENSOR_ABSENT
+            else -> count
+        }
+
+    /**
+     * 녹화 시작 기준 base 누적 — **시작 시각(startNs) 이내(ts ≤ start)** 이벤트의 누적만 base 로 인정한다(리뷰 #194 블로커3).
+     * 직전 trial 저장·휴대폰 재배치의 준비 동작 걸음이 최대 ~10초 지연 파이프라인에 남아 있어도, 그 걸음(ts ≤ start)이
+     * base 에 포함돼 최종 diff 에서 상쇄된다. 최신값이 아직 없거나(음수) 최신 이벤트의 시각이 start 이후면 유효 base 아님(-1).
+     */
+    fun baseAtStart(latestValue: Long, latestTsNs: Long, startNs: Long): Long =
+        if (latestValue >= 0L && startNs >= 0L && latestTsNs in 0L..startNs) latestValue else -1L
+
+    /**
+     * 종료 정산용 walkEnd 누적 — 보행 종료 이내 counter 이벤트가 **한 번도 없었으면(-1)** 유효한 base 로 폴백한다
+     * (리뷰 #194 블로커1). 이번 수집은 '실제 0걸음/과소계수'를 재는 것이므로, base 가 유효하면 새 이벤트가 없어도
+     * 최종은 base 와 같아야 하고 결과는 **0**이어야 한다(측정 불가 sentinel 이 아니라). base 도 없으면 -1(측정 불가) 유지.
+     */
+    fun resolveWalkEndCount(walkEndCount: Long, baseCount: Long): Long =
+        if (walkEndCount >= 0L) walkEndCount else baseCount
+}
 
 /**
  * 순수 CSV 직렬화. 스프레드시트·파이썬(pandas)에서 바로 열 수 있도록 표준 CSV 로 낸다.
@@ -170,7 +253,8 @@ object WaveformCsv {
     const val HEADER =
         "trial_id,device_model,placement_id,position,side,screen_facing,top_direction,fold_state," +
             "cue_delivery,label,phase,event,excluded,sensor_elapsed_ms,callback_elapsed_ms," +
-            "x,y,z,magnitude,filtered_mag,state,count,step_counted"
+            "x,y,z,magnitude,filtered_mag,state,count,step_counted," +
+            "hw_step_counter,hw_step_detector,hw_step_detector_total"
 
     /** CSV 셀 안의 콤마·개행을 공백으로 치환(따옴표 이스케이프 없이 단순 CSV 유지). */
     private fun cell(s: String): String = s.replace(',', ' ').replace('\n', ' ').replace('\r', ' ')
@@ -179,7 +263,7 @@ object WaveformCsv {
         val p = meta.placement
         return String.format(
             Locale.US,
-            "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%d,%d,%d,%.5f,%.5f,%.5f,%.5f,%.5f,%s,%d,%d",
+            "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%d,%d,%d,%.5f,%.5f,%.5f,%.5f,%.5f,%s,%d,%d,%d,%d,%d",
             cell(meta.trialId), cell(meta.deviceModel),
             cell(p.id), cell(p.position), cell(p.side), cell(p.screenFacing),
             cell(p.topDirection), cell(p.foldState),
@@ -191,6 +275,9 @@ object WaveformCsv {
             s.state.name,
             s.count,
             if (s.stepCounted) 1 else 0,
+            s.hwStepCounter,
+            if (s.hwStepDetected) 1 else 0,
+            s.hwStepDetectorTotal,
         )
     }
 
@@ -287,6 +374,27 @@ class WaveformRecorder {
     /** 녹화만 멈춘다 — 버퍼는 내보내기 위해 남겨둔다. */
     fun stop() {
         isRecording = false
+    }
+
+    /**
+     * 라벨 구간 종료 후 **HW 정산**(리뷰 #194 블로커1·2·3): TYPE_STEP_COUNTER/DETECTOR 는 보고 지연이 최대
+     * ~10초라, 동작 구간이 끝난 직후 도착하는 늦은 걸음이 잡히지 않을 수 있다. 종료 후 flush 구간에서 확정한
+     * **보행 종료 시점 누적(counter)·감지기 총 이벤트(detectorTotal)** 를 **마지막 walking 행**에 덮어쓴다.
+     *
+     * ⚠️ **마지막 walking 행** 인 이유(리뷰 #194 블로커2): walk_then_sit 의 trial 마지막 행은 phase=sitting 인데,
+     *    분석기(hw_final_counter)는 sitting 을 빼고 **마지막 walking 행**을 읽는다. trial 맨 끝 행에 쓰면 그 값이
+     *    walk_then_sit 정확도표에서 무시되므로, 분석기가 읽는 바로 그 행(마지막 walking)에 확정한다. walking 행이
+     *    하나도 없으면 마지막 행에 쓴다. 가속도 라벨 구간은 이미 stop 으로 고정돼 경계는 바뀌지 않는다.
+     *    버퍼가 비었으면 아무것도 하지 않는다.
+     */
+    fun finalizeHwWalkEnd(counter: Int, detectorTotal: Int) {
+        if (_samples.isEmpty()) return
+        val walkIdx = _samples.indexOfLast { it.phase == WaveformPhase.WALKING }
+        val target = if (walkIdx >= 0) walkIdx else _samples.size - 1
+        _samples[target] = _samples[target].copy(
+            hwStepCounter = counter,
+            hwStepDetectorTotal = detectorTotal,
+        )
     }
 
     /** 버퍼까지 완전 초기화(다음 수집 대비). */
