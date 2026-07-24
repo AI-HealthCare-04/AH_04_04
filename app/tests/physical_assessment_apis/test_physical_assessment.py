@@ -4,13 +4,14 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dtos.physical_assessment import PhysicalAssessmentCreateRequest
 from app.models.activity import ActivityLevelChangeLog, UserActivityProfile
-from app.models.enums import ActivityLevel, LevelReason, ReasonType
-from app.models.health import PhysicalAssessment
+from app.models.enums import ActivityLevel, HealthCheckStatus, InputMethod, LevelReason, ReasonType
+from app.models.health import HealthCheckSession, PhysicalAssessment
 from app.models.users import User
 from app.services.physical_assessment import PhysicalAssessmentService
 
@@ -76,6 +77,19 @@ class _FakeHealthProfileRepository:
         if self.birth_date is None:
             return None
         return SimpleNamespace(birth_date=self.birth_date)
+
+
+class _FakeHealthCheckRepository:
+    def __init__(self, health_check_session: HealthCheckSession | None) -> None:
+        self.health_check_session = health_check_session
+        self.updated: HealthCheckSession | None = None
+
+    async def get_session(self, session_id: int, user_id: int) -> HealthCheckSession | None:
+        return self.health_check_session
+
+    async def update_session(self, health_check_session: HealthCheckSession) -> HealthCheckSession:
+        self.updated = health_check_session
+        return health_check_session
 
 
 def _service(
@@ -243,6 +257,80 @@ async def test_create_assessment_sets_activity_profile_from_5sts() -> None:
     assert activity_repo.created is not None
     assert activity_repo.created.physical_assessment_id == 30
     assert session.committed is True
+
+
+async def test_create_assessment_completes_linked_started_session() -> None:
+    service, _, _, session = _service()
+    health_check_session = HealthCheckSession(
+        session_id=10,
+        user_id=1,
+        status=HealthCheckStatus.STARTED,
+        input_method=InputMethod.FORM,
+        has_estimated_value=False,
+        created_at=datetime(2026, 7, 10, 12, 0, 0),
+        completed_at=None,
+    )
+    health_check_repo = _FakeHealthCheckRepository(health_check_session)
+    service.health_check_repo = health_check_repo  # type: ignore[assignment]
+
+    await service.create_assessment(
+        cast(User, SimpleNamespace(user_id=1)),
+        PhysicalAssessmentCreateRequest(
+            session_id=10,
+            chair_stand_5_time_sec=Decimal("11.2"),
+        ),
+    )
+
+    assert health_check_repo.updated is health_check_session
+    assert health_check_session.status == HealthCheckStatus.COMPLETED
+    assert health_check_session.completed_at is not None
+    assert session.committed is True
+
+
+async def test_create_assessment_rejects_finished_session() -> None:
+    service, assessment_repo, _, session = _service()
+    health_check_session = HealthCheckSession(
+        session_id=10,
+        user_id=1,
+        status=HealthCheckStatus.SKIPPED,
+        input_method=InputMethod.FORM,
+        has_estimated_value=False,
+        created_at=datetime(2026, 7, 10, 12, 0, 0),
+        completed_at=datetime(2026, 7, 10, 12, 1, 0),
+    )
+    service.health_check_repo = _FakeHealthCheckRepository(health_check_session)  # type: ignore[assignment]
+
+    with pytest.raises(HTTPException) as exc:
+        await service.create_assessment(
+            cast(User, SimpleNamespace(user_id=1)),
+            PhysicalAssessmentCreateRequest(
+                session_id=10,
+                chair_stand_5_time_sec=Decimal("11.2"),
+            ),
+        )
+
+    assert exc.value.status_code == 409
+    assert assessment_repo.created is None
+    assert session.committed is False
+
+
+async def test_create_assessment_rejects_missing_session() -> None:
+    service, assessment_repo, _, session = _service()
+    service.health_check_repo = _FakeHealthCheckRepository(None)  # type: ignore[assignment]
+
+    with pytest.raises(HTTPException) as exc:
+        await service.create_assessment(
+            cast(User, SimpleNamespace(user_id=1)),
+            PhysicalAssessmentCreateRequest(
+                session_id=999,
+                chair_stand_5_time_sec=Decimal("11.2"),
+            ),
+        )
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "세션을 찾을 수 없습니다."
+    assert assessment_repo.created is None
+    assert session.committed is False
 
 
 async def test_create_assessment_slow_5sts_sets_easy() -> None:

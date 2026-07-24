@@ -1,6 +1,7 @@
 from datetime import date
 from decimal import Decimal
 
+from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.clock import now_kst
@@ -10,10 +11,11 @@ from app.dtos.physical_assessment import (
     PhysicalAssessmentResponse,
 )
 from app.models.activity import ActivityLevelChangeLog, UserActivityProfile
-from app.models.enums import ActivityLevel, LevelReason, ReasonType
-from app.models.health import PhysicalAssessment
+from app.models.enums import ActivityLevel, HealthCheckStatus, LevelReason, ReasonType
+from app.models.health import HealthCheckSession, PhysicalAssessment
 from app.models.users import User
 from app.repositories.activity_profile_repository import ActivityProfileRepository
+from app.repositories.health_check_repository import HealthCheckRepository
 from app.repositories.health_profile_repository import HealthProfileRepository
 from app.repositories.physical_assessment_repository import PhysicalAssessmentRepository
 
@@ -33,12 +35,15 @@ class PhysicalAssessmentService:
         self.repo = PhysicalAssessmentRepository(session)
         self.activity_repo = ActivityProfileRepository(session)
         self.health_repo = HealthProfileRepository(session)
+        self.health_check_repo = HealthCheckRepository(session)
 
     async def create_assessment(
         self,
         user: User,
         data: PhysicalAssessmentCreateRequest,
     ) -> PhysicalAssessmentResponse:
+        health_check_session = await self._get_started_session(data.session_id, user.user_id)
+
         # 밴드는 5STS 단독으로 '항상' 산출: 유효 5STS → 중/하, 미실시/스킵/통증/어지럼/연령미상 → 하.
         #   팀 결정 "미실시·중단 → 하(기본값)"에 따라 기존 레벨도 하로 수렴한다(리뷰 #103-1).
         chair_stand_valid = not data.chair_stand_skipped and data.chair_stand_5_time_sec is not None
@@ -67,6 +72,10 @@ class PhysicalAssessmentService:
             current_level=activity_level,
             physical_assessment_id=assessment.physical_assessment_id,
         )
+        if health_check_session is not None:
+            health_check_session.status = HealthCheckStatus.COMPLETED
+            health_check_session.completed_at = now_kst()
+            await self.health_check_repo.update_session(health_check_session)
         await self.session.commit()
         await self.session.refresh(assessment)
         await self.session.refresh(activity_profile)
@@ -78,6 +87,16 @@ class PhysicalAssessmentService:
                 level_reason=activity_profile.level_reason,
             ),
         )
+
+    async def _get_started_session(self, session_id: int | None, user_id: int) -> HealthCheckSession | None:
+        if session_id is None:
+            return None
+        health_check_session = await self.health_check_repo.get_session(session_id, user_id)
+        if health_check_session is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="세션을 찾을 수 없습니다.")
+        if health_check_session.status != HealthCheckStatus.STARTED:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="이미 종료된 세션입니다.")
+        return health_check_session
 
     @staticmethod
     def _age_years(birth: date) -> int:

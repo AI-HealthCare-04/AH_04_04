@@ -100,6 +100,7 @@ async def test_onboarding_happy_path_guest_to_completed(db_client: AsyncClient) 
     assessment = await db_client.post(
         "/api/v1/physical-assessments",
         json={
+            "session_id": sid,
             "assessment_type": "initial",
             "chair_stand_5_time_sec": 12.4,
             "chair_stand_skipped": False,
