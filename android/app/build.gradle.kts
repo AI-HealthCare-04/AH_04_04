@@ -79,7 +79,11 @@ abstract class ValidateReleaseSigningTask : DefaultTask() {
 
 val debugApiBaseUrl = providers.gradleProperty("AH_DEBUG_API_BASE_URL")
     .orElse(providers.environmentVariable("AH_DEBUG_API_BASE_URL"))
-    .orElse("http://10.0.2.2:8000/api/v1/")
+    // 기본값 = 배포(스테이징) 서버. 팀 대부분이 실기기로 배포 서버를 테스트하므로, 아무 설정 없이
+    // debug 빌드해도 실기기에서 바로 붙게 한다(예전 기본값 10.0.2.2 는 에뮬레이터 전용이라 실기기에서
+    // "시작 중 문제 발생 — 네트워크 확인" 오류를 반복 유발했다). 로컬 백엔드로 개발할 땐 gradle 프로퍼티
+    // 또는 환경변수 AH_DEBUG_API_BASE_URL(예: http://10.0.2.2:8000/api/v1/)로 override 한다.
+    .orElse("https://aigo-health.duckdns.org/api/v1/")
 
 val releaseApiBaseUrl = providers.gradleProperty("AH_RELEASE_API_BASE_URL")
     .orElse(providers.environmentVariable("AH_RELEASE_API_BASE_URL"))
