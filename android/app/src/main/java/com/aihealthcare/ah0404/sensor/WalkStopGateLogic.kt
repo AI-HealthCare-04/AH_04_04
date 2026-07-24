@@ -22,6 +22,8 @@ import kotlin.math.sqrt
  *   - 정지 진입 = **B ≥ WALK_REF_MIN_DYN**(애초에 보행 중이었고) 이고 **E < STOP_RATIO·B**(말미가 기준선의 40% 미만).
  *   - **기준선 latch**: 정지 진입 시 B 를 그 순간 값으로 고정하고 정지 중엔 갱신하지 않는다. (안 그러면 오래
  *     앉아 baseline 구간까지 저에너지가 되어 B 가 흘러내려 재보행 없이 풀린다.) findings §7 '보행 확정 구간 기준선'.
+ *     재보행 해제 직후에도 base 구간은 아직 앉기 저에너지라, **후보 기준선이 보행 수준(≥WALK_REF_MIN_DYN)일 때만**
+ *     B 를 갱신한다 — 안 그러면 latch 값이 저에너지로 덮여 '짧은 재보행→재정지'에서 두 번째 붕괴를 못 잡는다.
  *   - 정지 해제(재보행) = 말미 E 가 **RESUME_RATIO·B 이상**으로 되살아날 때만. 진입(0.4)보다 높은 0.6 =
  *     히스테리시스로 경계 채터링/조기 해제 방지. 즉 '재보행이 확정될 때까지' 동결이 유지된다.
  *
@@ -149,8 +151,15 @@ class WalkStopGateLogic {
         val e = median(tail)
         tailEnergy = e
         if (!isStopped) {
-            // 보행 중: 기준선을 계속 갱신하고, 말미가 기준선의 stopRatio 미만으로 붕괴하면 정지 진입(기준선 latch).
-            if (base.size >= MIN_WINDOWS_BASE) baselineWalk = median(base)
+            // 보행 중: 기준선을 갱신하되 **후보 기준선이 보행 수준(≥walkRefMinDyn)일 때만** 덮어쓴다.
+            //   !isStopped 는 '보행 중'과 같지 않다: 재보행으로 방금 해제된 직후엔 tail(마지막 2초)만 되살아났을
+            //   뿐 base 구간((now-7s, now-2s])은 아직 앉기 저에너지다. 무조건 덮으면 latch했던 보행 기준선이
+            //   즉시 저에너지 값(<walkRefMinDyn)으로 지워져, 짧게 재보행 후 다시 앉을 때 두 번째 붕괴를 감지할
+            //   기준선이 사라진다(리뷰 블로커). base 가 실제 보행 수준으로 다시 차오른 뒤에만 갱신한다.
+            if (base.size >= MIN_WINDOWS_BASE) {
+                val cand = median(base)
+                if (cand >= walkRefMinDyn) baselineWalk = cand
+            }
             baseline = baselineWalk
             if (!baselineWalk.isNaN() && baselineWalk >= walkRefMinDyn && e < stopRatio * baselineWalk) {
                 isStopped = true

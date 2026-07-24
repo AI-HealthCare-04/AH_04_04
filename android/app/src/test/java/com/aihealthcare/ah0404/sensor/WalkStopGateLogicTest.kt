@@ -96,4 +96,26 @@ class WalkStopGateLogicTest {
         feed(startMs = t, secs = 8.0, amp = 2.5f)           // 실제 재보행
         assertFalse("실제 재보행일 때만 동결 해제", gate.isStopped)
     }
+
+    @Test
+    fun `재보행 해제 직후 latch 기준선이 앉기 저에너지로 덮이지 않는다(재진입 블로커)`() {
+        // 리뷰 블로커(재진입): 재보행으로 isStopped=false 가 된 바로 다음 샘플부터 '보행 중' 분기가 다시
+        //   도는데, 이때 base 구간((now-7s, now-2s])은 아직 앉기 저에너지다. 무조건 median(base) 로 덮으면
+        //   latch했던 보행 기준선(≈2.5)이 즉시 저에너지 값(≈0.15 < walkRefMinDyn)으로 지워져, 짧게 재보행한
+        //   뒤 다시 앉을 때 두 번째 에너지 붕괴를 감지할 기준선이 사라진다.
+        //   가드('후보가 보행 수준일 때만 갱신')가 있으면 기준선은 보행 수준으로 보존되어야 한다.
+        //   → 가드 없으면 baseline≈0.15 로 떨어져 이 단언이 실패한다(가드 회귀 고정).
+        var t = feed(startMs = 0L, secs = 15.0, amp = 2.5f)  // ① 보행 → 기준선 latch(≈2.5)
+        t = feed(startMs = t, secs = 10.0, amp = 0.15f)      // ② 10초 정지(장시간)
+        assertTrue("장시간 정지 후에도 동결 유지", gate.isStopped)
+
+        feed(startMs = t, secs = 3.0, amp = 2.5f)            // ③ 해제될 만큼만 짧게 재보행
+        assertFalse("짧은 재보행으로 말미 에너지가 되살아나 해제", gate.isStopped)
+        // 해제 직후 base 는 아직 앉기 저에너지지만, latch 기준선은 보행 수준으로 남아 있어야 한다.
+        assertTrue(
+            "재보행 해제 직후 latch 기준선이 앉기 저에너지(<${WalkStopGateLogic.DEFAULT_WALK_REF_MIN_DYN})로 " +
+                "덮이면 두 번째 붕괴를 못 잡는다. baseline=${gate.baseline}",
+            gate.baseline >= WalkStopGateLogic.DEFAULT_WALK_REF_MIN_DYN,
+        )
+    }
 }
