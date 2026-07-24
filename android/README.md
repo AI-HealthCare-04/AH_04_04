@@ -4,25 +4,26 @@
 
 ## Debug
 
-기본 주소는 Android 에뮬레이터에서 호스트 PC를 가리키는 다음 값입니다.
+기본 주소는 **공용 배포(스테이징) 서버**입니다. 팀 대부분이 실기기로 이 서버를 테스트하므로, 별도 설정 없이 debug 빌드해도 실기기에서 바로 붙습니다.
 
 ```text
-http://10.0.2.2:8000/api/v1/
+https://aigo-health.duckdns.org/api/v1/
 ```
 
-실기기나 다른 개발 서버를 사용할 때는 Gradle 속성 또는 환경변수로 덮어쓸 수 있습니다.
+로컬 백엔드(에뮬레이터·개발 서버)로 개발할 때는 Gradle 속성 또는 환경변수로 덮어씁니다. 에뮬레이터는 호스트 PC를 `10.0.2.2`로 가리킵니다.
 
 ```powershell
-.\gradlew.bat assembleDebug -PAH_DEBUG_API_BASE_URL=http://192.168.0.10:8000/api/v1/
+.\gradlew.bat assembleDebug -PAH_DEBUG_API_BASE_URL=http://10.0.2.2:8000/api/v1/
 ```
 
 ```powershell
-$env:AH_DEBUG_API_BASE_URL="http://192.168.0.10:8000/api/v1/"
+$env:AH_DEBUG_API_BASE_URL="http://10.0.2.2:8000/api/v1/"
 .\gradlew.bat assembleDebug
 ```
 
-로컬 에뮬레이터와 실기기 개발 서버를 위한 HTTP cleartext 허용 설정은 debug 빌드에만
-포함됩니다. Release 빌드에는 이 예외가 포함되지 않습니다.
+> ⚠️ 기본값이 **공용 서버**이므로, 별도 설정 없이 debug로 테스트하면 그 데이터(로그인·미션 기록 등)가 **공유 스테이징 환경에 저장**됩니다. 격리가 필요하면 위처럼 로컬 백엔드로 override 하세요.
+
+로컬 개발 서버(HTTP)를 위한 cleartext 허용 설정은 debug 빌드에만 포함됩니다. Release 빌드에는 이 예외가 포함되지 않습니다.
 
 ## Release
 
