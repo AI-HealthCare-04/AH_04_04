@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -46,6 +47,15 @@ import kotlinx.coroutines.delay
 
 /** 측정 중 화면 갱신 주기(ms). 걸음/경과/상태를 세션에서 읽어온다. */
 private const val POLL_MS = 300L
+
+/**
+ * [#199 데모 스톱갭] 화면 유지(FLAG_KEEP_SCREEN_ON)를 걸어야 하는 단계인가.
+ * **측정 중(MEASURING)에만** true — READY/DONE 에서 화면을 무기한 켜 두지 않는다.
+ * 순수 함수라 단위 테스트로 phase 경계를 검증한다(리뷰 #206).
+ * ⚠️ 임시 방편(화면 상시 ON = 배터리·발열↑). 본해결은 Foreground Service 이관(#199).
+ */
+internal fun keepScreenOnForPhase(phase: WalkingSessionViewModel.Phase): Boolean =
+    phase == WalkingSessionViewModel.Phase.MEASURING
 
 /**
  * ============================================================================
@@ -156,6 +166,16 @@ fun WalkingMeasureScreen(
             petView.release()
             feedback.stop() // 이 화면의 발화·진동만 중단(공용 엔진은 Application 소유라 release 금지)
         }
+    }
+
+    // [#199 데모 스톱갭] 측정(MEASURING) 단계 동안만 화면 유지 — 화면 타임아웃으로 측정이 멈춰
+    //   10분 챌린지에 도달 못 하는 것을 막는다. phase 가 바뀌면 이 이펙트가 재실행돼 READY/DONE 에선
+    //   해제되고, 화면 이탈 시 onDispose 로도 해제한다(무기한 상시 ON 방지). 경계는 keepScreenOnForPhase
+    //   순수 함수로 단위 검증(리뷰 #206). ⚠️ 임시 — 본해결은 Foreground Service(#199).
+    val screenView = LocalView.current
+    DisposableEffect(ui.phase) {
+        screenView.keepScreenOn = keepScreenOnForPhase(ui.phase)
+        onDispose { screenView.keepScreenOn = false }
     }
 
     BackHandler { leave() }

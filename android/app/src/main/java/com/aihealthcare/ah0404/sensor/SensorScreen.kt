@@ -34,7 +34,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -116,16 +115,6 @@ fun StepCounterSection() {
             }
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
         }
-    }
-
-    // [#199 데모 스톱갭] 측정 화면이 떠 있는 동안 화면 꺼짐(타임아웃)으로 걸음 측정이 멈추는 것을
-    //   막는다(view.keepScreenOn = 윈도우 FLAG_KEEP_SCREEN_ON). 화면을 벗어나면 onDispose 로 원복해
-    //   불필요한 상시 ON 을 남기지 않는다. ⚠️ 임시 방편(배터리·발열↑, 주머니 오작동 터치) — 본해결은
-    //   Foreground Service 이관(화면 꺼도 주머니 측정 지속) #199.
-    val keepScreenOnView = LocalView.current
-    DisposableEffect(Unit) {
-        keepScreenOnView.keepScreenOn = true
-        onDispose { keepScreenOnView.keepScreenOn = false }
     }
 
     DisposableEffect(lifecycleOwner) {
