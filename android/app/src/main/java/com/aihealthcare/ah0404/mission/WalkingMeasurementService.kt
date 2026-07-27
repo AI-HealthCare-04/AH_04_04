@@ -60,14 +60,9 @@ class WalkingMeasurementService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null // 바인드 안 함(홀더로 값 공유)
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_STOP -> {
-                stopMeasurement()
-                return START_NOT_STICKY
-            }
-            else -> startMeasurement()
-        }
+        startMeasurement()
         // 시스템이 죽여도 세션(홀더)이 사라진 상태에서 되살릴 의미가 없으므로 NOT_STICKY.
+        // 종료는 companion stop()→stopService()→onDestroy() 경로로만 이뤄진다(ACTION_STOP 없음).
         return START_NOT_STICKY
     }
 
@@ -80,21 +75,11 @@ class WalkingMeasurementService : Service() {
         handler.postDelayed(ticker, UPDATE_MS)
     }
 
-    private fun stopMeasurement() {
+    override fun onDestroy() {
+        // 모든 종료 경로(stopService)가 여기로 수렴한다: 티커 정지 + WakeLock 해제.
+        //   포그라운드 알림은 서비스 파괴 시 시스템이 자동 제거하므로 별도 stopForeground 불필요.
         handler.removeCallbacks(ticker)
         releaseWakeLock()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
-        }
-        stopSelf()
-    }
-
-    override fun onDestroy() {
-        handler.removeCallbacks(ticker)
-        releaseWakeLock() // stopMeasurement 을 거치지 않고 종료되는 경로(시스템 종료 등)의 안전망
         super.onDestroy()
     }
 
@@ -162,7 +147,6 @@ class WalkingMeasurementService : Service() {
 
     companion object {
         private const val ACTION_START = "com.aihealthcare.ah0404.mission.action.START_WALK_MEASURE"
-        private const val ACTION_STOP = "com.aihealthcare.ah0404.mission.action.STOP_WALK_MEASURE"
         private const val CHANNEL_ID = "walking_measurement"
         private const val NOTIF_ID = 4199
         private const val UPDATE_MS = 1_000L
@@ -181,11 +165,18 @@ class WalkingMeasurementService : Service() {
             }
         }
 
-        /** 측정 종료/이탈 시 서비스를 내린다. */
+        /**
+         * 측정 종료/이탈 시 서비스를 내린다.
+         *
+         * `stopService()` 를 쓴다(과거 `startService(ACTION_STOP)` X). FGS 가 이미 내려간 뒤
+         * 백그라운드에서 다시 호출되는 경로(측정 완료 → 홈 → 시스템의 Activity 파괴 →
+         * onCleared → cancel → teardownService)가 실존하는데, Android 8+ 백그라운드 실행 제한상
+         * `startService()` 는 이때 IllegalStateException/BackgroundServiceStartNotAllowed 을 던진다.
+         * `stopService()` 는 그 제한이 없고, 이미 종료된 서비스에 불려도 무해하다(중복 cancel 안전).
+         * 정리는 onDestroy(티커 정지·WakeLock 해제)가, 알림 제거는 서비스 파괴 시 시스템이 담당한다.
+         */
         fun stop(context: Context) {
-            val intent = Intent(context, WalkingMeasurementService::class.java)
-                .setAction(ACTION_STOP)
-            context.startService(intent)
+            context.stopService(Intent(context, WalkingMeasurementService::class.java))
         }
     }
 }
