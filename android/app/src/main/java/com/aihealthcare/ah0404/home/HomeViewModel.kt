@@ -70,4 +70,7 @@ fun HomeResponse.toUi(): HomeUi = HomeUi(
     availableGame = availableMissionSummary.game,
     todayWalkingMin = todayWalking.dailyTotalMin,
     todayWalkingSteps = todayWalking.dailyTotalSteps,
+    streakCurrentDays = streak.currentDays,
+    streakCompletedToday = streak.completedToday,
+    streakAsOfDate = streak.asOfDate,
 )

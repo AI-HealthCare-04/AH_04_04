@@ -6,6 +6,7 @@ import com.aihealthcare.ah0404.network.HomeAvailableMissionSummary
 import com.aihealthcare.ah0404.network.HomeLatestPrediction
 import com.aihealthcare.ah0404.network.HomePointBalance
 import com.aihealthcare.ah0404.network.HomeResponse
+import com.aihealthcare.ah0404.network.HomeStreak
 import com.aihealthcare.ah0404.network.HomeTodaySummary
 import com.aihealthcare.ah0404.network.HomeTodayWalking
 import com.aihealthcare.ah0404.network.HomeUser
@@ -37,7 +38,10 @@ class HomeViewModelTest {
         override suspend fun getHome() = result()
     }
 
-    private fun home(prediction: HomeLatestPrediction? = HomeLatestPrediction("maintain", "잘 유지 중이에요")) =
+    private fun home(
+        prediction: HomeLatestPrediction? = HomeLatestPrediction("maintain", "잘 유지 중이에요"),
+        streak: HomeStreak = HomeStreak(),
+    ) =
         HomeResponse(
             user = HomeUser("홍길동"),
             pointBalance = HomePointBalance(1250),
@@ -46,6 +50,7 @@ class HomeViewModelTest {
             todaySummary = HomeTodaySummary(2),
             availableMissionSummary = HomeAvailableMissionSummary(meal = 2, exercise = 3, walking = 1, game = 1),
             todayWalking = HomeTodayWalking(dailyTotalMin = 22.0, dailyTotalSteps = 2350),
+            streak = streak,
         )
 
     @Test
@@ -64,6 +69,20 @@ class HomeViewModelTest {
         assertEquals(22, ui.todayWalkingMin.toInt())
         assertEquals(2350, ui.todayWalkingSteps)
         assertFalse(vm.error)
+    }
+
+    @Test
+    fun maps_server_authoritative_streak_without_client_side_calculation() = runTest {
+        val vm = HomeViewModel(
+            FakeApi {
+                home(streak = HomeStreak(currentDays = 4, completedToday = true, asOfDate = "2026-07-27"))
+            },
+        )
+        vm.load(); advanceUntilIdle()
+
+        assertEquals(4, vm.ui!!.streakCurrentDays)
+        assertTrue(vm.ui!!.streakCompletedToday)
+        assertEquals("2026-07-27", vm.ui!!.streakAsOfDate)
     }
 
     @Test
