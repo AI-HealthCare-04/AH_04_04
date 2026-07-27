@@ -91,8 +91,11 @@ fun WalkingMeasureScreen(
     // 생존한다(회전은 #135 세로 고정으로 재생성 없음). 오버레이는 자체 ViewModelStoreOwner 가 없어
     // Activity 에 바인딩되므로, 화면을 떠날 때 leave() 가 명시적으로 reset()→session.cancel() 을
     // 호출해 (1) 센서 해제 (2) 재진입 시 이전 세션 상태 부활 방지 (3) 재측정 가능 상태로 정리한다.
+    // #199: 백그라운드(화면 꺼짐·주머니)에서도 측정이 이어지도록 포그라운드 서비스 기반 컨트롤러를
+    //   주입한다. VM/상태 머신(#90)은 그대로 — 컨트롤러만 교체(drop-in). 측정 시작 시 FGS 기동,
+    //   이탈/종료(reset·cancel·onCleared) 시 FGS 종료.
     val vm: WalkingSessionViewModel = viewModel {
-        WalkingSessionViewModel(WalkingSession(context.applicationContext))
+        WalkingSessionViewModel(ServiceWalkingSessionController(context.applicationContext))
     }
     val ui = vm.uiState
 
