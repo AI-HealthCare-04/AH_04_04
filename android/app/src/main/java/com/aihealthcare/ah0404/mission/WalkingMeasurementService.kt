@@ -1,11 +1,13 @@
 package com.aihealthcare.ah0404.mission
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Handler
@@ -13,6 +15,7 @@ import android.os.IBinder
 import android.os.Looper
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import com.aihealthcare.ah0404.R
 
 /**
@@ -117,9 +120,14 @@ class WalkingMeasurementService : Service() {
 
     private fun notifySteps(steps: Int) {
         // POST_NOTIFICATIONS 미허용(13+)이면 표시만 생략, 서비스·측정은 계속된다.
+        //   Lint(MissingPermission)가 인정하는 명시적 권한 체크를 쓴다(areNotificationsEnabled 로는
+        //   notify() 의 권한 요구를 만족한 것으로 보지 않음). 13 미만은 권한이 자동 부여라 그대로 게시.
         if (Build.VERSION.SDK_INT >= 33 &&
-            NotificationManagerCompat.from(this).areNotificationsEnabled().not()
-        ) return
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
         NotificationManagerCompat.from(this).notify(NOTIF_ID, buildNotification(steps))
     }
 
