@@ -11,7 +11,7 @@ import com.aihealthcare.ah0404.network.PredictionInputsResponse
 import com.aihealthcare.ah0404.network.RecordApi
 import com.aihealthcare.ah0404.network.RiskHistoryItem
 import com.aihealthcare.ah0404.network.retrofit
-import java.time.LocalDate
+import java.util.Calendar
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -112,7 +112,9 @@ class RecordViewModel(
 /** 서버 응답 → 대시보드 주입값(#193). 성별 코드화·생년→나이·소수 반올림. 값 없으면 null(HTML 기본값 유지). */
 private fun PredictionInputsResponse.toDashboardPrefill(): DashboardPrefill = DashboardPrefill(
     sex = when (sex) { "male" -> 1; "female" -> 2; else -> null },
-    age = birthDate?.take(4)?.toIntOrNull()?.let { LocalDate.now().year - it }?.takeIf { it in 1..120 },
+    // java.time.LocalDate 는 API 26+ (minSdk 24) → Calendar 로 현재 연도 산출.
+    age = birthDate?.take(4)?.toIntOrNull()
+        ?.let { Calendar.getInstance().get(Calendar.YEAR) - it }?.takeIf { it in 1..120 },
     heightCm = heightCm?.roundToInt(),
     weightKg = weightKg?.roundToInt(),
     waistCm = waistCm?.roundToInt(),
