@@ -49,7 +49,7 @@ th{background:#f0f2f5;color:var(--mut);font-weight:600;font-size:11px}
 <body>
 <div class="wrap">
 <h1>근감소증 위험 예측</h1>
-<div class="sub">KNHANES 2022–2024 · AWGS 2025 라벨 · 일수 기반 로지스틱 모델(65세 이상). 출력은 <b>근감소증일 연속 확률</b>이며 진단이 아닙니다.</div>
+<div class="sub">KNHANES 2022–2024 · AWGS 2025 라벨 · 일수 기반 로지스틱 모델(65세 이상). 출력은 <b>근감소증일 연속 확률</b>이며 진단이 아닙니다. 운동 변화에 따른 값은 <b>입력을 가정했을 때의 연관 추정치</b>이지 인과효과가 아닙니다.</div>
 
 <div id="warn"></div>
 
@@ -75,12 +75,12 @@ th{background:#f0f2f5;color:var(--mut);font-weight:600;font-size:11px}
     <div class="cohortline" id="cohortline">–</div>
   </div>
   <div id="cohort"></div>
-  <div class="cohortnote">또래 분포는 국건영 통계 기반 데모 근사(추후 실제 예측 분포 데이터로 교체) · 진단이 아닙니다</div>
+  <div class="cohortnote"><b>시뮬레이션 예시</b> — 또래 분포·순위는 국건영 통계로 생성한 근사이며 <b>실제 예측 분포가 아닙니다</b>(허리 포함 모델도 이 근사 분포에 표시 · 추후 실제 분포로 교체) · 진단이 아닙니다</div>
   <div class="modeltag" id="modeltag"></div>
 </div>
 
 <div class="card">
-  <h2>운동을 주 5일로 늘리면 (현재 대비)</h2>
+  <h2>운동을 주 5일로 <u>가정하면</u> (현재 대비 · 모델 추정, 인과 아님)</h2>
   <div class="wi">
     <div class="wibox"><div class="t">근력운동 주 5일</div><div class="v" id="wiMusc">–</div><div class="d" id="dMusc"></div></div>
     <div class="wibox"><div class="t">걷기 주 5일</div><div class="v" id="wiWalk">–</div><div class="d" id="dWalk"></div></div>
@@ -260,8 +260,8 @@ function render(){
   const tail=rank>=85; // 위험 높은 쪽 꼬리: 나보다 낮은 사람이 대다수일 때
   const sexL=sex===1?"남성":"여성";
   cohortline.innerHTML=tail
-    ?"지금 <b>근력운동</b>을 시작하면 위험이 가장 크게 낮아지는 구간이에요 · 주 5일 시 <b>"+fmt(pM5)+"</b> 예상"
-    :"같은 연령대("+BANDL[bi]+") "+sexL+" 100명 중, <b>위험이 낮은 쪽에서 "+rank+"번째</b>";
+    ?"근력운동을 <b>주 5일로 가정</b>하면 위험 추정치가 가장 많이 낮아지는 구간이에요 · 주 5일 가정 시 <b>"+fmt(pM5)+"</b> (연관 추정, 인과 아님)"
+    :"같은 연령대("+BANDL[bi]+") "+sexL+" <b>시뮬레이션 예시</b>에서 위험이 낮은 쪽 약 "+rank+"번째 수준 (실제 분포 아님)";
   document.getElementById("cohort").innerHTML=cohortSVG(cohortFor(sex,bi).dens,p,rank,tail,fmt(p),sex);
 
   // 추이(0→5일)

@@ -112,12 +112,29 @@ class RecordViewModel(
 /** 서버 응답 → 대시보드 주입값(#193). 성별 코드화·생년→나이·소수 반올림. 값 없으면 null(HTML 기본값 유지). */
 private fun PredictionInputsResponse.toDashboardPrefill(): DashboardPrefill = DashboardPrefill(
     sex = when (sex) { "male" -> 1; "female" -> 2; else -> null },
-    // java.time.LocalDate 는 API 26+ (minSdk 24) → Calendar 로 현재 연도 산출.
-    age = birthDate?.take(4)?.toIntOrNull()
-        ?.let { Calendar.getInstance().get(Calendar.YEAR) - it }?.takeIf { it in 1..120 },
+    age = birthDate?.let(::manAgeFromIso)?.takeIf { it in 1..120 },
     heightCm = heightCm?.roundToInt(),
     weightKg = weightKg?.roundToInt(),
     waistCm = waistCm?.roundToInt(),
     walkDays = walkDays,
     muscDays = muscDays,
 )
+
+/**
+ * "YYYY-MM-DD" 생년월일 → **만 나이**. 연도만 빼면 생일 전 사용자가 1살 많게 나오므로(리뷰 반영),
+ * 올해 생일이 아직 안 지났으면 -1 한다. java.time(API26+) 대신 Calendar(minSdk 24) 사용.
+ */
+private fun manAgeFromIso(iso: String): Int? {
+    val parts = iso.split("-")
+    if (parts.size < 3) return null
+    val year = parts[0].toIntOrNull() ?: return null
+    val month = parts[1].toIntOrNull() ?: return null
+    val day = parts[2].take(2).toIntOrNull() ?: return null
+    val now = Calendar.getInstance()
+    val curYear = now.get(Calendar.YEAR)
+    val curMonth = now.get(Calendar.MONTH) + 1 // Calendar.MONTH 는 0-based
+    val curDay = now.get(Calendar.DAY_OF_MONTH)
+    var age = curYear - year
+    if (curMonth < month || (curMonth == month && curDay < day)) age-- // 올해 생일 전이면 -1
+    return age
+}
