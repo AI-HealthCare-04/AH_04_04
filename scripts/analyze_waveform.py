@@ -157,6 +157,13 @@ TAIL_S = 2.0           # 말미 구간 길이(초) — §9 채택안 r2. 앉기 
 WALK_REF_MIN_DYN = 1.0  # 기준구간 동적RMS 가 이 미만이면 '애초에 보행 아님'(shuffle/sit_only)
 STOP_RATIO = 0.4        # 말미 동적RMS 가 기준의 이 비율(k) 미만이면 '보행 종료(정지 전환)' 판정
 
+# ── #131 소급차감(retroactive subtraction) 파라미터 ──────────────────────────
+# '보행 직후 앉기' 오탐은 정지 감지가 확인창(≈TAIL_S) 때문에 늦게 '선언'되는 사이에 발생한다.
+# 그래서 정지 선언 시각 T 기준 (T-RETRO_WINDOW_S, T] 안에서 카운트된 걸음을 사후 취소한다.
+# (동결 대신 소급 차감 — 설계 근거: #184 재설계 메모 / #131)
+RETRO_WINDOW_S = 3.0            # 소급차감 창 폭(초)
+STOP_DETECT_LATENCY_S = TAIL_S  # 붕괴 온셋→선언까지 확인 지연(초) = 말미 확인창 길이
+
 
 # ── 저수준 유틸 ──────────────────────────────────────────────────────────────
 def _f(s):
@@ -256,6 +263,11 @@ def load_file(fp):
             r["_mag"] = _f(r["magnitude"])
             r["_fmag"] = _f(r["filtered_mag"])
             r["_t"] = _f(r["sensor_elapsed_ms"])
+            # 콜백 벽시계(SystemClock.elapsedRealtime). 라이브 검출기가 실제로 쓴 시각이라
+            # baseline 재현의 앵커 시각이다(WalkingSession.kt). 없으면 센서시각으로 폴백.
+            r["_tcb"] = _f(r.get("callback_elapsed_ms"))
+            if r["_tcb"] is None:
+                r["_tcb"] = r["_t"]
             r["_excluded"] = (r.get("excluded") or "0").strip() == "1"
             r["_step"] = (r.get("step_counted") or "0").strip() == "1"
             if None in (r["_x"], r["_y"], r["_z"], r["_t"]):
@@ -382,6 +394,46 @@ def sliding_stop_features(rows):
     walk_stop = was_walking and not math.isnan(tail_ratio) and tail_ratio < STOP_RATIO
     return {"e_ref": e_ref, "e_tail": e_tail, "tail_ratio": tail_ratio,
             "was_walking": was_walking, "walk_stop": walk_stop}
+
+
+def stop_declared_time(rows):
+    """'보행→정지' 선언 시각 T(절대 ms, _t 클럭)를 추정. 정지 전환 없으면 None.
+
+    sliding_stop_features 와 동일 기준(자기 e_ref 대비 말미 붕괴)을 쓰되, 판정 bool 이 아니라
+    '언제' 를 돌려준다: 붕괴가 지속(이후 끝까지 thr 미만)되기 시작하는 창 중심 τ 를 온셋으로
+    잡고, 실시간 감지가 확인창(STOP_DETECT_LATENCY_S)만큼 늦게 선언하는 것을 모델링해
+    T = τ + 지연 을 반환. #131 소급차감 창의 기준점이다."""
+    trace = windowed_dyn_trace(rows)
+    if not trace:
+        return None
+    ref = [e for (tc, e) in trace if REF_START_S <= tc <= REF_END_S]
+    if not ref:
+        return None
+    e_ref = statistics.median(ref)
+    if e_ref < WALK_REF_MIN_DYN:
+        return None  # 애초에 보행 아님 → 정지 전환 없음(normal 이 아닌 shuffle/sit_only 방어)
+    thr = STOP_RATIO * e_ref
+    onset = None
+    for i, (tc, _e) in enumerate(trace):
+        if tc < REF_START_S:
+            continue
+        if all(ee < thr for (_, ee) in trace[i:]):  # 이후 끝까지 붕괴 지속 = 진짜 정지 온셋
+            onset = tc
+            break
+    if onset is None:
+        return None  # 잦아들었다 다시 걷는 등 지속 붕괴 아님
+    rr = [r for r in rows if not r["_excluded"]]
+    t0 = rr[0]["_t"]
+    return t0 + (onset + STOP_DETECT_LATENCY_S) * 1000.0
+
+
+def apply_retro(step_times, stop_t, window_s=RETRO_WINDOW_S):
+    """정지 선언 시각 stop_t 의 (stop_t-window, stop_t] 안 걸음을 취소. (남은수, 취소수) 반환."""
+    if stop_t is None:
+        return len(step_times), 0
+    lo = stop_t - window_s * 1000.0
+    removed = sum(1 for t in step_times if lo < t <= stop_t)
+    return len(step_times) - removed, removed
 
 
 # ── 통계 헬퍼 ────────────────────────────────────────────────────────────────
@@ -682,6 +734,16 @@ def load_manual_counts(path):
     return m
 
 
+def lookup_manual(manual_counts, *keys):
+    """manual_step_count 정답 조회(첫 매칭 키). **0 은 sit_only 의 정상 정답**이므로
+    `.get(a) or .get(b)` 처럼 falsy 로 떨구면 안 된다(0 이 사라져 표/집계에서 정답이
+    누락됨, 리뷰 #201). 키 '존재'로만 판정하고 없으면 None 을 돌린다."""
+    for k in keys:
+        if k in manual_counts:
+            return manual_counts[k]
+    return None
+
+
 # ── 합성 데이터 자체검증(--selftest) ─────────────────────────────────────────
 def _synth_file(fp, label, placement, gravity_axis="z"):
     """합성 CSV 1개 생성. 보행=수평(전후) 진동, 앉기=수직(중력축) 하강 임팩트.
@@ -855,8 +917,16 @@ def selftest():
     assert inspect(sample_file) is True, "정상 합성 파일이 inspect 에서 FAIL"
     print("[✓] --inspect 단일 파일 점검 경로 통과\n")
 
+    _replay_selftest()
+    _retro_selftest()
+    _adaptive_selftest()
+    _manual_zero_selftest()
+
     print("=== 합성 데이터에 대한 전체 리포트(형식 확인용) ===\n")
     analyze(trials, parts)
+    # 리플레이 리포트 경로도 태운다(형식/무결성 확인).
+    print("=== 합성 데이터 리플레이 리포트(형식 확인용) ===\n")
+    replay(trials)
     print("[✓] selftest 통과 — 실제 수집 CSV 로 `python scripts/analyze_waveform.py <디렉토리>` 실행하세요.")
 
 
@@ -993,12 +1063,496 @@ def inspect(path):
     return ok
 
 
+# ── 검출기 리플레이(#176/#131) ───────────────────────────────────────────────
+# 녹화된 원시 파형(raw x,y,z)을 실제 앱 검출기(WalkingStepDetectorLogic.kt)와
+# 동일 로직으로 재생해 걸음수를 재현한다. 목적:
+#   ① baseline 포팅 검증 — 재생 count == 녹화 count 컬럼(앱이 라이브로 찍은 값)이어야 함.
+#   ② #176 적응형·#131 소급차감을 오프라인에서 얹어 정답(manual_step_count) 대비 채점.
+# ⚠️ 포팅 원본이 바뀌면(파라미터/상태머신) 이 클래스도 함께 갱신해야 앵커가 유효하다.
+class StepReplay:
+    """WalkingStepDetectorLogic.kt 의 파이썬 포팅(순수 로직). raw 가속도 샘플을 순서대로 먹인다.
+
+    감지 파라미터는 실측 확정 DEFAULT_*(#89) 고정이 기본값. 2단계(#176)에서 peak_threshold 를
+    돌출도 기반으로 교체·스윕할 수 있도록 생성자 인자로 노출한다."""
+    # ── #89 실측 확정값(WalkingStepDetectorLogic.kt DEFAULT_*와 1:1) ──
+    PEAK_THRESHOLD = 10.5
+    MIN_PEAK_INTERVAL_MS = 350
+    MAX_PEAK_INTERVAL_MS = 1000
+    PEAKS_TO_START_WALKING = 10
+    WALKING_TIMEOUT_MS = 2500
+    LOW_PASS_ALPHA = 0.3
+
+    def __init__(self, peak_threshold=None, min_int=None, max_int=None,
+                 peaks_to_start=None, timeout=None, alpha=None):
+        self.peak_threshold = self.PEAK_THRESHOLD if peak_threshold is None else peak_threshold
+        self.min_int = self.MIN_PEAK_INTERVAL_MS if min_int is None else min_int
+        self.max_int = self.MAX_PEAK_INTERVAL_MS if max_int is None else max_int
+        self.peaks_to_start = self.PEAKS_TO_START_WALKING if peaks_to_start is None else peaks_to_start
+        self.timeout = self.WALKING_TIMEOUT_MS if timeout is None else timeout
+        self.alpha = self.LOW_PASS_ALPHA if alpha is None else alpha
+        self.reset()
+
+    def reset(self):
+        self.filtered = 9.8
+        self.state = "IDLE"
+        self.count = 0
+        self.consecutive = 0
+        self.was_above = False
+        self.last_peak = 0
+        self.first_peak = 0
+        self.has_peak = False
+        self.step_times = []      # 카운트로 확정된 걸음의 시각(ms) — #131 소급차감용
+        self._warmup_peaks = []   # 게이트 진입 전 웜업 피크 시각들(진입 시 소급 반영)
+
+    def process(self, x, y, z, t):
+        """raw 가속도 1샘플 처리. 이번 샘플에서 걸음이 세어졌으면 True."""
+        raw = math.sqrt(x * x + y * y + z * z)
+        self.filtered = self.alpha * raw + (1 - self.alpha) * self.filtered
+
+        if self.has_peak and t - self.last_peak > self.timeout:
+            self.state = "IDLE"
+            self.consecutive = 0
+
+        is_above = self.filtered > self.peak_threshold
+        rising = is_above and not self.was_above
+        self.was_above = is_above
+        if not rising:
+            return False
+
+        if self.has_peak and t - self.last_peak < self.min_int:
+            return False
+
+        interval = (t - self.last_peak) if self.has_peak else float("inf")
+        if not self.has_peak:
+            self.first_peak = t
+        self.last_peak = t
+        self.has_peak = True
+
+        rhythmic = interval <= self.max_int
+        self.consecutive = self.consecutive + 1 if rhythmic else 1
+
+        if self.state == "IDLE":
+            # 웜업 피크 시각 기록(진입 시 소급 걸음 시각으로 사용). 리듬 끊기면 새로 시작.
+            self._warmup_peaks = (self._warmup_peaks + [t]) if rhythmic else [t]
+            if self.consecutive >= self.peaks_to_start:
+                self.state = "WALKING"
+                self.count += self.peaks_to_start
+                # 웜업 동안 모은 마지막 N개 피크 시각을 소급 걸음으로 인정.
+                self.step_times.extend(self._warmup_peaks[-self.peaks_to_start:])
+                self._warmup_peaks = []
+                return True
+            return False
+        # WALKING
+        if rhythmic:
+            self.count += 1
+            self.step_times.append(t)
+            return True
+        self.state = "IDLE"
+        self._warmup_peaks = [t]
+        return False
+
+
+def _recorded_count(rows):
+    """녹화 파일의 최종 count(앱이 라이브로 찍은 누적 걸음). 없으면 None."""
+    best = None
+    for r in rows:
+        c = _f(r.get("count"))
+        if c is not None:
+            best = int(c) if best is None else max(best, int(c))
+    return best
+
+
+def replay_trial(rows, factory=StepReplay, tkey="_tcb"):
+    """한 trial 의 raw 파형을 검출기로 재생. (재생 count, 걸음 시각 리스트) 반환.
+
+    tkey='_tcb'(콜백시각·기본)면 라이브 검출기(WalkingSession)를 그대로 재현(앵커).
+    tkey='_t'(센서 하드웨어시각)면 배칭으로 뭉친 콜백시각을 배제한 '타임스탬프 교정' 재생.
+    라이브 검출기는 녹화된 모든 샘플을 순서대로 처리했으므로 전체 rows 를 순서대로 먹인다."""
+    det = factory()
+    steps = []
+    for r in rows:
+        t = r.get(tkey)
+        if t is None:
+            t = r["_t"]
+        if None in (r["_x"], r["_y"], r["_z"], t):
+            continue
+        det.process(r["_x"], r["_y"], r["_z"], t)
+    # 걸음 시각은 소급차감(#131)에서 센서시각 기준 에너지창과 맞물리므로 _t 클럭으로 통일.
+    return det.count, det.step_times
+
+
+def replay(trials, manual_counts=None):
+    """검출기 리플레이 리포트.
+
+    ① baseline 포팅 앵커: 재생 count == 앱이 녹화한 count.
+    ② #131 소급차감: 정지 선언 T 의 (T-3s, T] 걸음 취소 → 보정 count.
+    ③ 라벨별 요약 + 정답(manual_step_count) 대비 + #131 수용 판정.
+    """
+    manual_counts = manual_counts or {}
+    print("=== 검출기 리플레이 (baseline 앵커 + 타임스탬프 교정 + #131 소급차감) ===\n")
+    print("재생=콜백시각(라이브 재현) · 교정=센서시각(배칭 아티팩트 제거) · 보정=교정+소급차감\n")
+    hdr = (f"  {'파일':<30} {'라벨':<14} {'녹화':>4} {'재생':>4} {'Δ':>3} "
+           f"{'교정':>4} {'차감':>4} {'보정':>4} {'정답':>4}")
+    print(hdr)
+    print("  " + "-" * (len(hdr) - 2))
+    by_label = defaultdict(list)   # label -> [(clean, adjusted, manual)]
+    anchor_ok = anchor_total = 0
+    ts_recovered = 0               # 타임스탬프 교정으로 회복된(교정>재생) trial 수
+    for t in trials:
+        rows = t["rows"]
+        label = t["label"]
+        rec = _recorded_count(rows)
+        rep_live, _ = replay_trial(rows, tkey="_tcb")   # 라이브(콜백) 재현 = 앵커
+        rep_clean, steps = replay_trial(rows, tkey="_t")  # 센서시각 = 교정 후보
+        stop_t = stop_declared_time(rows)
+        adj, removed = apply_retro(steps, stop_t)
+        tid = rows[0].get("trial_id") or t["file"]
+        man = lookup_manual(manual_counts, tid, t["file"])  # 0(sit_only 정답) 보존
+        delta = (rep_live - rec) if rec is not None else None
+        if rec is not None:
+            anchor_total += 1
+            if delta == 0:
+                anchor_ok += 1
+        if rep_clean > rep_live:
+            ts_recovered += 1
+        by_label[label].append((rep_clean, adj, man))
+        print(f"  {t['file']:<30.30} {label:<14} "
+              f"{('-' if rec is None else rec):>4} {rep_live:>4} "
+              f"{('-' if delta is None else f'{delta:+d}'):>3} {rep_clean:>4} "
+              f"{('-' if removed == 0 else f'-{removed}'):>4} {adj:>4} "
+              f"{('-' if man is None else man):>4}")
+    print()
+    if anchor_total:
+        pct = anchor_ok / anchor_total * 100
+        flag = "✅" if anchor_ok == anchor_total else "⚠️"
+        print(f"  {flag} 포팅 앵커(재생=콜백시각): {anchor_ok}/{anchor_total} trial 재생==녹화 ({pct:.0f}%)")
+        if anchor_ok != anchor_total:
+            print("     └ Δ≠0 = 포팅 불일치 또는 녹화 count 부재(합성/구스키마).")
+    else:
+        print("  ⚠️ 녹화 count 컬럼 없음 → 앵커 생략(합성/구스키마). 재생값만 참고.")
+    if ts_recovered:
+        print(f"  🔎 타임스탬프 교정(센서시각) 회복: {ts_recovered} trial 에서 교정>재생 "
+              f"— 센서 배칭으로 콜백시각이 뭉쳐 리듬 붕괴한 과소계수. "
+              f"수정 후보: SensorEvent.timestamp 사용(WalkingSession).")
+    print()
+
+    print("라벨별 요약 (교정=센서시각, 보정=+소급차감; 정답 대비는 manual_step_count 제공 시)\n")
+    print(f"  {'라벨':<14} {'n':>3} {'교정평균':>8} {'보정평균':>8} {'정답평균':>8} {'보정오차%':>9}")
+    print("  " + "-" * 56)
+    for label in ALL_LABELS + sorted(set(by_label) - set(ALL_LABELS)):
+        recs = by_label.get(label)
+        if not recs:
+            continue
+        reps = [r[0] for r in recs]
+        adjs = [r[1] for r in recs]
+        mans = [r[2] for r in recs if r[2] is not None]
+        rep_avg = sum(reps) / len(reps)
+        adj_avg = sum(adjs) / len(adjs)
+        man_avg = (sum(mans) / len(mans)) if mans else None
+        err = (f"{(adj_avg - man_avg) / man_avg * 100:+.0f}"
+               if (man_avg not in (None, 0)) else "-")
+        print(f"  {label:<14} {len(recs):>3} {rep_avg:>8.1f} {adj_avg:>8.1f} "
+              f"{('-' if man_avg is None else f'{man_avg:.1f}'):>8} {err:>9}")
+    print()
+
+    # #131 수용 판정: walk_then_sit 과다카운트가 정답+2 이하로 내려왔는가.
+    ws = [r for r in by_label.get(LABEL_WALK_SIT, []) if r[2] is not None]
+    if ws:
+        over_before = [r[0] - r[2] for r in ws]  # 재생 - 정답
+        over_after = [r[1] - r[2] for r in ws]   # 보정 - 정답
+        worst_after = max(over_after)
+        ok = worst_after <= 2
+        print(f"  {'✅' if ok else '❌'} #131 수용(walk_then_sit 과다 ≤ +2): "
+              f"보정 후 최대 +{worst_after} "
+              f"(차감 전 최대 +{max(over_before)}) — n={len(ws)}")
+    else:
+        print("  ℹ️ walk_then_sit 정답(manual_step_count) 없음 → #131 수용 판정 보류(3차 수집 시).")
+    print("     ※ 다음(2단계): #176 돌출도 적응형으로 정상/느린 보행 과소계수(0) 회복.")
+
+
+# ── #176 돌출도 적응형 검출(Stage 2) ─────────────────────────────────────────
+# 고정임계(10.5) 대신, 중력제거 동적신호의 국소최대에서 '골→마루 상승폭(돌출도)'이
+# 최근 돌출도 스케일 대비 충분하면 유효 피크로 본다. 약한/느린 걸음(hand-carry·저진폭
+# shuffle_walk)도 자기 스케일 기준으로 잡혀 과소계수(0)를 회복한다. 유효피크는 baseline 과
+# 동일한 리듬 상태머신(MIN/MAX/NEED/웜업)에 태워 카운트 → 검출 감도만 바꾸고 계수 규칙은 보존.
+# 기본값은 3차 파일럿(24 trial·2명) 스윕의 균형점: PR0.2/FL0.25 에서 normal −11%·
+# walk_then_sit +6%·shuffle_walk +8%·sit_only FP 0(정상/저진폭 회복하며 순수앉기 오탐 0).
+# ⚠️ 파일럿 규모라 잠정값 — 조건당 10회 전량 수집 후 재확정(--pr/--fl 로 스윕).
+ADAPT_PR = 0.2          # 돌출도 비율: 유효 문턱 = max(FL, PR·돌출EMA)
+ADAPT_FL = 0.25         # 돌출도 절대 하한(m/s²) — 미세 진동을 걸러 sit_only FP 억제
+ADAPT_GRAV_A = 0.9      # 중력 저역통과(느린 EMA): gravity = A·gravity + (1-A)·raw
+ADAPT_DYN_SMOOTH = 0.25 # 동적신호 평활 EMA α (프로토타입 값)
+ADAPT_PROM_EMA = 0.3    # 돌출도 스케일 EMA α
+
+
+def prominence_peaks(rows, pr=ADAPT_PR, fl=ADAPT_FL):
+    """중력제거 동적신호의 돌출도 기반 유효 피크 시각(ms, _t) 리스트."""
+    gx = gy = gz = None
+    dsig = 0.0
+    prev = None
+    prev_t = None
+    slope_up = False
+    last_trough = 0.0
+    prom_ema = None
+    peaks = []
+    for r in rows:
+        x, y, z, t = r["_x"], r["_y"], r["_z"], r["_t"]
+        if None in (x, y, z, t):
+            continue
+        if gx is None:
+            gx, gy, gz = x, y, z
+        else:
+            gx = ADAPT_GRAV_A * gx + (1 - ADAPT_GRAV_A) * x
+            gy = ADAPT_GRAV_A * gy + (1 - ADAPT_GRAV_A) * y
+            gz = ADAPT_GRAV_A * gz + (1 - ADAPT_GRAV_A) * z
+        dm = math.sqrt((x - gx) ** 2 + (y - gy) ** 2 + (z - gz) ** 2)
+        dsig = ADAPT_DYN_SMOOTH * dm + (1 - ADAPT_DYN_SMOOTH) * dsig
+        if prev is not None:
+            if dsig > prev:
+                if not slope_up:      # 골(직전이 국소최소)에서 상승 재개
+                    last_trough = prev
+                slope_up = True
+            elif dsig < prev:
+                if slope_up:          # 직전(prev)이 국소최대 = 피크 후보
+                    prom = prev - last_trough
+                    thr = max(fl, pr * (prom_ema if prom_ema is not None else prom))
+                    if prom >= thr:
+                        peaks.append(prev_t)
+                        prom_ema = (ADAPT_PROM_EMA * prom + (1 - ADAPT_PROM_EMA) * prom_ema
+                                    if prom_ema is not None else prom)
+                slope_up = False
+        prev = dsig
+        prev_t = t
+    return peaks
+
+
+def _count_from_peaks(peak_times, min_int=StepReplay.MIN_PEAK_INTERVAL_MS,
+                      max_int=StepReplay.MAX_PEAK_INTERVAL_MS,
+                      need=StepReplay.PEAKS_TO_START_WALKING):
+    """피크 시각 리스트를 baseline 과 동일한 리듬 상태머신에 태워 (count, step_times) 산출."""
+    state = "IDLE"
+    count = 0
+    consec = 0
+    last = None
+    steps = []
+    warmup = []
+    for t in peak_times:
+        if last is not None and t - last < min_int:
+            continue  # 최소 간격 미만 = 이중봉우리
+        interval = (t - last) if last is not None else float("inf")
+        last = t
+        rhythmic = interval <= max_int
+        consec = consec + 1 if rhythmic else 1
+        if state == "IDLE":
+            warmup = (warmup + [t]) if rhythmic else [t]
+            if consec >= need:
+                state = "WALKING"
+                count += need
+                steps.extend(warmup[-need:])
+                warmup = []
+        else:
+            if rhythmic:
+                count += 1
+                steps.append(t)
+            else:
+                state = "IDLE"
+                warmup = [t]
+    return count, steps
+
+
+def adaptive_step_count(rows, pr=ADAPT_PR, fl=ADAPT_FL):
+    """#176 돌출도 적응형 걸음수. (count, step_times) 반환."""
+    return _count_from_peaks(prominence_peaks(rows, pr, fl))
+
+
+def _replay_selftest():
+    """포팅 로직 자체를 알려진 신호로 검증(합성 파형 count 컬럼은 stub 이라 앵커 불가)."""
+    # 50Hz, 2걸음/초(간격 500ms, [350,1000] 대역 안 → rhythmic). 걸음마다 raw 스파이크.
+    hz, steps, step_period = 50, 16, 25   # 25샘플=500ms
+    det = StepReplay()
+    for i in range(steps * step_period):
+        phase = i % step_period
+        raw = 13.0 if phase < 5 else 9.8   # 각 걸음 초반 100ms 스파이크
+        det.process(raw, 0.0, 0.0, i * 20)  # x=raw,y=z=0 → magnitude=raw, dt=20ms
+    # 웜업 10 소급 + 이후 카운트 → 총 걸음 수 ≈ steps. 경계 효과 ±1 허용.
+    assert steps - 1 <= det.count <= steps, f"포팅 카운트 예상 {steps}±1, 실제 {det.count}"
+    assert len(det.step_times) == det.count, "step_times 개수 != count"
+    # 정지(느린 리듬)는 걷기로 안 샘: 1.5s 간격(대역 밖 >1000ms) 스파이크 → WALKING 진입 실패.
+    slow = StepReplay()
+    for k in range(8):
+        base = k * 75   # 75샘플=1500ms 간격
+        for j in range(5):
+            slow.process(13.0, 0.0, 0.0, (base + j) * 20)
+        for j in range(5, 75):
+            slow.process(9.8, 0.0, 0.0, (base + j) * 20)
+    assert slow.count == 0, f"대역 밖 느린 리듬은 0 이어야, 실제 {slow.count}"
+    print(f"[✓] 리플레이 포팅 검증: 2Hz 16걸음→count {det.count}, 느린 비보행→0\n")
+
+
+def _mk_signal_rows(spike_starts_ms, end_ms, hz=50):
+    """알려진 신호 rows 생성. spike_starts_ms 각 시점부터 100ms 동안 x=13(피크), 그 외 x=9.8.
+    windowed_dyn_trace·replay_trial·stop_declared_time 이 요구하는 필드만 채운다."""
+    dt = 1000 // hz
+    rows, t = [], 0
+    while t <= end_ms:
+        in_spike = any(s <= t < s + 100 for s in spike_starts_ms)
+        rows.append({"_x": 13.0 if in_spike else 9.8, "_y": 0.0, "_z": 0.0,
+                     "_t": float(t), "_excluded": False, "phase": "walking"})
+        t += dt
+    return rows
+
+
+def _retro_selftest():
+    """#131 정지감지·소급차감 메커니즘을 알려진 신호로 검증(정확 수치가 아니라 방향/작동)."""
+    # (1) 보행 후 앉기: 0~7.5s 2Hz 보행 + 8.0·8.88s 앉기 오탐 스파이크 + 이후 정지(잦아듦).
+    walk = list(range(0, 7501, 500))
+    sit_fp = [8000, 8882]                 # 앉기 직후 오탐(882ms 간격, 정상 대역 안)
+    rows1 = _mk_signal_rows(walk + sit_fp, 12000)
+    base1, steps1 = replay_trial(rows1)
+    stop1 = stop_declared_time(rows1)
+    adj1, removed1 = apply_retro(steps1, stop1)
+    assert stop1 is not None, "보행→정지 전환이 감지돼야 함(stop_t=None)"
+    assert removed1 >= 1, f"소급창에서 최소 1걸음 차감돼야, 실제 {removed1}"
+    assert adj1 == base1 - removed1 < base1, f"보정={base1}-{removed1} 이어야, 실제 {adj1}"
+
+    # (2) 계속 보행(정지 없음): 0~12s 2Hz 연속 → 차감 0, 보정==재생.
+    rows2 = _mk_signal_rows(list(range(0, 12001, 500)), 12000)
+    base2, steps2 = replay_trial(rows2)
+    stop2 = stop_declared_time(rows2)
+    adj2, removed2 = apply_retro(steps2, stop2)
+    assert stop2 is None, "정지 없는 연속 보행인데 정지 선언됨(과차감 위험)"
+    assert removed2 == 0 and adj2 == base2, f"연속 보행은 차감 0·보정==재생, 실제 -{removed2}/{adj2}"
+
+    print(f"[✓] 소급차감 검증: 보행후앉기 {base1}→{adj1}(-{removed1}) · 연속보행 {base2}(차감0)\n")
+
+
+def _adaptive_selftest():
+    """#176 돌출도 적응형: 약신호(고정임계 미달)를 회복하는지 알려진 신호로 검증."""
+    hz, steps, period = 50, 16, 25   # 2Hz
+    # 약한 보행: 중력은 z축(9.8), 걸음 임팩트는 직교하는 x축 임펄스(2.0·100ms). 직교라
+    # 크기는 √(9.8²+2²)=10.0<10.5 → 고정임계(filtered) 미달=0. 하지만 중력제거 동적신호엔
+    # 걸음마다 큰 돌출 → 적응형은 회복해야 함(실제 보행의 수평 스웨이와 같은 구조).
+    weak = []
+    for i in range(steps * period):
+        spike = 2.0 if (i % period) < 5 else 0.0
+        weak.append({"_x": spike, "_y": 0.0, "_z": 9.8,
+                     "_t": float(i * 20), "_excluded": False, "phase": "walking"})
+    fixed_cnt, _ = replay_trial(weak, tkey="_t")
+    adapt_cnt, _ = adaptive_step_count(weak)
+    assert fixed_cnt == 0, f"약신호는 고정임계로 0 이어야(대조), 실제 {fixed_cnt}"
+    assert adapt_cnt >= steps - 2, f"적응형은 약신호 회복(~{steps}), 실제 {adapt_cnt}"
+    # 순수 정지(미세 노이즈만): 적응형도 0 이어야(FP 없음).
+    import random
+    rnd = random.Random(7)
+    still = [{"_x": 9.8 + rnd.uniform(-0.02, 0.02), "_y": rnd.uniform(-0.02, 0.02),
+              "_z": rnd.uniform(-0.02, 0.02), "_t": float(i * 20),
+              "_excluded": False, "phase": "sitting"} for i in range(1000)]
+    still_cnt, _ = adaptive_step_count(still)
+    assert still_cnt == 0, f"순수 정지는 적응형 FP 0 이어야, 실제 {still_cnt}"
+    print(f"[✓] 적응형 검증: 약신호 고정임계 {fixed_cnt} → 적응형 {adapt_cnt} 회복 · 정지 FP 0\n")
+
+
+def _manual_zero_selftest():
+    """정답 조회가 manual_step_count=0(sit_only)을 보존하는지(리뷰 #201 회귀).
+
+    replay/adaptive 리포트가 공유하는 lookup_manual 경계에서 검증한다. 과거 버그는
+    `.get(a) or .get(b)` 라 0 이 falsy 로 떨어져 sit_only 정답이 표/집계에서 사라졌다."""
+    # load_manual_counts 는 trial_id 와 trial_id.csv 두 키를 같은 값으로 넣는다.
+    m = {"sit_only_1": 0, "sit_only_1.csv": 0, "normal_1": 15, "normal_1.csv": 15}
+    assert lookup_manual(m, "sit_only_1", "sit_only_1.csv") == 0, "0 정답이 보존되지 않음"
+    assert lookup_manual(m, "normal_1", "normal_1.csv") == 15, "양수 정답 조회 실패"
+    # 첫 키 부재 시 둘째 키(파일명) 폴백.
+    assert lookup_manual(m, "missing", "sit_only_1.csv") == 0, "폴백 키에서 0 유실"
+    # 어느 키도 없으면 None(정답 없음).
+    assert lookup_manual(m, "nope", "nope.csv") is None, "미등록은 None 이어야"
+    # 잠재 버그 대조: 폴백 키가 없을 때 falsy-or 는 0 을 None 으로 떨군다. lookup_manual 은 보존.
+    single = {"sit_only_1": 0}  # 폴백(.csv) 키 부재
+    assert lookup_manual(single, "sit_only_1", "sit_only_1.csv") == 0, "폴백 부재 시 0 유실"
+    buggy = single.get("sit_only_1") or single.get("sit_only_1.csv")  # 0 or None → None
+    assert buggy is None, "회귀 대조: 구 falsy-or 는 폴백 부재 시 0 을 None 으로 떨굼"
+    print("[✓] 정답 0 보존 검증(리뷰 #201): sit_only manual_step_count=0 이 표/집계에서 유지됨\n")
+
+
+def adaptive_report(trials, manual_counts=None, pr=ADAPT_PR, fl=ADAPT_FL):
+    """#176 돌출도 적응형 vs 현행(baseline) — 정답 대비 과소계수 회복 + sit_only FP 점검."""
+    manual_counts = manual_counts or {}
+    print(f"=== #176 돌출도 적응형 검출 (PR={pr} · FL={fl}) vs 현행 ===\n")
+    hdr = (f"  {'파일':<30} {'라벨':<14} {'현행':>4} {'적응형':>5} {'정답':>4} "
+           f"{'현행오차%':>9} {'적응오차%':>9}")
+    print(hdr)
+    print("  " + "-" * (len(hdr) - 2))
+    by_label = defaultdict(list)   # label -> [(base, adapt, adj, manual)]
+    for t in trials:
+        rows = t["rows"]
+        label = t["label"]
+        base = _recorded_count(rows)              # 현행 앱 라이브 count
+        adapt, a_steps = adaptive_step_count(rows, pr, fl)
+        adj, _rm = apply_retro(a_steps, stop_declared_time(rows))  # #131 소급차감 결합
+        tid = rows[0].get("trial_id") or t["file"]
+        man = lookup_manual(manual_counts, tid, t["file"])  # 0(sit_only 정답) 보존
+        be = f"{(base - man) / man * 100:+.0f}" if (man not in (None, 0)) else "-"
+        ae = f"{(adj - man) / man * 100:+.0f}" if (man not in (None, 0)) else "-"
+        by_label[label].append((base if base is not None else 0, adapt, adj, man))
+        print(f"  {t['file']:<30.30} {label:<14} "
+              f"{('-' if base is None else base):>4} {adj:>5} "
+              f"{('-' if man is None else man):>4} {be:>9} {ae:>9}")
+    print("  (적응형 = 돌출도 검출, 표의 적응형 열은 #131 소급차감까지 결합한 '보정' 값)")
+    print()
+    print("라벨별 평균 오차 (정답 대비, |오차| 작을수록 정확)\n")
+    print(f"  {'라벨':<14} {'n':>3} {'현행μ':>7} {'적응형μ':>8} {'보정μ':>7} {'정답μ':>7} "
+          f"{'현행%':>7} {'보정%':>7}")
+    print("  " + "-" * 66)
+    zero_recovered = walking_trials = 0
+    sit_fp = 0
+    wts_over = []
+    for label in ALL_LABELS + sorted(set(by_label) - set(ALL_LABELS)):
+        recs = by_label.get(label)
+        if not recs:
+            continue
+        b_avg = sum(r[0] for r in recs) / len(recs)
+        a_avg = sum(r[1] for r in recs) / len(recs)
+        j_avg = sum(r[2] for r in recs) / len(recs)
+        mans = [r[3] for r in recs if r[3] is not None]
+        m_avg = (sum(mans) / len(mans)) if mans else None
+        be = f"{(b_avg - m_avg) / m_avg * 100:+.0f}" if (m_avg not in (None, 0)) else "-"
+        je = f"{(j_avg - m_avg) / m_avg * 100:+.0f}" if (m_avg not in (None, 0)) else "-"
+        print(f"  {label:<14} {len(recs):>3} {b_avg:>7.1f} {a_avg:>8.1f} {j_avg:>7.1f} "
+              f"{('-' if m_avg is None else f'{m_avg:.1f}'):>7} {be:>7} {je:>7}")
+        if label in WALKING_LABELS:
+            for b, a, j, m in recs:
+                walking_trials += 1
+                if b == 0 and j > 0:
+                    zero_recovered += 1
+        if label == LABEL_SIT_ONLY:
+            sit_fp = sum(1 for r in recs if r[2] > 0)
+        if label == LABEL_WALK_SIT:
+            wts_over = [r[2] - r[3] for r in recs if r[3] is not None]
+    print()
+    print(f"  🔎 과소계수(0) 회복: 보행 {walking_trials}건 중 현행 0 → 보정 >0 인 trial "
+          f"{zero_recovered}건")
+    flag = "✅" if sit_fp == 0 else "⚠️"
+    print(f"  {flag} sit_only FP(순수 앉기 오탐): 보정에서 {sit_fp}건 (0 이어야 함)")
+    if wts_over:
+        wf = "✅" if max(wts_over) <= 2 else "⚠️"
+        print(f"  {wf} #131 walk_then_sit 과다(보정 후 정답대비): 최대 +{max(wts_over)} (목표 ≤+2)")
+    print("     ※ PR/FL 스윕: --adaptive --pr 0.2 --fl 0.25 처럼 조정. 적응형이 늘린 앉기 FP 를 "
+          "#131 소급차감이 흡수(결합).")
+
+
 def main():
     ap = argparse.ArgumentParser(description="#131 파형 판별 특징 탐색")
     ap.add_argument("data_dir", nargs="?", help="수집 CSV 들이 든 디렉토리")
     ap.add_argument("--participants", help="trial_id,participant_id[,session_id] 로그 CSV")
     ap.add_argument("--selftest", action="store_true", help="합성 데이터로 파이프라인 자체검증")
     ap.add_argument("--inspect", metavar="FILE", help="수집 CSV 1개가 제대로 담겼는지 즉시 점검")
+    ap.add_argument("--replay", action="store_true",
+                    help="검출기 리플레이(걸음수 재현) — 앱 count 대비 검증 + 라벨별/정답 대비")
+    ap.add_argument("--adaptive", action="store_true",
+                    help="#176 돌출도 적응형 검출 vs 현행 — 과소계수(0) 회복 + FP 점검")
+    ap.add_argument("--pr", type=float, default=ADAPT_PR,
+                    help=f"돌출도 비율(기본 {ADAPT_PR})")
+    ap.add_argument("--fl", type=float, default=ADAPT_FL,
+                    help=f"돌출도 절대 하한(기본 {ADAPT_FL})")
     args = ap.parse_args()
 
     if args.selftest:
@@ -1018,6 +1572,12 @@ def main():
         print()
     if not trials:
         sys.exit("남은 trial 이 없습니다(모두 폐기됨). cue_delivery/수집 상태를 확인하세요.")
+    if args.replay:
+        replay(trials, manual)
+        return
+    if args.adaptive:
+        adaptive_report(trials, manual, args.pr, args.fl)
+        return
     analyze(trials, parts, manual)
 
 
