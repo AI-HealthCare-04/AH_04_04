@@ -256,13 +256,21 @@ function render(){
 
   // 또래 분포 + 백분위 (코호트는 minimal 모델 기반 — 마커·순번 모두 화면의 p 사용)
   const bi=bandIdx(age);
-  const rank=Math.max(1,Math.min(100,Math.round(pctInterp(sex,age,p))+1));
-  const tail=rank>=85; // 위험 높은 쪽 꼬리: 나보다 낮은 사람이 대다수일 때
   const sexL=sex===1?"남성":"여성";
-  cohortline.innerHTML=tail
-    ?"근력운동을 <b>주 5일로 가정</b>하면 위험 추정치가 가장 많이 낮아지는 구간이에요 · 주 5일 가정 시 <b>"+fmt(pM5)+"</b> (연관 추정, 인과 아님)"
-    :"같은 연령대("+BANDL[bi]+") "+sexL+" <b>시뮬레이션 예시</b>에서 위험이 낮은 쪽 약 "+rank+"번째 수준 (실제 분포 아님)";
-  document.getElementById("cohort").innerHTML=cohortSVG(cohortFor(sex,bi).dens,p,rank,tail,fmt(p),sex);
+  // ⚠️ 코호트 분포는 minimal 모델로만 생성된다. 허리(waist) 입력 시 마커 p 는 waist 모델 결과라
+  //   서로 다른 확률 척도의 백분위를 계산하게 된다(리뷰 #205). 검증된 모델별 분포가 준비될 때까지
+  //   waist 입력에서는 코호트 그래프·순위·인원(N명)을 아예 표시하지 않는다(동일 모델 비교만 허용).
+  if(hasWa){
+    cohortline.innerHTML="허리 포함 모델의 또래 분포·순위는 준비 중이에요 (모델별 검증 분포 반영 예정)";
+    document.getElementById("cohort").innerHTML="";
+  }else{
+    const rank=Math.max(1,Math.min(100,Math.round(pctInterp(sex,age,p))+1));
+    const tail=rank>=85; // 위험 높은 쪽 꼬리: 나보다 낮은 사람이 대다수일 때
+    cohortline.innerHTML=tail
+      ?"근력운동을 <b>주 5일로 가정</b>하면 위험 추정치가 가장 많이 낮아지는 구간이에요 · 주 5일 가정 시 <b>"+fmt(pM5)+"</b> (연관 추정, 인과 아님)"
+      :"같은 연령대("+BANDL[bi]+") "+sexL+" <b>시뮬레이션 예시</b>에서 위험이 낮은 쪽 약 "+rank+"번째 수준 (실제 분포 아님)";
+    document.getElementById("cohort").innerHTML=cohortSVG(cohortFor(sex,bi).dens,p,rank,tail,fmt(p),sex);
+  }
 
   // 추이(0→5일)
   const xs=[0,1,2,3,4,5];
