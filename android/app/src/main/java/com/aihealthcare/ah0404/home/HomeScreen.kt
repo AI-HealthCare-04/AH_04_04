@@ -68,6 +68,9 @@ data class HomeUi(
     val availableGame: Int,
     val todayWalkingMin: Double = 0.0,  // today_walking.daily_total_min (#69)
     val todayWalkingSteps: Int = 0,     // today_walking.daily_total_steps (표시 전용)
+    val streakCurrentDays: Int = 0,
+    val streakCompletedToday: Boolean = false,
+    val streakAsOfDate: String? = null,
 ) {
     val availableTotal: Int get() = availableMeal + availableExercise + availableWalking + availableGame
 }
@@ -87,6 +90,9 @@ fun mockHome() = HomeUi(
     availableGame = 1,
     todayWalkingMin = 22.0,
     todayWalkingSteps = 2350,
+    streakCurrentDays = 3,
+    streakCompletedToday = true,
+    streakAsOfDate = "2026-07-27",
 )
 
 /** 홈 호스트 — GET /home 로드 후 콘텐츠 렌더. 진입마다 재조회. */
@@ -168,18 +174,29 @@ private fun HomeContent(
                 availableWalking = ui.availableWalking,
                 todayWalkingMin = ui.todayWalkingMin,
                 todayWalkingSteps = ui.todayWalkingSteps,
+                streakCurrentDays = ui.streakCurrentDays,
+                streakCompletedToday = ui.streakCompletedToday,
+                streakAsOfDate = ui.streakAsOfDate,
                 hourOfDay = hourOfDay,
                 hasFreshHomeData = !refreshError,
                 daysSinceLastVisit = daysSinceLastVisit(previousVisit?.lastVisitEpochDay, todayEpochDay),
                 excludedMessageId = previousVisit?.lastMessageId,
+                shownStreakKey = previousVisit?.lastStreakKey,
             ),
         )
     }
     // 완료된 소셜 계정만 user_id별로 저장한다. 게스트·미완료·로그아웃 상태(null)는 앱 재실행에 남기지 않는다.
     // 저장 실패는 화면을 막지 않으며 다음 실행에서 기본 선택으로 안전하게 폴백한다.
-    LaunchedEffect(persistentUserId, todayEpochDay, bubbleMessage.id) {
+    LaunchedEffect(persistentUserId, todayEpochDay, bubbleMessage.id, bubbleMessage.deduplicationKey) {
         persistentUserId?.let { userId ->
-            visitStore.write(userId, PetBubbleVisitState(todayEpochDay, bubbleMessage.id))
+            visitStore.write(
+                userId,
+                PetBubbleVisitState(
+                    lastVisitEpochDay = todayEpochDay,
+                    lastMessageId = bubbleMessage.id,
+                    lastStreakKey = bubbleMessage.deduplicationKey,
+                ),
+            )
         }
     }
     // 스크롤 콘텐츠 위에 마스코트 펫을 '고정 오버레이'로 얹는다.

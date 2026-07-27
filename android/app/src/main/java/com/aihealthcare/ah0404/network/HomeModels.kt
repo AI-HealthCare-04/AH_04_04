@@ -18,6 +18,7 @@ data class HomeResponse(
     @SerialName("today_summary") val todaySummary: HomeTodaySummary,
     @SerialName("available_mission_summary") val availableMissionSummary: HomeAvailableMissionSummary,
     @SerialName("today_walking") val todayWalking: HomeTodayWalking = HomeTodayWalking(),
+    val streak: HomeStreak = HomeStreak(),
 )
 
 @Serializable
@@ -50,4 +51,12 @@ data class HomeAvailableMissionSummary(
 data class HomeTodayWalking(
     @SerialName("daily_total_min") val dailyTotalMin: Double = 0.0,
     @SerialName("daily_total_steps") val dailyTotalSteps: Int = 0,
+)
+
+/** 서버가 KST 달성일로 계산한 권위 스트릭(#146). 앱은 이 값을 자체 계산하거나 선반영하지 않는다. */
+@Serializable
+data class HomeStreak(
+    @SerialName("current_days") val currentDays: Int = 0,
+    @SerialName("completed_today") val completedToday: Boolean = false,
+    @SerialName("as_of_date") val asOfDate: String? = null,
 )

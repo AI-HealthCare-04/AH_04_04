@@ -15,11 +15,16 @@ internal data class PetBubbleContext(
     val hasFreshHomeData: Boolean = true,
     val daysSinceLastVisit: Long? = null,
     val excludedMessageId: String? = null,
+    val streakCurrentDays: Int = 0,
+    val streakCompletedToday: Boolean = false,
+    val streakAsOfDate: String? = null,
+    val shownStreakKey: String? = null,
 )
 
 internal data class PetBubbleMessage(
     val id: String,
     val text: String,
+    val deduplicationKey: String? = null,
 )
 
 /**
@@ -38,6 +43,8 @@ internal fun selectPetBubbleMessage(
     }
 
     if (context.hasFreshHomeData) {
+        streakPraiseMessage(context)?.let { return it }
+
         val achievementGroups = buildList {
             if (context.completedToday > 0) add(completionMessages(context.completedToday))
             if (context.todayWalkingMin >= 1.0) add(walkingMinuteMessages(context.todayWalkingMin))
@@ -61,6 +68,29 @@ internal fun selectPetBubbleMessage(
 }
 
 internal fun isLateNight(hourOfDay: Int): Boolean = hourOfDay >= 22 || hourOfDay < 6
+
+/** 서버 권위 스트릭이 오늘 실제 완료된 경우에만, 같은 권위 스냅샷당 한 번 칭찬한다. */
+private fun streakPraiseMessage(context: PetBubbleContext): PetBubbleMessage? {
+    val asOfDate = context.streakAsOfDate?.takeIf { it.isNotBlank() } ?: return null
+    if (!context.streakCompletedToday || context.streakCurrentDays <= 0) return null
+
+    val key = streakDeduplicationKey(asOfDate, context.streakCurrentDays)
+    if (key == context.shownStreakKey) return null
+
+    val text = if (context.streakCurrentDays == 1) {
+        "오늘의 건강한 실천을 시작했어요. 정말 잘하셨어요!"
+    } else {
+        "벌써 ${context.streakCurrentDays}일째 꾸준히 실천하고 있어요!"
+    }
+    return PetBubbleMessage(
+        id = "streak_praise",
+        text = text,
+        deduplicationKey = key,
+    )
+}
+
+internal fun streakDeduplicationKey(asOfDate: String, currentDays: Int): String =
+    "streak:$asOfDate:$currentDays"
 
 private fun chooseFromGroups(
     groups: List<List<PetBubbleMessage>>,

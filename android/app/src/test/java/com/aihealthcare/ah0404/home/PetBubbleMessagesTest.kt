@@ -8,6 +8,78 @@ import org.junit.Test
 class PetBubbleMessagesTest {
 
     @Test
+    fun fresh_completed_streak_has_priority_and_uses_server_snapshot_key() {
+        val message = selectPetBubbleMessage(
+            context(
+                completedToday = 2,
+                streakCurrentDays = 4,
+                streakCompletedToday = true,
+                streakAsOfDate = "2026-07-27",
+            ),
+            choosing(0, 0),
+        )
+
+        assertEquals("streak_praise", message.id)
+        assertEquals("벌써 4일째 꾸준히 실천하고 있어요!", message.text)
+        assertEquals("streak:2026-07-27:4", message.deduplicationKey)
+    }
+
+    @Test
+    fun same_streak_snapshot_is_not_praised_twice() {
+        val message = selectPetBubbleMessage(
+            context(
+                completedToday = 1,
+                streakCurrentDays = 4,
+                streakCompletedToday = true,
+                streakAsOfDate = "2026-07-27",
+                shownStreakKey = "streak:2026-07-27:4",
+            ),
+            choosing(0, 0),
+        )
+
+        assertEquals("completion_count", message.id)
+    }
+
+    @Test
+    fun next_server_streak_snapshot_can_be_praised() {
+        val message = selectPetBubbleMessage(
+            context(
+                streakCurrentDays = 5,
+                streakCompletedToday = true,
+                streakAsOfDate = "2026-07-28",
+                shownStreakKey = "streak:2026-07-27:4",
+            ),
+        )
+
+        assertEquals("streak:2026-07-28:5", message.deduplicationKey)
+    }
+
+    @Test
+    fun incomplete_zero_or_stale_streak_falls_back_without_claiming_achievement() {
+        val incomplete = selectPetBubbleMessage(
+            context(streakCurrentDays = 3, streakCompletedToday = false, streakAsOfDate = "2026-07-27"),
+            choosing(0, 0),
+        )
+        val zero = selectPetBubbleMessage(
+            context(streakCurrentDays = 0, streakCompletedToday = true, streakAsOfDate = "2026-07-27"),
+            choosing(0, 0),
+        )
+        val stale = selectPetBubbleMessage(
+            context(
+                streakCurrentDays = 3,
+                streakCompletedToday = true,
+                streakAsOfDate = "2026-07-27",
+                hasFreshHomeData = false,
+            ),
+            choosing(0, 0),
+        )
+
+        assertEquals("afternoon_easy", incomplete.id)
+        assertEquals("afternoon_easy", zero.id)
+        assertEquals("afternoon_easy", stale.id)
+    }
+
+    @Test
     fun completed_mission_uses_achievement_instead_of_available_mission_prompt() {
         val message = selectPetBubbleMessage(
             context(
@@ -175,6 +247,10 @@ class PetBubbleMessagesTest {
         hasFreshHomeData: Boolean = true,
         daysSinceLastVisit: Long? = null,
         excludedMessageId: String? = null,
+        streakCurrentDays: Int = 0,
+        streakCompletedToday: Boolean = false,
+        streakAsOfDate: String? = null,
+        shownStreakKey: String? = null,
     ) = PetBubbleContext(
         nickname = "정인",
         completedToday = completedToday,
@@ -187,6 +263,10 @@ class PetBubbleMessagesTest {
         hasFreshHomeData = hasFreshHomeData,
         daysSinceLastVisit = daysSinceLastVisit,
         excludedMessageId = excludedMessageId,
+        streakCurrentDays = streakCurrentDays,
+        streakCompletedToday = streakCompletedToday,
+        streakAsOfDate = streakAsOfDate,
+        shownStreakKey = shownStreakKey,
     )
 
     private fun choosing(vararg indices: Int): (Int) -> Int {

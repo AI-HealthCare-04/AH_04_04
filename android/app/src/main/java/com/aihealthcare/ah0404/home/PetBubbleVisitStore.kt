@@ -11,6 +11,7 @@ private const val KST_OFFSET_MS = 9 * 60 * 60 * 1_000L
 internal data class PetBubbleVisitState(
     val lastVisitEpochDay: Long,
     val lastMessageId: String?,
+    val lastStreakKey: String? = null,
 )
 
 /** KST는 일광절약시간이 없는 UTC+9 고정 시간대라 epoch millis를 안전하게 날짜 번호로 바꿀 수 있다. */
@@ -44,6 +45,7 @@ internal class PetBubbleVisitStore(context: Context) {
             PetBubbleVisitState(
                 lastVisitEpochDay = preferences.getLong(visitKey, -1L),
                 lastMessageId = preferences.getString(messageKey(userId), null),
+                lastStreakKey = preferences.getString(streakKey(userId), null),
             ).takeIf { it.lastVisitEpochDay >= 0L }
         }.getOrElse {
             clear(userId)
@@ -54,10 +56,12 @@ internal class PetBubbleVisitStore(context: Context) {
     fun write(userId: Int, state: PetBubbleVisitState): Boolean {
         if (userId <= 0 || state.lastVisitEpochDay < 0L || state.lastMessageId.isNullOrBlank()) return false
         return runCatching {
-            preferences.edit()
+            val editor = preferences.edit()
                 .putLong(visitKey(userId), state.lastVisitEpochDay)
                 .putString(messageKey(userId), state.lastMessageId)
-                .apply()
+            // 일반 말풍선 기록이 뒤이어도 같은 스트릭 칭찬의 노출 이력은 보존한다.
+            state.lastStreakKey?.let { editor.putString(streakKey(userId), it) }
+            editor.apply()
             true
         }.getOrDefault(false)
     }
@@ -67,10 +71,12 @@ internal class PetBubbleVisitStore(context: Context) {
             preferences.edit()
                 .remove(visitKey(userId))
                 .remove(messageKey(userId))
+                .remove(streakKey(userId))
                 .apply()
         }
     }
 
     private fun visitKey(userId: Int) = "user_${userId}_last_visit_epoch_day"
     private fun messageKey(userId: Int) = "user_${userId}_last_message_id"
+    private fun streakKey(userId: Int) = "user_${userId}_last_streak_key"
 }
