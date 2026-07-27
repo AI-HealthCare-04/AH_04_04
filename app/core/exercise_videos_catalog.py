@@ -11,12 +11,11 @@
 #   없으면 available=false + video_url=null("준비중"). 영상이 서버에 올라오면 이 파일의 filename만
 #   채우면 그 단계가 켜진다(앱 코드 변경 없음). 실제 URL은 config.EXERCISE_VIDEO_BASE_URL로 조립.
 #
-# 현황(2026-07-27): warmup(몸풀기)·standing(서서 운동) EC2 업로드·서빙 완료 → available=true. 나머지 준비중.
-#   - warmup: warmup.mp4, standing: standing_exercise.mp4 를 EC2(/opt/ah0404/media/videos)에 업로드,
-#     nginx /videos/ 로 서빙. HTTPS 200 + Range 206 검증 완료(#213 인프라). 앱은 {BASE_URL}/videos/{파일명} 재생.
-#   - seated·cooldown: 서버 미업로드(준비중). 업로드 후 이 파일의 filename 만 채우면 켜짐(앱 무변경).
+# 현황(2026-07-27): warmup(몸풀기)만 EC2 업로드·서빙 완료 → available=true. 나머지는 준비중.
+#   - warmup(몸풀기): warmup.mp4 를 EC2(/opt/ah0404/media/videos)에 업로드, nginx /videos/ 로 서빙.
+#     HTTPS 200 + Range 206 검증 완료(#213 인프라). 앱은 {EXERCISE_VIDEO_BASE_URL}/videos/warmup.mp4 재생.
+#   - seated·standing·cooldown: 서버 미업로드(준비중). 업로드 후 이 파일의 filename 만 채우면 켜짐(앱 무변경).
 #   - 썸네일: 아직 없음(thumbnail_filename=None → thumbnail_url null). 후속.
-#   - 미니게임(mini_game.mp4)은 이 4단계 계약 밖 — 서버 서빙만 하고 앱에 URL 주입으로 노출(카탈로그 미포함).
 # =====================================================================================
 
 # frozen=True dataclass: 한 번 만들면 값을 못 바꾸는(불변) 데이터 묶음. 상수 카탈로그에 적합합니다.
@@ -38,6 +37,6 @@ class ExerciseVideoSpec:
 EXERCISE_VIDEOS_CATALOG: tuple[ExerciseVideoSpec, ...] = (
     ExerciseVideoSpec(stage="warmup", label="몸풀기", order=1, filename="warmup.mp4"),
     ExerciseVideoSpec(stage="seated", label="앉아서 운동", order=2),
-    ExerciseVideoSpec(stage="standing", label="서서 운동", order=3, filename="standing_exercise.mp4"),
+    ExerciseVideoSpec(stage="standing", label="서서 운동", order=3),
     ExerciseVideoSpec(stage="cooldown", label="마무리", order=4),
 )

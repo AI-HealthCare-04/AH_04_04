@@ -49,19 +49,16 @@ def test_available_matches_video_url_presence() -> None:
             assert item.thumbnail_url is None
 
 
-# 현황(2026-07-27): warmup(몸풀기)·standing(서서 운동) 서버 업로드 완료 → available=true + video_url,
-#   나머지(seated·cooldown)는 준비중(available=false, url null).
-def test_uploaded_stages_available_others_pending() -> None:
+# 현황(2026-07-27): warmup(몸풀기)만 서버 업로드 완료 → available=true + video_url(/videos/warmup.mp4),
+#   나머지 3단계(seated·standing·cooldown)는 준비중(available=false, url null).
+def test_only_warmup_available_others_pending() -> None:
     by_stage = {item.stage: item for item in ExerciseVideoService().get_videos().videos}
 
-    warmup = by_stage["warmup"]
-    assert warmup.available is True
-    assert warmup.video_url is not None and warmup.video_url.endswith("/videos/warmup.mp4")
-    standing = by_stage["standing"]
-    assert standing.available is True
-    assert standing.video_url is not None and standing.video_url.endswith("/videos/standing_exercise.mp4")
+    assert by_stage["warmup"].available is True
+    assert by_stage["warmup"].video_url is not None
+    assert by_stage["warmup"].video_url.endswith("/videos/warmup.mp4")
 
-    for stage in ("seated", "cooldown"):
+    for stage in ("seated", "standing", "cooldown"):
         assert by_stage[stage].available is False
         assert by_stage[stage].video_url is None
 
