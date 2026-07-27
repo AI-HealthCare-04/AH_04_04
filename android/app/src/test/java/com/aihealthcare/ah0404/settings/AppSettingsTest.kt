@@ -21,4 +21,13 @@ class AppSettingsTest {
         assertEquals(1.0f, AppSettings.soundScaleFor("large"))
         assertEquals(0.8f, AppSettings.soundScaleFor("unknown"))
     }
+
+    // 운동 난이도 → 운동영상 재생 속도. 가볍게 0.8 / 보통 1.0 / 힘차게 1.25. 알 수 없는 값은 보통(1.0).
+    @Test
+    fun exercise_speed_mapping() {
+        assertEquals(0.8f, AppSettings.exerciseSpeedFor(AppSettings.DIFF_EASY))
+        assertEquals(1.0f, AppSettings.exerciseSpeedFor(AppSettings.DIFF_NORMAL))
+        assertEquals(1.25f, AppSettings.exerciseSpeedFor(AppSettings.DIFF_HARD))
+        assertEquals(1.0f, AppSettings.exerciseSpeedFor("unknown"))
+    }
 }
