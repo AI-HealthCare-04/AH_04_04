@@ -734,6 +734,16 @@ def load_manual_counts(path):
     return m
 
 
+def lookup_manual(manual_counts, *keys):
+    """manual_step_count 정답 조회(첫 매칭 키). **0 은 sit_only 의 정상 정답**이므로
+    `.get(a) or .get(b)` 처럼 falsy 로 떨구면 안 된다(0 이 사라져 표/집계에서 정답이
+    누락됨, 리뷰 #201). 키 '존재'로만 판정하고 없으면 None 을 돌린다."""
+    for k in keys:
+        if k in manual_counts:
+            return manual_counts[k]
+    return None
+
+
 # ── 합성 데이터 자체검증(--selftest) ─────────────────────────────────────────
 def _synth_file(fp, label, placement, gravity_axis="z"):
     """합성 CSV 1개 생성. 보행=수평(전후) 진동, 앉기=수직(중력축) 하강 임팩트.
@@ -910,6 +920,7 @@ def selftest():
     _replay_selftest()
     _retro_selftest()
     _adaptive_selftest()
+    _manual_zero_selftest()
 
     print("=== 합성 데이터에 대한 전체 리포트(형식 확인용) ===\n")
     analyze(trials, parts)
@@ -1196,7 +1207,7 @@ def replay(trials, manual_counts=None):
         stop_t = stop_declared_time(rows)
         adj, removed = apply_retro(steps, stop_t)
         tid = rows[0].get("trial_id") or t["file"]
-        man = manual_counts.get(tid) or manual_counts.get(t["file"])
+        man = lookup_manual(manual_counts, tid, t["file"])  # 0(sit_only 정답) 보존
         delta = (rep_live - rec) if rec is not None else None
         if rec is not None:
             anchor_total += 1
@@ -1441,6 +1452,27 @@ def _adaptive_selftest():
     print(f"[✓] 적응형 검증: 약신호 고정임계 {fixed_cnt} → 적응형 {adapt_cnt} 회복 · 정지 FP 0\n")
 
 
+def _manual_zero_selftest():
+    """정답 조회가 manual_step_count=0(sit_only)을 보존하는지(리뷰 #201 회귀).
+
+    replay/adaptive 리포트가 공유하는 lookup_manual 경계에서 검증한다. 과거 버그는
+    `.get(a) or .get(b)` 라 0 이 falsy 로 떨어져 sit_only 정답이 표/집계에서 사라졌다."""
+    # load_manual_counts 는 trial_id 와 trial_id.csv 두 키를 같은 값으로 넣는다.
+    m = {"sit_only_1": 0, "sit_only_1.csv": 0, "normal_1": 15, "normal_1.csv": 15}
+    assert lookup_manual(m, "sit_only_1", "sit_only_1.csv") == 0, "0 정답이 보존되지 않음"
+    assert lookup_manual(m, "normal_1", "normal_1.csv") == 15, "양수 정답 조회 실패"
+    # 첫 키 부재 시 둘째 키(파일명) 폴백.
+    assert lookup_manual(m, "missing", "sit_only_1.csv") == 0, "폴백 키에서 0 유실"
+    # 어느 키도 없으면 None(정답 없음).
+    assert lookup_manual(m, "nope", "nope.csv") is None, "미등록은 None 이어야"
+    # 잠재 버그 대조: 폴백 키가 없을 때 falsy-or 는 0 을 None 으로 떨군다. lookup_manual 은 보존.
+    single = {"sit_only_1": 0}  # 폴백(.csv) 키 부재
+    assert lookup_manual(single, "sit_only_1", "sit_only_1.csv") == 0, "폴백 부재 시 0 유실"
+    buggy = single.get("sit_only_1") or single.get("sit_only_1.csv")  # 0 or None → None
+    assert buggy is None, "회귀 대조: 구 falsy-or 는 폴백 부재 시 0 을 None 으로 떨굼"
+    print("[✓] 정답 0 보존 검증(리뷰 #201): sit_only manual_step_count=0 이 표/집계에서 유지됨\n")
+
+
 def adaptive_report(trials, manual_counts=None, pr=ADAPT_PR, fl=ADAPT_FL):
     """#176 돌출도 적응형 vs 현행(baseline) — 정답 대비 과소계수 회복 + sit_only FP 점검."""
     manual_counts = manual_counts or {}
@@ -1457,7 +1489,7 @@ def adaptive_report(trials, manual_counts=None, pr=ADAPT_PR, fl=ADAPT_FL):
         adapt, a_steps = adaptive_step_count(rows, pr, fl)
         adj, _rm = apply_retro(a_steps, stop_declared_time(rows))  # #131 소급차감 결합
         tid = rows[0].get("trial_id") or t["file"]
-        man = manual_counts.get(tid) or manual_counts.get(t["file"])
+        man = lookup_manual(manual_counts, tid, t["file"])  # 0(sit_only 정답) 보존
         be = f"{(base - man) / man * 100:+.0f}" if (man not in (None, 0)) else "-"
         ae = f"{(adj - man) / man * 100:+.0f}" if (man not in (None, 0)) else "-"
         by_label[label].append((base if base is not None else 0, adapt, adj, man))
@@ -1517,8 +1549,10 @@ def main():
                     help="검출기 리플레이(걸음수 재현) — 앱 count 대비 검증 + 라벨별/정답 대비")
     ap.add_argument("--adaptive", action="store_true",
                     help="#176 돌출도 적응형 검출 vs 현행 — 과소계수(0) 회복 + FP 점검")
-    ap.add_argument("--pr", type=float, default=ADAPT_PR, help="돌출도 비율(기본 0.3)")
-    ap.add_argument("--fl", type=float, default=ADAPT_FL, help="돌출도 절대 하한(기본 0.35)")
+    ap.add_argument("--pr", type=float, default=ADAPT_PR,
+                    help=f"돌출도 비율(기본 {ADAPT_PR})")
+    ap.add_argument("--fl", type=float, default=ADAPT_FL,
+                    help=f"돌출도 절대 하한(기본 {ADAPT_FL})")
     args = ap.parse_args()
 
     if args.selftest:
