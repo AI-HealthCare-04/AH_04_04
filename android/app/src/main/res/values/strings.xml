@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">My Application</string>
+    <string name="app_name">아이고</string>
 
     <!-- Suno AI 무료 티어: 비상업 이용 + 출처 표시(attribution) 의무. 임의 제거 금지. (몸풀기 루틴 BGM) -->
     <string name="credit_music_title">음악 크레딧</string>
