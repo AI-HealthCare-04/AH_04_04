@@ -43,6 +43,11 @@ class _FakeHealthCheckRepository:
     def __init__(self, health_check_session: HealthCheckSession | None = None) -> None:
         self.health_check_session = health_check_session
         self.created_session: HealthCheckSession | None = None
+        # 중단 후 재진입 재사용(#180)용. 기본 None = 남은 STARTED 없음 → start_session 이 새로 만든다.
+        self.lingering_started: HealthCheckSession | None = None
+
+    async def get_latest_started(self, user_id: int) -> HealthCheckSession | None:
+        return self.lingering_started
 
     async def create_session(self, health_check_session: HealthCheckSession) -> HealthCheckSession:
         health_check_session.session_id = 100

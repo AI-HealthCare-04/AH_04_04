@@ -1,3 +1,4 @@
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.health import PhysicalAssessment
@@ -11,3 +12,13 @@ class PhysicalAssessmentRepository:
         self.session.add(assessment)
         await self.session.flush()
         return assessment
+
+    async def get_by_session(self, session_id: int, user_id: int) -> PhysicalAssessment | None:
+        """세션에 저장된 체력검사(멱등 재제출 시 기존 반환용, #180). 유니크라 1건이지만 방어적으로 최신 1건."""
+        stmt = (
+            select(PhysicalAssessment)
+            .where(PhysicalAssessment.session_id == session_id, PhysicalAssessment.user_id == user_id)
+            .order_by(PhysicalAssessment.physical_assessment_id.desc())
+            .limit(1)
+        )
+        return await self.session.scalar(stmt)

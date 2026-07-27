@@ -30,6 +30,11 @@ class HealthCheckService:
         self.activity_repo = ActivityProfileRepository(session)
 
     async def start_session(self, user: User, data: HealthCheckSessionCreateRequest) -> HealthCheckSessionResponse:
+        # 중단 후 재진입(#180): 남아 있는 STARTED 세션이 있으면 새로 만들지 않고 재사용한다.
+        #   → 고아 STARTED 누적을 막고 "하던 데서 이어하기"가 된다. 없을 때만 새로 생성.
+        existing = await self.repo.get_latest_started(user.user_id)
+        if existing is not None:
+            return HealthCheckSessionResponse.model_validate(existing)
         health_check_session = HealthCheckSession(
             user_id=user.user_id,
             status=HealthCheckStatus.STARTED,
