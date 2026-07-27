@@ -26,3 +26,6 @@ app/ml/artifacts/*
 !app/ml/artifacts/model_config.yaml
 !app/ml/artifacts/sarcopenia_model_minimal.joblib
 !app/ml/artifacts/sarcopenia_model_with_waist.joblib
+
+# macOS
+.DS_Store

@@ -10,7 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dtos.physical_assessment import PhysicalAssessmentCreateRequest
 from app.models.activity import ActivityLevelChangeLog, UserActivityProfile
-from app.models.enums import ActivityLevel, HealthCheckStatus, InputMethod, LevelReason, ReasonType
+from app.models.enums import (
+    ActivityLevel,
+    AssessmentType,
+    HealthCheckStatus,
+    InputMethod,
+    LevelReason,
+    ReasonType,
+)
 from app.models.health import HealthCheckSession, PhysicalAssessment
 from app.models.users import User
 from app.services.physical_assessment import PhysicalAssessmentService
@@ -34,11 +41,16 @@ class _FakeSession:
 class _FakePhysicalAssessmentRepository:
     def __init__(self) -> None:
         self.created: PhysicalAssessment | None = None
+        # COMPLETED 재제출 분기(#180 2b)에서 기존 저장을 돌려주기 위한 사전 저장물.
+        self.stored: PhysicalAssessment | None = None
 
     async def create_physical_assessment(self, assessment: PhysicalAssessment) -> PhysicalAssessment:
         assessment.physical_assessment_id = 30
         self.created = assessment
         return assessment
+
+    async def get_by_session(self, session_id: int, user_id: int) -> PhysicalAssessment | None:
+        return self.stored
 
 
 class _FakeActivityProfileRepository:
@@ -83,8 +95,13 @@ class _FakeHealthCheckRepository:
     def __init__(self, health_check_session: HealthCheckSession | None) -> None:
         self.health_check_session = health_check_session
         self.updated: HealthCheckSession | None = None
+        # 전이 경로가 세션 행을 잠그고 읽는지(#207 동시성) 확인용.
+        self.locked_for_update = False
 
-    async def get_session(self, session_id: int, user_id: int) -> HealthCheckSession | None:
+    async def get_session(
+        self, session_id: int, user_id: int, *, for_update: bool = False
+    ) -> HealthCheckSession | None:
+        self.locked_for_update = self.locked_for_update or for_update
         return self.health_check_session
 
     async def update_session(self, health_check_session: HealthCheckSession) -> HealthCheckSession:
@@ -285,6 +302,8 @@ async def test_create_assessment_completes_linked_started_session() -> None:
     assert health_check_session.status == HealthCheckStatus.COMPLETED
     assert health_check_session.completed_at is not None
     assert session.committed is True
+    # 전이 경로는 세션 행을 잠그고 읽어 동시 건너뛰기와 직렬화한다(#207 동시성).
+    assert health_check_repo.locked_for_update is True
 
 
 async def test_create_assessment_rejects_finished_session() -> None:
@@ -307,6 +326,84 @@ async def test_create_assessment_rejects_finished_session() -> None:
                 session_id=10,
                 chair_stand_5_time_sec=Decimal("11.2"),
             ),
+        )
+
+    assert exc.value.status_code == 409
+    assert assessment_repo.created is None
+    assert session.committed is False
+
+
+def _completed_session() -> HealthCheckSession:
+    return HealthCheckSession(
+        session_id=10,
+        user_id=1,
+        status=HealthCheckStatus.COMPLETED,
+        input_method=InputMethod.FORM,
+        has_estimated_value=False,
+        created_at=datetime(2026, 7, 10, 12, 0, 0),
+        completed_at=datetime(2026, 7, 10, 12, 1, 0),
+    )
+
+
+def _stored_assessment() -> PhysicalAssessment:
+    # 컬럼 정밀도(Numeric(5,2))대로 11.20 으로 저장된 기존 결과.
+    return PhysicalAssessment(
+        physical_assessment_id=30,
+        user_id=1,
+        session_id=10,
+        assessment_type=AssessmentType.INITIAL,
+        chair_stand_5_time_sec=Decimal("11.20"),
+        chair_stand_skipped=False,
+        pain_reported=False,
+        dizziness_reported=False,
+        used_for_level_setting=True,
+    )
+
+
+async def test_create_assessment_completed_session_same_payload_is_idempotent() -> None:
+    # 응답 유실 재전송(#180): 이미 COMPLETED 된 세션에 같은 내용 재제출 →
+    #   새로 만들지 않고 기존 결과를 그대로 돌려준다(멱등). 11.2 vs 저장 11.20 은 2자리 정규화로 동일.
+    existing_profile = UserActivityProfile(
+        activity_profile_id=100,
+        user_id=1,
+        current_level=ActivityLevel.NORMAL,
+        level_reason=LevelReason.INITIAL_TEST,
+        physical_assessment_id=30,
+        started_at=datetime(2026, 7, 10, 12, 0, 0),
+    )
+    service, assessment_repo, _, session = _service(existing_profile)
+    assessment_repo.stored = _stored_assessment()
+    service.health_check_repo = _FakeHealthCheckRepository(_completed_session())  # type: ignore[assignment]
+
+    response = await service.create_assessment(
+        cast(User, SimpleNamespace(user_id=1)),
+        PhysicalAssessmentCreateRequest(session_id=10, chair_stand_5_time_sec=Decimal("11.2")),
+    )
+
+    assert response.physical_assessment_id == 30
+    assert assessment_repo.created is None  # 재생성 없음
+    assert session.committed is False  # 재제출은 아무것도 커밋하지 않는다
+
+
+async def test_create_assessment_completed_session_different_payload_conflicts() -> None:
+    # #180 완료기준(리뷰 #207 2b): 이미 완료된 세션에 '다른' 내용 제출 →
+    #   확정된 결과를 덮어쓰지 않도록 409. 같은 값의 멱등 재시도와 구분된다.
+    existing_profile = UserActivityProfile(
+        activity_profile_id=100,
+        user_id=1,
+        current_level=ActivityLevel.NORMAL,
+        level_reason=LevelReason.INITIAL_TEST,
+        physical_assessment_id=30,
+        started_at=datetime(2026, 7, 10, 12, 0, 0),
+    )
+    service, assessment_repo, _, session = _service(existing_profile)
+    assessment_repo.stored = _stored_assessment()  # 저장값 11.20
+    service.health_check_repo = _FakeHealthCheckRepository(_completed_session())  # type: ignore[assignment]
+
+    with pytest.raises(HTTPException) as exc:
+        await service.create_assessment(
+            cast(User, SimpleNamespace(user_id=1)),
+            PhysicalAssessmentCreateRequest(session_id=10, chair_stand_5_time_sec=Decimal("13.5")),
         )
 
     assert exc.value.status_code == 409

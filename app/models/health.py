@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, func
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -77,6 +77,8 @@ class HealthProfile(Base):
 
 class PhysicalAssessment(Base):
     __tablename__ = "physical_assessments"
+    # 세션당 체력검사 1건(멱등, #180). NULL(독립 제출)은 MySQL 유니크에서 제외되어 다건 허용된다.
+    __table_args__ = (UniqueConstraint("session_id", name="uq_physical_assessments_session_id"),)
 
     physical_assessment_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id"), nullable=False, index=True)
