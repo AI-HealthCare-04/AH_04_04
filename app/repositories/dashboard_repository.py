@@ -7,7 +7,7 @@
 # =====================================================================================
 from datetime import date
 
-from sqlalchemy import and_, case, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.dashboard import DailyActivitySummary
@@ -53,32 +53,35 @@ class DashboardRepository:
 
         원천은 `physical_activity_logs`(활동별 duration_min·activity_type 보유). 요약 테이블의
         단순 카운트로는 '30분 이상'·'근력' 정의를 복원할 수 없어 원천 로그에서 정확히 센다:
-          - walk_days = WALKING & duration_min ≥ 30 인 **날 수**(distinct activity_date)
-          - musc_days = SEATED/STANDING_EXERCISE 인 **날 수** (STRETCHING·WARM_UP 등 비근력 제외)
+          - walk_days = 날짜별 WALKING `duration_min` **합계** ≥ 30 인 날 수
+            (리뷰 반영: 같은 날 20+15분=35분도 포함, 20+9분=29분은 제외 — '하루 30분' 정의)
+          - musc_days = SEATED/STANDING_EXERCISE 가 있는 날 수(distinct) (STRETCHING·WARM_UP 등 제외)
         physical_activity_logs 에는 user_id 가 없어 mission_logs 와 조인해 사용자로 거른다."""
-        walk_day = case(
-            (
-                and_(
-                    PhysicalActivityLog.activity_type == ActivityType.WALKING,
-                    PhysicalActivityLog.duration_min >= WALK_MIN_DURATION_MIN,
-                ),
-                PhysicalActivityLog.activity_date,
-            )
+        base_where = (
+            MissionLog.user_id == user_id,
+            PhysicalActivityLog.activity_date >= start,
+            PhysicalActivityLog.activity_date <= end,
         )
-        musc_day = case(
-            (PhysicalActivityLog.activity_type.in_(MUSC_ACTIVITY_TYPES), PhysicalActivityLog.activity_date)
-        )
-        stmt = (
-            select(func.count(func.distinct(walk_day)), func.count(func.distinct(musc_day)))
+        # walk: 날짜별 걷기시간 합산 후 ≥30분인 날. 개별 로그가 아니라 '당일 누적' 기준(#204 리뷰).
+        walk_daily = (
+            select(PhysicalActivityLog.activity_date)
             .join(MissionLog, PhysicalActivityLog.mission_log_id == MissionLog.mission_log_id)
-            .where(
-                MissionLog.user_id == user_id,
-                PhysicalActivityLog.activity_date >= start,
-                PhysicalActivityLog.activity_date <= end,
-            )
+            .where(*base_where, PhysicalActivityLog.activity_type == ActivityType.WALKING)
+            .group_by(PhysicalActivityLog.activity_date)
+            .having(func.coalesce(func.sum(PhysicalActivityLog.duration_min), 0) >= WALK_MIN_DURATION_MIN)
+            .subquery()
         )
-        row = (await self.session.execute(stmt)).one()
-        return int(row[0] or 0), int(row[1] or 0)
+        walk_days = int(await self.session.scalar(select(func.count()).select_from(walk_daily)) or 0)
+        # musc: 근력(SEATED/STANDING)이 하루에 한 번이라도 있으면 그 날 1일.
+        musc_days = int(
+            await self.session.scalar(
+                select(func.count(func.distinct(PhysicalActivityLog.activity_date)))
+                .join(MissionLog, PhysicalActivityLog.mission_log_id == MissionLog.mission_log_id)
+                .where(*base_where, PhysicalActivityLog.activity_type.in_(MUSC_ACTIVITY_TYPES))
+            )
+            or 0
+        )
+        return walk_days, musc_days
 
     async def get_summaries_between(
         self, user_id: int, start: date, end: date

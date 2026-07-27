@@ -94,12 +94,13 @@ async def test_count_active_days_matches_model_variable_definition(
     d0, d1, d2 = end, end - timedelta(days=1), end - timedelta(days=2)
     outside = start - timedelta(days=1)  # 윈도우 밖
 
-    # d0: 30분 걷기(walk O) + 같은 날 29분 걷기(무시) + 근력(musc O) → walk/ musc 모두 1일에 집계
-    await _add_activity(db_sessionmaker, user_id, template_id, activity_type=ActivityType.WALKING, activity_date=d0, duration_min="30")
-    await _add_activity(db_sessionmaker, user_id, template_id, activity_type=ActivityType.WALKING, activity_date=d0, duration_min="29")
+    # d0: 걷기 20분+15분 = 당일 누적 35분(walk O, '하루 30분' 정의) + 근력(musc O)
+    await _add_activity(db_sessionmaker, user_id, template_id, activity_type=ActivityType.WALKING, activity_date=d0, duration_min="20")
+    await _add_activity(db_sessionmaker, user_id, template_id, activity_type=ActivityType.WALKING, activity_date=d0, duration_min="15")
     await _add_activity(db_sessionmaker, user_id, template_id, activity_type=ActivityType.SEATED_EXERCISE, activity_date=d0)
-    # d1: 29분 걷기(walk X) + 서서 근력(musc O)
-    await _add_activity(db_sessionmaker, user_id, template_id, activity_type=ActivityType.WALKING, activity_date=d1, duration_min="29")
+    # d1: 걷기 20분+9분 = 당일 누적 29분(walk X, 30분 미만) + 서서 근력(musc O)
+    await _add_activity(db_sessionmaker, user_id, template_id, activity_type=ActivityType.WALKING, activity_date=d1, duration_min="20")
+    await _add_activity(db_sessionmaker, user_id, template_id, activity_type=ActivityType.WALKING, activity_date=d1, duration_min="9")
     await _add_activity(db_sessionmaker, user_id, template_id, activity_type=ActivityType.STANDING_EXERCISE, activity_date=d1)
     # d2: 스트레칭(근력 아님) → 둘 다 X
     await _add_activity(db_sessionmaker, user_id, template_id, activity_type=ActivityType.STRETCHING, activity_date=d2)
@@ -109,5 +110,5 @@ async def test_count_active_days_matches_model_variable_definition(
     async with db_sessionmaker() as s:
         walk_days, musc_days = await DashboardRepository(s).count_active_days(user_id, start, end)
 
-    assert walk_days == 1  # d0 만(30분↑). 29분·윈도우 밖은 미포함, 같은 날 중복은 1일.
+    assert walk_days == 1  # d0 당일 누적 35분(20+15)만. d1 은 29분(20+9)이라 제외, 윈도우 밖도 제외.
     assert musc_days == 2  # d0(seated) + d1(standing). 스트레칭은 미포함.
