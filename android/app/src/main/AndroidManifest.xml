@@ -15,11 +15,15 @@
          · HIGH_SAMPLING_RATE_SENSORS : health FGS 실행의 '선행 권한' 요건을 자동 승인 권한 하나로 충족한다
            (공식 문서: 이 권한만으로 충분 → ACTIVITY_RECOGNITION/BODY_SENSORS 불필요, 런타임 프롬프트 없음).
            우리가 >200Hz 로 샘플링해서가 아니라, 오직 FGS-health 선행요건 충족용으로 선언한다.
-         · POST_NOTIFICATIONS : 지속 알림 표시(Android 13+ 런타임). 거부돼도 측정/서비스는 계속되고 알림만 숨는다. -->
+         · POST_NOTIFICATIONS : 지속 알림 표시(Android 13+ 런타임). 거부돼도 측정/서비스는 계속되고 알림만 숨는다.
+         · WAKE_LOCK : FGS 는 프로세스 우선순위만 올릴 뿐 CPU suspend 를 막지 못한다. 기본 가속도계는
+           non-wake-up 센서라 화면 OFF 로 SoC 가 suspend 되면 콜백이 끊기고 FIFO 초과분이 유실된다
+           (10분 측정에서 걸음 누락). 측정 수명 동안 PARTIAL_WAKE_LOCK 을 유지해 CPU 를 깨워 둔다. normal 등급, 런타임 불필요. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH" />
     <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:name=".AigoApplication"

@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -40,6 +41,15 @@ import com.aihealthcare.ah0404.R
 class WalkingMeasurementService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
+
+    /**
+     * 측정 수명 동안 CPU 를 깨워 두는 partial wake lock. FGS 는 프로세스 우선순위만 올릴 뿐 SoC
+     * suspend 를 막지 못하므로, 화면 OFF 로 기기가 suspend 되면 non-wake-up 가속도계 콜백이 끊기고
+     * FIFO 초과분이 유실된다(10분 측정 걸음 누락). start~모든 종료 경로(stopMeasurement/onDestroy)에서
+     * 획득·해제한다. reference-count 를 끄고 isHeld 로 가드해 중복 acquire/release 를 안전하게 만든다.
+     */
+    private var wakeLock: PowerManager.WakeLock? = null
+
     private val ticker = object : Runnable {
         override fun run() {
             notifySteps(WalkingMeasurement.currentSteps())
@@ -62,6 +72,7 @@ class WalkingMeasurementService : Service() {
     }
 
     private fun startMeasurement() {
+        acquireWakeLock()
         createChannelIfNeeded()
         val notif = buildNotification(WalkingMeasurement.currentSteps())
         startAsForeground(notif)
@@ -71,6 +82,7 @@ class WalkingMeasurementService : Service() {
 
     private fun stopMeasurement() {
         handler.removeCallbacks(ticker)
+        releaseWakeLock()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
@@ -82,7 +94,24 @@ class WalkingMeasurementService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(ticker)
+        releaseWakeLock() // stopMeasurement 을 거치지 않고 종료되는 경로(시스템 종료 등)의 안전망
         super.onDestroy()
+    }
+
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        val lock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG).apply {
+            setReferenceCounted(false)
+        }
+        // 세션이 비정상적으로 안 끝나도 무한 점유되지 않도록 넉넉한 안전 타임아웃을 둔다(정상 해제는 stop 경로).
+        lock.acquire(WAKE_LOCK_TIMEOUT_MS)
+        wakeLock = lock
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
     }
 
     private fun startAsForeground(notif: Notification) {
@@ -137,6 +166,9 @@ class WalkingMeasurementService : Service() {
         private const val CHANNEL_ID = "walking_measurement"
         private const val NOTIF_ID = 4199
         private const val UPDATE_MS = 1_000L
+        private const val WAKE_LOCK_TAG = "ah0404:walking_measurement"
+        // 걷기 챌린지는 10분 상한. 정상 해제는 stop 경로가 담당하고, 이 값은 누수 방지용 안전 상한이다.
+        private const val WAKE_LOCK_TIMEOUT_MS = 20 * 60 * 1000L
 
         /** 측정 시작 시 서비스를 포그라운드로 띄운다. */
         fun start(context: Context) {
