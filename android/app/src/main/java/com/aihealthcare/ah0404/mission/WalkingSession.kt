@@ -73,10 +73,12 @@ class WalkingSession(
             )
             // #131: 같은 샘플로 '보행→정지 전환'을 감지해 정지 선언 창의 걸음을 소급 취소한다.
             //   검출기는 손대지 않고(카운트 원천 유지), 취소는 steps 노출값에서만 반영한다.
+            //   ⚠️ 걸음 등록(onStepCounted)을 게이트 처리(processSample) **앞**에 둔다. 정지가 이 샘플에서
+            //      선언되면 방금 카운트된 걸음도 취소 창 안에 들어와야 하기 때문이다(리뷰 #215 등록 순서).
+            if (counted) stopGate.onStepCounted(tsMs)
             stopGate.processSample(
                 event.values[0], event.values[1], event.values[2], tsMs,
             )
-            if (counted) stopGate.onStepCounted(tsMs)
         }
 
         override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
@@ -156,8 +158,11 @@ class WalkingSession(
         running = false
         unregisterSensor()
         activeTime.stop()
+        // #131: 정지 선언 확인창이 끝나기 전에 종료돼도(앉으며 종료) 소급차감을 마무리 반영한다.
+        //   그 뒤 최종 스냅샷은 보정된 steps(= count - canceledSteps)로 고정한다(리뷰 #215: 종료값 미반영 방지).
+        stopGate.flushOnStop()
 
-        val snapshot = WalkingSnapshot(steps = detector.count, durationSec = elapsedSec())
+        val snapshot = WalkingSnapshot(steps = steps, durationSec = elapsedSec())
         Log.i(TAG, "세션 종료 → steps=${snapshot.steps}, durationSec=${snapshot.durationSec} (제출은 #91)")
         return snapshot
     }
