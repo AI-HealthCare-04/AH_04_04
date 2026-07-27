@@ -14,6 +14,7 @@ from app.dtos.dashboard import (
     HomeAvailableMissionSummary,
     HomeLatestPrediction,
     HomeResponse,
+    HomeStreak,
     HomeTodaySummary,
     HomeTodayWalking,
     HomeUser,
@@ -34,6 +35,7 @@ from app.repositories.health_profile_repository import HealthProfileRepository
 from app.services.activity_metrics import moderate_equivalent_min
 from app.services.mission import MissionService
 from app.services.risk_prediction import RiskPredictionService
+from app.services.streak import compute_current_streak
 
 
 class DashboardService:
@@ -63,8 +65,13 @@ class DashboardService:
         )
 
     async def get_home(self, user: User) -> HomeResponse:
+        as_of_date = today_kst()
         current_points = await self.repo.get_current_points(user.user_id)
         summary = await self.repo.get_today_summary(user.user_id)
+        streak = compute_current_streak(
+            await self.repo.get_counted_summary_dates(user.user_id, as_of_date),
+            as_of_date=as_of_date,
+        )
         # 사용자의 실제 운동 난이도(user_activity_profiles.current_level)를 읽어온다.
         #   프로필이 아직 없으면(건강체크 스킵/기초체력검사 전) 기본 easy로 본다.
         #   표시(activity_profile)와 미션 수 산정에 같은 레벨을 써서
@@ -89,6 +96,11 @@ class DashboardService:
             today_walking=HomeTodayWalking(
                 daily_total_min=total_walking_min,
                 daily_total_steps=total_walking_steps,
+            ),
+            streak=HomeStreak(
+                current_days=streak.current_days,
+                completed_today=streak.completed_today,
+                as_of_date=as_of_date,
             ),
         )
 

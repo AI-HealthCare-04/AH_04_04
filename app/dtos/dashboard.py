@@ -75,6 +75,14 @@ class HomeTodayWalking(BaseModel):
     daily_total_steps: int
 
 
+class HomeStreak(BaseModel):
+    # 스트릭은 서버가 KST 날짜와 성공한 미션 기록으로 계산한 권위값이다.
+    # 앱은 이 값을 자체 계산하거나 낙관적으로 증가시키지 않는다.
+    current_days: int = Field(ge=0)
+    completed_today: bool
+    as_of_date: date
+
+
 # [응답] 홈 통합 조회 (명세 §29). 홈 화면에 필요한 정보를 한 번에 반환한다.
 # latest_prediction은 nullable(건강체크 건너뛰면 null).
 class HomeResponse(BaseModel):
@@ -85,6 +93,7 @@ class HomeResponse(BaseModel):
     today_summary: HomeTodaySummary
     available_mission_summary: HomeAvailableMissionSummary
     today_walking: HomeTodayWalking
+    streak: HomeStreak
 
 
 # [응답] 월별 스탬프 요약 (명세 §30). 조회 월의 일자별 성취(daily_activity_summaries)를 반환한다.
