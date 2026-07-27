@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>근감소증 위험 예측 (AWGS 2025 · 일수 기반)</title>
+<style>
+:root{--bg:#f7f8fa;--card:#fff;--line:#e3e6ea;--tx:#222;--mut:#667;--accent:#2b6cb0;--good:#1a9850;--warn:#b45309;--warnbg:#fff7ed}
+*{box-sizing:border-box}
+body{font-family:system-ui,"Segoe UI","Malgun Gothic",sans-serif;margin:0;background:var(--bg);color:var(--tx);line-height:1.5}
+.wrap{max-width:780px;margin:0 auto;padding:20px}
+h1{font-size:20px;margin:0 0 4px}
+.sub{color:var(--mut);font-size:13px;margin-bottom:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px}
+label{font-size:12px;color:var(--mut);display:block;margin-bottom:4px}
+input[type=number]{width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;font-size:15px}
+.seg{display:flex;gap:6px}
+.seg button{flex:1;padding:8px;border:1px solid var(--line);background:#fff;border-radius:8px;cursor:pointer;font-size:14px}
+.seg button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.hint{font-size:11px;color:var(--mut);margin-top:3px}
+.slider{margin-top:2px}
+input[type=range]{width:100%}
+.dval{font-weight:700;color:var(--accent)}
+.bmi{font-size:13px;color:var(--mut);margin-top:10px}
+.result{text-align:center;padding:18px 12px 6px}
+.pct{font-size:52px;font-weight:800;line-height:1;color:var(--accent)}
+.plab{font-size:13px;color:var(--mut);margin-top:6px}
+.cohortline{font-size:14px;color:#445;margin-top:10px;line-height:1.55}
+.cohortline b{color:var(--accent);font-weight:700}
+.cohortnote{font-size:11px;color:var(--mut);text-align:center;margin-top:2px}
+h2{font-size:14px;margin:0 0 10px}
+.wi{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.wibox{border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.wibox .t{font-size:12px;color:var(--mut)}
+.wibox .v{font-size:22px;font-weight:800;margin:2px 0}
+.wibox .d{font-size:12px;font-weight:600;color:var(--good)}
+table{border-collapse:collapse;width:100%;margin-top:10px;font-size:13px}
+th,td{border:1px solid var(--line);padding:6px 4px;text-align:center}
+th{background:#f0f2f5;color:var(--mut);font-weight:600;font-size:11px}
+.note{font-size:12px;color:var(--mut);line-height:1.7;margin-top:6px}
+#warn{display:none;background:var(--warnbg);border:1px solid #fed7aa;color:var(--warn);border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:12px}
+.modeltag{font-size:11px;color:var(--mut);text-align:center;margin-top:8px}
+.lg{display:flex;gap:16px;font-size:12px;color:var(--mut);margin-top:6px;flex-wrap:wrap}
+.lgi{display:flex;align-items:center;gap:5px}
+.ln{width:16px;height:3px;border-radius:2px;display:inline-block}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>근감소증 위험 예측</h1>
+<div class="sub">KNHANES 2022–2024 · AWGS 2025 라벨 · 일수 기반 로지스틱 모델(65세 이상). 출력은 <b>근감소증일 연속 확률</b>이며 진단이 아닙니다. 운동 변화에 따른 값은 <b>입력을 가정했을 때의 연관 추정치</b>이지 인과효과가 아닙니다.</div>
+
+<div id="warn"></div>
+
+<div class="card">
+  <div class="controls">
+    <div><label>성별</label><div class="seg" id="sex"><button data-v="1" class="on">남성</button><button data-v="2">여성</button></div></div>
+    <div><label>나이</label><input type="number" id="age" value="75" min="65" max="90"></div>
+    <div><label>키 (cm)</label><input type="number" id="ht" value="166"></div>
+    <div><label>몸무게 (kg)</label><input type="number" id="wt" value="66"></div>
+    <div><label>허리둘레 (cm) · 선택</label><input type="number" id="wa" placeholder="모르면 비워두세요"><div class="hint">입력 시 허리 포함 모델</div></div>
+  </div>
+  <div style="margin-top:14px" class="controls">
+    <div><label>걷기 (주 <span class="dval" id="walkL">0</span>일)</label><input class="slider" type="range" id="walk" min="0" max="5" step="1" value="0"><div class="hint">하루 30분 이상 걷는 요일 수</div></div>
+    <div><label>근력운동 (주 <span class="dval" id="muscL">0</span>일)</label><input class="slider" type="range" id="musc" min="0" max="5" step="1" value="0"><div class="hint">아령·밴드·맨몸 등 근력운동 요일 수</div></div>
+  </div>
+  <div class="bmi">BMI: <b id="bmiOut">–</b> · 사용 모델: <b id="mdlOut">–</b></div>
+</div>
+
+<div class="card">
+  <div class="result">
+    <div class="pct" id="pct">–</div>
+    <div class="plab">현재 입력 기준 근감소증 추정 확률</div>
+    <div class="cohortline" id="cohortline">–</div>
+  </div>
+  <div id="cohort"></div>
+  <div class="cohortnote"><b>시뮬레이션 예시</b> — 또래 분포·순위는 국건영 통계로 생성한 근사이며 <b>실제 예측 분포가 아닙니다</b>(허리 포함 모델도 이 근사 분포에 표시 · 추후 실제 분포로 교체) · 진단이 아닙니다</div>
+  <div class="modeltag" id="modeltag"></div>
+</div>
+
+<div class="card">
+  <h2>운동을 주 5일로 <u>가정하면</u> (현재 대비 · 모델 추정, 인과 아님)</h2>
+  <div class="wi">
+    <div class="wibox"><div class="t">근력운동 주 5일</div><div class="v" id="wiMusc">–</div><div class="d" id="dMusc"></div></div>
+    <div class="wibox"><div class="t">걷기 주 5일</div><div class="v" id="wiWalk">–</div><div class="d" id="dWalk"></div></div>
+  </div>
+  <div class="note">절대 변화(%p)와 <b>상대 감소율</b>(현재 대비 몇 % 낮아지는지)을 함께 표시합니다.</div>
+</div>
+
+<div class="card">
+  <h2>일수별 위험 추이 (0→5일)</h2>
+  <div id="chart"></div>
+  <div class="lg">
+    <span class="lgi"><span class="ln" style="background:#2b6cb0"></span>근력운동 늘릴 때 (걷기는 현재값 고정)</span>
+    <span class="lgi"><span class="ln" style="background:#e08a1e"></span>걷기 늘릴 때 (근력은 현재값 고정)</span>
+  </div>
+  <table id="tbl"></table>
+</div>
+
+<div class="card">
+  <h2>해석 주의</h2>
+  <div class="note">
+  • 근력운동은 하루씩 늘 때 위험이 뚜렷이 낮아지지만, <b>걷기는 완만</b>합니다. 이는 표시 문제가 아니라 데이터에서 걷기의 신호가 약한 실제 경향입니다(관찰 데이터 기반이라 인과 아님).<br>
+  • 근감소증이 <b>근육량 기준</b>이라 무거울수록 낮게 나옵니다. 근육 적고 지방 많은 <b>근감소성 비만</b>은 낮게 표시돼도 실제 고위험일 수 있어 기능검사가 필요합니다.<br>
+  • 65세 미만·학습범위 밖 입력은 참고용이며 경고가 표시됩니다.
+  </div>
+</div>
+</div>
+
+<script>
+const MODELS={
+ minimal:{intercept:0.7848014961250168,
+  coef:{age:0.6338867631046556,height_cm:-1.2063505347362475,weight_kg:-0.3257516548312984,bmi:-0.12541694891489233,walk_days:-0.10202379179415048,musc_days:-0.34969551607848304,sex:-2.112910195684659},
+  mean:{age:72.48422528628184,height_cm:159.14961439588689,weight_kg:61.092755316662775,bmi:24.06448856762313,walk_days:4.364337462023838,musc_days:0.9658798784762795},
+  scale:{age:5.036178650297799,height_cm:8.70005623360037,weight_kg:10.203834418222295,bmi:3.172272332470186,walk_days:2.4957546518518146,musc_days:1.8159673537356056}},
+ waist:{intercept:0.6891001142819875,
+  coef:{age:0.5169053168600816,height_cm:-1.0992701366066517,weight_kg:-0.9854242889658065,bmi:-0.5198546552270974,waist_cm:0.9851485602507347,walk_days:-0.09016793130462468,musc_days:-0.3194740866761107,sex:-2.1036756466955766},
+  mean:{age:72.48422528628184,height_cm:159.14961439588689,weight_kg:61.092755316662775,bmi:24.06448856762313,waist_cm:86.23197008646879,walk_days:4.364337462023838,musc_days:0.9658798784762795},
+  scale:{age:5.036178650297799,height_cm:8.70005623360037,weight_kg:10.203834418222295,bmi:3.172272332470186,waist_cm:9.17461094413287,walk_days:2.4957546518518146,musc_days:1.8159673537356056}}
+};
+const RANGE={age:[65,80],ht:[143,178],wt:[40,88],bmi:[17,33],wa:[66,108]};
+const KNAME={age:"나이",ht:"키",wt:"몸무게",bmi:"BMI",wa:"허리둘레"};
+let sex=1;
+function predict(m,age,sexv,ht,wt,bmi,wa,wd,md){
+  let L=m.intercept;
+  const z=(f,x)=>m.coef[f]*((x-m.mean[f])/m.scale[f]);
+  L+=z("age",age)+z("height_cm",ht)+z("weight_kg",wt)+z("bmi",bmi)+z("walk_days",wd)+z("musc_days",md);
+  if(m.coef.waist_cm!==undefined) L+=z("waist_cm",wa);
+  L+=m.coef.sex*sexv;
+  return 1/(1+Math.exp(-L));
+}
+function fmt(p){return p<0.005?"<0.5%":p>0.995?">99.5%":(p*100).toFixed(1)+"%";}
+// ===== 또래(코호트) 분포: 성별 2 × 연령밴드 4 =====
+// 국건영 통계 모멘트(모델의 mean/scale) 기반 몬테카를로 근사. 추후 실제 예측 분포(quantiles/density)로 교체.
+const BANDS=[[65,69],[70,74],[75,79],[80,88]], BANDC=[67,72,77,82],
+      BANDL=["65–69세","70–74세","75–79세","80세 이상"], cohortCache={};
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function cohortFor(sexv,bi){
+  const key=sexv+"_"+bi; if(cohortCache[key])return cohortCache[key];
+  const rng=mulberry32(9137+sexv*100+bi);
+  const randn=()=>{let u=0,v=0;while(!u)u=rng();while(!v)v=rng();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)};
+  const [a0,a1]=BANDS[bi], htM=sexv===1?166:153, htS=sexv===1?6.2:5.6, ps=[];
+  for(let i=0;i<1500;i++){
+    const age=a0+rng()*(a1-a0+1);
+    const ht=Math.max(htM-3*htS,Math.min(htM+3*htS,htM+htS*randn()));
+    const bmi=Math.max(17,Math.min(33,24.06+3.17*randn()));
+    const wt=bmi*Math.pow(ht/100,2);
+    const wd=Math.max(0,Math.min(5,Math.round(4.36+2.5*randn())));
+    const md=Math.max(0,Math.min(5,Math.round(0.97+1.82*randn())));
+    ps.push(predict(MODELS.minimal,age,sexv,ht,wt,bmi,0,wd,md));
+  }
+  ps.sort((x,y)=>x-y);
+  const bw=0.022, dens=[]; let dmax=0;
+  for(let g=0;g<=50;g++){const x=g*0.01; let s=0;
+    for(const p of ps){const z=(x-p)/bw; if(z>-4&&z<4)s+=Math.exp(-0.5*z*z);}
+    dens.push(s); if(s>dmax)dmax=s;}
+  return cohortCache[key]={sorted:ps,dens:dens.map(v=>v/dmax)};
+}
+function pctBelow(sorted,p){let lo=0,hi=sorted.length;while(lo<hi){const m=(lo+hi)>>1;if(sorted[m]<p)lo=m+1;else hi=m;}return lo/sorted.length*100}
+function bandIdx(a){for(let i=0;i<4;i++)if(a<=BANDS[i][1])return i;return 3}
+// 밴드 경계 점프 방지: 인접 밴드 중심(67·72·77·82) 사이 선형 보간
+function pctInterp(sexv,age,p){
+  const a=Math.max(BANDC[0],Math.min(BANDC[3],age));
+  let j=0; while(j<2&&a>BANDC[j+1])j++;
+  const w=Math.max(0,Math.min(1,(a-BANDC[j])/(BANDC[j+1]-BANDC[j])));
+  return (1-w)*pctBelow(cohortFor(sexv,j).sorted,p)+w*pctBelow(cohortFor(sexv,j+1).sorted,p);
+}
+function cohortSVG(dens,pMark,rank,tail,pTxt,sexv){
+  const W=640,H=214,padL=16,padR=16,base=150,top=36;
+  const X=v=>padL+(W-padL-padR)*Math.min(v,0.5)/0.5;
+  const Y=d=>base-(base-top)*d;
+  let curve="",area="M"+padL+","+base;
+  for(let g=0;g<=50;g++){const px=X(g*0.01).toFixed(1),py=Y(dens[g]).toFixed(1);
+    curve+=(g?"L":"M")+px+","+py; area+="L"+px+","+py;}
+  area+="L"+X(0.5)+","+base+"Z";
+  const xu=X(pMark), gi=Math.max(0,Math.min(50,Math.round(pMark/0.01))), yu=Y(dens[gi]);
+  const sexL=sexv===1?"남성":"여성";
+  const zones=[[0,0.15,"rgba(26,152,80,.33)","#0F6E56","낮음"],[0.15,0.30,"rgba(240,164,0,.33)","#854F0B","중간"],[0.30,0.5,"rgba(215,48,39,.30)","#993C1D","높음"]];
+  let strip="";
+  for(const z of zones){
+    strip+=`<rect x="${(X(z[0])+1).toFixed(1)}" y="158" width="${(X(z[1])-X(z[0])-2).toFixed(1)}" height="9" rx="2" fill="${z[2]}"/>`+
+           `<text x="${((X(z[0])+X(z[1]))/2).toFixed(1)}" y="181" text-anchor="middle" font-size="11" fill="${z[3]}">${z[4]}</text>`;}
+  let areaLb="";
+  if(!tail){
+    if(xu-padL>95) areaLb+=`<text x="${((padL+xu)/2).toFixed(1)}" y="136" text-anchor="middle" font-size="12" fill="#556">나보다 낮음 ${rank-1}명</text>`;
+    if(X(0.5)-xu>95) areaLb+=`<text x="${((xu+X(0.5))/2).toFixed(1)}" y="106" text-anchor="middle" font-size="12" fill="#98a">나보다 높음 ${100-rank}명</text>`;
+  }
+  const mkLb=xu>W-130
+    ?`<text x="${xu-9}" y="52" text-anchor="end" font-size="13" font-weight="700" fill="#111">나 · ${pTxt}</text>`
+    :`<text x="${xu+9}" y="52" font-size="13" font-weight="700" fill="#111">나 · ${pTxt}</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="또래 ${sexL} 분포에서 내 위치. 위험이 낮은 쪽에서 ${rank}번째">
+<text x="${padL}" y="22" font-size="12" fill="#889">또래 ${sexL} 분포 (국민건강영양조사 기반)</text>
+<path d="${area}" fill="rgba(43,108,176,.10)"/>
+<clipPath id="meArea"><rect x="0" y="0" width="${xu.toFixed(1)}" height="${base}"/></clipPath>
+<path d="${area}" fill="rgba(43,108,176,.28)" clip-path="url(#meArea)"/>
+<path d="${curve}" fill="none" stroke="#2b6cb0" stroke-width="2"/>
+<line x1="${padL}" y1="${base}" x2="${W-padR}" y2="${base}" stroke="#d5d9df"/>
+<line x1="${xu.toFixed(1)}" y1="42" x2="${xu.toFixed(1)}" y2="${base}" stroke="#111" stroke-width="2"/>
+<circle cx="${xu.toFixed(1)}" cy="${yu.toFixed(1)}" r="5" fill="#111" stroke="#fff" stroke-width="1.5"/>
+${mkLb}${areaLb}${strip}
+<text x="${X(0)}" y="200" font-size="11" fill="#889">0%</text>
+<text x="${X(0.15).toFixed(1)}" y="200" text-anchor="middle" font-size="11" fill="#889">15%</text>
+<text x="${X(0.30).toFixed(1)}" y="200" text-anchor="middle" font-size="11" fill="#889">30%</text>
+<text x="${X(0.5)}" y="200" text-anchor="end" font-size="11" fill="#889">50%+</text>
+</svg>`;
+}
+
+function chartSVG(xs, sMusc, sWalk, curMusc, curWalk){
+  const W=680,H=200,padL=42,padR=12,padT=12,padB=28;
+  const all=sMusc.concat(sWalk); let ymax=Math.max(...all)*1.15, ymin=Math.min(...all)*0.6;
+  if(ymax-ymin<0.02){ymax+=0.01;ymin=Math.max(0,ymin-0.01);}
+  const X=i=>padL+(W-padL-padR)*(i/(xs.length-1));
+  const Y=v=>padT+(H-padT-padB)*(1-(v-ymin)/(ymax-ymin));
+  const poly=(arr,c)=>`<polyline fill="none" stroke="${c}" stroke-width="2.5" points="${arr.map((v,i)=>X(i)+","+Y(v)).join(" ")}"/>`+
+    arr.map((v,i)=>`<circle cx="${X(i)}" cy="${Y(v)}" r="3" fill="${c}"/>`).join("");
+  let grid="",ax="";
+  for(let g=0;g<=4;g++){const yv=ymin+(ymax-ymin)*g/4; const yy=Y(yv);
+    grid+=`<line x1="${padL}" y1="${yy}" x2="${W-padR}" y2="${yy}" stroke="#eef0f3"/>`;
+    ax+=`<text x="${padL-6}" y="${yy+4}" text-anchor="end" font-size="11" fill="#889">${(yv*100).toFixed(1)}%</text>`;}
+  let xax=xs.map((d,i)=>`<text x="${X(i)}" y="${H-8}" text-anchor="middle" font-size="11" fill="#889">${d}일</text>`).join("");
+  const cm=`<circle cx="${X(curMusc)}" cy="${Y(sMusc[curMusc])}" r="5.5" fill="none" stroke="#2b6cb0" stroke-width="2.5"/>`;
+  const cw=`<circle cx="${X(curWalk)}" cy="${Y(sWalk[curWalk])}" r="5.5" fill="none" stroke="#e08a1e" stroke-width="2.5"/>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%">${grid}${ax}${xax}${poly(sWalk,"#e08a1e")}${poly(sMusc,"#2b6cb0")}${cm}${cw}</svg>`;
+}
+
+function render(){
+  const age=+age_.value, ht=+ht_.value, wt=+wt_.value;
+  const waRaw=wa_.value.trim(), hasWa=waRaw!=="" && +waRaw>0, wa=hasWa?+waRaw:0;
+  const wd=+walk_.value, md=+musc_.value;
+  walkL.textContent=wd; muscL.textContent=md;
+  const bmi=wt/Math.pow(ht/100,2);
+  bmiOut.textContent=isFinite(bmi)?bmi.toFixed(1):"–";
+  const m=hasWa?MODELS.waist:MODELS.minimal;
+  mdlOut.textContent=hasWa?"허리 포함형(8입력)":"허리 제외형(7입력)";
+  // 경고
+  const vals={age,ht,wt,bmi,wa}; let oor=[];
+  for(const k in RANGE){ if(k==="wa"&&!hasWa) continue; if(vals[k]<RANGE[k][0]||vals[k]>RANGE[k][1]) oor.push(KNAME[k]); }
+  if(age<65) oor.push("나이(65세 미만)");
+  const w=document.getElementById("warn");
+  if(oor.length){w.style.display="block";w.innerHTML="⚠ <b>"+oor.join(", ")+"</b> 값이 학습 범위를 벗어났습니다. 이 예측은 외삽이라 신뢰가 낮습니다.";}
+  else w.style.display="none";
+
+  const p=predict(m,age,sex,ht,wt,bmi,wa,wd,md);
+  pct.textContent=fmt(p);
+  modeltag.textContent="model_version: sarcopenia_lr_"+(hasWa?"waist":"minimal")+"_days_awgs2025 (데모) · 연속 확률";
+
+  // what-if: 각 운동을 주5일로
+  const pM5=predict(m,age,sex,ht,wt,bmi,wa,wd,5);
+  const pW5=predict(m,age,sex,ht,wt,bmi,wa,5,md);
+  const show=(pnew,vEl,dEl)=>{vEl.textContent=fmt(pnew);
+    const dp=(pnew-p)*100, rel=p>0?(pnew-p)/p*100:0;
+    dEl.textContent=(dp<=0?"▼ ":"▲ ")+Math.abs(dp).toFixed(1)+"%p · 상대 "+(rel<=0?"−":"+")+Math.abs(rel).toFixed(0)+"%";
+    dEl.style.color=dp<=0?"var(--good)":"#d73027";};
+  show(pM5,wiMusc,dMusc); show(pW5,wiWalk,dWalk);
+
+  // 또래 분포 + 백분위 (코호트는 minimal 모델 기반 — 마커·순번 모두 화면의 p 사용)
+  const bi=bandIdx(age);
+  const sexL=sex===1?"남성":"여성";
+  // ⚠️ 코호트 분포는 minimal 모델로만 생성된다. 허리(waist) 입력 시 마커 p 는 waist 모델 결과라
+  //   서로 다른 확률 척도의 백분위를 계산하게 된다(리뷰 #205). 검증된 모델별 분포가 준비될 때까지
+  //   waist 입력에서는 코호트 그래프·순위·인원(N명)을 아예 표시하지 않는다(동일 모델 비교만 허용).
+  if(hasWa){
+    cohortline.innerHTML="허리 포함 모델의 또래 분포·순위는 준비 중이에요 (모델별 검증 분포 반영 예정)";
+    document.getElementById("cohort").innerHTML="";
+  }else{
+    const rank=Math.max(1,Math.min(100,Math.round(pctInterp(sex,age,p))+1));
+    const tail=rank>=85; // 위험 높은 쪽 꼬리: 나보다 낮은 사람이 대다수일 때
+    cohortline.innerHTML=tail
+      ?"근력운동을 <b>주 5일로 가정</b>하면 위험 추정치가 가장 많이 낮아지는 구간이에요 · 주 5일 가정 시 <b>"+fmt(pM5)+"</b> (연관 추정, 인과 아님)"
+      :"같은 연령대("+BANDL[bi]+") "+sexL+" <b>시뮬레이션 예시</b>에서 위험이 낮은 쪽 약 "+rank+"번째 수준 (실제 분포 아님)";
+    document.getElementById("cohort").innerHTML=cohortSVG(cohortFor(sex,bi).dens,p,rank,tail,fmt(p),sex);
+  }
+
+  // 추이(0→5일)
+  const xs=[0,1,2,3,4,5];
+  const sMusc=xs.map(x=>predict(m,age,sex,ht,wt,bmi,wa,wd,x)); // 근력 변화, 걷기 현재
+  const sWalk=xs.map(x=>predict(m,age,sex,ht,wt,bmi,wa,x,md)); // 걷기 변화, 근력 현재
+  document.getElementById("chart").innerHTML=chartSVG(xs,sMusc,sWalk,md,wd);
+  let th="<tr><th>일수</th>"+xs.map(d=>`<th>${d}일</th>`).join("")+"</tr>";
+  th+="<tr><td style='color:#2b6cb0;font-weight:700'>근력운동</td>"+sMusc.map((v,i)=>`<td${i===md?" style='background:#eaf2fb;font-weight:700'":""}>${fmt(v)}</td>`).join("")+"</tr>";
+  th+="<tr><td style='color:#e08a1e;font-weight:700'>걷기</td>"+sWalk.map((v,i)=>`<td${i===wd?" style='background:#fdf3e7;font-weight:700'":""}>${fmt(v)}</td>`).join("")+"</tr>";
+  document.getElementById("tbl").innerHTML=th;
+}
+document.querySelectorAll("#sex button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll("#sex button").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); sex=+b.dataset.v;
+  if(sex===2){ht_.value=153;wt_.value=56;}else{ht_.value=166;wt_.value=66;}
+  render();});
+const age_=document.getElementById("age"),ht_=document.getElementById("ht"),wt_=document.getElementById("wt"),wa_=document.getElementById("wa"),walk_=document.getElementById("walk"),musc_=document.getElementById("musc");
+[age_,ht_,wt_,wa_,walk_,musc_].forEach(e=>e.addEventListener("input",render));
+render();
+</script>
+</body>
+</html>

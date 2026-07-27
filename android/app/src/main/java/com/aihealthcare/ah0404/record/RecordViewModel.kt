@@ -6,13 +6,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aihealthcare.ah0404.dashboard.DashboardPrefill
+import com.aihealthcare.ah0404.network.PredictionInputsResponse
 import com.aihealthcare.ah0404.network.RecordApi
 import com.aihealthcare.ah0404.network.RiskHistoryItem
 import com.aihealthcare.ah0404.network.retrofit
+import java.util.Calendar
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /**
  * `_13 나의 기록` 상태 + 백엔드 배선.
@@ -42,6 +46,9 @@ class RecordViewModel(
     var totalPoints by mutableStateOf(0); private set
     var activityError by mutableStateOf(false); private set
 
+    // 예측 대시보드(#193) 개인화 초기값. null 이면 대시보드가 HTML 기본값으로 열린다(엔드포인트 미배포/미완 시).
+    var predictionPrefill by mutableStateOf<DashboardPrefill?>(null); private set
+
     // 겹친 refresh 중 최신 것만 상태를 commit 하도록 식별하는 세대 토큰.
     private var generation = 0
 
@@ -61,8 +68,11 @@ class RecordViewModel(
         coroutineScope {
             val historyCall = async { safeCall { api.getRiskHistory().predictions } }
             val logsCall = async { safeCall { api.getMissionLogs().logs } }
+            // 예측 대시보드 개인화(#193): 실패해도(미배포/프로필 미완) 화면은 막지 않고 기본값 폴백.
+            val prefillCall = async { safeCall { api.getPredictionInputs() } }
             val historyResult = historyCall.await()
             val logsResult = logsCall.await()
+            val prefillResult = prefillCall.await()
 
             // 이 refresh 이후 더 최신 refresh 가 시작됐다면, 낡은 결과는 버린다(commit 안 함).
             if (gen != generation) return@coroutineScope
@@ -76,6 +86,9 @@ class RecordViewModel(
                     totalPoints = logs.sumOf { it.earnedPoints }
                 }
                 .onFailure { activityError = true; Log.w(TAG, "미션 로그 조회 실패: ${it.message}") }
+            prefillResult
+                .onSuccess { predictionPrefill = it.toDashboardPrefill() }
+                .onFailure { Log.w(TAG, "예측 입력 조회 실패(기본값 폴백): ${it.message}") }
             loaded = true
         }
         if (gen == generation) loading = false
@@ -94,4 +107,34 @@ class RecordViewModel(
     companion object {
         const val TAG = "Record"
     }
+}
+
+/** 서버 응답 → 대시보드 주입값(#193). 성별 코드화·생년→나이·소수 반올림. 값 없으면 null(HTML 기본값 유지). */
+private fun PredictionInputsResponse.toDashboardPrefill(): DashboardPrefill = DashboardPrefill(
+    sex = when (sex) { "male" -> 1; "female" -> 2; else -> null },
+    age = birthDate?.let(::manAgeFromIso)?.takeIf { it in 1..120 },
+    heightCm = heightCm?.roundToInt(),
+    weightKg = weightKg?.roundToInt(),
+    waistCm = waistCm?.roundToInt(),
+    walkDays = walkDays,
+    muscDays = muscDays,
+)
+
+/**
+ * "YYYY-MM-DD" 생년월일 → **만 나이**. 연도만 빼면 생일 전 사용자가 1살 많게 나오므로(리뷰 반영),
+ * 올해 생일이 아직 안 지났으면 -1 한다. java.time(API26+) 대신 Calendar(minSdk 24) 사용.
+ */
+private fun manAgeFromIso(iso: String): Int? {
+    val parts = iso.split("-")
+    if (parts.size < 3) return null
+    val year = parts[0].toIntOrNull() ?: return null
+    val month = parts[1].toIntOrNull() ?: return null
+    val day = parts[2].take(2).toIntOrNull() ?: return null
+    val now = Calendar.getInstance()
+    val curYear = now.get(Calendar.YEAR)
+    val curMonth = now.get(Calendar.MONTH) + 1 // Calendar.MONTH 는 0-based
+    val curDay = now.get(Calendar.DAY_OF_MONTH)
+    var age = curYear - year
+    if (curMonth < month || (curMonth == month && curDay < day)) age-- // 올해 생일 전이면 -1
+    return age
 }

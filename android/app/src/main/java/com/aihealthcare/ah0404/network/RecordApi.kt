@@ -11,4 +11,8 @@ interface RecordApi {
 
     @GET("mission-logs")
     suspend fun getMissionLogs(@Query("date") date: String? = null): MissionLogListResponse
+
+    /** 예측 대시보드(#193) 개인화 입력 — 등록된 신체값 + 최근 7일 걷기/운동 요일 수. */
+    @GET("dashboard/prediction-inputs")
+    suspend fun getPredictionInputs(): PredictionInputsResponse
 }

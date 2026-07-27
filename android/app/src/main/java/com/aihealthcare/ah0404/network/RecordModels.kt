@@ -5,6 +5,18 @@ import kotlinx.serialization.Serializable
 
 /** `_13 나의 기록` 화면에서 사용하는 예측 이력과 미션 기록 DTO. */
 
+/** 예측 대시보드(#193) 개인화 입력 응답. 프로필 미완이면 신체값 null → 앱이 기본값 폴백. */
+@Serializable
+data class PredictionInputsResponse(
+    val sex: String? = null, // "male" | "female" | null
+    @SerialName("birth_date") val birthDate: String? = null, // "YYYY-MM-DD" | null
+    @SerialName("height_cm") val heightCm: Double? = null,
+    @SerialName("weight_kg") val weightKg: Double? = null,
+    @SerialName("waist_cm") val waistCm: Double? = null,
+    @SerialName("walk_days") val walkDays: Int = 0,
+    @SerialName("musc_days") val muscDays: Int = 0,
+)
+
 @Serializable
 data class RiskHistoryItem(
     @SerialName("created_at") val createdAt: String,

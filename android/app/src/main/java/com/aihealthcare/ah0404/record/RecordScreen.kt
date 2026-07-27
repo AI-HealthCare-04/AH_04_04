@@ -19,7 +19,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -29,11 +32,14 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.aihealthcare.ah0404.dashboard.PredictionDashboardScreen
 import com.aihealthcare.ah0404.network.RiskHistoryItem
 import com.aihealthcare.ah0404.settings.TopBar
 import com.aihealthcare.ah0404.ui.components.AigoCard
+import com.aihealthcare.ah0404.ui.components.AigoSegmentedSelector
 import com.aihealthcare.ah0404.ui.components.MEDICAL_DISCLAIMER_DEFAULT
 import com.aihealthcare.ah0404.ui.components.MedicalDisclaimer
+import com.aihealthcare.ah0404.ui.components.SegmentOption
 import com.aihealthcare.ah0404.ui.theme.Dimens
 import java.util.GregorianCalendar
 import java.util.Locale
@@ -54,64 +60,94 @@ fun RecordScreen(
     vm: RecordViewModel = viewModel(),
 ) {
     LaunchedEffect(Unit) { vm.load() }
+    // 상단 세그먼트: 기존 챌린지 기록 ↔ 근감소증 예측 대시보드(#193). 대시보드는 심사·평가용 WebView.
+    var tab by remember { mutableStateOf(RecordTab.RECORDS) }
 
     Column(
         modifier = modifier
             .fillMaxSize()
-            .systemBarsPadding()
-            .verticalScroll(rememberScrollState()),
+            .systemBarsPadding(),
     ) {
         TopBar(title = "나의 기록", onBack = onBack)
 
-        Column(
-            Modifier.padding(Dimens.ScreenPadding),
-            verticalArrangement = Arrangement.spacedBy(Dimens.ElementGap),
-        ) {
-            AigoCard {
-                Text(
-                    "근육 건강 변화",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                )
-                Spacer(Modifier.height(Dimens.Space4))
-                Text(
-                    "생활습관 관리를 위해 살펴보는 참고 점수예요.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(Dimens.Space8))
-                when {
-                    vm.historyError -> ErrorRow(onRetry = vm::load)
-                    vm.loading && vm.history.isEmpty() -> LoadingRow()
-                    vm.history.isEmpty() -> EmptyText(
-                        "아직 기록이 없어요. 건강 확인을 마치면 이곳에서 변화를 볼 수 있어요.",
+        AigoSegmentedSelector(
+            options = listOf(
+                SegmentOption(RecordTab.RECORDS, "나의 기록"),
+                SegmentOption(RecordTab.DASHBOARD, "대시보드"),
+            ),
+            selected = tab,
+            onSelect = { tab = it },
+            horizontal = true,
+            modifier = Modifier.padding(
+                horizontal = Dimens.ScreenPadding,
+                vertical = Dimens.Space8,
+            ),
+        )
+
+        when (tab) {
+            RecordTab.RECORDS -> Column(
+                Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(Dimens.ScreenPadding),
+                verticalArrangement = Arrangement.spacedBy(Dimens.ElementGap),
+            ) {
+                AigoCard {
+                    Text(
+                        "근육 건강 변화",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
                     )
-                    else -> RiskTrendContent(vm.history)
+                    Spacer(Modifier.height(Dimens.Space4))
+                    Text(
+                        "생활습관 관리를 위해 살펴보는 참고 점수예요.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(Dimens.Space8))
+                    when {
+                        vm.historyError -> ErrorRow(onRetry = vm::load)
+                        vm.loading && vm.history.isEmpty() -> LoadingRow()
+                        vm.history.isEmpty() -> EmptyText(
+                            "아직 기록이 없어요. 건강 확인을 마치면 이곳에서 변화를 볼 수 있어요.",
+                        )
+                        else -> RiskTrendContent(vm.history)
+                    }
                 }
+
+                AigoCard {
+                    Text(
+                        "그동안의 활동",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Spacer(Modifier.height(Dimens.Space8))
+                    when {
+                        vm.activityError -> ErrorRow(onRetry = vm::load)
+                        vm.loading && !vm.loaded -> LoadingRow()
+                        else -> Text(
+                            "완료한 미션 ${vm.completedMissions}개 · 모은 포인트 %,d P".format(vm.totalPoints),
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                    }
+                }
+
+                MedicalDisclaimer(text = MEDICAL_DISCLAIMER_DEFAULT)
+                Spacer(Modifier.height(Dimens.Space8))
             }
 
-            AigoCard {
-                Text(
-                    "그동안의 활동",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                )
-                Spacer(Modifier.height(Dimens.Space8))
-                when {
-                    vm.activityError -> ErrorRow(onRetry = vm::load)
-                    vm.loading && !vm.loaded -> LoadingRow()
-                    else -> Text(
-                        "완료한 미션 ${vm.completedMissions}개 · 모은 포인트 %,d P".format(vm.totalPoints),
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                }
-            }
-
-            MedicalDisclaimer(text = MEDICAL_DISCLAIMER_DEFAULT)
-            Spacer(Modifier.height(Dimens.Space8))
+            RecordTab.DASHBOARD -> PredictionDashboardScreen(
+                prefill = vm.predictionPrefill,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+            )
         }
     }
 }
+
+/** 나의 기록 화면 상단 세그먼트 탭(#193). */
+internal enum class RecordTab { RECORDS, DASHBOARD }
 
 @Composable
 private fun LoadingRow() {

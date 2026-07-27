@@ -2,6 +2,7 @@ package com.aihealthcare.ah0404.record
 
 import com.aihealthcare.ah0404.network.MissionLogItem
 import com.aihealthcare.ah0404.network.MissionLogListResponse
+import com.aihealthcare.ah0404.network.PredictionInputsResponse
 import com.aihealthcare.ah0404.network.RecordApi
 import com.aihealthcare.ah0404.network.RiskHistoryItem
 import com.aihealthcare.ah0404.network.RiskHistoryResponse
@@ -35,6 +36,7 @@ class RecordViewModelTest {
         override suspend fun getMissionLogs(date: String?): MissionLogListResponse {
             logsCalls++; return logs()
         }
+        override suspend fun getPredictionInputs() = PredictionInputsResponse()
     }
 
     private fun risk(vararg stages: String) =
@@ -129,6 +131,7 @@ class RecordViewModelTest {
                 MissionLogListResponse(listOf(MissionLogItem(1, "walking", true, true, 14)))
             }
         }
+        override suspend fun getPredictionInputs() = PredictionInputsResponse()
     }
 
     @Test
