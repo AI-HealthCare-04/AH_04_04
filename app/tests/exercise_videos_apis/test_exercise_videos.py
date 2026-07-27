@@ -49,11 +49,18 @@ def test_available_matches_video_url_presence() -> None:
             assert item.thumbnail_url is None
 
 
-# 현황(서버 미업로드): 4단계 모두 준비중(available=false)이어야 한다.
-def test_all_stages_currently_pending() -> None:
-    videos = ExerciseVideoService().get_videos().videos
-    assert all(not item.available for item in videos)
-    assert all(item.video_url is None for item in videos)
+# 현황(2026-07-27): warmup(몸풀기)만 서버 업로드 완료 → available=true + video_url(/videos/warmup.mp4),
+#   나머지 3단계(seated·standing·cooldown)는 준비중(available=false, url null).
+def test_only_warmup_available_others_pending() -> None:
+    by_stage = {item.stage: item for item in ExerciseVideoService().get_videos().videos}
+
+    assert by_stage["warmup"].available is True
+    assert by_stage["warmup"].video_url is not None
+    assert by_stage["warmup"].video_url.endswith("/videos/warmup.mp4")
+
+    for stage in ("seated", "standing", "cooldown"):
+        assert by_stage[stage].available is False
+        assert by_stage[stage].video_url is None
 
 
 # 매핑 로직: filename이 채워지면(서버 업로드) available=true + video_url이 base로 조립된다.
