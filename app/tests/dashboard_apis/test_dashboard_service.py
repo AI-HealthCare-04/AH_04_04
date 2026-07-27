@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import cast
 
@@ -371,3 +372,68 @@ def test_month_range_rejects_invalid_format(bad_month: str) -> None:
     with pytest.raises(HTTPException) as exc:
         DashboardService._month_range(bad_month)
     assert exc.value.status_code == 400
+
+
+# ── 예측 대시보드 입력(#193) ─────────────────────────────────────────────────
+def _service_with_prediction_stub(profile: object, active_days: tuple[int, int]) -> DashboardService:
+    # DB 없이 매핑·clamp 로직만 검증하기 위해 두 레포 호출을 스텁한다.
+    service = DashboardService(session=None)  # type: ignore[arg-type]
+
+    async def fake_latest(user_id: int) -> object:
+        return profile
+
+    async def fake_count(user_id: int, start: date, end: date) -> tuple[int, int]:
+        return active_days
+
+    service.health_repo.get_latest_profile = fake_latest  # type: ignore[assignment]
+    service.repo.count_active_days = fake_count  # type: ignore[assignment]
+    return service
+
+
+def test_prediction_inputs_maps_profile_and_clamps_days() -> None:
+    profile = SimpleNamespace(
+        sex=SimpleNamespace(value="male"),
+        birth_date=date(1950, 3, 1),
+        height_cm=Decimal("166.0"),
+        weight_kg=Decimal("66.0"),
+        waist_cm=Decimal("84.0"),
+    )
+    service = _service_with_prediction_stub(profile, active_days=(7, 2))  # 7 → 5로 clamp
+    out = asyncio.run(service.get_prediction_inputs(_USER_WITH_ID))
+    assert out.sex == "male"
+    assert out.birth_date == date(1950, 3, 1)
+    assert out.height_cm == 166.0
+    assert out.weight_kg == 66.0
+    assert out.waist_cm == 84.0
+    assert out.walk_days == 5  # 모델·슬라이더 상한 5로 clamp
+    assert out.musc_days == 2
+
+
+def test_prediction_inputs_null_profile_falls_back_to_none() -> None:
+    # 온보딩 미완(프로필 없음) → 신체값 null, 요일 수는 0.
+    service = _service_with_prediction_stub(profile=None, active_days=(0, 0))
+    out = asyncio.run(service.get_prediction_inputs(_USER_WITH_ID))
+    assert out.sex is None
+    assert out.birth_date is None
+    assert out.height_cm is None
+    assert out.weight_kg is None
+    assert out.waist_cm is None
+    assert out.walk_days == 0
+    assert out.musc_days == 0
+
+
+def test_prediction_inputs_none_waist_stays_none() -> None:
+    # 허리 미측정(waist_cm None)이면 null 유지 → 허리 제외형 모델.
+    profile = SimpleNamespace(
+        sex=SimpleNamespace(value="female"),
+        birth_date=date(1955, 6, 1),
+        height_cm=Decimal("153.0"),
+        weight_kg=Decimal("56.0"),
+        waist_cm=None,
+    )
+    service = _service_with_prediction_stub(profile, active_days=(3, 1))
+    out = asyncio.run(service.get_prediction_inputs(_USER_WITH_ID))
+    assert out.sex == "female"
+    assert out.waist_cm is None
+    assert out.walk_days == 3
+    assert out.musc_days == 1

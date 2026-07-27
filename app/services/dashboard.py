@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.utils.clock import today_kst
 from app.dtos.dashboard import (
     ActivityTrendPoint,
+    DashboardPredictionInputs,
     DashboardSummaryResponse,
     HomeActivityProfile,
     HomeAvailableMissionSummary,
@@ -30,6 +31,7 @@ from app.models.enums import ActivityLevel, DailyResult, MissionType
 from app.models.users import User
 from app.repositories.activity_profile_repository import ActivityProfileRepository
 from app.repositories.dashboard_repository import DashboardRepository
+from app.repositories.health_profile_repository import HealthProfileRepository
 from app.services.activity_metrics import moderate_equivalent_min
 from app.services.mission import MissionService
 from app.services.risk_prediction import RiskPredictionService
@@ -41,8 +43,26 @@ class DashboardService:
         self.session = session
         self.repo = DashboardRepository(session)
         self.activity_repo = ActivityProfileRepository(session)
+        self.health_repo = HealthProfileRepository(session)
         self.mission_service = MissionService(session)
         self.risk_service = RiskPredictionService(session)
+
+    async def get_prediction_inputs(self, user: User) -> DashboardPredictionInputs:
+        """근감소증 예측 대시보드(#193) 개인화 초기값. 최신 health_profile(신체) + 최근 7일
+        걷기/운동 요일 수(daily_activity_summaries)를 합쳐 준다. 프로필 없으면 신체는 null."""
+        as_of = today_kst()
+        start = as_of - timedelta(days=6)  # 최근 7일(오늘 포함)
+        profile = await self.health_repo.get_latest_profile(user.user_id)
+        walk_days, musc_days = await self.repo.count_active_days(user.user_id, start, as_of)
+        return DashboardPredictionInputs(
+            sex=(profile.sex.value if profile else None),
+            birth_date=(profile.birth_date if profile else None),
+            height_cm=(float(profile.height_cm) if profile else None),
+            weight_kg=(float(profile.weight_kg) if profile else None),
+            waist_cm=(float(profile.waist_cm) if profile and profile.waist_cm is not None else None),
+            walk_days=min(walk_days, 5),
+            musc_days=min(musc_days, 5),
+        )
 
     async def get_home(self, user: User) -> HomeResponse:
         as_of_date = today_kst()

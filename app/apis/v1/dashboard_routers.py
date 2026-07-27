@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db.session import get_db_session
 from app.dependencies.security import get_request_user
 from app.dtos.dashboard import (
+    DashboardPredictionInputs,
     DashboardSummaryResponse,
     HomeResponse,
     PointsResponse,
@@ -23,6 +24,19 @@ async def get_home(
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> HomeResponse:
     return await DashboardService(session).get_home(user)
+
+
+@dashboard_router.get(
+    "/dashboard/prediction-inputs",
+    response_model=DashboardPredictionInputs,
+    status_code=status.HTTP_200_OK,
+)
+async def get_prediction_inputs(
+    user: Annotated[User, Depends(get_request_user)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> DashboardPredictionInputs:
+    # 근감소증 예측 대시보드(#193) 개인화 초기값. 등록된 신체값 + 최근 7일 걷기/운동 요일 수.
+    return await DashboardService(session).get_prediction_inputs(user)
 
 
 @dashboard_router.get("/dashboard/stamps", response_model=StampsResponse, status_code=status.HTTP_200_OK)

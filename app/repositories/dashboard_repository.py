@@ -11,7 +11,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.dashboard import DailyActivitySummary
+from app.models.enums import ActivityType
 from app.models.missions import MissionLog, PhysicalActivityLog
+
+# 예측 대시보드(#193) walk_days/musc_days 정의 — 모델 학습 변수와 일치시킨다.
+#   walk_days = "하루 30분 이상 걷기"  → WALKING + duration_min ≥ 30
+#   musc_days = "근력운동"            → SEATED/STANDING_EXERCISE (STRETCHING·WARM_UP 등 제외)
+WALK_MIN_DURATION_MIN = 30
+MUSC_ACTIVITY_TYPES = (ActivityType.SEATED_EXERCISE, ActivityType.STANDING_EXERCISE)
 
 
 class DashboardRepository:
@@ -40,6 +47,41 @@ class DashboardRepository:
             DailyActivitySummary.summary_date == func.current_date(),
         )
         return await self.session.scalar(stmt)
+
+    async def count_active_days(self, user_id: int, start: date, end: date) -> tuple[int, int]:
+        """[start, end](양끝 포함)의 (walk_days, musc_days). 모델 학습 변수 정의와 일치시킨다(#193, 리뷰 반영).
+
+        원천은 `physical_activity_logs`(활동별 duration_min·activity_type 보유). 요약 테이블의
+        단순 카운트로는 '30분 이상'·'근력' 정의를 복원할 수 없어 원천 로그에서 정확히 센다:
+          - walk_days = 날짜별 WALKING `duration_min` **합계** ≥ 30 인 날 수
+            (리뷰 반영: 같은 날 20+15분=35분도 포함, 20+9분=29분은 제외 — '하루 30분' 정의)
+          - musc_days = SEATED/STANDING_EXERCISE 가 있는 날 수(distinct) (STRETCHING·WARM_UP 등 제외)
+        physical_activity_logs 에는 user_id 가 없어 mission_logs 와 조인해 사용자로 거른다."""
+        base_where = (
+            MissionLog.user_id == user_id,
+            PhysicalActivityLog.activity_date >= start,
+            PhysicalActivityLog.activity_date <= end,
+        )
+        # walk: 날짜별 걷기시간 합산 후 ≥30분인 날. 개별 로그가 아니라 '당일 누적' 기준(#204 리뷰).
+        walk_daily = (
+            select(PhysicalActivityLog.activity_date)
+            .join(MissionLog, PhysicalActivityLog.mission_log_id == MissionLog.mission_log_id)
+            .where(*base_where, PhysicalActivityLog.activity_type == ActivityType.WALKING)
+            .group_by(PhysicalActivityLog.activity_date)
+            .having(func.coalesce(func.sum(PhysicalActivityLog.duration_min), 0) >= WALK_MIN_DURATION_MIN)
+            .subquery()
+        )
+        walk_days = int(await self.session.scalar(select(func.count()).select_from(walk_daily)) or 0)
+        # musc: 근력(SEATED/STANDING)이 하루에 한 번이라도 있으면 그 날 1일.
+        musc_days = int(
+            await self.session.scalar(
+                select(func.count(func.distinct(PhysicalActivityLog.activity_date)))
+                .join(MissionLog, PhysicalActivityLog.mission_log_id == MissionLog.mission_log_id)
+                .where(*base_where, PhysicalActivityLog.activity_type.in_(MUSC_ACTIVITY_TYPES))
+            )
+            or 0
+        )
+        return walk_days, musc_days
 
     async def get_counted_summary_dates(self, user_id: int, through_date: date) -> list[date]:
         """기준일까지 성공한 미션이 한 개 이상 있는 날짜를 최신순으로 반환한다.
