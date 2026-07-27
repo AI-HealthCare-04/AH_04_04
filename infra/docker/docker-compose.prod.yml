@@ -43,6 +43,10 @@ services:
       - ../nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - certbot-conf:/etc/letsencrypt
       - certbot-www:/var/www/certbot
+      # 운동 영상 정적 서빙(#72/#199): 호스트 미디어 디렉터리를 읽기전용 마운트. 컨테이너 재생성 후에도
+      #   호스트 파일은 유지(도커 밖 보관). nginx conf 의 /videos/ alias 대상. 배포 시 이 볼륨이 유지돼야
+      #   서버 수동 설정이 덮이지 않는다(템플릿에 반드시 포함).
+      - /opt/ah0404/media/videos:/srv/media/videos:ro
     ports:
       - "${NGINX_EXPOSE_PORT:-80}:80"
       - "${NGINX_SSL_EXPOSE_PORT:-443}:443"
