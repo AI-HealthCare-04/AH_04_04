@@ -56,7 +56,9 @@ class _FakeHealthCheckRepository:
         self.created_session = health_check_session
         return health_check_session
 
-    async def get_session(self, session_id: int, user_id: int) -> HealthCheckSession | None:
+    async def get_session(
+        self, session_id: int, user_id: int, *, for_update: bool = False
+    ) -> HealthCheckSession | None:
         return self.health_check_session
 
     async def update_session(self, health_check_session: HealthCheckSession) -> HealthCheckSession:

@@ -64,7 +64,8 @@ class HealthCheckService:
         )
 
     async def _get_started_session(self, session_id: int, user_id: int) -> HealthCheckSession:
-        health_check_session = await self.repo.get_session(session_id, user_id)
+        # 건너뛰기는 SKIPPED 로 전이하므로 세션 행을 잠가 동시 제출과 직렬화한다(#207 리뷰).
+        health_check_session = await self.repo.get_session(session_id, user_id, for_update=True)
         if health_check_session is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="세션을 찾을 수 없습니다.")
         if health_check_session.status != HealthCheckStatus.STARTED:

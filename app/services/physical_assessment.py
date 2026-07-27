@@ -1,5 +1,5 @@
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
@@ -48,11 +48,15 @@ class PhysicalAssessmentService:
         #   COMPLETED(응답 유실 재시도) → 기존 결과 200 반환 · SKIPPED → 409 · 세션 없음 → 404
         health_check_session: HealthCheckSession | None = None
         if data.session_id is not None:
-            health_check_session = await self.health_check_repo.get_session(data.session_id, user.user_id)
+            # STARTED→COMPLETED 전이가 있는 경로이므로 세션 행을 잠가 동시 건너뛰기와 직렬화한다(#207 리뷰):
+            #   먼저 커밋한 쪽이 상태를 확정하고, 뒤늦은 쪽은 갱신된 상태(COMPLETED/SKIPPED)를 보고 분기한다.
+            health_check_session = await self.health_check_repo.get_session(
+                data.session_id, user.user_id, for_update=True
+            )
             if health_check_session is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="세션을 찾을 수 없습니다.")
             if health_check_session.status == HealthCheckStatus.COMPLETED:
-                return await self._existing_assessment_response(data.session_id, user.user_id)
+                return await self._resolve_completed_resubmit(data.session_id, data, user.user_id)
             if health_check_session.status == HealthCheckStatus.SKIPPED:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
@@ -100,7 +104,7 @@ class PhysicalAssessmentService:
             await self.session.rollback()
             if data.session_id is None:
                 raise  # 독립 제출은 세션 유니크 대상이 아님 → 진짜 무결성 오류(삼키지 않음)
-            return await self._existing_assessment_response(data.session_id, user.user_id)
+            return await self._resolve_completed_resubmit(data.session_id, data, user.user_id)
         await self.session.refresh(assessment)
         await self.session.refresh(activity_profile)
         return PhysicalAssessmentResponse(
@@ -112,8 +116,13 @@ class PhysicalAssessmentService:
             ),
         )
 
-    async def _existing_assessment_response(self, session_id: int, user_id: int) -> PhysicalAssessmentResponse:
-        """이미 COMPLETED 된 세션의 기존 체력검사 결과를 그대로 반환(멱등 재제출, #180)."""
+    async def _resolve_completed_resubmit(
+        self, session_id: int, data: PhysicalAssessmentCreateRequest, user_id: int
+    ) -> PhysicalAssessmentResponse:
+        """이미 COMPLETED 된 세션에 다시 들어온 제출 처리(#180 완료기준, 리뷰 #207 2b):
+        동일 payload 재시도는 기존 결과로 수렴(응답 유실 재전송 멱등),
+        다른 payload 는 이미 확정된 결과를 덮어쓰지 않도록 409(충돌)로 막는다.
+        session_id 는 호출부에서 non-None 으로 좁혀진 값을 명시로 받는다."""
         assessment = await self.repo.get_by_session(session_id, user_id)
         activity_profile = await self.activity_repo.get_by_user_id(user_id)
         if assessment is None or activity_profile is None:
@@ -121,6 +130,11 @@ class PhysicalAssessmentService:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="완료된 세션의 체력검사 기록을 찾을 수 없습니다.",
+            )
+        if not self._same_payload(data, assessment):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="이미 완료된 세션에 다른 내용의 체력검사를 다시 제출할 수 없습니다.",
             )
         return PhysicalAssessmentResponse(
             physical_assessment_id=assessment.physical_assessment_id,
@@ -130,6 +144,27 @@ class PhysicalAssessmentService:
                 level_reason=activity_profile.level_reason,
             ),
         )
+
+    @staticmethod
+    def _same_payload(data: PhysicalAssessmentCreateRequest, assessment: PhysicalAssessment) -> bool:
+        """재제출이 기존 저장과 동일 요청인지(멱등 판정, #207 2b). 저장에 반영되는 필드만 비교한다.
+        5STS 시간은 컬럼 정밀도(Numeric(5,2))와 같은 2자리로 정규화해 같은 값의 재전송이
+        부동 자릿수 차이로 '다름'이 되는 오탐을 막는다."""
+        return (
+            data.assessment_type == assessment.assessment_type
+            and PhysicalAssessmentService._quantize_5sts(data.chair_stand_5_time_sec)
+            == PhysicalAssessmentService._quantize_5sts(assessment.chair_stand_5_time_sec)
+            and data.chair_stand_skipped == assessment.chair_stand_skipped
+            and data.pain_reported == assessment.pain_reported
+            and data.dizziness_reported == assessment.dizziness_reported
+        )
+
+    @staticmethod
+    def _quantize_5sts(value: Decimal | None) -> Decimal | None:
+        """5STS 시간을 저장 컬럼과 같은 소수 2자리(HALF_UP)로 정규화. None 은 그대로."""
+        if value is None:
+            return None
+        return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     @staticmethod
     def _age_years(birth: date) -> int:

@@ -14,11 +14,16 @@ class HealthCheckRepository:
         await self.session.flush()
         return health_check_session
 
-    async def get_session(self, session_id: int, user_id: int) -> HealthCheckSession | None:
+    async def get_session(
+        self, session_id: int, user_id: int, *, for_update: bool = False
+    ) -> HealthCheckSession | None:
         stmt = select(HealthCheckSession).where(
             HealthCheckSession.session_id == session_id,
             HealthCheckSession.user_id == user_id,
         )
+        if for_update:
+            # 제출·건너뛰기 동시 요청 직렬화(#207 리뷰): 상태 전이가 끝날 때(커밋)까지 세션 행을 잠근다.
+            stmt = stmt.with_for_update()
         return await self.session.scalar(stmt)
 
     async def get_latest_started(self, user_id: int) -> HealthCheckSession | None:
