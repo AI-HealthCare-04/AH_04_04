@@ -58,10 +58,15 @@ class WalkingSession(
     private val listener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent?) {
             event ?: return
-            // 센서 이벤트마다 걸음 감지 로직에 흘려보낸다. 시각은 단조 증가하는 elapsedRealtime(ms).
+            // 센서 이벤트마다 걸음 감지 로직에 흘려보낸다.
+            // ⚠️ 시각은 콜백 벽시계(SystemClock.elapsedRealtime)가 아니라 **센서 하드웨어 표본 시각**
+            //    event.timestamp(ns→ms)를 쓴다. 100Hz 등 고주파 센서는 여러 표본을 한 콜백에 묶어
+            //    (배칭) 전달하는데, 이때 콜백 시각을 쓰면 표본들의 시각이 한 점에 뭉쳐 리듬 게이트가
+            //    붕괴(간격≈0 → 이중봉우리로 오인)해 걸음이 0으로 과소계수된다(#176 근본원인). 하드웨어
+            //    표본 시각을 쓰면 실제 표본 간격이 복원돼 신호가 살아난다. (오프라인 리플레이로 확인, PR#201)
             detector.processSample(
                 event.values[0], event.values[1], event.values[2],
-                SystemClock.elapsedRealtime(),
+                event.timestamp / 1_000_000L,
             )
         }
 
