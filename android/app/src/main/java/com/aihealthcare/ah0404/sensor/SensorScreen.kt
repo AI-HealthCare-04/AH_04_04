@@ -100,7 +100,10 @@ fun StepCounterSection() {
                 val y = event.values[1]
                 val z = event.values[2]
                 rawMag.value = sqrt(x * x + y * y + z * z)
-                if (walkLogic.processSample(x, y, z, System.currentTimeMillis())) {
+                // 시각은 센서 하드웨어 표본 시각 event.timestamp(ns→ms). 콜백 벽시계
+                // (System.currentTimeMillis)를 쓰면 100Hz 배칭 시 표본 시각이 뭉쳐 리듬이 붕괴해
+                // 과소계수된다(#176). WalkingSession 과 동일 기준. (PR#201 리플레이로 확인)
+                if (walkLogic.processSample(x, y, z, event.timestamp / 1_000_000L)) {
                     stepCount.value = walkLogic.count
                 }
                 filteredMag.value = walkLogic.filteredMagnitude
