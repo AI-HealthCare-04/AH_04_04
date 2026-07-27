@@ -5,7 +5,7 @@ package com.aihealthcare.ah0404.mission
  *
  * 이 화면들은 **이동만** 담당하고 실제 수행·기록 생성은 지지 않는다.
  *  - 걷기 기록은 #90 세션 화면 → #91 이 유일한 기록 지점이다(여기서 직접 POST 금지, 이중 경로 금지).
- *  - 식사·게임의 실제 수행 화면은 유형별 후속 이슈로 분리 → 지금은 '준비 중'으로 연결.
+ *  - 게임은 미니게임 영상 화면으로 연결. 식사의 실제 수행 화면은 후속 이슈로 분리 → 지금은 '준비 중'.
  */
 enum class MissionDestination {
     /** 걷기: #90 보행 세션 측정 화면. */
@@ -18,7 +18,10 @@ enum class MissionDestination {
      */
     EXERCISE_VIDEOS,
 
-    /** 아직 수행 화면이 없는 유형(식사·게임 등): '준비 중' 안내 화면. */
+    /** 게임: 미니게임 영상 화면(MiniGameScreen). 서버 /videos 로 스트리밍하는 짧은 재미 영상. */
+    MINI_GAME,
+
+    /** 아직 수행 화면이 없는 유형(식사 등): '준비 중' 안내 화면. */
     COMING_SOON,
 }
 
@@ -30,5 +33,6 @@ internal fun missionDestination(missionType: String): MissionDestination =
     when (missionType) {
         "walking" -> MissionDestination.WALKING
         "exercise" -> MissionDestination.EXERCISE_VIDEOS
+        "game" -> MissionDestination.MINI_GAME
         else -> MissionDestination.COMING_SOON
     }

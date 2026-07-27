@@ -41,6 +41,7 @@ import com.aihealthcare.ah0404.auth.OfflineModeScreen
 import com.aihealthcare.ah0404.exercise.ExerciseVideosScreen
 import com.aihealthcare.ah0404.home.HomeScreen
 import com.aihealthcare.ah0404.mission.ComingSoonScreen
+import com.aihealthcare.ah0404.mission.MiniGameScreen
 import com.aihealthcare.ah0404.mission.MissionDestination
 import com.aihealthcare.ah0404.mission.MissionScreen
 import com.aihealthcare.ah0404.mission.WalkingMeasureScreen
@@ -279,6 +280,11 @@ private fun MainContent(
             ExerciseVideosScreen(onBack = { subScreen = null })
             return
         }
+        "minigame" -> {
+            BackHandler { subScreen = null }
+            MiniGameScreen(onBack = { subScreen = null })
+            return
+        }
     }
 
     BackHandler {
@@ -324,6 +330,7 @@ private fun MainContent(
                         MissionDestination.WALKING -> walkingMission = mission
                         // 홈의 '영상 따라 운동하기'와 같은 목적지 — 미션 탭만 '준비 중'으로 막던 문제 해소(#162).
                         MissionDestination.EXERCISE_VIDEOS -> subScreen = "exercise"
+                        MissionDestination.MINI_GAME -> subScreen = "minigame"
                         MissionDestination.COMING_SOON -> comingSoonMission = mission
                     }
                 },

@@ -22,15 +22,15 @@ class MissionRoutingTest {
     }
 
     @Test
-    fun meal_and_game_route_to_coming_soon() {
-        // 식사·게임은 아직 수행 화면이 없다 → '준비 중'. 걷기 경로로 가면 안 된다.
-        listOf("meal", "game").forEach { type ->
-            assertEquals(
-                "미션 유형 '$type' 은 준비 중으로 가야 한다",
-                MissionDestination.COMING_SOON,
-                missionDestination(type),
-            )
-        }
+    fun game_routes_to_mini_game_screen() {
+        // 게임은 미니게임 영상 화면으로 연결(#93). 걷기 경로로 가면 안 된다.
+        assertEquals(MissionDestination.MINI_GAME, missionDestination("game"))
+    }
+
+    @Test
+    fun meal_routes_to_coming_soon() {
+        // 식사는 아직 수행 화면이 없다 → '준비 중'. 걷기 경로로 가면 안 된다.
+        assertEquals(MissionDestination.COMING_SOON, missionDestination("meal"))
     }
 
     @Test
