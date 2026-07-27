@@ -4,6 +4,10 @@ import android.annotation.SuppressLint
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import com.aihealthcare.ah0404.settings.AppSettings
@@ -20,6 +24,7 @@ data class DashboardPrefill(
     val age: Int? = null,
     val heightCm: Int? = null,
     val weightKg: Int? = null,
+    val waistCm: Int? = null,
     val walkDays: Int? = null,
     val muscDays: Int? = null,
 )
@@ -37,6 +42,11 @@ fun PredictionDashboardScreen(
     modifier: Modifier = Modifier,
     prefill: DashboardPrefill? = null,
 ) {
+    // 페이지 로드와 prefill(비동기 fetch) 도착 순서가 어느 쪽이든, 둘 다 준비되면 **정확히 한 번** 주입한다.
+    //   (이후 사용자가 슬라이더를 만졌을 때 재주입으로 되돌리지 않도록 1회로 제한. 모든 경로가 update 를 거침.)
+    var pageLoaded by remember { mutableStateOf(false) }
+    var injected by remember { mutableStateOf(false) }
+
     AndroidView(
         modifier = modifier,
         factory = { context ->
@@ -48,14 +58,20 @@ fun PredictionDashboardScreen(
                 settings.textZoom = (AppSettings.fontScale * 100).roundToInt()
                 webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView, url: String?) {
-                        prefill?.let { view.evaluateJavascript(buildPrefillJs(it), null) }
+                        pageLoaded = true // recompose → update 에서 주입 판단(최신 prefill 참조)
                     }
                 }
                 loadUrl("file:///android_asset/sarcopenia_predictor_screen.html")
             }
         },
-        // fontScale 이 바뀌면(설정 변경) 재적용 — AppSettings.fontScale 는 Compose 관찰 상태.
-        update = { it.settings.textZoom = (AppSettings.fontScale * 100).roundToInt() },
+        update = { webView ->
+            // fontScale 변경(설정) 재적용 — AppSettings.fontScale 는 Compose 관찰 상태.
+            webView.settings.textZoom = (AppSettings.fontScale * 100).roundToInt()
+            if (pageLoaded && !injected && prefill != null) {
+                webView.evaluateJavascript(buildPrefillJs(prefill), null)
+                injected = true
+            }
+        },
     )
 }
 
@@ -72,6 +88,7 @@ private fun buildPrefillJs(p: DashboardPrefill): String {
     setVal("age", p.age)
     setVal("ht", p.heightCm)
     setVal("wt", p.weightKg)
+    setVal("wa", p.waistCm)   // 허리둘레(선택) — null 이면 미주입 → 허리 제외형 모델 유지
     setVal("walk", p.walkDays)
     setVal("musc", p.muscDays)
     sb.append("if(typeof render==='function')render();")

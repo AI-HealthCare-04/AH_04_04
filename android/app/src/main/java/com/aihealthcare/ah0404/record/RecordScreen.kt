@@ -137,6 +137,7 @@ fun RecordScreen(
             }
 
             RecordTab.DASHBOARD -> PredictionDashboardScreen(
+                prefill = vm.predictionPrefill,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
