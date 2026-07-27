@@ -6,6 +6,8 @@ import android.webkit.WebViewClient
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
+import com.aihealthcare.ah0404.settings.AppSettings
+import kotlin.math.roundToInt
 
 /**
  * 대시보드에 초기값으로 주입할 사용자 데이터(#193). 모두 선택 — 없으면 HTML 기본값으로 열린다.
@@ -40,6 +42,10 @@ fun PredictionDashboardScreen(
         factory = { context ->
             WebView(context).apply {
                 settings.javaScriptEnabled = true
+                // 앱 글자 크기 설정(AppSettings.fontScale)을 WebView 에도 반영(#193). WebView 는 Compose
+                //   fontScale 을 자동으로 안 따라오므로 textZoom(%)으로 연결 — 설정에서 키워도 대시보드가
+                //   안 커지던 문제(버그처럼 보임) 해결.
+                settings.textZoom = (AppSettings.fontScale * 100).roundToInt()
                 webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView, url: String?) {
                         prefill?.let { view.evaluateJavascript(buildPrefillJs(it), null) }
@@ -48,6 +54,8 @@ fun PredictionDashboardScreen(
                 loadUrl("file:///android_asset/sarcopenia_predictor_screen.html")
             }
         },
+        // fontScale 이 바뀌면(설정 변경) 재적용 — AppSettings.fontScale 는 Compose 관찰 상태.
+        update = { it.settings.textZoom = (AppSettings.fontScale * 100).roundToInt() },
     )
 }
 
