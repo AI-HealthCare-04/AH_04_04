@@ -109,6 +109,11 @@ async def test_meal_complete_awards_points_and_reflects_on_home(
     assert home["today_summary"]["counted_mission_count"] == 1
     assert home["today_summary"]["daily_result"] == "success"
     assert home["available_mission_summary"]["meal"] == 0
+    assert home["streak"] == {
+        "current_days": 1,
+        "completed_today": True,
+        "as_of_date": today_kst().isoformat(),
+    }
 
     # 포인트 API: 잔액·적립이력
     points = (await db_client.get(f"{API}/users/me/points", headers=auth)).json()
@@ -144,6 +149,7 @@ async def test_meal_second_completion_hits_daily_limit(
     assert home["point_balance"]["current_points"] == 10
     assert home["today_summary"]["counted_mission_count"] == 1
     assert home["available_mission_summary"]["meal"] == 0
+    assert home["streak"]["current_days"] == 1  # 같은 날 중복 완료는 스트릭을 늘리지 않는다
 
 
 # -------------------------------------------------------------------------------------
