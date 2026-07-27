@@ -41,9 +41,24 @@ class DashboardRepository:
         )
         return await self.session.scalar(stmt)
 
-    async def get_summaries_between(
-        self, user_id: int, start: date, end: date
-    ) -> list[DailyActivitySummary]:
+    async def get_counted_summary_dates(self, user_id: int, through_date: date) -> list[date]:
+        """기준일까지 성공한 미션이 한 개 이상 있는 날짜를 최신순으로 반환한다.
+
+        날짜별 중복 제거와 성공 판정은 미션 도메인이 유지하는
+        daily_activity_summaries를 단일 원천으로 사용한다.
+        """
+        stmt = (
+            select(DailyActivitySummary.summary_date)
+            .where(
+                DailyActivitySummary.user_id == user_id,
+                DailyActivitySummary.summary_date <= through_date,
+                DailyActivitySummary.counted_mission_count > 0,
+            )
+            .order_by(DailyActivitySummary.summary_date.desc())
+        )
+        return list((await self.session.scalars(stmt)).all())
+
+    async def get_summaries_between(self, user_id: int, start: date, end: date) -> list[DailyActivitySummary]:
         """기간(start~end, 양끝 포함) 내 일자별 활동 요약을 날짜 오름차순으로 반환."""
         stmt = (
             select(DailyActivitySummary)
@@ -57,9 +72,7 @@ class DashboardRepository:
         result = await self.session.scalars(stmt)
         return list(result.all())
 
-    async def get_activity_logs_between(
-        self, user_id: int, start: date, end: date
-    ) -> list[PhysicalActivityLog]:
+    async def get_activity_logs_between(self, user_id: int, start: date, end: date) -> list[PhysicalActivityLog]:
         """기간(start~end, 양끝 포함) 내 신체활동 로그를 활동량 환산 원천으로 읽는다(읽기 전용).
 
         physical_activity_logs에는 user_id가 없어 mission_logs와 조인해 사용자로 거른다.

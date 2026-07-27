@@ -281,6 +281,9 @@ def _service_for_home(*, profile: object | None) -> tuple[DashboardService, dict
     async def fake_get_today_summary(user_id: object) -> object:
         return None
 
+    async def fake_get_counted_summary_dates(user_id: object, through_date: object) -> list[date]:
+        return captured.get("completed_dates", [])  # type: ignore[return-value]
+
     async def fake_get_by_user_id(user_id: object) -> object:
         return profile
 
@@ -296,6 +299,7 @@ def _service_for_home(*, profile: object | None) -> tuple[DashboardService, dict
 
     service.repo.get_current_points = fake_get_current_points  # type: ignore[assignment]
     service.repo.get_today_summary = fake_get_today_summary  # type: ignore[assignment]
+    service.repo.get_counted_summary_dates = fake_get_counted_summary_dates  # type: ignore[assignment]
     service.activity_repo.get_by_user_id = fake_get_by_user_id  # type: ignore[assignment]
     service.mission_service.get_missions = fake_get_missions  # type: ignore[assignment]
     service.mission_service.get_today_walking_totals = fake_today_walking  # type: ignore[assignment]
@@ -342,6 +346,18 @@ def test_get_home_today_walking_defaults_to_zero_when_no_walking() -> None:
 
     assert result.today_walking.daily_total_min == 0.0
     assert result.today_walking.daily_total_steps == 0
+
+
+def test_get_home_includes_server_authoritative_streak() -> None:
+    service, captured = _service_for_home(profile=None)
+    today = today_kst()
+    captured["completed_dates"] = [today, today - timedelta(days=1), today - timedelta(days=2)]
+
+    result = asyncio.run(service.get_home(_HOME_USER))
+
+    assert result.streak.current_days == 3
+    assert result.streak.completed_today is True
+    assert result.streak.as_of_date == today
 
 
 def test_month_range_returns_first_and_last_day() -> None:
