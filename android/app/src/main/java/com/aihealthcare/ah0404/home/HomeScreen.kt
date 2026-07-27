@@ -160,7 +160,9 @@ private fun HomeContent(
             value = currentHourOfDay()
         }
     }
-    val todayEpochDay = kstEpochDay()
+    val nowMillis = System.currentTimeMillis()
+    val todayEpochDay = kstEpochDay(nowMillis)
+    val todayKstDate = kstDateString(nowMillis)
     val previousVisit = remember(persistentUserId, todayEpochDay) {
         persistentUserId?.let(visitStore::read)
     }
@@ -177,6 +179,7 @@ private fun HomeContent(
                 streakCurrentDays = ui.streakCurrentDays,
                 streakCompletedToday = ui.streakCompletedToday,
                 streakAsOfDate = ui.streakAsOfDate,
+                todayKstDate = todayKstDate,
                 hourOfDay = hourOfDay,
                 hasFreshHomeData = !refreshError,
                 daysSinceLastVisit = daysSinceLastVisit(previousVisit?.lastVisitEpochDay, todayEpochDay),

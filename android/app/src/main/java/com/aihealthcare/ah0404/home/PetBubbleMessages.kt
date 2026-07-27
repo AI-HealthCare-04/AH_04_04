@@ -18,6 +18,7 @@ internal data class PetBubbleContext(
     val streakCurrentDays: Int = 0,
     val streakCompletedToday: Boolean = false,
     val streakAsOfDate: String? = null,
+    val todayKstDate: String? = null,
     val shownStreakKey: String? = null,
 )
 
@@ -72,21 +73,37 @@ internal fun isLateNight(hourOfDay: Int): Boolean = hourOfDay >= 22 || hourOfDay
 /** 서버 권위 스트릭이 오늘 실제 완료된 경우에만, 같은 권위 스냅샷당 한 번 칭찬한다. */
 private fun streakPraiseMessage(context: PetBubbleContext): PetBubbleMessage? {
     val asOfDate = context.streakAsOfDate?.takeIf { it.isNotBlank() } ?: return null
-    if (!context.streakCompletedToday || context.streakCurrentDays <= 0) return null
+    val currentDays = context.streakCurrentDays
+    if (
+        !context.streakCompletedToday ||
+        asOfDate != context.todayKstDate ||
+        !isStreakPraiseMilestone(currentDays)
+    ) {
+        return null
+    }
 
-    val key = streakDeduplicationKey(asOfDate, context.streakCurrentDays)
+    val key = streakDeduplicationKey(asOfDate, currentDays)
     if (key == context.shownStreakKey) return null
 
-    val text = if (context.streakCurrentDays == 1) {
-        "오늘의 건강한 실천을 시작했어요. 정말 잘하셨어요!"
-    } else {
-        "벌써 ${context.streakCurrentDays}일째 꾸준히 실천하고 있어요!"
-    }
     return PetBubbleMessage(
         id = "streak_praise",
-        text = text,
+        text = streakPraiseText(currentDays),
         deduplicationKey = key,
     )
+}
+
+internal fun isStreakPraiseMilestone(currentDays: Int): Boolean = when (currentDays) {
+    1, 4, 7, 14, 21, 30 -> true
+    else -> currentDays > 30 && currentDays % 30 == 0
+}
+
+internal fun streakPraiseText(currentDays: Int): String = when (currentDays) {
+    1 -> "오늘의 건강한 실천을 시작했어요. 정말 잘하셨어요!"
+    4 -> "작심삼일을 넘어섰어요! 정말 대단해요!"
+    7 -> "건강한 실천을 시작한 지 벌써 일주일이에요!"
+    14, 21 -> "벌써 ${currentDays}일째 꾸준히 실천하고 있어요!"
+    30 -> "건강한 실천을 한 달 동안 이어 왔어요! 정말 대단해요!"
+    else -> "건강한 실천을 ${currentDays / 30}개월째 이어 가고 있어요!"
 }
 
 internal fun streakDeduplicationKey(asOfDate: String, currentDays: Int): String =

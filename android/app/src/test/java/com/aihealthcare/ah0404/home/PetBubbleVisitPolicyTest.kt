@@ -12,6 +12,8 @@ class PetBubbleVisitPolicyTest {
         val beforeKstMidnight = 53_999_999L
 
         assertEquals(kstEpochDay(beforeKstMidnight) + 1, kstEpochDay(beforeKstMidnight + 1))
+        assertEquals("1970-01-01", kstDateString(beforeKstMidnight))
+        assertEquals("1970-01-02", kstDateString(beforeKstMidnight + 1))
     }
 
     @Test

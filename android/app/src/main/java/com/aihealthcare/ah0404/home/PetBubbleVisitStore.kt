@@ -1,6 +1,9 @@
 package com.aihealthcare.ah0404.home
 
 import android.content.Context
+import java.util.Calendar
+import java.util.Locale
+import java.util.TimeZone
 
 internal const val PET_REVISIT_AFTER_DAYS = 3L
 
@@ -17,6 +20,20 @@ internal data class PetBubbleVisitState(
 /** KST는 일광절약시간이 없는 UTC+9 고정 시간대라 epoch millis를 안전하게 날짜 번호로 바꿀 수 있다. */
 internal fun kstEpochDay(epochMillis: Long = System.currentTimeMillis()): Long =
     Math.floorDiv(epochMillis + KST_OFFSET_MS, DAY_MS)
+
+/** 서버 `as_of_date`와 비교할 현재 KST 서비스 날짜를 ISO-8601 날짜 문자열로 만든다. */
+internal fun kstDateString(epochMillis: Long = System.currentTimeMillis()): String {
+    val calendar = Calendar.getInstance(TimeZone.getTimeZone("GMT+09:00")).apply {
+        timeInMillis = epochMillis
+    }
+    return String.format(
+        Locale.ROOT,
+        "%04d-%02d-%02d",
+        calendar.get(Calendar.YEAR),
+        calendar.get(Calendar.MONTH) + 1,
+        calendar.get(Calendar.DAY_OF_MONTH),
+    )
+}
 
 /**
  * 마지막 방문일과 오늘 사이의 KST 달력 날짜 차이.
