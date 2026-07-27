@@ -13,7 +13,7 @@
   NULL 이 아닌 session_id 가 이미 중복이면 DDL 이 실패하는데 원인 파악이 어렵다. 먼저 세어
   건수를 담은 메시지로 중단시킨다(재전송으로 생긴 중복이면 physical_assessment_id 가 큰 쪽을 정리).
 
-Revision ID: 0011_physical_assessment_session_uq
+Revision ID: 0011_assessment_session_uq
 Revises: 0010_exercise_target_minutes
 Create Date: 2026-07-27 00:00:00
 """
@@ -23,7 +23,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0011_physical_assessment_session_uq"
+revision: str = "0011_assessment_session_uq"
 down_revision: str | None = "0010_exercise_target_minutes"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

@@ -1,0 +1,10 @@
+# Android build artifacts (로컬 생성물 — 저장소에 넣지 않는다, #207 리뷰)
+.gradle/
+build/
+/local.properties
+*.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+.DS_Store
