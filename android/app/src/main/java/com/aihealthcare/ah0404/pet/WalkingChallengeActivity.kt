@@ -3,6 +3,7 @@ package com.aihealthcare.ah0404.pet
 
 import android.os.Bundle
 import android.os.CountDownTimer
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import com.aihealthcare.ah0404.R
 
@@ -30,6 +31,12 @@ class WalkingChallengeActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // [#199 데모 스톱갭] 챌린지 진행 중 화면 꺼짐(타임아웃)으로 10분 측정이 멈추는 것을 막는다.
+        //   ⚠️ 임시 방편: 화면 상시 ON → 배터리·발열↑, 주머니 시 정전식 오작동 터치 가능.
+        //   본해결은 Foreground Service 이관(화면 꺼도 주머니 측정 지속) — #199. 액티비티 종료 시
+        //   윈도우와 함께 플래그가 사라지므로 별도 해제 불필요.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         // 1) 펫 화면 부품 만들고 자산 지정
         petView = PetWalkingView(this).apply {
