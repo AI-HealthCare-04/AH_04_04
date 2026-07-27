@@ -29,6 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
 import com.aihealthcare.ah0404.media.StreamingVideoPlayer
+import com.aihealthcare.ah0404.settings.AppSettings
 import com.aihealthcare.ah0404.network.ExerciseVideoItem
 import com.aihealthcare.ah0404.routine.RoutinePlayerScreen
 import com.aihealthcare.ah0404.settings.TopBar
@@ -127,7 +128,11 @@ private fun VideoArea(item: ExerciseVideoItem, onStartWarmup: () -> Unit) {
                 }
             }
             // 그 외 단계: 스트리밍 영상(서버 업로드 시).
-            item.available && url != null -> StreamingVideoPlayer(url = url, modifier = Modifier.fillMaxSize())
+            item.available && url != null -> StreamingVideoPlayer(
+                url = url,
+                modifier = Modifier.fillMaxSize(),
+                speed = AppSettings.exerciseSpeedFor(AppSettings.exerciseDifficulty), // 운동 난이도별 재생 속도
+            )
             // 준비중(서버 업로드 전) — 탭은 유지하되 안내.
             else -> {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
