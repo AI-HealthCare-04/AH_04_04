@@ -20,8 +20,81 @@ class PetBubbleMessagesTest {
         )
 
         assertEquals("streak_praise", message.id)
-        assertEquals("벌써 4일째 꾸준히 실천하고 있어요!", message.text)
+        assertEquals("작심삼일을 넘어섰어요! 정말 대단해요!", message.text)
         assertEquals("streak:2026-07-27:4", message.deduplicationKey)
+    }
+
+    @Test
+    fun praises_only_agreed_milestones_with_day_based_copy_for_fourteen_and_twenty_one() {
+        val expectedMessages = mapOf(
+            1 to "오늘의 건강한 실천을 시작했어요. 정말 잘하셨어요!",
+            4 to "작심삼일을 넘어섰어요! 정말 대단해요!",
+            7 to "건강한 실천을 시작한 지 벌써 일주일이에요!",
+            14 to "벌써 14일째 꾸준히 실천하고 있어요!",
+            21 to "벌써 21일째 꾸준히 실천하고 있어요!",
+            30 to "건강한 실천을 한 달 동안 이어 왔어요! 정말 대단해요!",
+            60 to "건강한 실천을 2개월째 이어 가고 있어요!",
+            90 to "건강한 실천을 3개월째 이어 가고 있어요!",
+        )
+
+        expectedMessages.forEach { (days, expectedText) ->
+            val message = selectPetBubbleMessage(
+                context(
+                    streakCurrentDays = days,
+                    streakCompletedToday = true,
+                    streakAsOfDate = "2026-07-27",
+                ),
+            )
+
+            assertEquals("streak_praise", message.id)
+            assertEquals(expectedText, message.text)
+        }
+    }
+
+    @Test
+    fun non_milestone_streak_days_fall_back_to_a_normal_message() {
+        listOf(0, 2, 3, 5, 6, 8, 13, 15, 20, 22, 29, 31, 59, 61).forEach { days ->
+            val message = selectPetBubbleMessage(
+                context(
+                    streakCurrentDays = days,
+                    streakCompletedToday = true,
+                    streakAsOfDate = "2026-07-27",
+                ),
+                choosing(0, 0),
+            )
+
+            assertEquals("${days}일은 스트릭 칭찬 대상이 아니어야 합니다.", "afternoon_easy", message.id)
+        }
+    }
+
+    @Test
+    fun mismatched_server_date_falls_back_without_streak_praise() {
+        val message = selectPetBubbleMessage(
+            context(
+                streakCurrentDays = 7,
+                streakCompletedToday = true,
+                streakAsOfDate = "2026-07-26",
+                todayKstDate = "2026-07-27",
+            ),
+            choosing(0, 0),
+        )
+
+        assertEquals("afternoon_easy", message.id)
+    }
+
+    @Test
+    fun revisit_message_keeps_priority_over_a_streak_milestone() {
+        val message = selectPetBubbleMessage(
+            context(
+                daysSinceLastVisit = 3,
+                streakCurrentDays = 7,
+                streakCompletedToday = true,
+                streakAsOfDate = "2026-07-27",
+            ),
+            choosing(0, 0),
+        )
+
+        assertEquals("revisit_welcome", message.id)
     }
 
     @Test
@@ -44,20 +117,21 @@ class PetBubbleMessagesTest {
     fun next_server_streak_snapshot_can_be_praised() {
         val message = selectPetBubbleMessage(
             context(
-                streakCurrentDays = 5,
+                streakCurrentDays = 7,
                 streakCompletedToday = true,
                 streakAsOfDate = "2026-07-28",
+                todayKstDate = "2026-07-28",
                 shownStreakKey = "streak:2026-07-27:4",
             ),
         )
 
-        assertEquals("streak:2026-07-28:5", message.deduplicationKey)
+        assertEquals("streak:2026-07-28:7", message.deduplicationKey)
     }
 
     @Test
     fun incomplete_zero_or_stale_streak_falls_back_without_claiming_achievement() {
         val incomplete = selectPetBubbleMessage(
-            context(streakCurrentDays = 3, streakCompletedToday = false, streakAsOfDate = "2026-07-27"),
+            context(streakCurrentDays = 4, streakCompletedToday = false, streakAsOfDate = "2026-07-27"),
             choosing(0, 0),
         )
         val zero = selectPetBubbleMessage(
@@ -66,7 +140,7 @@ class PetBubbleMessagesTest {
         )
         val stale = selectPetBubbleMessage(
             context(
-                streakCurrentDays = 3,
+                streakCurrentDays = 4,
                 streakCompletedToday = true,
                 streakAsOfDate = "2026-07-27",
                 hasFreshHomeData = false,
@@ -250,6 +324,7 @@ class PetBubbleMessagesTest {
         streakCurrentDays: Int = 0,
         streakCompletedToday: Boolean = false,
         streakAsOfDate: String? = null,
+        todayKstDate: String? = "2026-07-27",
         shownStreakKey: String? = null,
     ) = PetBubbleContext(
         nickname = "정인",
@@ -266,6 +341,7 @@ class PetBubbleMessagesTest {
         streakCurrentDays = streakCurrentDays,
         streakCompletedToday = streakCompletedToday,
         streakAsOfDate = streakAsOfDate,
+        todayKstDate = todayKstDate,
         shownStreakKey = shownStreakKey,
     )
 
