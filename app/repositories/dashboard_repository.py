@@ -7,7 +7,7 @@
 # =====================================================================================
 from datetime import date
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.dashboard import DailyActivitySummary
@@ -40,6 +40,22 @@ class DashboardRepository:
             DailyActivitySummary.summary_date == func.current_date(),
         )
         return await self.session.scalar(stmt)
+
+    async def count_active_days(self, user_id: int, start: date, end: date) -> tuple[int, int]:
+        """[start, end](양끝 포함)에서 걷기/운동을 한 번이라도 한 '요일 수'를 (walk_days, musc_days)로.
+
+        예측 대시보드(#193)의 walk_days/musc_days 입력. (user_id, summary_date) 가 유니크라
+        일자별 walking_count/exercise_count>0 인 날을 세면 곧 요일 수다."""
+        stmt = select(
+            func.coalesce(func.sum(case((DailyActivitySummary.walking_count > 0, 1), else_=0)), 0),
+            func.coalesce(func.sum(case((DailyActivitySummary.exercise_count > 0, 1), else_=0)), 0),
+        ).where(
+            DailyActivitySummary.user_id == user_id,
+            DailyActivitySummary.summary_date >= start,
+            DailyActivitySummary.summary_date <= end,
+        )
+        row = (await self.session.execute(stmt)).one()
+        return int(row[0] or 0), int(row[1] or 0)
 
     async def get_summaries_between(
         self, user_id: int, start: date, end: date

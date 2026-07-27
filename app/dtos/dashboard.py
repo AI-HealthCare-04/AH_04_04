@@ -7,6 +7,19 @@ from app.dtos.risk_prediction import RiskComparisonStatus
 from app.models.enums import ActivityLevel, DailyResult
 
 
+class DashboardPredictionInputs(BaseModel):
+    # 근감소증 예측 대시보드(#193) 초기값 — 등록된 사용자 데이터로 대시보드를 개인화한다.
+    #   신체 값은 최신 health_profile 에서, 운동 요일 수는 최근 7일 daily_activity_summaries 에서 파생.
+    #   온보딩 미완(프로필 없음)이면 신체 값은 null → 앱이 대시보드 기본값으로 폴백한다.
+    sex: str | None = None            # "male" | "female"
+    birth_date: date | None = None
+    height_cm: float | None = None
+    weight_kg: float | None = None
+    waist_cm: float | None = None     # 미측정이면 null → 허리 제외형(minimal) 모델
+    walk_days: int = Field(ge=0, le=5)  # 최근 7일 '걷기' 성공 요일 수(챌린지 기록 파생, 0~5)
+    musc_days: int = Field(ge=0, le=5)  # 최근 7일 '운동' 성공 요일 수(0~5)
+
+
 class HomeUser(BaseModel):
     nickname: str
 
