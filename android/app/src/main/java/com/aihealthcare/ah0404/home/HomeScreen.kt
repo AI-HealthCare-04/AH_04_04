@@ -1,6 +1,7 @@
 package com.aihealthcare.ah0404.home
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
@@ -28,6 +30,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -208,9 +211,8 @@ private fun HomeContent(
             )
         }
     }
-    // 스크롤 콘텐츠 위에 마스코트 펫을 '고정 오버레이'로 얹는다.
-    //   PetIdleView 는 GLSurfaceView(setZOrderOnTop) 라 스크롤 Column 안에 넣으면 떠서 깨지므로,
-    //   Box 로 감싸 하단 코너에 고정한다(센서 탭과 동일 방식). 마지막 콘텐츠는 하단 여백으로 가림 방지.
+    // 스크롤 콘텐츠. 마스코트 펫/말풍선은 운동강도↔예측 사이 인라인 섹션(아래)에 두어 스크롤과 함께 움직인다.
+    //   PetIdleView 를 GLSurfaceView→GLTextureView 로 바꿔 스크롤 Column 안에 인라인으로 넣어도 안 깨진다.
     Box(modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -256,6 +258,30 @@ private fun HomeContent(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+
+        // 🐶 펫 섹션 — 운동강도 ↔ 예측 사이. 배경이미지(placeholder) 위에 펫 + 말풍선을 얹는다.
+        //   스크롤 흐름 안에 있어 위치가 고정되지 않고 콘텐츠와 함께 움직인다(PetIdle 은 GLTextureView 라 인라인 가능).
+        //   TODO(재란): 배경이미지 준비되면 이 Box 의 background 를 Image(painterResource(R.drawable.…)) 로 교체.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(220.dp)
+                .clip(RoundedCornerShape(Dimens.Space16))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+        ) {
+            PetSpeechBubble(
+                text = bubbleMessage.text,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(Dimens.Space12),
+            )
+            PetIdle(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(Dimens.Space8)
+                    .size(160.dp),
+            )
+        }
 
         // 건강 상태(위험도 순화 문구) — 비노출 계약: care_stage/display_message 만 + 고지 필수
         AigoCard {
@@ -312,28 +338,7 @@ private fun HomeContent(
 
         // TODO: 백엔드 연결 — 주간 리포트·걸음 목표/비교(계약 GAP: /home 확장 대기)
         Spacer(Modifier.height(Dimens.Space8))
-        // 하단 코너 펫 오버레이가 마지막 콘텐츠를 가리지 않도록 여백 확보.
-        Spacer(Modifier.height(320.dp))
         }
-
-        PetSpeechBubble(
-            text = bubbleMessage.text,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(
-                    start = Dimens.Space16,
-                    end = Dimens.Space16,
-                    bottom = 164.dp,
-                ),
-        )
-
-        // 마스코트 펫(고개 갸웃 idle) — 배경 투명, 하단 코너 고정. 홈에 온기를 더한다.
-        PetIdle(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(Dimens.Space8)
-                .size(160.dp),
-        )
     }
 }
 

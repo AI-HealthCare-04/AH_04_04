@@ -1,11 +1,9 @@
 package com.aihealthcare.ah0404.pet
 
 import android.content.Context
-import android.graphics.PixelFormat
 import android.graphics.SurfaceTexture
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
-import android.opengl.GLSurfaceView
 import android.os.Handler
 import android.os.Looper
 import android.util.AttributeSet
@@ -16,8 +14,6 @@ import androidx.media3.exoplayer.ExoPlayer
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
-import javax.microedition.khronos.egl.EGLConfig
-import javax.microedition.khronos.opengles.GL10
 
 /**
  * ============================================================================
@@ -33,7 +29,8 @@ import javax.microedition.khronos.opengles.GL10
  *   - 배경이 '초록'이 아니라 '흰색'이라, 초록빼기 대신
  *     "밝고 무채색인 픽셀 = 배경"으로 판정해 투명 처리한다.
  *     (검은 눈·코는 '어두워서' 유지됨)
- *   - GLSurfaceView 자체를 투명하게 설정 → 뒤 화면이 비쳐 보인다.
+ *   - TextureView(GLTextureView) 기반이라 스크롤 Column 안에 인라인으로 넣어도 함께 스크롤된다.
+ *     투명 배경은 isOpaque=false + EGL alpha(GLTextureView) + 아래 셰이더로 유지된다.
  *
  *  Compose 에서 쓰려면 PetIdle() 컴포저블을 쓰면 편하다.
  *  (일반 View/XML 이면 이 뷰를 그대로 배치하고 setIdleVideo() 호출)
@@ -42,7 +39,7 @@ import javax.microedition.khronos.opengles.GL10
 class PetIdleView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null
-) : GLSurfaceView(context, attrs) {
+) : GLTextureView(context, attrs) {
 
     private val renderer: IdleRenderer
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -51,19 +48,11 @@ class PetIdleView @JvmOverloads constructor(
     private var idleRawResId: Int = 0
 
     init {
-        setEGLContextClientVersion(2)
-        // 알파(투명) 채널이 있는 표면을 요청
-        setEGLConfigChooser(8, 8, 8, 8, 16, 0)
-        holder.setFormat(PixelFormat.TRANSLUCENT)
-        // 투명 영역으로 뒤 화면이 보이도록 표면을 창 위에 올린다
-        setZOrderOnTop(true)
-        preserveEGLContextOnPause = true
-
+        // EGL 컨텍스트·알파 설정·연속 렌더·투명 합성은 GLTextureView 가 담당한다.
         renderer = IdleRenderer(
             onVideoSurfaceReady = { surface -> attachPlayer(surface) }
         )
         setRenderer(renderer)
-        renderMode = RENDERMODE_CONTINUOUSLY
     }
 
     /** 배경 없앨 강아지 영상 지정. R.raw.파일이름. */
@@ -102,8 +91,9 @@ class PetIdleView @JvmOverloads constructor(
         mainHandler.post { player?.pause() }
     }
 
-    /** 화면을 떠날 때 호출(메모리 정리). */
-    fun release() {
+    /** 화면을 떠날 때 호출(메모리 정리). 렌더 스레드·EGL 정리(super) + 플레이어 해제. */
+    override fun release() {
+        super.release()
         mainHandler.post {
             player?.release()
             player = null
@@ -115,7 +105,7 @@ class PetIdleView @JvmOverloads constructor(
     // ========================================================================
     private class IdleRenderer(
         private val onVideoSurfaceReady: (Surface) -> Unit
-    ) : Renderer, SurfaceTexture.OnFrameAvailableListener {
+    ) : GLTextureView.Renderer, SurfaceTexture.OnFrameAvailableListener {
 
         // ── 🎛️ 흰색 배경 판정 튜닝 ──
         // 채도(색 선명함)가 satLow~satHigh 사이에서 배경/강아지 경계.
@@ -145,7 +135,7 @@ class PetIdleView @JvmOverloads constructor(
         private var hSatLow = 0; private var hSatHigh = 0
         private var hLumaLow = 0; private var hLumaHigh = 0
 
-        override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
+        override fun onSurfaceCreated() {
             GLES20.glClearColor(0f, 0f, 0f, 0f)   // 완전 투명 배경
 
             program = buildProgram(VERTEX, FRAGMENT)
@@ -177,14 +167,14 @@ class PetIdleView @JvmOverloads constructor(
             onVideoSurfaceReady(Surface(st))
         }
 
-        override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
+        override fun onSurfaceChanged(width: Int, height: Int) {
             GLES20.glViewport(0, 0, width, height)
             viewportW = width
             viewportH = height
             rebuildQuad()
         }
 
-        override fun onDrawFrame(gl: GL10?) {
+        override fun onDrawFrame() {
             surfaceTexture?.let {
                 try {
                     it.updateTexImage()
