@@ -106,23 +106,15 @@ class StepCounterWalkingSession(
     }
 
     override fun pause() {
-        // 누적 카운터라 해제해도 손실 없음(재등록 후 latest-base 유지). 활성 시계만 동결.
-        unregisterSensor()
-        activeTime.pause()
+        // #199 정합: 만보기는 누적 카운터라 백그라운드(화면 꺼짐·주머니)에서도 걸음이 계속 쌓여 복귀 시
+        //   반영된다. 여기서 시계를 동결하면 '걸음은 느는데 시간만 멈춰' steps↔durationSec 짝이 왜곡된다
+        //   (리뷰 #223: 주머니 10분 보행 → 걸음은 전체·시간은 몇 초). 그래서 no-op 로 둔다 — 센서·시계를
+        //   모두 유지해 '걸음이 쌓이는 동안 시간도 흐른다'를 보장한다(가속도계 FGS 경로의 pause no-op 와 동일 의미).
     }
 
-    override fun resume(): Boolean {
-        if (!running) return false
-        registerSensor()
-        if (registered) {
-            activeTime.resume()
-            return true
-        }
-        running = false
-        activeTime.stop()
-        Log.w(TAG, "복귀 시 만보기 재등록 실패 → 측정 중단")
-        return false
-    }
+    override fun resume(): Boolean =
+        // 백그라운드에서도 세션이 계속 유효했으므로(no-op pause) 재등록/시계 재개가 필요 없다. 지원 여부만 보고.
+        running && isSensorAvailable
 
     override fun cancel() {
         running = false
