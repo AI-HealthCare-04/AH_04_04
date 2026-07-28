@@ -78,6 +78,10 @@ fun ProteinChallengeScreen(
     val count = selected.size
     val goalMet = count >= PROTEIN_DAILY_GOAL
 
+    // 화면 진입마다 VM 의 달성 추적을 리셋 — Activity 범위 VM 이라 이전 방문/계정/날짜의 판정이
+    // 남아 문구를 오염시킬 수 있다(리뷰 #225 2차). 진입 후 첫 저장은 fresh today_log 로 재추정.
+    LaunchedEffect(mission.missionTemplateId) { vm.onScreenEntered() }
+
     // 저장 성공 → 미션 목록 재조회 트리거. 사용자가 결과 오버레이를 읽는 동안 갱신이 끝나,
     // 복귀·재진입 시점에는 today_log 가 이미 최신이다.
     LaunchedEffect(saveState) {

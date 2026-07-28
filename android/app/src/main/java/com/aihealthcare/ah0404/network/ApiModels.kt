@@ -67,7 +67,7 @@ data class MissionLogCreateRequest(
 )
 
 // [요청 일부] 단백질 식사 상세. protein_foods 는 정의된 7개 카테고리 id 목록,
-//   protein_meal_count 는 그 개수(서버가 3종 이상이면 오늘 목표 달성으로 카운트).
+//   protein_meal_count 는 그 개수(서버가 1종 이상이면 오늘 목표 달성으로 카운트, #227).
 @Serializable
 data class MealDetail(
     @SerialName("protein_foods") val proteinFoods: List<String>,

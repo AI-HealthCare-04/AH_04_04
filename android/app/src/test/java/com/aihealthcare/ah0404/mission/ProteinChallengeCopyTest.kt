@@ -50,15 +50,9 @@ class ProteinChallengeCopyTest {
 
     @Test
     fun `빈 기록은 안 먹었어요 저장으로 안내한다`() {
+        // 계약(#227): 0종만 미완료다. 1종 이상 + 미완료 조합은 정상 경로에서 존재하지 않는다.
         val empty = ProteinSaveState.Saved(countedForDaily = false, earnedPoints = 0, newlyCounted = false, savedCount = 0)
         assertTrue(proteinResultMessage(empty).contains("안 드신 것으로 저장"))
-    }
-
-    @Test
-    fun `목표 미달 저장은 기존 안내를 유지한다`() {
-        val partial = ProteinSaveState.Saved(countedForDaily = false, earnedPoints = 0, newlyCounted = false, savedCount = 2)
-        assertTrue(proteinResultMessage(partial).contains("저장했어요"))
-        assertFalse(proteinResultMessage(partial).contains("안 드신"))
     }
 
     // ── proteinSaveButtonLabel: 0개 저장 경로 노출 ──

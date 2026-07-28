@@ -47,22 +47,19 @@ internal fun missionDestination(missionType: String): MissionDestination =
 
 /**
  * 미션 카드 하단 CTA 문구 — 목적지가 실제 수행/기록 화면인 유형은 그에 맞는 행동을 안내한다(리뷰 #225).
- * 식사는 기록 화면(ProteinChallengeScreen)이 생겼는데 '준비 중'으로 표시되면 사용자가 기능이 없는 줄 안다.
+ * '준비 중'은 **수행 화면이 정말 없는 유형(COMING_SOON)에만** 쓴다 — 운동 영상(#219)·미니게임(#220)·
+ * 식사 기록처럼 실화면이 있는 유형에 '준비 중'을 표시하면 사용자가 기능이 없는 줄 안다(리뷰 #225 2차).
  * 순수 함수 — 라우팅 규칙과 함께 JVM 단위테스트로 고정한다.
  */
 internal fun missionCtaLabel(missionType: String): String =
     when (missionDestination(missionType)) {
         MissionDestination.WALKING -> "눌러서 측정 시작 →"
         MissionDestination.PROTEIN_MEAL -> "눌러서 기록하기 →"
-        MissionDestination.EXERCISE_VIDEOS,
-        MissionDestination.MINI_GAME,
-        MissionDestination.COMING_SOON,
-        -> "준비 중 · 눌러서 보기 →"
+        MissionDestination.EXERCISE_VIDEOS -> "눌러서 운동 영상 보기 →"
+        MissionDestination.MINI_GAME -> "눌러서 게임 하기 →"
+        MissionDestination.COMING_SOON -> "준비 중 · 눌러서 보기 →"
     }
 
 /** CTA 를 강조색으로 그릴지 — 실제 수행/기록 화면으로 바로 이어지는 유형만 강조한다. */
 internal fun missionCtaHighlighted(missionType: String): Boolean =
-    when (missionDestination(missionType)) {
-        MissionDestination.WALKING, MissionDestination.PROTEIN_MEAL -> true
-        else -> false
-    }
+    missionDestination(missionType) != MissionDestination.COMING_SOON

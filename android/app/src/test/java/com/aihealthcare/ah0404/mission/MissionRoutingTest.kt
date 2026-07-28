@@ -53,17 +53,24 @@ class MissionRoutingTest {
     }
 
     @Test
-    fun `수행 화면이 없는 유형만 준비 중을 안내한다`() {
-        assertEquals("준비 중 · 눌러서 보기 →", missionCtaLabel("unknown_future_type"))
-        assertEquals("준비 중 · 눌러서 보기 →", missionCtaLabel("exercise"))
-        assertEquals("준비 중 · 눌러서 보기 →", missionCtaLabel("game"))
+    fun `운동 영상과 게임도 실제 목적지 CTA 를 안내한다(준비 중 아님)`() {
+        // #219 운동 영상·#220 미니게임은 실화면이 있다 — '준비 중' 회귀 방지(리뷰 #225 2차).
+        assertEquals("눌러서 운동 영상 보기 →", missionCtaLabel("exercise"))
+        assertEquals("눌러서 게임 하기 →", missionCtaLabel("game"))
     }
 
     @Test
-    fun `기록 화면이 있는 유형만 CTA 를 강조한다`() {
+    fun `수행 화면이 없는 미지의 유형만 준비 중을 안내한다`() {
+        assertEquals("준비 중 · 눌러서 보기 →", missionCtaLabel("unknown_future_type"))
+        assertEquals("준비 중 · 눌러서 보기 →", missionCtaLabel(""))
+    }
+
+    @Test
+    fun `실화면이 있는 유형은 CTA 를 강조하고 준비 중만 강조하지 않는다`() {
         assertEquals(true, missionCtaHighlighted("walking"))
         assertEquals(true, missionCtaHighlighted("meal"))
-        assertEquals(false, missionCtaHighlighted("exercise"))
+        assertEquals(true, missionCtaHighlighted("exercise"))
+        assertEquals(true, missionCtaHighlighted("game"))
         assertEquals(false, missionCtaHighlighted("unknown_future_type"))
     }
 }
