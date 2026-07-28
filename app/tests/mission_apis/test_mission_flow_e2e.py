@@ -67,7 +67,7 @@ async def _seed_template(
 
 def _meal_body(template_id: int, *, foods: list[str] | None = None, success: bool = True) -> dict:
     # 단백질 챌린지: protein_foods 는 정의된 7개 카테고리 id 여야 하고(자유텍스트 아님),
-    #   하루 목표 3종 이상이어야 counted_for_daily 로 인정된다. 기본은 서로 다른 3종.
+    #   하루 목표 PROTEIN_DAILY_GOAL_COUNT(현재 1)종 이상이면 counted_for_daily 로 인정된다.
     picks = foods if foods is not None else ["meat", "egg", "soy"]
     return {
         "mission_template_id": template_id,

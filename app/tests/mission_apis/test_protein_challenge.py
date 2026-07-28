@@ -93,7 +93,8 @@ def _service(*, existing_meal: object | None = None) -> tuple[MissionService, di
 
 def test_category_constant_has_seven_fixed_ids() -> None:
     assert PROTEIN_CATEGORY_IDS == {"meat", "fish", "egg", "soy", "dairy", "shellfish", "nuts"}
-    assert PROTEIN_DAILY_GOAL_COUNT == 3
+    # 팀 결정(2026-07-28): 1종 이상이면 성공. 3은 다른 챌린지와 혼동된 값이었다.
+    assert PROTEIN_DAILY_GOAL_COUNT == 1
 
 
 def test_undefined_category_id_is_rejected_400() -> None:
@@ -112,20 +113,32 @@ def test_three_categories_completes_and_counts() -> None:
     assert cast(SimpleNamespace, cap["created"]).success is True
 
 
-def test_two_categories_saves_but_not_completed() -> None:
+def test_single_category_completes_and_counts() -> None:
+    # 목표 = 1종(팀 결정 2026-07-28): 한 가지만 챙겨 먹어도 미션 성공이다.
     service, cap = _service()
-    resp = asyncio.run(service.create_mission_log(_USER, _meal_request(["meat", "egg"])))
-    assert resp.success is False  # 3종 미만 → 완료 아님
+    resp = asyncio.run(service.create_mission_log(_USER, _meal_request(["meat"])))
+    assert resp.success is True
+    assert resp.counted_for_daily is True
+    assert resp.earned_points == 10
+    assert cast(SimpleNamespace, cap["created"]).success is True
+
+
+def test_empty_categories_saves_but_not_completed() -> None:
+    # 빈 배열("오늘 안 먹었어요")은 유효 기록으로 저장되지만 완료/적립은 아니다(#224 계약 유지).
+    service, cap = _service()
+    resp = asyncio.run(service.create_mission_log(_USER, _meal_request([])))
+    assert resp.success is False
     assert resp.counted_for_daily is False
     assert resp.earned_points == 0
     assert cap["created"] is not None  # 그래도 기록은 남는다
 
 
 def test_duplicate_categories_counted_once() -> None:
-    # 같은 카테고리를 두 번 보내도 서버가 중복 제거해 2종으로 센다(3종 미만 → 미완료).
+    # 같은 카테고리를 여러 번 보내도 서버가 중복 제거해 1종으로 센다. 목표가 1종이라 완료는 되지만,
+    # 판정 입력이 '서로 다른 카테고리 수'라는 계약(중복 부풀리기 무시)은 유지된다.
     service, _ = _service()
-    resp = asyncio.run(service.create_mission_log(_USER, _meal_request(["meat", "meat", "egg"])))
-    assert resp.success is False
+    resp = asyncio.run(service.create_mission_log(_USER, _meal_request(["meat", "meat", "meat"])))
+    assert resp.success is True  # 중복 제거 후 1종 ≥ 목표(1)
 
 
 def test_resave_updates_existing_record_not_append() -> None:
