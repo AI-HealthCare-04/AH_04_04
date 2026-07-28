@@ -340,6 +340,12 @@ class MissionService:
         counted_for_daily = success
         earned_points = compute_earned_points(counted_for_daily, template.reward_points)
 
+        # 당일 upsert 경합 방지(지영 리뷰 #224): 조회~생성/갱신을 사용자 단위로 직렬화한다.
+        #   users 행을 먼저 FOR UPDATE 로 잠근 뒤 당일 기록을 읽어야, 서로 다른 payload(중복 클릭·
+        #   네트워크 재시도로 dedup 자연키가 갈리는 경우)가 동시에 도착해도 두 요청이 각각 None 을
+        #   읽고 새 로그를 만드는 일이 없다 — get_today_meal_log 조합엔 DB 유일 제약이 없어(걷기/운동
+        #   완료와 달리) 조회만으로는 못 막는다. 두 번째 요청은 lock 획득 후 첫 로그를 보고 갱신 경로로 간다.
+        await self.repo.lock_user_for_completion(user.user_id)
         existing_meal = await self.repo.get_today_meal_log(user.user_id, data.mission_template_id)
         if existing_meal is not None:
             # 재저장: 당일 기록(로그·상세)을 최신 선택으로 갱신한다.
@@ -348,6 +354,9 @@ class MissionService:
             existing_meal.protein_foods = foods
             existing_meal.protein_meal_count = count
             existing_meal.counted_for_daily = counted_for_daily
+            # 자유텍스트도 최신 요청 값으로 갱신(지영 리뷰 #224): 카테고리만 갱신하고 raw_text 를
+            #   남겨두면 '최신 카테고리 + 옛 설명' 혼합 상태가 된다.
+            existing_meal.raw_text = raw_text
             mission_log = await self.repo.get_mission_log(existing_meal.mission_log_id, user.user_id)
             if mission_log is not None:
                 mission_log.success = success

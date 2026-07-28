@@ -83,6 +83,7 @@ def _service(*, existing_meal: object | None = None) -> tuple[MissionService, di
     service.repo.create_mission_log = create_log  # type: ignore[assignment]
     service.repo.add_meal_log = add_meal  # type: ignore[assignment]
     service.repo.get_today_meal_log = get_today_meal  # type: ignore[assignment]
+    service.repo.lock_user_for_completion = _noop  # type: ignore[assignment]
     service.repo.get_mission_log = get_mission_log  # type: ignore[assignment]
     service.repo.counted_breakdown_today = breakdown  # type: ignore[assignment]
     service.repo.sum_earned_points_today = sum_points  # type: ignore[assignment]

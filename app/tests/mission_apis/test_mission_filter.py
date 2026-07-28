@@ -179,6 +179,8 @@ def _service_for_create(*, template: object, profile: object | None) -> tuple[Mi
     service.health_repo.get_latest_profile = fake_latest_profile  # type: ignore[assignment]
     service.repo.create_mission_log = fake_create_mission_log  # type: ignore[assignment]
     service.repo.get_today_meal_log = fake_get_today_meal  # type: ignore[assignment]
+    # 당일 upsert 직렬화 잠금 — DB 없는 단위테스트에선 no-op
+    service.repo.lock_user_for_completion = _noop  # type: ignore[method-assign]
     service.repo.add_meal_log = fake_add_meal  # type: ignore[assignment]
     service.repo.count_meal_missions_today = fake_count_meal  # type: ignore[assignment]
     service.repo.counted_breakdown_today = fake_breakdown  # type: ignore[assignment]
@@ -187,7 +189,7 @@ def _service_for_create(*, template: object, profile: object | None) -> tuple[Mi
     return service, flags
 
 
-async def _noop() -> None:
+async def _noop(*args: object, **kwargs: object) -> None:
     return None
 
 
