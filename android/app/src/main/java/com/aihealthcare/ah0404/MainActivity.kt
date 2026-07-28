@@ -337,7 +337,6 @@ private fun MainContent(
                 onGoMissions = { selectedTab = MainTab.MISSIONS },
                 onOpenSettings = { selectedTab = MainTab.SETTINGS },
                 onOpenRecords = { selectedTab = MainTab.RECORDS },
-                onOpenExercise = { subScreen = "exercise" },
                 modifier = contentModifier,
             )
             MainTab.MISSIONS -> MissionScreen(

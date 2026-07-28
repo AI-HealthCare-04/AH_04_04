@@ -105,7 +105,6 @@ fun HomeScreen(
     onGoMissions: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenRecords: () -> Unit,
-    onOpenExercise: () -> Unit,
     modifier: Modifier = Modifier,
     vm: HomeViewModel = viewModel(),
 ) {
@@ -121,7 +120,6 @@ fun HomeScreen(
             onGoMissions = onGoMissions,
             onOpenSettings = onOpenSettings,
             onOpenRecords = onOpenRecords,
-            onOpenExercise = onOpenExercise,
             modifier = modifier,
         )
         vm.error -> HomeError(onRetry = vm::load, modifier = modifier)
@@ -152,7 +150,6 @@ private fun HomeContent(
     onGoMissions: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenRecords: () -> Unit,
-    onOpenExercise: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current.applicationContext
@@ -296,13 +293,19 @@ private fun HomeContent(
             MedicalDisclaimer(text = ui.disclaimer ?: MEDICAL_DISCLAIMER_DEFAULT)
         }
 
-        // 오늘 요약
+        // 오늘 요약 — 완료 미션 개수 하나로 통일(남은 개수 이중 표기 제거) + 미션 CTA.
+        //   예전엔 '오늘의 활동'(완료 수)과 '오늘의 미션'(남은 수)을 둘 다 보여줘 혼선이 있었다.
         AigoCard {
             Text("오늘의 활동", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(Dimens.Space8))
             Text(
                 "지금까지 미션 ${ui.completedToday}개를 완료했어요.",
                 style = MaterialTheme.typography.bodyLarge,
+            )
+            Spacer(Modifier.height(Dimens.Space16))
+            AigoPrimaryButton(
+                text = "오늘의 미션 하러 가기",
+                onClick = onGoMissions,
             )
         }
 
@@ -317,23 +320,7 @@ private fun HomeContent(
             )
         }
 
-        // 오늘의 미션 요약 + CTA
-        AigoCard {
-            Text("오늘의 미션", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(Dimens.Space8))
-            Text(
-                "식사 ${ui.availableMeal} · 운동 ${ui.availableExercise} · 걷기 ${ui.availableWalking} · 게임 ${ui.availableGame}",
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            Spacer(Modifier.height(Dimens.Space16))
-            AigoPrimaryButton(
-                text = "오늘의 미션 하러 가기 (${ui.availableTotal})",
-                onClick = onGoMissions,
-            )
-        }
-
-        // 나의 기록(_13) 진입 — 연속 예측 추이 + 활동 요약
-        AigoSecondaryButton(text = "영상 따라 운동하기", onClick = onOpenExercise)
+        // '영상 따라 운동하기'는 미션 탭(오늘의 미션 하러 가기)에서 진입 가능하므로 홈의 중복 버튼은 제거했다.
         AigoSecondaryButton(text = "나의 기록 보기", onClick = onOpenRecords)
 
         // TODO: 백엔드 연결 — 주간 리포트·걸음 목표/비교(계약 GAP: /home 확장 대기)
