@@ -17,8 +17,10 @@ from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.protein_categories import PROTEIN_CATEGORY_IDS, PROTEIN_DAILY_GOAL_COUNT
 from app.core.utils.clock import today_kst
 from app.dtos.mission import (
+    MealTodayLog,
     MissionLogCreateRequest,
     MissionLogCreateResponse,
     MissionLogUpdateRequest,
@@ -69,7 +71,14 @@ class MissionService:
             mission_type=mission_type,
             exclude_kidney_check=exclude_kidney_check,
         )
-        return [MissionResponse.model_validate(t) for t in templates]
+        responses = [MissionResponse.model_validate(t) for t in templates]
+        # 단백질(식사) 미션엔 오늘 저장된 기록을 붙여, 앱이 재진입 시 카드 선택 상태를 복원하게 한다(지시서 §4.1).
+        for resp, template in zip(responses, templates, strict=True):
+            if template.mission_type == MissionType.MEAL:
+                meal = await self.repo.get_today_meal_log(user.user_id, template.mission_template_id)
+                if meal is not None:
+                    resp.today_log = MealTodayLog(eaten=meal.protein_foods, logged_at=meal.created_at)
+        return responses
 
     @staticmethod
     def _should_hide_kidney_missions(profile: HealthProfile | None) -> bool:
@@ -176,6 +185,16 @@ class MissionService:
                 detail="운동/걷기 미션은 시작(in_progress)으로만 생성할 수 있습니다.",
             )
 
+        # 단백질(식사) 미션: eaten(protein_foods)은 정의된 7개 카테고리 id 만 허용(정의 밖이면 400, 지시서 §4.2).
+        #   빈 배열은 허용("오늘 안 먹었어요"도 기록) — 완료 판정만 3종 이상에서 성립한다.
+        if template.mission_type == MissionType.MEAL and data.meal_detail is not None:
+            invalid = set(data.meal_detail.protein_foods) - PROTEIN_CATEGORY_IDS
+            if invalid:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"허용되지 않은 단백질 카테고리입니다: {sorted(invalid)}",
+                )
+
     async def _existing_log_response(self, log: MissionLog) -> MissionLogCreateResponse:
         """이미 기록된 수행을 그대로 돌려준다(재전송). 새로 만들지도, 값을 바꾸지도 않는다."""
         # 요약은 로그로부터 다시 계산하는 멱등 연산이라, 재전송으로 값이 흔들리지 않는다.
@@ -231,7 +250,10 @@ class MissionService:
     async def _complete_immediately(
         self, user: User, data: MissionLogCreateRequest, template: MissionTemplate
     ) -> MissionLogCreateResponse:
-        # 식사/게임 즉시완료
+        # 식사(단백질) 미션은 당일 1건 upsert(재저장=최신 선택으로 갱신, 서버가 완료판정). 게임은 아래 기존 경로.
+        if template.mission_type == MissionType.MEAL:
+            return await self._upsert_meal(user, data, template)
+        # 게임 즉시완료
         success = bool(data.success)
         daily_limit_reached = False
         counted_for_daily = success
@@ -296,6 +318,90 @@ class MissionService:
             success=success,
             counted_for_daily=counted_for_daily,
             daily_limit_reached=daily_limit_reached,
+            earned_points=earned_points,
+            daily_result=daily_result.value,
+        )
+
+    async def _upsert_meal(
+        self, user: User, data: MissionLogCreateRequest, template: MissionTemplate
+    ) -> MissionLogCreateResponse:
+        """단백질(식사) 미션 저장 — 당일 1건을 upsert 한다.
+        - 완료판정은 서버가 한다: 서로 다른 카테고리 3종 이상이면 success(지시서 §4.2). 클라 success 는 무시.
+        - 같은 날 재저장은 기존 기록을 최신 선택으로 갱신(append 아님, 지시서 §3-3).
+        - 빈 배열도 저장(기록 가치) — 완료(카운트)는 3종 이상에서만.
+        오프라인 '같은 payload 재전송'은 상위 _find_resent_log 가 이미 걸러 여기 오지 않는다.
+        """
+        detail = data.meal_detail
+        # 상세가 없으면 빈 기록으로 취급(빈 배열 허용, 지시서 §4.2) — 완료(카운트)는 3종 이상에서만.
+        foods = list(dict.fromkeys(detail.protein_foods)) if detail is not None else []  # 중복 제거·순서 유지
+        raw_text = detail.raw_text if detail is not None else None
+        count = len(foods)
+        success = count >= PROTEIN_DAILY_GOAL_COUNT
+        counted_for_daily = success
+        earned_points = compute_earned_points(counted_for_daily, template.reward_points)
+
+        # 당일 upsert 경합 방지(지영 리뷰 #224): 조회~생성/갱신을 사용자 단위로 직렬화한다.
+        #   users 행을 먼저 FOR UPDATE 로 잠근 뒤 당일 기록을 읽어야, 서로 다른 payload(중복 클릭·
+        #   네트워크 재시도로 dedup 자연키가 갈리는 경우)가 동시에 도착해도 두 요청이 각각 None 을
+        #   읽고 새 로그를 만드는 일이 없다 — get_today_meal_log 조합엔 DB 유일 제약이 없어(걷기/운동
+        #   완료와 달리) 조회만으로는 못 막는다. 두 번째 요청은 lock 획득 후 첫 로그를 보고 갱신 경로로 간다.
+        await self.repo.lock_user_for_completion(user.user_id)
+        existing_meal = await self.repo.get_today_meal_log(user.user_id, data.mission_template_id)
+        if existing_meal is not None:
+            # 재저장: 당일 기록(로그·상세)을 최신 선택으로 갱신한다.
+            #   created_on_device_at(=dedup 자연키)은 '첫 저장' 값으로 유지한다 — 갱신하면 첫 저장의 오프라인
+            #   재전송이 dedup 을 놓쳐 오래된 payload 로 되돌릴 수 있다. 재전송은 기존(최신) 기록을 그대로 받는다.
+            existing_meal.protein_foods = foods
+            existing_meal.protein_meal_count = count
+            existing_meal.counted_for_daily = counted_for_daily
+            # 자유텍스트도 최신 요청 값으로 갱신(지영 리뷰 #224): 카테고리만 갱신하고 raw_text 를
+            #   남겨두면 '최신 카테고리 + 옛 설명' 혼합 상태가 된다.
+            existing_meal.raw_text = raw_text
+            mission_log = await self.repo.get_mission_log(existing_meal.mission_log_id, user.user_id)
+            if mission_log is not None:
+                mission_log.success = success
+                mission_log.counted_for_daily = counted_for_daily
+                mission_log.earned_points = earned_points
+                mission_log.performed_at = data.created_on_device_at
+            log_id = existing_meal.mission_log_id
+            log_status = (
+                mission_log.status.value if mission_log is not None else MissionStatus.COMPLETED.value
+            )
+        else:
+            log = MissionLog(
+                user_id=user.user_id,
+                mission_template_id=data.mission_template_id,
+                mission_type=MissionType.MEAL,
+                status=MissionStatus.COMPLETED,
+                performed_at=data.created_on_device_at,
+                success=success,
+                input_method=data.input_method,
+                counted_for_daily=counted_for_daily,
+                earned_points=earned_points,
+                created_on_device_at=data.created_on_device_at,
+            )
+            await self.repo.create_mission_log(log)
+            await self.repo.add_meal_log(
+                MealLog(
+                    mission_log_id=log.mission_log_id,
+                    meal_date=today_kst(),
+                    protein_foods=foods,
+                    protein_meal_count=count,
+                    raw_text=raw_text,
+                    counted_for_daily=counted_for_daily,
+                )
+            )
+            log_id = log.mission_log_id
+            log_status = log.status.value
+
+        daily_result = await self._refresh_daily_summary(user.user_id)
+        await self.session.commit()
+        return MissionLogCreateResponse(
+            mission_log_id=log_id,
+            status=log_status,
+            success=success,
+            counted_for_daily=counted_for_daily,
+            daily_limit_reached=False,  # upsert 라 '1일 1회 초과' 개념 없음(재저장은 갱신).
             earned_points=earned_points,
             daily_result=daily_result.value,
         )

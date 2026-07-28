@@ -15,12 +15,13 @@
 import asyncio
 
 from httpx import AsyncClient, Response
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette import status
 
 from app.core.utils.clock import today_kst
 from app.models.enums import ActivityLevel, MissionType, TargetUnit
-from app.models.missions import MissionTemplate
+from app.models.missions import MealLog, MissionLog, MissionTemplate
 
 API = "/api/v1"
 
@@ -64,13 +65,16 @@ async def _seed_template(
     return template_id
 
 
-def _meal_body(template_id: int, *, success: bool = True) -> dict:
+def _meal_body(template_id: int, *, foods: list[str] | None = None, success: bool = True) -> dict:
+    # 단백질 챌린지: protein_foods 는 정의된 7개 카테고리 id 여야 하고(자유텍스트 아님),
+    #   하루 목표 3종 이상이어야 counted_for_daily 로 인정된다. 기본은 서로 다른 3종.
+    picks = foods if foods is not None else ["meat", "egg", "soy"]
     return {
         "mission_template_id": template_id,
         "mission_type": "meal",
         "status": "completed",
         "success": success,
-        "meal_detail": {"protein_foods": ["두부"], "protein_meal_count": 1},
+        "meal_detail": {"protein_foods": picks, "protein_meal_count": len(picks)},
     }
 
 
@@ -82,6 +86,25 @@ def _game_body(template_id: int, *, success: bool = True) -> dict:
         "success": success,
         "game_detail": {"game_type": "card_match", "completed": success},
     }
+
+
+async def _count_logs(sm: async_sessionmaker[AsyncSession], user_id: int) -> int:
+    async with sm() as s:
+        return (
+            await s.scalar(select(func.count()).select_from(MissionLog).where(MissionLog.user_id == user_id))
+        ) or 0
+
+
+async def _today_meal_log(sm: async_sessionmaker[AsyncSession], user_id: int) -> MealLog | None:
+    """이 사용자의 최신 MealLog 1건(당일 upsert 라 하루엔 1건). 상세 갱신 검증용."""
+    async with sm() as s:
+        stmt = (
+            select(MealLog)
+            .join(MissionLog, MealLog.mission_log_id == MissionLog.mission_log_id)
+            .where(MissionLog.user_id == user_id)
+            .order_by(MealLog.meal_log_id.desc())
+        )
+        return await s.scalar(stmt)
 
 
 # -------------------------------------------------------------------------------------
@@ -124,9 +147,10 @@ async def test_meal_complete_awards_points_and_reflects_on_home(
 
 
 # -------------------------------------------------------------------------------------
-# 2. 식사 2회째 → 일일 한도 도달 (미카운트·미적립), 잔액 불변
+# 2. 식사 재저장(같은 날 카테고리 추가) → upsert 로 기존 기록 갱신, 이중 적립 없음
+#    (단백질 챌린지는 '하루 한 장의 기록'을 편집하는 모델이라 '2회째=한도'가 아니다)
 # -------------------------------------------------------------------------------------
-async def test_meal_second_completion_hits_daily_limit(
+async def test_meal_resave_updates_without_double_awarding(
     db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
 ) -> None:
     auth, _ = await _guest(db_client)
@@ -134,22 +158,88 @@ async def test_meal_second_completion_hits_daily_limit(
         db_sessionmaker, mission_type=MissionType.MEAL, reward_points=10, daily_count_limit=1
     )
 
-    first = (await db_client.post(f"{API}/mission-logs", json=_meal_body(template_id), headers=auth)).json()
+    first = (
+        await db_client.post(
+            f"{API}/mission-logs", json=_meal_body(template_id, foods=["meat", "egg", "soy"]), headers=auth
+        )
+    ).json()
     assert first["counted_for_daily"] is True and first["earned_points"] == 10
 
-    second = await db_client.post(f"{API}/mission-logs", json=_meal_body(template_id), headers=auth)
-    assert second.status_code == status.HTTP_201_CREATED  # 저장은 되지만
+    # 같은 날 다시 저장(카테고리 2종 추가) — 새 로그를 만들지 않고 오늘 기록을 갱신한다.
+    second = await db_client.post(
+        f"{API}/mission-logs",
+        json=_meal_body(template_id, foods=["meat", "egg", "soy", "fish", "dairy"]),
+        headers=auth,
+    )
+    assert second.status_code == status.HTTP_201_CREATED
     body = second.json()
-    assert body["daily_limit_reached"] is True
-    assert body["counted_for_daily"] is False
-    assert body["earned_points"] == 0
+    assert body["daily_limit_reached"] is False  # 한도 개념 없음
+    assert body["counted_for_daily"] is True
+    assert body["earned_points"] == 10  # 재계산값일 뿐, 추가 적립이 아니다
 
-    # 잔액은 여전히 10 (이중 적립 없음), 카운트도 1 유지
+    # 잔액·카운트는 그대로 10 / 1 (로그 1건을 갱신했을 뿐, 이중 적립 없음)
     home = (await db_client.get(f"{API}/home", headers=auth)).json()
     assert home["point_balance"]["current_points"] == 10
     assert home["today_summary"]["counted_mission_count"] == 1
     assert home["available_mission_summary"]["meal"] == 0
-    assert home["streak"]["current_days"] == 1  # 같은 날 중복 완료는 스트릭을 늘리지 않는다
+    assert home["streak"]["current_days"] == 1  # 같은 날 재저장은 스트릭을 늘리지 않는다
+
+
+# -------------------------------------------------------------------------------------
+# 2b. 동시 식사 저장(서로 다른 payload)이 로그·카운트·포인트를 중복시키지 않는다 (#224 지영 P1)
+# -------------------------------------------------------------------------------------
+async def test_meal_concurrent_saves_do_not_duplicate(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    auth, user_id = await _guest(db_client)
+    template_id = await _seed_template(
+        db_sessionmaker, mission_type=MissionType.MEAL, reward_points=10, daily_count_limit=1
+    )
+
+    # 서로 다른 카테고리 조합(=다른 payload)이라 재전송 dedup(자연키)로도 안 걸린다.
+    #   사용자 단위 잠금이 없으면 두 요청이 각각 '오늘 기록 없음'을 읽고 새 로그를 만들어 이중 적립된다.
+    r1, r2 = await asyncio.gather(
+        db_client.post(
+            f"{API}/mission-logs", json=_meal_body(template_id, foods=["meat", "egg", "soy"]), headers=auth
+        ),
+        db_client.post(
+            f"{API}/mission-logs", json=_meal_body(template_id, foods=["fish", "dairy", "nuts"]), headers=auth
+        ),
+    )
+    assert r1.status_code == status.HTTP_201_CREATED
+    assert r2.status_code == status.HTTP_201_CREATED
+
+    # 로그는 정확히 1건(당일 1건 upsert), 포인트·카운트도 1회만.
+    assert await _count_logs(db_sessionmaker, user_id) == 1
+    home = (await db_client.get(f"{API}/home", headers=auth)).json()
+    assert home["point_balance"]["current_points"] == 10
+    assert home["today_summary"]["counted_mission_count"] == 1
+    assert home["available_mission_summary"]["meal"] == 0
+
+
+# -------------------------------------------------------------------------------------
+# 2c. 재저장 시 자유텍스트(raw_text)도 최신 값으로 갱신된다 (#224 지영 P2)
+# -------------------------------------------------------------------------------------
+async def test_meal_resave_updates_raw_text(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    auth, user_id = await _guest(db_client)
+    template_id = await _seed_template(db_sessionmaker, mission_type=MissionType.MEAL, reward_points=10)
+
+    body1 = _meal_body(template_id, foods=["meat", "egg", "soy"])
+    body1["meal_detail"]["raw_text"] = "아침에 두부와 계란"
+    await db_client.post(f"{API}/mission-logs", json=body1, headers=auth)
+
+    body2 = _meal_body(template_id, foods=["fish", "dairy", "nuts"])
+    body2["meal_detail"]["raw_text"] = "점심에 생선과 우유"
+    await db_client.post(f"{API}/mission-logs", json=body2, headers=auth)
+
+    # 당일 MealLog 는 1건, 카테고리와 raw_text 모두 최신(두 번째) 값으로 갱신돼야 한다.
+    row = await _today_meal_log(db_sessionmaker, user_id)
+    assert row is not None
+    assert row.raw_text == "점심에 생선과 우유"
+    assert set(row.protein_foods) == {"fish", "dairy", "nuts"}
+    assert await _count_logs(db_sessionmaker, user_id) == 1
 
 
 # -------------------------------------------------------------------------------------
