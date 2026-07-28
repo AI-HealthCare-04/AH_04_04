@@ -136,9 +136,14 @@ def test_empty_categories_saves_but_not_completed() -> None:
 def test_duplicate_categories_counted_once() -> None:
     # 같은 카테고리를 여러 번 보내도 서버가 중복 제거해 1종으로 센다. 목표가 1종이라 완료는 되지만,
     # 판정 입력이 '서로 다른 카테고리 수'라는 계약(중복 부풀리기 무시)은 유지된다.
-    service, _ = _service()
+    # 저장값도 정규화된 목록·개수여야 한다(지영 리뷰 #227 비차단): success 만으론 목표 1에서
+    # 중복 제거를 증명할 수 없으므로 저장된 값을 직접 고정한다.
+    service, cap = _service()
     resp = asyncio.run(service.create_mission_log(_USER, _meal_request(["meat", "meat", "meat"])))
     assert resp.success is True  # 중복 제거 후 1종 ≥ 목표(1)
+    stored = cast(SimpleNamespace, cap["added_meal"])
+    assert stored.protein_foods == ["meat"]  # 정규화(중복 제거·순서 유지) 목록으로 저장
+    assert stored.protein_meal_count == 1  # 클라이언트 count 가 아니라 서버가 센 값
 
 
 def test_resave_updates_existing_record_not_append() -> None:
