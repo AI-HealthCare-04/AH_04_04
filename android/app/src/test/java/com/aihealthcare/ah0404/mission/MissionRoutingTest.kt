@@ -28,9 +28,9 @@ class MissionRoutingTest {
     }
 
     @Test
-    fun meal_routes_to_coming_soon() {
-        // 식사는 아직 수행 화면이 없다 → '준비 중'. 걷기 경로로 가면 안 된다.
-        assertEquals(MissionDestination.COMING_SOON, missionDestination("meal"))
+    fun meal_routes_to_protein_challenge_screen() {
+        // 식사는 단백질 식사 기록 화면으로 연결. 걷기 경로로 가면 안 된다.
+        assertEquals(MissionDestination.PROTEIN_MEAL, missionDestination("meal"))
     }
 
     @Test

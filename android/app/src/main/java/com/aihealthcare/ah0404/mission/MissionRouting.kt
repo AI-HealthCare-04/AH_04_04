@@ -21,7 +21,14 @@ enum class MissionDestination {
     /** 게임: 미니게임 영상 화면(MiniGameScreen). 서버 /videos 로 스트리밍하는 짧은 재미 영상. */
     MINI_GAME,
 
-    /** 아직 수행 화면이 없는 유형(식사 등): '준비 중' 안내 화면. */
+    /**
+     * 식사: 단백질 식사 기록 화면(ProteinChallengeScreen). 신장질환자를 제외한 사용자가
+     * 오늘 먹은 단백질 카테고리를 골라 저장한다. 걷기와 달리 이 화면이 유일한 기록 지점이다
+     * (즉시완료 미션이라 별도 세션 흐름이 없다).
+     */
+    PROTEIN_MEAL,
+
+    /** 아직 수행 화면이 없는 유형: '준비 중' 안내 화면. */
     COMING_SOON,
 }
 
@@ -34,5 +41,6 @@ internal fun missionDestination(missionType: String): MissionDestination =
         "walking" -> MissionDestination.WALKING
         "exercise" -> MissionDestination.EXERCISE_VIDEOS
         "game" -> MissionDestination.MINI_GAME
+        "meal" -> MissionDestination.PROTEIN_MEAL
         else -> MissionDestination.COMING_SOON
     }

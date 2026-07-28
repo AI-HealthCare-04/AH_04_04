@@ -43,6 +43,7 @@ import com.aihealthcare.ah0404.home.HomeScreen
 import com.aihealthcare.ah0404.mission.ComingSoonScreen
 import com.aihealthcare.ah0404.mission.MiniGameScreen
 import com.aihealthcare.ah0404.mission.MissionDestination
+import com.aihealthcare.ah0404.mission.ProteinChallengeScreen
 import com.aihealthcare.ah0404.mission.MissionScreen
 import com.aihealthcare.ah0404.mission.WalkingMeasureScreen
 import com.aihealthcare.ah0404.mission.missionDestination
@@ -250,7 +251,19 @@ private fun MainContent(
         return
     }
 
-    // '준비 중' 오버레이(#93). 수행 화면이 아직 없는 유형(운동·식사·게임)을 누르면 진입.
+    // 단백질 식사 기록 오버레이. 미션 목록에서 식사 미션을 고르면 진입(이 화면이 유일한 기록 지점).
+    var proteinMission by rememberSaveable(stateSaver = MissionStateSaver) {
+        mutableStateOf<Mission?>(null)
+    }
+    proteinMission?.let { mission ->
+        ProteinChallengeScreen(
+            mission = mission,
+            onBack = { proteinMission = null },
+        )
+        return
+    }
+
+    // '준비 중' 오버레이(#93). 수행 화면이 아직 없는 유형을 누르면 진입.
     var comingSoonMission by rememberSaveable(stateSaver = MissionStateSaver) {
         mutableStateOf<Mission?>(null)
     }
@@ -331,6 +344,7 @@ private fun MainContent(
                         // 홈의 '영상 따라 운동하기'와 같은 목적지 — 미션 탭만 '준비 중'으로 막던 문제 해소(#162).
                         MissionDestination.EXERCISE_VIDEOS -> subScreen = "exercise"
                         MissionDestination.MINI_GAME -> subScreen = "minigame"
+                        MissionDestination.PROTEIN_MEAL -> proteinMission = mission
                         MissionDestination.COMING_SOON -> comingSoonMission = mission
                     }
                 },
