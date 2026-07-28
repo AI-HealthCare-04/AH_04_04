@@ -186,7 +186,7 @@ class MissionService:
             )
 
         # 단백질(식사) 미션: eaten(protein_foods)은 정의된 7개 카테고리 id 만 허용(정의 밖이면 400, 지시서 §4.2).
-        #   빈 배열은 허용("오늘 안 먹었어요"도 기록) — 완료 판정만 3종 이상에서 성립한다.
+        #   빈 배열은 허용("오늘 안 먹었어요"도 기록) — 완료 판정은 PROTEIN_DAILY_GOAL_COUNT종 이상에서 성립한다.
         if template.mission_type == MissionType.MEAL and data.meal_detail is not None:
             invalid = set(data.meal_detail.protein_foods) - PROTEIN_CATEGORY_IDS
             if invalid:
@@ -326,13 +326,13 @@ class MissionService:
         self, user: User, data: MissionLogCreateRequest, template: MissionTemplate
     ) -> MissionLogCreateResponse:
         """단백질(식사) 미션 저장 — 당일 1건을 upsert 한다.
-        - 완료판정은 서버가 한다: 서로 다른 카테고리 3종 이상이면 success(지시서 §4.2). 클라 success 는 무시.
+        - 완료판정은 서버가 한다: 서로 다른 카테고리 PROTEIN_DAILY_GOAL_COUNT종 이상이면 success. 클라 success 는 무시.
         - 같은 날 재저장은 기존 기록을 최신 선택으로 갱신(append 아님, 지시서 §3-3).
-        - 빈 배열도 저장(기록 가치) — 완료(카운트)는 3종 이상에서만.
+        - 빈 배열도 저장(기록 가치) — 완료(카운트)는 PROTEIN_DAILY_GOAL_COUNT종 이상에서만.
         오프라인 '같은 payload 재전송'은 상위 _find_resent_log 가 이미 걸러 여기 오지 않는다.
         """
         detail = data.meal_detail
-        # 상세가 없으면 빈 기록으로 취급(빈 배열 허용, 지시서 §4.2) — 완료(카운트)는 3종 이상에서만.
+        # 상세가 없으면 빈 기록으로 취급(빈 배열 허용) — 완료(카운트)는 PROTEIN_DAILY_GOAL_COUNT종 이상에서만.
         foods = list(dict.fromkeys(detail.protein_foods)) if detail is not None else []  # 중복 제거·순서 유지
         raw_text = detail.raw_text if detail is not None else None
         count = len(foods)
