@@ -50,13 +50,14 @@ fun ExerciseVideosScreen(
 ) {
     LaunchedEffect(Unit) { vm.load() }
 
-    // 몸풀기 번들 루틴은 백엔드 목록과 무관하게 재생 가능. 전체화면으로 띄운다(스트리밍 #72과 별개).
-    var showRoutine by remember { mutableStateOf(false) }
-    if (showRoutine) {
+    // 번들 루틴(몸풀기·마무리)은 백엔드 목록과 무관하게 오프라인에서도 재생 가능(심사 환경 안정 버전).
+    //   여러 동작을 조합한 가이드 루틴이라 단일 스트리밍 영상이 아니라 번들 RoutinePlayer 로 띄운다(#72 스트리밍과 별개).
+    var routineFile by remember { mutableStateOf<String?>(null) }
+    routineFile?.let { file ->
         RoutinePlayerScreen(
-            routineFile = "warmup_common.json",
-            onExit = { showRoutine = false },
-            onComplete = { showRoutine = false },
+            routineFile = file,
+            onExit = { routineFile = null },
+            onComplete = { routineFile = null },
         )
         return
     }
@@ -71,10 +72,10 @@ fun ExerciseVideosScreen(
         // 번들 몸풀기는 네트워크와 무관하게 '즉시' 시작 가능해야 한다(오프라인/느린망 포함).
         //   서버 목록이 오면 탭으로, 아직이면(로딩/빈/에러) 폴백에서 몸풀기 버튼을 바로 보여준다.
         if (vm.videos.isNotEmpty()) {
-            StageTabs(vm.videos, onStartWarmup = { showRoutine = true })
+            StageTabs(vm.videos, onStartRoutine = { routineFile = it })
         } else {
             WarmupFallback(
-                onStart = { showRoutine = true },
+                onStart = { routineFile = "warmup_common.json" },
                 loading = vm.loading,
                 retry = if (vm.error) vm::load else null,
             )
@@ -83,7 +84,7 @@ fun ExerciseVideosScreen(
 }
 
 @Composable
-private fun StageTabs(videos: List<ExerciseVideoItem>, onStartWarmup: () -> Unit) {
+private fun StageTabs(videos: List<ExerciseVideoItem>, onStartRoutine: (String) -> Unit) {
     var selected by remember(videos) { mutableIntStateOf(0) }
     val current = videos[selected.coerceIn(0, videos.lastIndex)]
 
@@ -97,13 +98,20 @@ private fun StageTabs(videos: List<ExerciseVideoItem>, onStartWarmup: () -> Unit
                 )
             }
         }
-        VideoArea(current, onStartWarmup = onStartWarmup)
+        VideoArea(current, onStartRoutine = onStartRoutine)
     }
+}
+
+/** 번들 루틴(RoutinePlayer)으로 재생하는 단계 → 그 단계의 루틴 JSON 파일. 스트리밍이 아니라 조합형 가이드 루틴이다. */
+private fun bundledRoutineFile(stage: String): String? = when (stage) {
+    "warmup" -> "warmup_common.json"
+    "cooldown" -> "cooldown_common.json"
+    else -> null
 }
 
 @UnstableApi
 @Composable
-private fun VideoArea(item: ExerciseVideoItem, onStartWarmup: () -> Unit) {
+private fun VideoArea(item: ExerciseVideoItem, onStartRoutine: (String) -> Unit) {
     Box(
         Modifier
             .fillMaxWidth()
@@ -114,17 +122,18 @@ private fun VideoArea(item: ExerciseVideoItem, onStartWarmup: () -> Unit) {
         contentAlignment = Alignment.Center,
     ) {
         val url = item.videoUrl
+        val bundledRoutine = bundledRoutineFile(item.stage)
         when {
-            // 몸풀기: 번들 루틴(따라 하는 실제 운동). 스트리밍 준비중과 별개로 지금 재생 가능.
-            item.stage == "warmup" -> {
+            // 몸풀기·마무리: 번들 루틴(따라 하는 실제 운동). 스트리밍 준비중과 별개로 오프라인에서도 지금 재생 가능.
+            bundledRoutine != null -> {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                     Text("🤸", style = MaterialTheme.typography.headlineLarge)
                     Text(
-                        "따라 하는 몸풀기 운동이에요.",
+                        "따라 하는 ${item.label} 운동이에요.",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Button(onClick = onStartWarmup) { Text("운동 시작하기") }
+                    Button(onClick = { onStartRoutine(bundledRoutine) }) { Text("운동 시작하기") }
                 }
             }
             // 그 외 단계: 스트리밍 영상(서버 업로드 시).

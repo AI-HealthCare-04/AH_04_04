@@ -1,0 +1,52 @@
+{
+  "id": "cooldown_common",
+  "title": "마무리 운동",
+  "subtitle": "피로를 풀어줘요",
+  "bgm": "cooldown_meditation",
+  "totalSec": 243,
+  "steps": [
+    { "type": "intro", "sec": 10, "name": "마무리 운동", "guide": "천천히 몸을 풀어볼까요" },
+
+    { "type": "image", "asset": "calf_1", "sec": 15, "mode": "timer",
+      "name": "종아리 늘리기", "guide": "의자를 잡고 뒷발 뒤꿈치를 바닥에 붙여요", "safety": "의자를 꼭 잡으세요" },
+    { "type": "image", "asset": "calf_2", "sec": 15, "mode": "timer",
+      "name": "종아리 늘리기", "guide": "반대쪽 종아리도 늘려요", "safety": "의자를 꼭 잡으세요" },
+
+    { "type": "image", "asset": "hamstring_left", "sec": 15, "mode": "timer",
+      "name": "뒤 허벅지 늘리기", "guide": "앞다리를 펴고 발끝을 위로, 상체를 숙여요", "safety": "의자를 꼭 잡으세요" },
+    { "type": "image", "asset": "hamstring_right", "sec": 15, "mode": "timer",
+      "name": "뒤 허벅지 늘리기", "guide": "반대쪽도 늘려요", "safety": "의자를 꼭 잡으세요" },
+
+    { "type": "image", "asset": "quad_left", "sec": 15, "mode": "timer",
+      "name": "앞 허벅지 늘리기", "guide": "발목을 잡아 무릎을 뒤로 접어요", "safety": "의자를 꼭 잡으세요" },
+    { "type": "image", "asset": "quad_right", "sec": 15, "mode": "timer",
+      "name": "앞 허벅지 늘리기", "guide": "반대쪽도 늘려요", "safety": "의자를 꼭 잡으세요" },
+
+    { "type": "image", "asset": "hip_flexor_left", "sec": 15, "mode": "timer",
+      "name": "고관절 늘리기", "guide": "앞무릎을 굽히고 뒷다리를 뻗어요", "safety": "의자를 꼭 잡으세요" },
+    { "type": "image", "asset": "hip_flexor_right", "sec": 15, "mode": "timer",
+      "name": "고관절 늘리기", "guide": "반대쪽도 늘려요", "safety": "의자를 꼭 잡으세요" },
+
+    { "type": "image", "asset": "inner_thigh_left", "sec": 15, "mode": "timer",
+      "name": "안 허벅지 늘리기", "guide": "다리를 넓게 벌려 한쪽으로 체중을 실어요" },
+    { "type": "image", "asset": "inner_thigh_right", "sec": 15, "mode": "timer",
+      "name": "안 허벅지 늘리기", "guide": "반대쪽으로 체중을 실어요" },
+
+    { "type": "notice", "sec": 3, "name": "의자에 앉아주세요", "guide": "이제 앉아서 마무리해요" },
+
+    { "type": "video", "asset": "cat_camel_loop", "sec": 21, "mode": "count", "count": 6,
+      "name": "고양이 낙타 스트레칭", "guide": "등을 둥글게 말았다가 활짝 펴요" },
+
+    { "type": "image", "asset": "neck_1", "sec": 5, "mode": "timer", "name": "목 늘리기", "guide": "고개를 천천히 앞으로 숙여요" },
+    { "type": "image", "asset": "neck_2", "sec": 5, "mode": "timer", "name": "목 늘리기", "guide": "고개를 천천히 뒤로 젖혀요" },
+    { "type": "image", "asset": "neck_3", "sec": 5, "mode": "timer", "name": "목 늘리기", "guide": "고개를 옆으로 기울여요" },
+    { "type": "image", "asset": "neck_4", "sec": 5, "mode": "timer", "name": "목 늘리기", "guide": "반대쪽으로 기울여요" },
+    { "type": "image", "asset": "neck_5", "sec": 5, "mode": "timer", "name": "목 늘리기", "guide": "대각선 아래를 바라봐요" },
+    { "type": "image", "asset": "neck_6", "sec": 5, "mode": "timer", "name": "목 늘리기", "guide": "반대쪽 대각선을 바라봐요" },
+
+    { "type": "video", "asset": "breathing_loop", "sec": 24, "mode": "count", "count": 6,
+      "name": "호흡 정리", "guide": "팔을 올리며 숨을 들이쉬고, 내리며 내쉬어요" },
+
+    { "type": "outro", "sec": 5, "name": "수고하셨어요", "guide": "잘하셨습니다!" }
+  ]
+}
