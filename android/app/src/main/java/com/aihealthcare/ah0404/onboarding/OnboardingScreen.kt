@@ -38,6 +38,8 @@ import com.aihealthcare.ah0404.auth.AuthLoginViewModel
 import com.aihealthcare.ah0404.auth.SocialProvider
 import com.aihealthcare.ah0404.auth.SocialSignInClients
 import com.aihealthcare.ah0404.network.TokenHolder
+import com.aihealthcare.ah0404.fitness.StsAssessmentScreen
+import com.aihealthcare.ah0404.fitness.formatStsSeconds
 import com.aihealthcare.ah0404.ui.components.AigoCheckboxRow
 import com.aihealthcare.ah0404.ui.components.AigoDialog
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
@@ -382,8 +384,19 @@ private fun ProfileStep(vm: OnboardingViewModel) {
     )
 }
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 private fun AssessmentStep(vm: OnboardingViewModel) {
+    // 영상 따라 측정하는 가이드 화면(모델 B: 회당 버튼). 측정 완료 시 소요 초를 입력값에 채운다.
+    //   측정이 어려운 사용자는 아래 직접 입력으로도 진행 가능(폴백).
+    var measuring by remember { mutableStateOf(false) }
+    if (measuring) {
+        StsAssessmentScreen(
+            onMeasured = { sec -> vm.chairStandSec = formatStsSeconds(sec); measuring = false },
+            onCancel = { measuring = false },
+        )
+        return
+    }
     val chairStandSeconds = parseChairStandSeconds(vm.chairStandSec)
     val showInputError = vm.chairStandSec.isNotBlank() && chairStandSeconds == null
     StepScaffold(
@@ -391,6 +404,8 @@ private fun AssessmentStep(vm: OnboardingViewModel) {
         subtitle = "어려우면 건너뛰어도 괜찮아요. 나중에 언제든 할 수 있어요.",
         onBack = { vm.goBack() },
         content = {
+            Text("영상을 따라 5번 앉았다 일어서면, 걸린 시간을 재드려요.", style = MaterialTheme.typography.bodyLarge)
+            Spacer(Modifier.height(Dimens.Space8))
             Text("의자에서 5번 앉았다 일어서기 (초)", style = MaterialTheme.typography.titleMedium)
             AigoTextField(
                 vm.chairStandSec,
@@ -409,7 +424,8 @@ private fun AssessmentStep(vm: OnboardingViewModel) {
         },
         footer = {
             Column(verticalArrangement = Arrangement.spacedBy(Dimens.Space12)) {
-                AigoPrimaryButton(
+                AigoPrimaryButton(text = "따라하며 측정하기", onClick = { measuring = true })
+                AigoSecondaryButton(
                     text = "검사 완료",
                     onClick = { chairStandSeconds?.let(vm::submitAssessment) },
                     enabled = chairStandSeconds != null,
