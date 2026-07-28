@@ -7,7 +7,9 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.SystemClock
 import android.util.Log
+import com.aihealthcare.ah0404.sensor.WalkStopGateLogic
 import com.aihealthcare.ah0404.sensor.WalkingStepDetectorLogic
+import kotlin.math.max
 
 /**
  * ============================================================================
@@ -33,6 +35,7 @@ import com.aihealthcare.ah0404.sensor.WalkingStepDetectorLogic
 class WalkingSession(
     context: Context,
     private val detector: WalkingStepDetectorLogic = WalkingStepDetectorLogic(),
+    private val stopGate: WalkStopGateLogic = WalkStopGateLogic(),
     nowMs: () -> Long = { SystemClock.elapsedRealtime() },
 ) : WalkingSessionController {
     private val sensorManager =
@@ -49,8 +52,8 @@ class WalkingSession(
     /** 이 기기가 가속도계를 지원하는가. */
     override val isSensorAvailable: Boolean get() = accelSensor != null
 
-    /** 지금까지 누적된 걸음 수. */
-    override val steps: Int get() = detector.count
+    /** 지금까지 누적된 걸음 수. #131 소급차감(보행 직후 앉기 오탐)으로 취소된 걸음을 뺀다. */
+    override val steps: Int get() = max(0, detector.count - stopGate.canceledSteps)
 
     /** 현재 보행 상태(IDLE/WALKING). */
     override val state: WalkingStepDetectorLogic.State get() = detector.state
@@ -64,9 +67,17 @@ class WalkingSession(
             //    (배칭) 전달하는데, 이때 콜백 시각을 쓰면 표본들의 시각이 한 점에 뭉쳐 리듬 게이트가
             //    붕괴(간격≈0 → 이중봉우리로 오인)해 걸음이 0으로 과소계수된다(#176 근본원인). 하드웨어
             //    표본 시각을 쓰면 실제 표본 간격이 복원돼 신호가 살아난다. (오프라인 리플레이로 확인, PR#201)
-            detector.processSample(
-                event.values[0], event.values[1], event.values[2],
-                event.timestamp / 1_000_000L,
+            val tsMs = event.timestamp / 1_000_000L
+            val counted = detector.processSample(
+                event.values[0], event.values[1], event.values[2], tsMs,
+            )
+            // #131: 같은 샘플로 '보행→정지 전환'을 감지해 정지 선언 창의 걸음을 소급 취소한다.
+            //   검출기는 손대지 않고(카운트 원천 유지), 취소는 steps 노출값에서만 반영한다.
+            //   ⚠️ 걸음 등록(onStepCounted)을 게이트 처리(processSample) **앞**에 둔다. 정지가 이 샘플에서
+            //      선언되면 방금 카운트된 걸음도 취소 창 안에 들어와야 하기 때문이다(리뷰 #215 등록 순서).
+            if (counted) stopGate.onStepCounted(tsMs)
+            stopGate.processSample(
+                event.values[0], event.values[1], event.values[2], tsMs,
             )
         }
 
@@ -80,6 +91,7 @@ class WalkingSession(
     override fun start(): Boolean {
         if (running) return registered
         detector.reset()
+        stopGate.reset()
         activeTime.start()
         running = true
         registerSensor()
@@ -146,8 +158,11 @@ class WalkingSession(
         running = false
         unregisterSensor()
         activeTime.stop()
+        // #131: 정지 선언 확인창이 끝나기 전에 종료돼도(앉으며 종료) 소급차감을 마무리 반영한다.
+        //   그 뒤 최종 스냅샷은 보정된 steps(= count - canceledSteps)로 고정한다(리뷰 #215: 종료값 미반영 방지).
+        stopGate.flushOnStop()
 
-        val snapshot = WalkingSnapshot(steps = detector.count, durationSec = elapsedSec())
+        val snapshot = WalkingSnapshot(steps = steps, durationSec = elapsedSec())
         Log.i(TAG, "세션 종료 → steps=${snapshot.steps}, durationSec=${snapshot.durationSec} (제출은 #91)")
         return snapshot
     }
