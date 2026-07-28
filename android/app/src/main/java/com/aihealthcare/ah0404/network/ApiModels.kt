@@ -27,7 +27,16 @@ data class Mission(
     @SerialName("target_unit") val targetUnit: String,
     @SerialName("requires_safety_notice") val requiresSafetyNotice: Boolean,
     @SerialName("daily_count_limit") val dailyCountLimit: Int? = null,
-    @SerialName("reward_points") val rewardPoints: Int
+    @SerialName("reward_points") val rewardPoints: Int,
+    // 단백질(식사) 미션 한정: 오늘 이미 저장된 기록. 없으면 null. 재진입 시 카드 선택 복원에 쓴다.
+    @SerialName("today_log") val todayLog: MealTodayLog? = null,
+)
+
+// 단백질 미션의 '오늘 기록' — 재진입 시 앱이 선택 상태를 복원한다(GET /missions today_log).
+@Serializable
+data class MealTodayLog(
+    val eaten: List<String>,               // 오늘 먹은 단백질 카테고리 id 목록
+    @SerialName("logged_at") val loggedAt: String,
 )
 
 @Serializable
@@ -53,6 +62,17 @@ data class MissionLogCreateRequest(
     //   재전송 시 반드시 같은 값을 다시 보내야 중복 집계가 막힌다 → 측정 '시작' 시각을 한 번 잡아 고정한다.
     //   null 이면 서버 유니크에서 제외돼 종전 동작(중복 방지 없음)과 호환.
     @SerialName("created_on_device_at") val createdOnDeviceAt: String? = null,
+    // 식사(단백질) 즉시완료에서만 채운다. 걷기/운동은 null → 전송에서 빠짐.
+    @SerialName("meal_detail") val mealDetail: MealDetail? = null,
+)
+
+// [요청 일부] 단백질 식사 상세. protein_foods 는 정의된 7개 카테고리 id 목록,
+//   protein_meal_count 는 그 개수(서버가 1종 이상이면 오늘 목표 달성으로 카운트, #227).
+@Serializable
+data class MealDetail(
+    @SerialName("protein_foods") val proteinFoods: List<String>,
+    @SerialName("protein_meal_count") val proteinMealCount: Int,
+    @SerialName("raw_text") val rawText: String? = null,
 )
 
 @Serializable

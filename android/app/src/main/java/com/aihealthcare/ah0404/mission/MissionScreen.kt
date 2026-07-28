@@ -151,14 +151,13 @@ private fun MissionCard(mission: Mission, onClick: (() -> Unit)? = null) {
         }
 
         if (onClick != null) {
-            val isWalking = mission.missionType == "walking"
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                // 걷기는 바로 측정, 나머지는 아직 수행 화면이 없어 '준비 중'으로 연결됨을 미리 알린다.
-                text = if (isWalking) "눌러서 측정 시작 →" else "준비 중 · 눌러서 보기 →",
+                // 실제 수행/기록 화면이 있는 유형(걷기·식사)은 그 행동을, 나머지는 '준비 중'을 안내한다(리뷰 #225).
+                text = missionCtaLabel(mission.missionType),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Bold,
-                color = if (isWalking) MaterialTheme.colorScheme.primary
+                color = if (missionCtaHighlighted(mission.missionType)) MaterialTheme.colorScheme.primary
                 else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
