@@ -35,6 +35,9 @@ open class GLTextureView @JvmOverloads constructor(
     private var renderer: Renderer? = null
     private var thread: RenderThread? = null
 
+    /** release() 가 종료를 기다리다 타임아웃한 스레드. 표면 파괴 콜백에서 소유권 이관으로 마저 정리한다. */
+    private var zombie: RenderThread? = null
+
     init {
         isOpaque = false // 투명 배경 합성(뒤 배경이미지가 비쳐 보이도록)
         surfaceTextureListener = this
@@ -53,9 +56,9 @@ open class GLTextureView @JvmOverloads constructor(
         thread?.paused = true
     }
 
-    /** 화면 이탈 시 렌더 스레드·EGL 정리. */
+    /** 화면 이탈 시 렌더 스레드·EGL 정리. 종료가 늦으면 zombie 로 넘겨 표면 파괴 콜백에서 마저 처리한다. */
     open fun release() {
-        thread?.finishAndWait()
+        thread?.let { t -> if (!t.finishAndWait()) zombie = t }
         thread = null
     }
 
@@ -69,9 +72,16 @@ open class GLTextureView @JvmOverloads constructor(
     }
 
     override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
-        thread?.finishAndWait()
+        val t = thread ?: zombie
         thread = null
-        return true // 표면을 우리가 EGL 정리에서 소비했으므로 시스템이 release 하도록 true
+        zombie = null
+        if (t == null) return true
+        if (t.finishAndWait()) return true // 렌더 스레드가 EGL 정리까지 마침 → 시스템이 표면을 release
+        // 종료 대기 타임아웃(드라이버가 스왑에서 멈춘 경우 등): 스레드가 아직 이 표면으로 그리는 중일 수
+        // 있으므로 시스템이 먼저 release 하게 두면 안 된다(네이티브 크래시, 리뷰 #222 P1). 표면 소유권을
+        // 렌더 스레드로 넘겨 EGL 정리 후 스스로 release 하게 하고 false 를 반환한다.
+        t.releaseSurfaceOnExit()
+        return false
     }
 
     override fun onSurfaceTextureUpdated(surface: SurfaceTexture) { /* no-op (연속 렌더) */ }
@@ -87,6 +97,14 @@ open class GLTextureView @JvmOverloads constructor(
         @Volatile private var running = true
         @Volatile private var sizeDirty = false
 
+        // 표면 소유권 handshake(리뷰 #222 P1): finishAndWait 타임아웃 시 표면 release 책임이
+        //   프레임워크→렌더 스레드로 넘어온다. '스레드 종료 직전'과 '이관 요청'이 엇갈려도 정확히
+        //   한 쪽만 release 하도록 세 상태(finished/releaseSurfaceOnExit/surfaceReleased)를 한 락으로 지킨다.
+        private val surfaceLock = Any()
+        private var finished = false
+        private var ownsSurface = false
+        private var surfaceReleased = false
+
         private var eglDisplay: EGLDisplay = EGL14.EGL_NO_DISPLAY
         private var eglContext: EGLContext = EGL14.EGL_NO_CONTEXT
         private var eglSurface: EGLSurface = EGL14.EGL_NO_SURFACE
@@ -97,29 +115,61 @@ open class GLTextureView @JvmOverloads constructor(
             sizeDirty = true
         }
 
-        fun finishAndWait() {
+        /**
+         * 종료를 요청하고 스레드가 EGL 정리까지 마치기를 기다린다.
+         * interrupt 로 프레임 간 sleep 을 즉시 깨우므로 정상 경로에서는 수 ms 안에 끝난다.
+         * @return 스레드 종료가 확인됐는가. false(타임아웃)면 표면을 아직 쓰는 중일 수 있다.
+         */
+        fun finishAndWait(): Boolean {
             running = false
-            runCatching { join(1000) }
+            interrupt() // sleep 즉시 깨움 → 다음 running 체크에서 루프 탈출
+            runCatching { join(JOIN_TIMEOUT_MS) }
+            return !isAlive
+        }
+
+        /**
+         * 타임아웃 시 표면 소유권 이관: 스레드가 EGL 정리 후 표면을 스스로 release 한다.
+         * 스레드가 이미 종료를 마친 상태라면(finished) 여기서 직접 release 한다 — 어느 쪽이든 정확히 1회.
+         */
+        fun releaseSurfaceOnExit() {
+            synchronized(surfaceLock) {
+                ownsSurface = true
+                if (finished && !surfaceReleased) {
+                    surface.release()
+                    surfaceReleased = true
+                }
+            }
         }
 
         override fun run() {
-            if (!initEgl()) return
-            renderer.onSurfaceCreated()
-            renderer.onSurfaceChanged(width, height)
-            while (running) {
-                if (paused) {
-                    sleepQuietly(16)
-                    continue
+            // EGL·표면 정리를 모든 경로(초기화 실패·렌더러 예외 포함)에서 보장한다(리뷰 #222 P2).
+            try {
+                if (!initEgl()) return
+                renderer.onSurfaceCreated()
+                renderer.onSurfaceChanged(width, height)
+                while (running) {
+                    if (paused) {
+                        sleepQuietly(16)
+                        continue
+                    }
+                    if (sizeDirty) {
+                        renderer.onSurfaceChanged(width, height)
+                        sizeDirty = false
+                    }
+                    renderer.onDrawFrame()
+                    EGL14.eglSwapBuffers(eglDisplay, eglSurface)
+                    sleepQuietly(16) // ~60fps 상한(과도한 스핀 방지)
                 }
-                if (sizeDirty) {
-                    renderer.onSurfaceChanged(width, height)
-                    sizeDirty = false
+            } finally {
+                destroyEgl()
+                synchronized(surfaceLock) {
+                    finished = true
+                    if (ownsSurface && !surfaceReleased) {
+                        surface.release()
+                        surfaceReleased = true
+                    }
                 }
-                renderer.onDrawFrame()
-                EGL14.eglSwapBuffers(eglDisplay, eglSurface)
-                sleepQuietly(16) // ~60fps 상한(과도한 스핀 방지)
             }
-            destroyEgl()
         }
 
         private fun initEgl(): Boolean {
@@ -172,7 +222,11 @@ open class GLTextureView @JvmOverloads constructor(
         }
 
         private fun sleepQuietly(ms: Long) {
-            runCatching { sleep(ms) }
+            runCatching { sleep(ms) } // InterruptedException 포함 — finishAndWait 의 interrupt 로 깨어난다
+        }
+
+        private companion object {
+            const val JOIN_TIMEOUT_MS = 1000L
         }
     }
 }
