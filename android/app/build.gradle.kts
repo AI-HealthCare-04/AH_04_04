@@ -88,6 +88,12 @@ val debugApiBaseUrl = providers.gradleProperty("AH_DEBUG_API_BASE_URL")
 val releaseApiBaseUrl = providers.gradleProperty("AH_RELEASE_API_BASE_URL")
     .orElse(providers.environmentVariable("AH_RELEASE_API_BASE_URL"))
 
+// 미니게임 영상 URL — 운동영상 4단계 카탈로그(#72) 밖이라 서버 카탈로그가 아니라 앱에 직접 주입한다.
+//   기본값 = 배포 서버의 /videos/mini_game.mp4. gradle 프로퍼티/환경변수로 override 가능.
+val miniGameVideoUrl = providers.gradleProperty("AH_MINI_GAME_VIDEO_URL")
+    .orElse(providers.environmentVariable("AH_MINI_GAME_VIDEO_URL"))
+    .orElse("https://aigo-health.duckdns.org/videos/mini_game.mp4")
+
 val googleWebClientId = providers.gradleProperty("AH_GOOGLE_WEB_CLIENT_ID")
     .orElse(providers.environmentVariable("AH_GOOGLE_WEB_CLIENT_ID"))
     .orElse("")
@@ -132,6 +138,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", googleWebClientId.get().asBuildConfigString())
         buildConfigField("String", "KAKAO_NATIVE_APP_KEY", kakaoNativeAppKey.get().asBuildConfigString())
+        buildConfigField("String", "MINI_GAME_VIDEO_URL", miniGameVideoUrl.get().asBuildConfigString())
         manifestPlaceholders["KAKAO_NATIVE_APP_KEY"] = kakaoNativeAppKey.get().ifBlank { "unconfigured" }
     }
 
