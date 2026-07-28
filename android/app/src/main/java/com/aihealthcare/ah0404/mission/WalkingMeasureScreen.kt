@@ -19,7 +19,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -34,7 +37,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
 import com.aihealthcare.ah0404.R
 import com.aihealthcare.ah0404.feedback.AppFeedback
+import com.aihealthcare.ah0404.network.HomeApi
 import com.aihealthcare.ah0404.network.Mission
+import com.aihealthcare.ah0404.network.retrofit
 import com.aihealthcare.ah0404.pet.PetWalkingView
 import com.aihealthcare.ah0404.settings.AppSettings
 import com.aihealthcare.ah0404.ui.components.AigoCard
@@ -103,8 +108,19 @@ fun WalkingMeasureScreen(
     // 엔진은 앱 공용(#149 AppFeedback)이라 화면은 소비만 한다(release 금지 — 다른 화면 음성이 죽는다).
     // "언제" 는 세션 VM 의 트래커가 결정(구성 변경에도 생존 → 재발화 없음), "어떻게(진동/TTS)" 는 feedback 이 담당.
     val feedback: WalkingFeedback = remember { SharedWalkingFeedback(AppFeedback.tts, AppFeedback.haptic) }
-    // 목표 신호는 단위가 걸음일 때만(그 외 걷기 목표는 목표 도달 신호 없음).
-    val goalSteps = mission.targetValue.takeIf { mission.targetUnit == "steps" }
+
+    // 실시간 목표 알림용: 세션 시작 시 '오늘 걷기 누적분'(이번 세션 제외)을 받아온다(#234/#239).
+    //   이 세션은 아직 서버에 없어 이 값이 곧 '이전 세션들 합'이고, 나눠 걷기 누적 판정에 더한다.
+    //   best-effort — 오프라인/실패 시 0.0(단일 세션처럼 이번 경과분만으로 판정). VM(순수) 대신 화면에서 조회한다.
+    //   rememberSaveable 로 구성 변경에도 유지. VM 은 네트워크를 갖지 않아 순수 JVM 테스트가 그대로 유지된다.
+    var priorDailyMin by rememberSaveable { mutableStateOf(0.0) }
+    LaunchedEffect(ui.phase) {
+        if (ui.phase == WalkingSessionViewModel.Phase.MEASURING) {
+            priorDailyMin = 0.0
+            runCatching { retrofit.create(HomeApi::class.java).getHome().todayWalking.dailyTotalMin }
+                .onSuccess { priorDailyMin = it }
+        }
+    }
 
     // 사용자 소리 크기 설정(sound_size)을 TTS 음량에 연동(별도 AudioManager 없음). 설정 변경도 따라간다.
     LaunchedEffect(AppSettings.soundScale) { AppFeedback.tts.setVolume(AppSettings.soundScale) }
@@ -128,12 +144,20 @@ fun WalkingMeasureScreen(
         }
     }
 
-    // 세션 상태(확정·걸음)가 바뀔 때마다 새로 발생한 신호만 재생(VM 트래커가 1회로 dedupe).
-    // 트래커가 VM(구성 변경 생존) 수명이라, 회전/글꼴 변경으로 화면이 재구성돼 이 이펙트가 재실행돼도
-    // 같은 cue 가 다시 울리지 않는다(리뷰 #148 블로커 3). 측정 중에만 steps 가 변하므로
-    // 백그라운드(pause)에선 신호가 나지 않는다(#144 와 정합).
-    LaunchedEffect(ui.confirmed, ui.steps) {
-        vm.drainFeedbackCues(goalSteps).forEach(feedback::play)
+    // 세션 상태(확정·경과·걸음)가 바뀔 때마다 새로 발생한 신호만 재생(VM 트래커가 1회로 dedupe).
+    // 목표 도달은 서버 계약대로 '당일 누적 시간(분)' 기준이라, (세션 시작 시 받아온 오늘 누적분 +
+    //   이번 경과분) ≥ 목표분 인 순간 실시간으로 GOAL_REACHED 를 낸다(측정 중, 종료 전). 단위가 걸음인
+    //   미션만 걸음으로 판정한다. 트래커가 VM(구성 변경 생존) 수명이라 재구성돼도 재발화하지 않는다(#148 블로커 3).
+    // 측정 중에만 경과/걸음이 변하므로 백그라운드(pause)에선 신호가 나지 않는다(#144 와 정합).
+    LaunchedEffect(ui.confirmed, ui.elapsedSec, ui.steps, priorDailyMin) {
+        val goalReached = walkingGoalReached(
+            targetUnit = mission.targetUnit,
+            targetValue = mission.targetValue,
+            priorDailyMin = priorDailyMin,
+            elapsedSec = ui.elapsedSec,
+            steps = ui.steps,
+        )
+        vm.drainFeedbackCues(goalReached).forEach(feedback::play)
     }
 
     // 측정 중 동안만 주기 폴링. phase 가 바뀌면 이 이펙트가 재시작돼 루프가 자연히 멈춘다.
