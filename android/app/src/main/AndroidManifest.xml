@@ -25,6 +25,12 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- 하드웨어 만보기(TYPE_STEP_COUNTER)로 걸음을 센다(정확도 우위, 실기기 검증). API 29+ 에선 이 런타임
+         권한이 있어야 걸음 이벤트가 전달된다(화면 진입 시 요청). 미지원/거부 기기는 가속도계로 폴백하므로
+         required=false — 만보기 없는 기기에서도 설치·측정이 가능하다. -->
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <uses-feature android:name="android.hardware.sensor.stepcounter" android:required="false" />
+
     <application
         android:name=".AigoApplication"
         android:allowBackup="true"

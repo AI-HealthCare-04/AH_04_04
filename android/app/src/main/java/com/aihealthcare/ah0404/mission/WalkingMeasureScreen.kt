@@ -2,7 +2,13 @@
 
 package com.aihealthcare.ah0404.mission
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -95,9 +101,27 @@ fun WalkingMeasureScreen(
     //   주입한다. VM/상태 머신(#90)은 그대로 — 컨트롤러만 교체(drop-in). 측정 시작 시 FGS 기동,
     //   이탈/종료(reset·cancel·onCleared) 시 FGS 종료.
     val vm: WalkingSessionViewModel = viewModel {
-        WalkingSessionViewModel(ServiceWalkingSessionController(context.applicationContext))
+        // 걸음 소스는 AdaptiveWalkingSessionController 가 start() 시점에 고른다:
+        //   만보기(TYPE_STEP_COUNTER) 지원+권한 → 만보기 단일 소스, 아니면 가속도계(FGS)로 폴백.
+        //   VM/상태 머신(#90)은 무변경(drop-in). 화면 실시간 표시(poll)와 최종 총계(stop)가 모두
+        //   같은 session.steps 하나를 읽으므로 "화면 숫자 = 결과 숫자"가 소스와 무관하게 보장된다.
+        WalkingSessionViewModel(AdaptiveWalkingSessionController(context.applicationContext))
     }
     val ui = vm.uiState
+
+    // 만보기(TYPE_STEP_COUNTER)는 API 29+ 에서 ACTIVITY_RECOGNITION 런타임 권한이 있어야 이벤트가 온다.
+    //   화면 진입 시 1회 요청한다. 거부돼도 측정은 가능하다 — 컨트롤러가 가속도계로 폴백한다(정확도만 낮아짐).
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { /* 결과(허용/거부)는 다음 start() 의 소스 선택에 자연 반영된다 */ }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACTIVITY_RECOGNITION)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            permissionLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
+        }
+    }
 
     // 진동·음성 피드백(#92) — 화면을 보지 않아도 진행을 알 수 있게 핵심 순간에만 신호를 낸다.
     // 엔진은 앱 공용(#149 AppFeedback)이라 화면은 소비만 한다(release 금지 — 다른 화면 음성이 죽는다).
