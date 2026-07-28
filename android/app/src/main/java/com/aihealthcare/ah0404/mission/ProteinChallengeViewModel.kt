@@ -56,6 +56,12 @@ internal fun proteinResultMessage(result: ProteinSaveState.Saved): String = when
         "오늘 드신 단백질을 저장했어요.\n${PROTEIN_DAILY_GOAL}가지 이상 드시면 포인트를 받을 수 있어요."
 }
 
+/**
+ * 저장 중(Saving)에는 화면 이탈을 막는다(리뷰 #225 3차) — 이탈을 허용하면 응답 도착 시점에
+ * 화면이 없어 목록 재조회(onSaved)가 누락되고 stale today_log 문제가 재발한다. 순수 함수.
+ */
+internal fun proteinBackAllowed(state: ProteinSaveState): Boolean = state !is ProteinSaveState.Saving
+
 /** 저장 버튼 문구 — 0개 선택도 '안 먹었어요' 기록으로 저장 가능함을 안내(#224 계약, 리뷰 #225 P2). */
 internal fun proteinSaveButtonLabel(count: Int): String = when {
     count == 0 -> "안 먹었어요로 저장하기"
@@ -63,8 +69,10 @@ internal fun proteinSaveButtonLabel(count: Int): String = when {
     else -> "저장하기" // 목표(#227: 1종)에서는 도달하지 않음 — 목표를 되올릴 때를 위한 일반형
 }
 
-class ProteinChallengeViewModel : ViewModel() {
-    private val api = retrofit.create(MissionApi::class.java)
+class ProteinChallengeViewModel(
+    // 실경로는 공용 retrofit. JVM 테스트는 fake 를 주입해 저장 상태 수명(진입 리셋 등)을 검증한다.
+    private val api: MissionApi = retrofit.create(MissionApi::class.java),
+) : ViewModel() {
 
     private val _saveState = MutableStateFlow<ProteinSaveState>(ProteinSaveState.Idle)
     val saveState: StateFlow<ProteinSaveState> = _saveState
@@ -79,8 +87,13 @@ class ProteinChallengeViewModel : ViewModel() {
      */
     private var countedBefore: Boolean? = null
 
-    /** 화면 진입 시 호출 — 이전 방문/계정/날짜의 달성 추적을 버린다(리뷰 #225 2차). */
+    /**
+     * 화면 진입 시 호출 — 이전 방문의 상태를 **전부** 버린다(리뷰 #225 2차·3차).
+     * Activity 범위 VM 이라 saveState 를 남겨두면, 결과/오류 오버레이에서 시스템 뒤로가기로 나갔다
+     * 재진입할 때 이전 Saved/Error 가 즉시 재노출되고 Saved 면 onSaved 도 재호출된다.
+     */
     fun onScreenEntered() {
+        _saveState.value = ProteinSaveState.Idle
         countedBefore = null
     }
 

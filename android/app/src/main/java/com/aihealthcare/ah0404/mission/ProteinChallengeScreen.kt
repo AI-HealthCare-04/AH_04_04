@@ -68,7 +68,6 @@ fun ProteinChallengeScreen(
     onSaved: () -> Unit = {},
     vm: ProteinChallengeViewModel = viewModel(),
 ) {
-    BackHandler { onBack() }
 
     // 선택 상태: 재진입 시 오늘 기록(todayLog.eaten)으로 미리 채운다. 구성 변경에도 유지.
     var selected by rememberSaveable {
@@ -77,6 +76,11 @@ fun ProteinChallengeScreen(
     val saveState by vm.saveState.collectAsState()
     val count = selected.size
     val goalMet = count >= PROTEIN_DAILY_GOAL
+
+    // 저장 중에는 시스템 뒤로가기를 막는다(리뷰 #225 3차) — 이탈하면 응답이 와도 목록 재조회(onSaved)가
+    // 누락돼 stale today_log 가 재발한다. Saving 이 아닐 때만 onBack. (결과 오버레이 표시 중에는
+    // 오버레이의 BackHandler 가 나중에 합성돼 우선한다 — onDone 경유로 상태 정리 후 이탈)
+    BackHandler { if (proteinBackAllowed(saveState)) onBack() }
 
     // 화면 진입마다 VM 의 달성 추적을 리셋 — Activity 범위 VM 이라 이전 방문/계정/날짜의 판정이
     // 남아 문구를 오염시킬 수 있다(리뷰 #225 2차). 진입 후 첫 저장은 fresh today_log 로 재추정.
@@ -143,7 +147,12 @@ fun ProteinChallengeScreen(
                         enabled = saveState !is ProteinSaveState.Saving,
                     )
                     Spacer(Modifier.height(Dimens.Space8))
-                    AigoSecondaryButton(text = "돌아가기", onClick = onBack)
+                    // 저장 중 이탈 금지(시스템 뒤로가기와 동일 규칙, 리뷰 #225 3차)
+                    AigoSecondaryButton(
+                        text = "돌아가기",
+                        onClick = onBack,
+                        enabled = proteinBackAllowed(saveState),
+                    )
                     if (saveState is ProteinSaveState.Error) {
                         Spacer(Modifier.height(Dimens.Space12))
                         Text(
