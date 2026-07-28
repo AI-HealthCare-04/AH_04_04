@@ -43,6 +43,7 @@ import com.aihealthcare.ah0404.home.HomeScreen
 import com.aihealthcare.ah0404.mission.ComingSoonScreen
 import com.aihealthcare.ah0404.mission.MiniGameScreen
 import com.aihealthcare.ah0404.mission.MissionDestination
+import com.aihealthcare.ah0404.mission.MissionViewModel
 import com.aihealthcare.ah0404.mission.ProteinChallengeScreen
 import com.aihealthcare.ah0404.mission.MissionScreen
 import com.aihealthcare.ah0404.mission.WalkingMeasureScreen
@@ -255,10 +256,15 @@ private fun MainContent(
     var proteinMission by rememberSaveable(stateSaver = MissionStateSaver) {
         mutableStateOf<Mission?>(null)
     }
+    // Activity 범위 MissionViewModel — MissionScreen 과 같은 인스턴스다. 저장 성공 시 목록을 재조회해
+    //   today_log 를 서버 권위값으로 갱신한다(리뷰 #225 P1: 갱신 없이는 VM 이 보존한 stale 목록으로
+    //   재진입 선택 복원이 저장 직후 깨진다).
+    val missionVm: MissionViewModel = viewModel()
     proteinMission?.let { mission ->
         ProteinChallengeScreen(
             mission = mission,
             onBack = { proteinMission = null },
+            onSaved = { missionVm.loadMissions() },
         )
         return
     }

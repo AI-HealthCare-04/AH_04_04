@@ -39,4 +39,31 @@ class MissionRoutingTest {
         assertEquals(MissionDestination.COMING_SOON, missionDestination("unknown_future_type"))
         assertEquals(MissionDestination.COMING_SOON, missionDestination(""))
     }
+
+    // ── 카드 CTA 문구(리뷰 #225 P2): 실제 수행/기록 화면이 있는 유형은 '준비 중'으로 표시하지 않는다 ──
+
+    @Test
+    fun `걷기 카드는 측정 시작을 안내한다`() {
+        assertEquals("눌러서 측정 시작 →", missionCtaLabel("walking"))
+    }
+
+    @Test
+    fun `식사 카드는 준비 중이 아니라 기록하기를 안내한다`() {
+        assertEquals("눌러서 기록하기 →", missionCtaLabel("meal"))
+    }
+
+    @Test
+    fun `수행 화면이 없는 유형만 준비 중을 안내한다`() {
+        assertEquals("준비 중 · 눌러서 보기 →", missionCtaLabel("unknown_future_type"))
+        assertEquals("준비 중 · 눌러서 보기 →", missionCtaLabel("exercise"))
+        assertEquals("준비 중 · 눌러서 보기 →", missionCtaLabel("game"))
+    }
+
+    @Test
+    fun `기록 화면이 있는 유형만 CTA 를 강조한다`() {
+        assertEquals(true, missionCtaHighlighted("walking"))
+        assertEquals(true, missionCtaHighlighted("meal"))
+        assertEquals(false, missionCtaHighlighted("exercise"))
+        assertEquals(false, missionCtaHighlighted("unknown_future_type"))
+    }
 }

@@ -26,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -62,6 +63,9 @@ fun ProteinChallengeScreen(
     mission: Mission,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    // 저장 성공 시 1회 호출 — 호출부(MainActivity)가 미션 목록을 재조회해 today_log 를 서버 권위값으로
+    //   갱신한다(리뷰 #225 P1: 갱신 없이는 재진입 선택 복원이 저장 직후 stale 값으로 깨진다).
+    onSaved: () -> Unit = {},
     vm: ProteinChallengeViewModel = viewModel(),
 ) {
     BackHandler { onBack() }
@@ -73,6 +77,12 @@ fun ProteinChallengeScreen(
     val saveState by vm.saveState.collectAsState()
     val count = selected.size
     val goalMet = count >= PROTEIN_DAILY_GOAL
+
+    // 저장 성공 → 미션 목록 재조회 트리거. 사용자가 결과 오버레이를 읽는 동안 갱신이 끝나,
+    // 복귀·재진입 시점에는 today_log 가 이미 최신이다.
+    LaunchedEffect(saveState) {
+        if (saveState is ProteinSaveState.Saved) onSaved()
+    }
 
     Box(modifier = modifier.fillMaxSize()) {
         LazyVerticalGrid(
@@ -121,10 +131,12 @@ fun ProteinChallengeScreen(
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column {
                     Spacer(Modifier.height(Dimens.Space8))
+                    // 0개 선택도 저장 가능 — #224 계약상 빈 기록은 '오늘 안 먹었어요'라는 유효 기록이다
+                    //   (리뷰 #225 P2). 버튼 문구가 그 의미를 미리 알려 실수 저장을 막는다.
                     AigoPrimaryButton(
-                        text = if (goalMet) "목표 달성! 저장하기" else "저장하기",
+                        text = proteinSaveButtonLabel(count),
                         onClick = { vm.save(mission, selected) },
-                        enabled = selected.isNotEmpty() && saveState !is ProteinSaveState.Saving,
+                        enabled = saveState !is ProteinSaveState.Saving,
                     )
                     Spacer(Modifier.height(Dimens.Space8))
                     AigoSecondaryButton(text = "돌아가기", onClick = onBack)
@@ -288,11 +300,8 @@ private fun ProteinResultOverlay(result: ProteinSaveState.Saved, onDone: () -> U
             )
             Spacer(Modifier.height(Dimens.Space12))
             Text(
-                text = if (result.countedForDaily) {
-                    "오늘 단백질을 잘 챙기셨어요.\n${result.earnedPoints}포인트를 받았어요!"
-                } else {
-                    "오늘 드신 단백질을 저장했어요.\n${PROTEIN_DAILY_GOAL}가지 이상 드시면 포인트를 받을 수 있어요."
-                },
+                // 신규 달성/재저장/빈 기록을 구분해 안내(순수 함수, 리뷰 #225 P1·P2).
+                text = proteinResultMessage(result),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,

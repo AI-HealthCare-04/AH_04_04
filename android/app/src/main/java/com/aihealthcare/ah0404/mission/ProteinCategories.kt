@@ -17,8 +17,11 @@ data class ProteinCategory(
     val imageRes: Int,   // R.drawable.protein_cat_* (res/drawable-nodpi 정사각 사진)
 )
 
-/** 서버 PROTEIN_DAILY_GOAL_COUNT 과 같은 값. 3종 이상 = 오늘 목표 달성. */
-const val PROTEIN_DAILY_GOAL: Int = 3
+/**
+ * 서버 PROTEIN_DAILY_GOAL_COUNT 과 같은 값. 1종 이상 = 오늘 목표 달성.
+ * 팀 결정(2026-07-28): '한 가지라도 챙겨 먹으면 성공' — 기존 3은 다른 챌린지와 혼동된 값(#227).
+ */
+const val PROTEIN_DAILY_GOAL: Int = 1
 
 /**
  * 화면에 노출하는 순서. id 는 백엔드 7-id 와 동일:
