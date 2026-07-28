@@ -253,17 +253,13 @@ class MissionService:
         # 식사(단백질) 미션은 당일 1건 upsert(재저장=최신 선택으로 갱신, 서버가 완료판정). 게임은 아래 기존 경로.
         if template.mission_type == MissionType.MEAL:
             return await self._upsert_meal(user, data, template)
-        # 게임 즉시완료
+        # 게임 즉시완료 — 식사(MEAL)는 위에서 _upsert_meal 로 전부 라우팅되므로 여기 오지 않는다.
+        #   (과거 식사 1일 1회 카운트·meal_detail 저장 블록은 #224 upsert 도입으로 죽은 코드가 됐고,
+        #    특히 meal_detail 저장은 카테고리 검증(_upsert_meal 전용)을 우회해 비검증 값을 저장할 수
+        #    있는 구멍이라 제거했다 — 지영 리뷰 #227 비차단 후속.)
         success = bool(data.success)
         daily_limit_reached = False
         counted_for_daily = success
-
-        # 식사는 1일 1회만 카운트
-        if template.mission_type == MissionType.MEAL:
-            already = await self.repo.count_meal_missions_today(user.user_id)
-            if already >= 1:
-                daily_limit_reached = True
-                counted_for_daily = False
 
         earned_points = compute_earned_points(counted_for_daily, template.reward_points)
 
@@ -284,18 +280,7 @@ class MissionService:
         )
         await self.repo.create_mission_log(log)
 
-        # 상세 저장 (mission_log 1:1)
-        if data.meal_detail is not None:
-            await self.repo.add_meal_log(
-                MealLog(
-                    mission_log_id=log.mission_log_id,
-                    meal_date=today_kst(),
-                    protein_foods=data.meal_detail.protein_foods,
-                    protein_meal_count=data.meal_detail.protein_meal_count,
-                    raw_text=data.meal_detail.raw_text,
-                    counted_for_daily=counted_for_daily,
-                )
-            )
+        # 상세 저장 (mission_log 1:1) — meal 상세는 _upsert_meal 에서만 저장한다(검증·정규화 일원화).
         if data.game_detail is not None:
             gd = data.game_detail
             await self.repo.add_game_log(
