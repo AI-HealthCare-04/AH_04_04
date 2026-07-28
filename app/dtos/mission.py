@@ -27,6 +27,13 @@ from app.models.enums import (
 # -------------------------------------------------------------------------------------
 
 
+class MealTodayLog(BaseModel):
+    """단백질 미션의 '오늘 기록' — 재진입 시 앱이 카드 선택 상태를 복원하는 데 쓴다(지시서 §3-3, §4.1)."""
+
+    eaten: list[str]
+    logged_at: datetime
+
+
 class MissionResponse(BaseSerializerModel):
     mission_template_id: int
     mission_type: str
@@ -39,6 +46,8 @@ class MissionResponse(BaseSerializerModel):
     requires_safety_notice: bool
     daily_count_limit: int | None
     reward_points: int
+    # 단백질(식사) 미션 한정: 오늘 저장된 기록. 없으면 null. 다른 종류 미션은 항상 null.
+    today_log: MealTodayLog | None = None
 
 
 class MissionListResponse(BaseModel):

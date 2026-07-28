@@ -118,6 +118,23 @@ class MissionRepository:
         self.session.add(meal_log)
         await self.session.flush()
 
+    async def get_today_meal_log(self, user_id: int, mission_template_id: int) -> MealLog | None:
+        """오늘(current_date) 이 사용자·미션의 식사 기록. 재저장 upsert·today_log 복원에 쓴다. 없으면 None.
+        MealLog 에는 user_id 가 없어 MissionLog 와 조인해 사용자로 거른다."""
+        stmt = (
+            select(MealLog)
+            .join(MissionLog, MealLog.mission_log_id == MissionLog.mission_log_id)
+            .where(
+                MissionLog.user_id == user_id,
+                MissionLog.mission_template_id == mission_template_id,
+                MissionLog.mission_type == MissionType.MEAL,
+                MealLog.meal_date == func.current_date(),
+            )
+            .order_by(MealLog.meal_log_id.desc())
+            .limit(1)
+        )
+        return await self.session.scalar(stmt)
+
     async def add_game_log(self, game_log: GameLog) -> None:
         self.session.add(game_log)
         await self.session.flush()
