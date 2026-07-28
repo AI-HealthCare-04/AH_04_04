@@ -12,8 +12,8 @@ from fastapi import HTTPException
 from starlette import status
 
 from app.core.protein_categories import PROTEIN_CATEGORY_IDS, PROTEIN_DAILY_GOAL_COUNT
-from app.dtos.mission import MealDetail, MissionLogCreateRequest
-from app.models.enums import MissionStatus, MissionType
+from app.dtos.mission import GameDetail, MealDetail, MissionLogCreateRequest
+from app.models.enums import GameType, MissionStatus, MissionType
 from app.models.users import User
 from app.services.mission import MissionService
 
@@ -43,13 +43,16 @@ def _meal_request(eaten: list[str]) -> MissionLogCreateRequest:
     )
 
 
-def _service(*, existing_meal: object | None = None) -> tuple[MissionService, dict[str, object]]:
-    """existing_meal 이 있으면 upsert 의 '갱신' 경로, 없으면 '생성' 경로를 탄다."""
+def _service(
+    *, existing_meal: object | None = None, template: SimpleNamespace | None = None
+) -> tuple[MissionService, dict[str, object]]:
+    """existing_meal 이 있으면 upsert 의 '갱신' 경로, 없으면 '생성' 경로를 탄다.
+    template 을 주면 미션 유형을 바꿀 수 있다(유형↔상세 payload 계약 테스트용)."""
     captured: dict[str, object] = {"created": None, "added_meal": None}
     service = MissionService(session=cast(object, SimpleNamespace(commit=_noop)))  # type: ignore[arg-type]
 
     async def get_template(_id: object) -> object:
-        return _meal_template()
+        return template if template is not None else _meal_template()
 
     async def latest_profile(_uid: object) -> object:
         return None
@@ -102,6 +105,35 @@ def test_undefined_category_id_is_rejected_400() -> None:
     with pytest.raises(HTTPException) as exc:
         asyncio.run(service.create_mission_log(_USER, _meal_request(["meat", "banana"])))
     assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+
+
+def test_meal_detail_on_non_meal_mission_is_rejected_400() -> None:
+    # 유형↔상세 payload 계약(지영 리뷰 #230 비차단): game 미션에 meal_detail 을 붙이면 400.
+    #   조용히 무시하면 검증·정규화를 우회한 클라이언트 버그가 늦게 발견된다.
+    game_template = SimpleNamespace(
+        mission_template_id=10, mission_type=MissionType.GAME, requires_kidney_check=False, reward_points=5
+    )
+    service, cap = _service(template=game_template)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(service.create_mission_log(_USER, _meal_request(["meat"])))
+    assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert cap["created"] is None  # 기록이 만들어지면 안 된다
+
+
+def test_game_detail_on_meal_mission_is_rejected_400() -> None:
+    # 반대 방향도 동일: meal 미션에 game_detail 을 붙이면 400.
+    service, cap = _service()
+    request = MissionLogCreateRequest(
+        mission_template_id=10,
+        mission_type=MissionType.MEAL,
+        status=MissionStatus.COMPLETED,
+        success=True,
+        game_detail=GameDetail(game_type=GameType.CARD_MATCH, completed=True),
+    )
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(service.create_mission_log(_USER, request))
+    assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert cap["created"] is None
 
 
 def test_three_categories_completes_and_counts() -> None:

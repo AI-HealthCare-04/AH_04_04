@@ -185,6 +185,20 @@ class MissionService:
                 detail="운동/걷기 미션은 시작(in_progress)으로만 생성할 수 있습니다.",
             )
 
+        # 상세 payload 는 해당 미션 유형에만 허용한다(지영 리뷰 #230 비차단).
+        #   어긋난 조합(예: game 요청에 meal_detail)을 조용히 무시하면 클라이언트 버그가 늦게
+        #   발견된다 — 계약 위반은 400 으로 즉시 드러낸다.
+        if data.meal_detail is not None and template.mission_type != MissionType.MEAL:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="meal_detail 은 식사(meal) 미션에만 보낼 수 있습니다.",
+            )
+        if data.game_detail is not None and template.mission_type != MissionType.GAME:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="game_detail 은 게임(game) 미션에만 보낼 수 있습니다.",
+            )
+
         # 단백질(식사) 미션: eaten(protein_foods)은 정의된 7개 카테고리 id 만 허용(정의 밖이면 400, 지시서 §4.2).
         #   빈 배열은 허용("오늘 안 먹었어요"도 기록) — 완료 판정은 PROTEIN_DAILY_GOAL_COUNT종 이상에서 성립한다.
         if template.mission_type == MissionType.MEAL and data.meal_detail is not None:
@@ -201,8 +215,10 @@ class MissionService:
         #   앱이 최신 daily_result 를 받도록 여기서도 한 번 갱신한다.
         daily_result = await self._refresh_daily_summary(log.user_id)
         await self.session.commit()
-        # 식사 1일 1회 초과였는지 복원 — _complete_immediately 가 세운 조건과 같다.
-        #   재전송에도 같은 안내("이미 제출하셨어요")가 나가야 한다.
+        # '식사 1일 1회 초과' 복원 — **#224 이전 옛 데이터 전용**(지영 리뷰 #230 비차단 정리).
+        #   현행 upsert 계약에서는 식사 로그가 항상 success == counted_for_daily 라 이 조건이 성립하지
+        #   않지만, 1일 1회 제한 시절에 만들어진 행(success=True·counted=False)의 재전송에는 당시와
+        #   같은 안내("이미 제출하셨어요")가 나가야 하므로 복원 로직을 유지한다.
         daily_limit_reached = log.mission_type == MissionType.MEAL and log.success and not log.counted_for_daily
         return MissionLogCreateResponse(
             mission_log_id=log.mission_log_id,
