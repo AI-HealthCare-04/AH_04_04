@@ -1,11 +1,9 @@
 package com.aihealthcare.ah0404.pet
 
 import android.content.Context
-import android.graphics.PixelFormat
 import android.graphics.SurfaceTexture
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
-import android.opengl.GLSurfaceView
 import android.os.Handler
 import android.os.Looper
 import android.util.AttributeSet
@@ -16,8 +14,6 @@ import androidx.media3.exoplayer.ExoPlayer
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
-import javax.microedition.khronos.egl.EGLConfig
-import javax.microedition.khronos.opengles.GL10
 
 /**
  * ============================================================================
@@ -25,15 +21,17 @@ import javax.microedition.khronos.opengles.GL10
  * ============================================================================
  *
  *  하는 일:
- *   - 흰색 배경 강아지 영상에서 "흰/회색 배경만 실시간으로 빼고(투명 처리)",
+ *   - 초록 배경 강아지 영상에서 "초록 배경만 실시간으로 빼고(그린 키잉, 투명 처리)",
  *   - 강아지만 남겨서 어떤 화면 위에도 얹을 수 있게 한다. (배경 없음)
  *
+ *  ⚠️ 과거에는 흰 배경 영상 + "밝고 무채색=배경" 키잉이었는데, 강아지의 흰 털(이마·가슴)이
+ *     같은 판정에 걸려 구멍이 뚫리고 고개 갸웃 시 얼굴이 조각나는 문제가 있었다. idle 영상을
+ *     초록 배경으로 재렌더링(AI 매팅, 강아지에 없는 색)하고 그린 키잉으로 전환해 해결.
+ *
  *  PetWalkingView 와 차이:
- *   - 공원 배경/스크롤 없음. 강아지만.
- *   - 배경이 '초록'이 아니라 '흰색'이라, 초록빼기 대신
- *     "밝고 무채색인 픽셀 = 배경"으로 판정해 투명 처리한다.
- *     (검은 눈·코는 '어두워서' 유지됨)
- *   - GLSurfaceView 자체를 투명하게 설정 → 뒤 화면이 비쳐 보인다.
+ *   - 공원 배경/스크롤 없음. 강아지만. (그린 키잉 신호·튜닝값은 동일)
+ *   - TextureView(GLTextureView) 기반이라 스크롤 Column 안에 인라인으로 넣어도 함께 스크롤된다.
+ *     투명 배경은 isOpaque=false + EGL alpha(GLTextureView) + premultiplied 블렌딩 + 아래 셰이더로 유지된다.
  *
  *  Compose 에서 쓰려면 PetIdle() 컴포저블을 쓰면 편하다.
  *  (일반 View/XML 이면 이 뷰를 그대로 배치하고 setIdleVideo() 호출)
@@ -42,7 +40,7 @@ import javax.microedition.khronos.opengles.GL10
 class PetIdleView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null
-) : GLSurfaceView(context, attrs) {
+) : GLTextureView(context, attrs) {
 
     private val renderer: IdleRenderer
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -51,19 +49,11 @@ class PetIdleView @JvmOverloads constructor(
     private var idleRawResId: Int = 0
 
     init {
-        setEGLContextClientVersion(2)
-        // 알파(투명) 채널이 있는 표면을 요청
-        setEGLConfigChooser(8, 8, 8, 8, 16, 0)
-        holder.setFormat(PixelFormat.TRANSLUCENT)
-        // 투명 영역으로 뒤 화면이 보이도록 표면을 창 위에 올린다
-        setZOrderOnTop(true)
-        preserveEGLContextOnPause = true
-
+        // EGL 컨텍스트·알파 설정·연속 렌더·투명 합성은 GLTextureView 가 담당한다.
         renderer = IdleRenderer(
             onVideoSurfaceReady = { surface -> attachPlayer(surface) }
         )
         setRenderer(renderer)
-        renderMode = RENDERMODE_CONTINUOUSLY
     }
 
     /** 배경 없앨 강아지 영상 지정. R.raw.파일이름. */
@@ -102,8 +92,9 @@ class PetIdleView @JvmOverloads constructor(
         mainHandler.post { player?.pause() }
     }
 
-    /** 화면을 떠날 때 호출(메모리 정리). */
-    fun release() {
+    /** 화면을 떠날 때 호출(메모리 정리). 렌더 스레드·EGL 정리(super) + 플레이어 해제. */
+    override fun release() {
+        super.release()
         mainHandler.post {
             player?.release()
             player = null
@@ -115,17 +106,14 @@ class PetIdleView @JvmOverloads constructor(
     // ========================================================================
     private class IdleRenderer(
         private val onVideoSurfaceReady: (Surface) -> Unit
-    ) : Renderer, SurfaceTexture.OnFrameAvailableListener {
+    ) : GLTextureView.Renderer, SurfaceTexture.OnFrameAvailableListener {
 
-        // ── 🎛️ 흰색 배경 판정 튜닝 ──
-        // 채도(색 선명함)가 satLow~satHigh 사이에서 배경/강아지 경계.
-        // 배경(흰/회색)은 채도≈0, 강아지(크림색)는 채도 높음.
-        var satLow = 0.08f
-        var satHigh = 0.16f
-        // 밝기가 lumaLow~lumaHigh 이상일 때만 '흰 배경'으로 본다.
-        // (검은 눈·코는 어두워서 유지됨)
-        var lumaLow = 0.55f
-        var lumaHigh = 0.70f
+        // ── 🎛️ 초록 배경 판정 튜닝 (PetWalkingView 와 동일 기준) ──
+        // 과거 흰 배경 키잉(밝고 무채색=배경)은 강아지의 흰 털(이마·가슴)까지 배경으로 오판해
+        // 구멍이 뚫리고, 고개를 갸웃할 때 압축 색상 번짐으로 얼굴이 조각나는 문제가 있었다.
+        // → idle 영상을 초록 배경으로 재렌더링(AI 매팅)하고 검증된 그린 키잉으로 전환.
+        var threshold = 0.16f   // 초록 판정 기준(낮출수록 더 많이 투명)
+        var smoothing = 0.06f   // 경계 부드럽기
 
         var videoAspect = 16f / 9f   // 영상 가로:세로 (1280x720)
 
@@ -142,10 +130,9 @@ class PetIdleView @JvmOverloads constructor(
 
         private var hPos = 0; private var hTex = 0; private var hStMatrix = 0
         private var hTexture = 0
-        private var hSatLow = 0; private var hSatHigh = 0
-        private var hLumaLow = 0; private var hLumaHigh = 0
+        private var hThreshold = 0; private var hSmoothing = 0
 
-        override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
+        override fun onSurfaceCreated() {
             GLES20.glClearColor(0f, 0f, 0f, 0f)   // 완전 투명 배경
 
             program = buildProgram(VERTEX, FRAGMENT)
@@ -153,10 +140,8 @@ class PetIdleView @JvmOverloads constructor(
             hTex = GLES20.glGetAttribLocation(program, "aTex")
             hStMatrix = GLES20.glGetUniformLocation(program, "uStMatrix")
             hTexture = GLES20.glGetUniformLocation(program, "uTexture")
-            hSatLow = GLES20.glGetUniformLocation(program, "uSatLow")
-            hSatHigh = GLES20.glGetUniformLocation(program, "uSatHigh")
-            hLumaLow = GLES20.glGetUniformLocation(program, "uLumaLow")
-            hLumaHigh = GLES20.glGetUniformLocation(program, "uLumaHigh")
+            hThreshold = GLES20.glGetUniformLocation(program, "uThreshold")
+            hSmoothing = GLES20.glGetUniformLocation(program, "uSmoothing")
 
             rebuildQuad()
             // 영상 텍스처는 원점이 좌하단이라 배경 이미지와 반대로 매핑
@@ -177,14 +162,14 @@ class PetIdleView @JvmOverloads constructor(
             onVideoSurfaceReady(Surface(st))
         }
 
-        override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
+        override fun onSurfaceChanged(width: Int, height: Int) {
             GLES20.glViewport(0, 0, width, height)
             viewportW = width
             viewportH = height
             rebuildQuad()
         }
 
-        override fun onDrawFrame(gl: GL10?) {
+        override fun onDrawFrame() {
             surfaceTexture?.let {
                 try {
                     it.updateTexImage()
@@ -195,17 +180,18 @@ class PetIdleView @JvmOverloads constructor(
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
             GLES20.glEnable(GLES20.GL_BLEND)
-            GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+            // premultiplied alpha 블렌딩: 셰이더가 rgb*alpha 를 출력하고 (ONE, 1-SRC_ALPHA) 로 섞는다.
+            //   TextureView 표면은 premultiplied 로 합성되므로, straight alpha(SRC_ALPHA 블렌드)를 쓰면
+            //   반투명 경계 픽셀이 배경과 이중 합산돼 허옇게 뜬다(흰 얼룩의 한 원인이었음).
+            GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA)
 
             GLES20.glUseProgram(program)
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
             GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, puppyTextureId)
             GLES20.glUniform1i(hTexture, 0)
             GLES20.glUniformMatrix4fv(hStMatrix, 1, false, stMatrix, 0)
-            GLES20.glUniform1f(hSatLow, satLow)
-            GLES20.glUniform1f(hSatHigh, satHigh)
-            GLES20.glUniform1f(hLumaLow, lumaLow)
-            GLES20.glUniform1f(hLumaHigh, lumaHigh)
+            GLES20.glUniform1f(hThreshold, threshold)
+            GLES20.glUniform1f(hSmoothing, smoothing)
 
             GLES20.glEnableVertexAttribArray(hPos)
             GLES20.glVertexAttribPointer(hPos, 2, GLES20.GL_FLOAT, false, 0, quadPos)
@@ -276,29 +262,32 @@ class PetIdleView @JvmOverloads constructor(
                 }
             """
 
-            // 흰/회색 배경(밝고 무채색)을 투명 처리. 검은 눈·코(어두움)는 유지.
+            // 초록 배경을 투명 처리(그린 키잉, PetWalkingView 와 동일 신호) + premultiplied 출력.
+            //   흰 배경 키잉(밝고 무채색=배경)은 강아지 흰 털과 판정이 겹쳐 구조적으로 오탐이 났다.
+            //   초록은 강아지(크림색·검정)에 없어 오탐 없이 분리된다.
             private const val FRAGMENT = """
                 #extension GL_OES_EGL_image_external : require
                 precision mediump float;
                 varying vec2 vTex;
                 uniform samplerExternalOES uTexture;
-                uniform float uSatLow;
-                uniform float uSatHigh;
-                uniform float uLumaLow;
-                uniform float uLumaHigh;
+                uniform float uThreshold;
+                uniform float uSmoothing;
                 void main() {
                     vec4 c = texture2D(uTexture, vTex);
-                    float mx = max(max(c.r, c.g), c.b);
-                    float mn = min(min(c.r, c.g), c.b);
-                    float sat = mx - mn;                       // 채도(색 선명함)
-                    // 무채색일수록(=회색/흰색) 1, 색이 있을수록 0
-                    float grayness = 1.0 - smoothstep(uSatLow, uSatHigh, sat);
-                    // 밝을수록 1 (어두운 눈·코는 0 → 유지)
-                    float bright = smoothstep(uLumaLow, uLumaHigh, mn);
-                    float bgness = grayness * bright;          // 밝고 무채색 = 배경
-                    float alpha = 1.0 - bgness;
-                    if (alpha <= 0.01) discard;
-                    gl_FragColor = vec4(c.rgb, alpha);
+                    // 초록이 빨강/파랑보다 얼마나 강한가 = 초록도(greenness)
+                    float greenness = c.g - max(c.r, c.b);
+                    // 초록도가 기준보다 크면 배경 → 투명(alpha=0)
+                    float alpha = 1.0 - smoothstep(
+                        uThreshold - uSmoothing, uThreshold + uSmoothing, greenness);
+                    if (alpha <= 0.01) discard;   // 완전 투명은 버림
+                    // 강아지 몸에 묻은 초록빛 살짝 줄이기(despill)
+                    vec3 rgb = c.rgb;
+                    if (greenness > 0.0) {
+                        float avg = (c.r + c.b) * 0.5;
+                        rgb.g = min(c.g, avg + 0.15);
+                    }
+                    // premultiplied alpha 출력(블렌드 함수 ONE, 1-SRC_ALPHA 와 짝)
+                    gl_FragColor = vec4(rgb * alpha, alpha);
                 }
             """
         }
