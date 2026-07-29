@@ -136,6 +136,10 @@ async def test_meal_complete_awards_points_and_reflects_on_home(
         "as_of_date": today_kst().isoformat(),
     }
 
+    missions = (await db_client.get(f"{API}/missions", headers=auth)).json()["missions"]
+    meal_card = next(item for item in missions if item["mission_template_id"] == template_id)
+    assert meal_card["today_log"]["logged_at"].endswith("+09:00")
+
     # 포인트 API: 잔액·적립이력
     points = (await db_client.get(f"{API}/users/me/points", headers=auth)).json()
     assert points["current_points"] == 10
