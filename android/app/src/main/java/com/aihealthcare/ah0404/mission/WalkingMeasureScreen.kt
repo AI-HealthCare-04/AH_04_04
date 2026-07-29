@@ -53,6 +53,8 @@ import com.aihealthcare.ah0404.ui.components.AigoHeroCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
 import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
 import com.aihealthcare.ah0404.ui.components.WalkSitGuidanceNote
+import com.aihealthcare.ah0404.ui.components.WalkingPlacementHint
+import com.aihealthcare.ah0404.ui.components.WalkingStepsReferenceNote
 import com.aihealthcare.ah0404.ui.theme.Dimens
 import kotlinx.coroutines.delay
 
@@ -67,6 +69,20 @@ private const val POLL_MS = 300L
  */
 internal fun keepScreenOnForPhase(phase: WalkingSessionViewModel.Phase): Boolean =
     phase == WalkingSessionViewModel.Phase.MEASURING
+
+/** 배치 안내(#232)를 띄우기 전 '0보 지속'으로 볼 최소 경과 시간(초). */
+internal const val PLACEMENT_HINT_AFTER_SEC = 20
+
+/**
+ * 측정 중 폰 배치 안내(#232)를 노출할지 판정한다 — 검출기 무수술 UX 완화.
+ *
+ * 경과 시간은 흐르는데 걸음이 계속 0인(=보행 확정 게이트가 열리지 않은) 상태가 임계 시간 이상
+ * 지속되면 true. 정상 보행은 수 초 안에 확정돼 걸음이 오르므로(steps>0) 안내가 뜨지 않는다.
+ * 손 파지/느린 보행처럼 게이트가 안 열려 0에 머무는 경우에만 배치 안내를 띄운다(#176 잔여 문제).
+ * 순수 함수라 화면/기기 없이 경계를 단위 검증한다.
+ */
+internal fun shouldShowPlacementHint(elapsedSec: Int, steps: Int): Boolean =
+    steps == 0 && elapsedSec >= PLACEMENT_HINT_AFTER_SEC
 
 /**
  * ============================================================================
@@ -365,8 +381,17 @@ private fun MeasuringContent(
         color = MaterialTheme.colorScheme.secondary,
     )
 
+    // #232: 경과는 흐르는데 걸음이 계속 0(게이트 미개방)이면 폰 배치 안내를 노출한다.
+    //   검출기/상태머신은 건드리지 않는 순수 안내 — 손 파지/느린 보행(#176 잔여)의 오작동 오해를 완화한다.
+    if (shouldShowPlacementHint(ui.elapsedSec, ui.steps)) {
+        WalkingPlacementHint()
+    }
+
     // 🟡 #132: 보행 직후 곧바로 앉기 과다카운트 완화 안내(실사용 노출 지점).
     WalkSitGuidanceNote()
+
+    // #232: 걸음 수는 참고용(미션 성공은 시간 기반)임을 알려, 걸음이 낮게/높게 나와도 혼란을 줄인다.
+    WalkingStepsReferenceNote()
 
     AigoPrimaryButton(text = "측정 종료", onClick = onFinish)
 }
@@ -391,6 +416,9 @@ private fun DoneContent(
         Spacer(Modifier.height(Dimens.Space8))
         ResultRow("오늘 목표", goalText)
     }
+
+    // #232: 걸음 수는 참고용(미션 성공은 시간 기반)임을 기록 화면에서도 동일 카피로 안내한다.
+    WalkingStepsReferenceNote()
 
     // 서버 저장 상태(#91). 성공은 조용히 안내, 실패는 재시도 버튼으로 사용자가 다시 시도한다.
     //   (자동 재전송 outbox 는 post-v1 #105 — v1 은 재시도 버튼으로 처리)
