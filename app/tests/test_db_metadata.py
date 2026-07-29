@@ -153,7 +153,7 @@ def test_timestamp_columns_have_defaults() -> None:
 
 
 def test_core_read_indexes_match_repository_query_patterns() -> None:
-    expected = {
+    expected: dict[str, dict[str, tuple[str, ...]]] = {
         "mission_logs": {
             "ix_mission_logs_user_created_at": ("user_id", "created_at"),
         },
