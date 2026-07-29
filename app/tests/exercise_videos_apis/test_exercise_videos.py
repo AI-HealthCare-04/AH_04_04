@@ -49,8 +49,8 @@ def test_available_matches_video_url_presence() -> None:
             assert item.thumbnail_url is None
 
 
-# 현황(2026-07-27): warmup(몸풀기)·standing(서서 운동) 서버 업로드 완료 → available=true + video_url,
-#   나머지(seated·cooldown)는 준비중(available=false, url null).
+# 현황(2026-07-29): warmup·standing·seated(근력 운동, strength_exercise.mp4) 서빙 → available=true + video_url,
+#   cooldown 은 앱 번들 루틴이라 스트리밍 미사용(available=false, url null).
 def test_uploaded_stages_available_others_pending() -> None:
     by_stage = {item.stage: item for item in ExerciseVideoService().get_videos().videos}
 
@@ -60,10 +60,12 @@ def test_uploaded_stages_available_others_pending() -> None:
     standing = by_stage["standing"]
     assert standing.available is True
     assert standing.video_url is not None and standing.video_url.endswith("/videos/standing_exercise.mp4")
+    seated = by_stage["seated"]
+    assert seated.available is True
+    assert seated.video_url is not None and seated.video_url.endswith("/videos/strength_exercise.mp4")
 
-    for stage in ("seated", "cooldown"):
-        assert by_stage[stage].available is False
-        assert by_stage[stage].video_url is None
+    assert by_stage["cooldown"].available is False
+    assert by_stage["cooldown"].video_url is None
 
 
 # 매핑 로직: filename이 채워지면(서버 업로드) available=true + video_url이 base로 조립된다.

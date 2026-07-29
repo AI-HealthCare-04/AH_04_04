@@ -11,10 +11,11 @@
 #   없으면 available=false + video_url=null("준비중"). 영상이 서버에 올라오면 이 파일의 filename만
 #   채우면 그 단계가 켜진다(앱 코드 변경 없음). 실제 URL은 config.EXERCISE_VIDEO_BASE_URL로 조립.
 #
-# 현황(2026-07-27): warmup(몸풀기)·standing(서서 운동) EC2 업로드·서빙 완료 → available=true. 나머지 준비중.
-#   - warmup: warmup.mp4, standing: standing_exercise.mp4 를 EC2(/opt/ah0404/media/videos)에 업로드,
-#     nginx /videos/ 로 서빙. HTTPS 200 + Range 206 검증 완료(#213 인프라). 앱은 {BASE_URL}/videos/{파일명} 재생.
-#   - seated·cooldown: 서버 미업로드(준비중). 업로드 후 이 파일의 filename 만 채우면 켜짐(앱 무변경).
+# 현황(2026-07-29): warmup(몸풀기)·standing(서서 운동)·seated(근력 운동) 서빙 대상 → available=true. cooldown은 앱 번들 루틴.
+#   - warmup: warmup.mp4, standing: standing_exercise.mp4, seated: strength_exercise.mp4 를
+#     EC2(/opt/ah0404/media/videos)에 업로드, nginx /videos/ 로 서빙. 앱은 {BASE_URL}/videos/{파일명} 재생.
+#   ⚠️ seated(strength_exercise.mp4)는 EC2 업로드 후 이 PR을 머지해야 한다(파일 없이 available=true면 404).
+#   - cooldown: 서버 스트리밍 미사용 — 앱이 번들 루틴(RoutinePlayer)으로 재생(오프라인 완결). filename 비움.
 #   - 썸네일: 아직 없음(thumbnail_filename=None → thumbnail_url null). 후속.
 #   - 미니게임(mini_game.mp4)은 이 4단계 계약 밖 — 서버 서빙만 하고 앱에 URL 주입으로 노출(카탈로그 미포함).
 # =====================================================================================
@@ -37,7 +38,9 @@ class ExerciseVideoSpec:
 # 운동 4단계. order 순서대로 앱 탭에 노출된다. filename은 서버 업로드 시 채운다(현재 warmup만 채워짐).
 EXERCISE_VIDEOS_CATALOG: tuple[ExerciseVideoSpec, ...] = (
     ExerciseVideoSpec(stage="warmup", label="몸풀기", order=1, filename="warmup.mp4"),
-    ExerciseVideoSpec(stage="seated", label="앉아서 운동", order=2),
+    # seated 슬롯에 서서 하는 근력 운동 영상을 배치(원래 '앉아서' 자리). 내용에 맞춰 라벨을 '근력 운동'으로.
+    #   stage 키(seated)는 안정 식별자라 유지한다(앱 번들 폴백은 warmup/cooldown만 쓰므로 seated 무영향).
+    ExerciseVideoSpec(stage="seated", label="근력 운동", order=2, filename="strength_exercise.mp4"),
     ExerciseVideoSpec(stage="standing", label="서서 운동", order=3, filename="standing_exercise.mp4"),
     ExerciseVideoSpec(stage="cooldown", label="마무리", order=4),
 )
