@@ -2,7 +2,12 @@
 
 package com.aihealthcare.ah0404.mission
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -28,6 +33,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -108,6 +114,23 @@ fun WalkingMeasureScreen(
 
     // 사용자 소리 크기 설정(sound_size)을 TTS 음량에 연동(별도 AudioManager 없음). 설정 변경도 따라간다.
     LaunchedEffect(AppSettings.soundScale) { AppFeedback.tts.setVolume(AppSettings.soundScale) }
+
+    // #199 WALK-02: 포그라운드 서비스의 "걷기 측정 중 · N보" 지속 알림이 실제로 보이려면 Android 13+ 에서
+    //   POST_NOTIFICATIONS 런타임 허용이 필요하다. 매니페스트 선언·서비스의 checkSelfPermission 은 이미
+    //   있었으나 실사용 경로(이 화면)에 요청이 없어 RC QA(WALK-02)에서 알림 미표시가 확인됐다. 걷기 측정
+    //   화면 진입 시 한 번 요청한다. 거부해도 측정·FGS·WakeLock 은 계속되고 알림만 숨는다(서비스가 표시를
+    //   생략) — 측정 지속(#199 본질)은 권한과 무관하다. 재요청은 시스템이 관리(2회 거부 시 자동 무시).
+    val notifPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { /* 허용/거부와 무관하게 측정은 진행 — 결과는 알림 표시 여부만 좌우한다. */ }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 
     // 화면을 완전히 떠날 때: 세션을 리셋(센서 해제 + stale 방지 + 신호 이력 초기화)한 뒤 상위로 이탈.
     //   ⚠️ 저장 중(Submitting)에는 이탈을 막는다(리뷰 #172). 지금 나가면 reset() 이 스냅샷·자연 키를 버리는데
