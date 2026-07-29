@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -82,10 +83,11 @@ class MissionLog(Base):
             "created_on_device_at",
             name="uq_mission_logs_user_template_device_time",
         ),
+        Index("ix_mission_logs_user_created_at", "user_id", "created_at"),
     )
 
     mission_log_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id"), nullable=False)
     mission_template_id: Mapped[int] = mapped_column(
         ForeignKey("mission_templates.mission_template_id"),
         nullable=False,

@@ -72,12 +72,15 @@ class MissionService:
             exclude_kidney_check=exclude_kidney_check,
         )
         responses = [MissionResponse.model_validate(t) for t in templates]
+        meal_template_ids = [
+            template.mission_template_id for template in templates if template.mission_type == MissionType.MEAL
+        ]
+        today_meals = await self.repo.get_today_meal_logs(user.user_id, meal_template_ids)
         # 단백질(식사) 미션엔 오늘 저장된 기록을 붙여, 앱이 재진입 시 카드 선택 상태를 복원하게 한다(지시서 §4.1).
         for resp, template in zip(responses, templates, strict=True):
-            if template.mission_type == MissionType.MEAL:
-                meal = await self.repo.get_today_meal_log(user.user_id, template.mission_template_id)
-                if meal is not None:
-                    resp.today_log = MealTodayLog(eaten=meal.protein_foods, logged_at=meal.created_at)
+            meal = today_meals.get(template.mission_template_id)
+            if meal is not None:
+                resp.today_log = MealTodayLog(eaten=meal.protein_foods, logged_at=meal.created_at)
         return responses
 
     @staticmethod
