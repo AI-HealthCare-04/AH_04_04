@@ -82,7 +82,8 @@ fun ExerciseVideosScreen(
         RoutinePlayerScreen(
             routineFile = file,
             onExit = { routineFile = null },
-            onComplete = { routineFile = null },
+            // durationMin(실제 재생 분)은 #234 운동 완료 배선(정인 레이어 B)에서 vm.submitExercise로 사용. 지금은 미사용.
+            onComplete = { _ -> routineFile = null },
         )
         return
     }
