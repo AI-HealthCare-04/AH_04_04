@@ -15,6 +15,9 @@ validation:
     shuffle: true
     random_state: 42
 
+training_notes:
+  with_waist: waist-missing rows dropped (n=13), not imputed
+
 feature_sets:
   default: self_report_plus_waist_days
   fallback: self_report_minimal_days
