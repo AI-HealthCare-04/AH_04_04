@@ -200,27 +200,17 @@ fun RoutinePlayerScreen(
     ) {
         if (step == null) return@Column
 
-        // image_toggle: interval 주기로 두 정지 이미지를 번갈아 표시(고양이 낙타 등 AI 영상이 실패하는 동작).
-        //   step이 바뀌면 프레임을 0으로 리셋하고, 자세가 바뀔 때 자막(guideByFrame)도 함께 바꾼다.
-        var toggleFrame by remember(step) { mutableIntStateOf(0) }
-        if (step.type == StepType.IMAGE_TOGGLE) {
-            // 정지(paused) 중에는 토글을 멈추고, 재개 시 이미 진행한 toggleFrame부터 남은 컷만 이어간다(지영 리뷰 #250).
-            //   paused를 키에 넣어 정지 전환 때 effect가 취소되게 하고(정지 중 이미지·자막 고정), toggleFrame은
-            //   remember(step)라 정지/재개로 리셋되지 않으므로 재개 때 현재 프레임 이후만 진행한다. repeat 재시작이
-            //   아니라 toggleFrame<maxToggles 조건으로 이어가야 재개 때 초과 토글(첫 이미지로 되돌아감)이 없다.
-            LaunchedEffect(step, paused) {
-                if (paused) return@LaunchedEffect
-                val interval = step.interval ?: 3.5
-                val intervalMs = (interval * 1000).toLong()
-                // step.sec 동안 sec/interval 컷을 보여주고 **마지막 컷에서 멈춘다**. while(true)로 두면 종료 시점(sec)에
-                //   토글이 한 번 더 돌아 첫 이미지로 되돌아간 뒤 다음 step으로 넘어가는 깜빡임이 생긴다(끝에 여분 교차 방지).
-                val maxToggles = ((step.sec / interval).toInt() - 1).coerceAtLeast(0)
-                while (toggleFrame < maxToggles) {
-                    delay(intervalMs)
-                    if (toggleFrame < maxToggles) toggleFrame++
-                }
-            }
-        }
+        // image_toggle: 자세 이미지(toggleFrame)를 카운트와 '같은 시계'인 elapsedMs에서 파생한다(지영 리뷰 #250).
+        //   별도 delay 타이머로 두면 정지/재개 때 카운트(elapsedMs 기준)와 자세가 서로 어긋나(재개 직후 카운트만
+        //   먼저 오르고 자세는 늦게 바뀜) 세트가 어긋나 보이고, 끝에서 한 컷 더 돌아 첫 이미지로 깜빡였다.
+        //   elapsedMs 파생이면 정지 시 elapsedMs가 멈추므로 자세도 함께 멈추고, 카운트 증가 시점(낙타→고양이)과
+        //   항상 일치한다(interval=3.5s·count=3이면 2컷=1카운트로 딱 맞물림). maxFrame 상한으로 마지막 컷(낙타)에서
+        //   멈춰 끝 깜빡임을 없앤다.
+        val toggleFrame = if (step.type == StepType.IMAGE_TOGGLE) {
+            val interval = step.interval ?: 3.5
+            val maxFrame = ((step.sec / interval).toInt() - 1).coerceAtLeast(0)
+            (elapsedMs / (interval * 1000).toLong()).toInt().coerceIn(0, maxFrame)
+        } else 0
         val displayGuide = step.guideByFrame
             ?.takeIf { step.type == StepType.IMAGE_TOGGLE && it.isNotEmpty() }
             ?.let { it[toggleFrame % it.size] }
