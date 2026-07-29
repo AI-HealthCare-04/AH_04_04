@@ -398,14 +398,14 @@ def test_prediction_inputs_maps_profile_and_clamps_days() -> None:
         weight_kg=Decimal("66.0"),
         waist_cm=Decimal("84.0"),
     )
-    service = _service_with_prediction_stub(profile, active_days=(7, 2))  # 7 → 5로 clamp
+    service = _service_with_prediction_stub(profile, active_days=(7, 2))
     out = asyncio.run(service.get_prediction_inputs(_USER_WITH_ID))
     assert out.sex == "male"
     assert out.birth_date == date(1950, 3, 1)
     assert out.height_cm == 166.0
     assert out.weight_kg == 66.0
     assert out.waist_cm == 84.0
-    assert out.walk_days == 5  # 모델·슬라이더 상한 5로 clamp
+    assert out.walk_days == 7
     assert out.musc_days == 2
 
 

@@ -65,8 +65,8 @@ class HealthProfile(Base):
     weight_kg: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
     bmi: Mapped[Decimal] = mapped_column(Numeric(4, 1), nullable=False)
     waist_cm: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
-    walking_practice: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    strength_exercise: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    walk_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    musc_days: Mapped[int] = mapped_column(Integer, nullable=False)
     activity_input_source: Mapped[ActivityInputSource] = mapped_column(
         Enum(ActivityInputSource, values_callable=enum_values, name="activity_input_source_enum"),
         nullable=False,

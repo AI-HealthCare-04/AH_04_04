@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.models.enums import ActivityType, Intensity
-from app.services.activity_metrics import derive_activity_practice_flags, moderate_equivalent_min
+from app.services.activity_metrics import derive_activity_day_counts, moderate_equivalent_min
 
 
 def test_met_value_takes_priority_and_ignores_intensity() -> None:
@@ -42,7 +42,7 @@ def test_none_duration_is_zero() -> None:
     assert moderate_equivalent_min(ActivityType.WALKING, None, None, None) == 0.0
 
 
-def test_activity_practice_flags_follow_model_weekly_definitions() -> None:
+def test_activity_day_counts_follow_model_weekly_definitions() -> None:
     logs = [
         SimpleNamespace(
             activity_date=date(2026, 7, day),
@@ -63,13 +63,13 @@ def test_activity_practice_flags_follow_model_weekly_definitions() -> None:
         for day in (1, 3)
     ]
 
-    walking_practice, strength_exercise = derive_activity_practice_flags(logs, activity_window_days=7)  # type: ignore[arg-type]
+    walk_days, musc_days = derive_activity_day_counts(logs, activity_window_days=7)  # type: ignore[arg-type]
 
-    assert walking_practice is True
-    assert strength_exercise is True
+    assert walk_days == 5
+    assert musc_days == 2
 
 
-def test_activity_practice_flags_scale_weekly_definitions_for_fourteen_days() -> None:
+def test_activity_day_counts_normalize_fourteen_days_to_weekly_counts() -> None:
     logs = [
         SimpleNamespace(
             activity_date=date(2026, 7, day),
@@ -90,12 +90,12 @@ def test_activity_practice_flags_scale_weekly_definitions_for_fourteen_days() ->
         for day in (1, 3, 8, 10)
     ]
 
-    walking_practice, strength_exercise = derive_activity_practice_flags(logs, activity_window_days=14)  # type: ignore[arg-type]
+    walk_days, musc_days = derive_activity_day_counts(logs, activity_window_days=14)  # type: ignore[arg-type]
 
-    assert walking_practice is False
-    assert strength_exercise is True
+    assert walk_days == 5
+    assert musc_days == 2
 
 
-def test_activity_practice_flags_reject_unsupported_window() -> None:
+def test_activity_day_counts_reject_unsupported_window() -> None:
     with pytest.raises(ValueError, match="must be 7 or 14"):
-        derive_activity_practice_flags([], activity_window_days=10)
+        derive_activity_day_counts([], activity_window_days=10)

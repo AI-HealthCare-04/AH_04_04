@@ -14,8 +14,8 @@ class HealthProfileCreateRequest(BaseModel):
     height_cm: Decimal = Field(gt=0)
     weight_kg: Decimal = Field(gt=0)
     waist_cm: Decimal | None = Field(default=None, gt=0)
-    walking_practice: bool
-    strength_exercise: bool
+    walk_days: int = Field(ge=0, le=7)
+    musc_days: int = Field(ge=0, le=5)
     kidney_status: KidneyStatus = KidneyStatus.UNKNOWN
     protein_restriction_status: ProteinRestrictionStatus = ProteinRestrictionStatus.UNKNOWN
     activity_input_source: ActivityInputSource
@@ -42,8 +42,8 @@ class HealthProfileResponse(BaseModel):
     weight_kg: Decimal
     bmi: Decimal
     waist_cm: Decimal | None
-    walking_practice: bool
-    strength_exercise: bool
+    walk_days: int
+    musc_days: int
     activity_input_source: ActivityInputSource
     activity_window_days: int | None
     kidney_status: KidneyStatus

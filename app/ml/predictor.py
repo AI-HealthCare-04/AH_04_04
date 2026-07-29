@@ -26,8 +26,8 @@ MINIMAL_FEATURE_COLUMNS: tuple[str, ...] = (
     "height_cm",
     "weight_kg",
     "bmi",
-    "pa_walk_30min_5days",
-    "pa_muscle_2days",
+    "walk_days",
+    "musc_days",
 )
 
 WITH_WAIST_FEATURE_COLUMNS: tuple[str, ...] = (
@@ -37,8 +37,8 @@ WITH_WAIST_FEATURE_COLUMNS: tuple[str, ...] = (
     "weight_kg",
     "bmi",
     "waist_cm",
-    "pa_walk_30min_5days",
-    "pa_muscle_2days",
+    "walk_days",
+    "musc_days",
 )
 
 
@@ -91,6 +91,13 @@ def _normalize_sex(value: Any) -> int | None:
     return int(raw)
 
 
+def _clamp_float(value: Any, *, lower: float, upper: float) -> float | None:
+    numeric = _to_float(value)
+    if numeric is None:
+        return None
+    return min(max(numeric, lower), upper)
+
+
 def has_waist_input(features: Mapping[str, Any]) -> bool:
     return features.get("waist_cm") is not None
 
@@ -103,8 +110,8 @@ def normalize_features(features: Mapping[str, Any], *, include_waist: bool = Fal
         "weight_kg": _to_float(features.get("weight_kg")),
         "bmi": _to_float(features.get("bmi")),
         "waist_cm": _to_float(features.get("waist_cm")),
-        "pa_walk_30min_5days": features.get("pa_walk_30min_5days", features.get("walking_practice")),
-        "pa_muscle_2days": features.get("pa_muscle_2days", features.get("strength_exercise")),
+        "walk_days": _clamp_float(features.get("walk_days"), lower=0, upper=7),
+        "musc_days": _clamp_float(features.get("musc_days"), lower=0, upper=5),
     }
 
     if normalized["bmi"] is None and normalized["height_cm"] and normalized["weight_kg"]:
@@ -124,8 +131,8 @@ def features_from_health_profile(profile: Any) -> dict[str, Any]:
             "weight_kg": profile.weight_kg,
             "bmi": profile.bmi,
             "waist_cm": profile.waist_cm,
-            "walking_practice": profile.walking_practice,
-            "strength_exercise": profile.strength_exercise,
+            "walk_days": profile.walk_days,
+            "musc_days": profile.musc_days,
         },
         include_waist=profile.waist_cm is not None,
     )
@@ -173,7 +180,7 @@ class RiskPredictor:
         return RiskPredictionResult(
             risk_score=score,
             risk_level=level,
-            model_version=str(bundle.get("model_version") or f"sarcopenia_lr_{bundle.get('feature_set', 'unknown')}_v1"),
+            model_version=str(bundle.get("model_version") or "sarcopenia_lr_unknown"),
             model_variant=ModelVariant.WITH_WAIST if include_waist else ModelVariant.MINIMAL,
             input_snapshot=snapshot,
             threshold=threshold,

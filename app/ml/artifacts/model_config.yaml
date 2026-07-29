@@ -15,12 +15,27 @@ validation:
     shuffle: true
     random_state: 42
 
+training_notes:
+  with_waist: waist-missing rows dropped (n=13), not imputed
+
 feature_sets:
-  default: self_report_plus_waist
-  fallback: self_report_minimal
+  default: self_report_plus_waist_days
+  fallback: self_report_minimal_days
+
+activity_features:
+  walk_days:
+    source: BE3_31-compatible day count
+    min: 0
+    max: 7
+  musc_days:
+    source: BE5_1-compatible day count
+    min: 0
+    max: 5
+    note: 5 means 5 or more days
 
 target_label: sarcopenia_awgs2025
 probability_type: raw
+model_version_suffix: awgs2025_days_v3
 selected_threshold: 0.20
 
 smote:

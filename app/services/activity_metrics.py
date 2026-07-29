@@ -17,6 +17,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from datetime import date
 from decimal import Decimal
+from math import floor
 
 from app.models.enums import ActivityType, Intensity
 from app.models.missions import PhysicalActivityLog
@@ -42,11 +43,8 @@ INTENSITY_FACTOR: dict[Intensity, float] = {
     Intensity.HIGH: 1.3,
 }
 
-# Model feature meanings: pa_walk_30min_5days / pa_muscle_2days.
-# A 14-day window applies the same weekly standard twice.
+# Model feature meanings: walk_days / musc_days.
 WALKING_MINUTES_PER_DAY = 30.0
-WALKING_DAYS_PER_WEEK = 5
-STRENGTH_DAYS_PER_WEEK = 2
 _STRENGTH_ACTIVITY_TYPES = frozenset(
     {
         ActivityType.CHAIR_STAND,
@@ -76,12 +74,12 @@ def moderate_equivalent_min(
     return round(float(duration_min) * effective_met / MODERATE_MET_BASELINE, 1)
 
 
-def derive_activity_practice_flags(
+def derive_activity_day_counts(
     logs: Iterable[PhysicalActivityLog],
     *,
     activity_window_days: int,
-) -> tuple[bool, bool]:
-    """Convert service logs into the model's walking and strength features."""
+) -> tuple[int, int]:
+    """Convert service logs into the model's walking and strength day-count features."""
     if activity_window_days not in (7, 14):
         raise ValueError("activity_window_days must be 7 or 14.")
     weeks = activity_window_days // 7
@@ -99,7 +97,6 @@ def derive_activity_practice_flags(
     walking_days = sum(
         minutes >= WALKING_MINUTES_PER_DAY for minutes in walking_minutes_by_day.values()
     )
-    return (
-        walking_days >= WALKING_DAYS_PER_WEEK * weeks,
-        len(strength_days) >= STRENGTH_DAYS_PER_WEEK * weeks,
-    )
+    weekly_walk_days = floor((walking_days / weeks) + 0.5)
+    weekly_musc_days = floor((len(strength_days) / weeks) + 0.5)
+    return (min(int(weekly_walk_days), 7), min(int(weekly_musc_days), 5))
