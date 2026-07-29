@@ -2,6 +2,7 @@ package com.aihealthcare.ah0404.exercise
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
+import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -12,8 +13,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Tab
@@ -35,6 +39,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -64,9 +69,15 @@ fun ExerciseVideosScreen(
 ) {
     LaunchedEffect(Unit) { vm.load() }
 
+    // 선택 탭·루틴·전체화면 상태는 조기반환보다 '먼저' 선언한다 — 그래야 루틴/전체화면 진입으로 아래 UI가
+    //   composition에서 빠져도 이 remember들이 폐기되지 않고 유지된다. (전체화면을 열었다 닫으면 근력/서서
+    //   탭이 몸풀기(0)로 리셋되던 문제 — selected를 StageTabs 안에 두면 언마운트 시 사라짐. 지영 리뷰 #254 P1)
+    var selectedTab by remember(vm.videos) { mutableIntStateOf(0) }
+    var routineFile by remember { mutableStateOf<String?>(null) }
+    var fullscreenUrl by remember { mutableStateOf<String?>(null) }
+
     // 번들 루틴(몸풀기·마무리)은 백엔드 목록과 무관하게 오프라인에서도 재생 가능(심사 환경 안정 버전).
     //   여러 동작을 조합한 가이드 루틴이라 단일 스트리밍 영상이 아니라 번들 RoutinePlayer 로 띄운다(#72 스트리밍과 별개).
-    var routineFile by remember { mutableStateOf<String?>(null) }
     routineFile?.let { file ->
         RoutinePlayerScreen(
             routineFile = file,
@@ -78,7 +89,6 @@ fun ExerciseVideosScreen(
 
     // 스트리밍 운동(근력·서서)은 포스터 탭 시 '가로 전체화면'으로 크게 재생한다(세로 고정 앱에서 이 화면만 가로).
     //   기기 크기가 달라도 fillMaxSize + 가로라 알아서 꽉 찬다(고정 픽셀 없음). 나가면 세로로 복원.
-    var fullscreenUrl by remember { mutableStateOf<String?>(null) }
     fullscreenUrl?.let { url ->
         FullscreenLandscapeVideo(url = url, onExit = { fullscreenUrl = null })
         return
@@ -94,7 +104,13 @@ fun ExerciseVideosScreen(
         // 번들 루틴(몸풀기·마무리)은 네트워크와 무관하게 '즉시' 시작 가능해야 한다(오프라인/느린망 포함).
         //   서버 목록이 오면 탭으로, 아직이면(로딩/빈/에러) 폴백에서 번들 루틴 버튼들을 바로 보여준다.
         if (vm.videos.isNotEmpty()) {
-            StageTabs(vm.videos, onStartRoutine = { routineFile = it }, onPlayFullscreen = { fullscreenUrl = it })
+            StageTabs(
+                vm.videos,
+                selected = selectedTab,
+                onSelect = { selectedTab = it },
+                onStartRoutine = { routineFile = it },
+                onPlayFullscreen = { fullscreenUrl = it },
+            )
         } else {
             RoutineFallback(
                 onStart = { routineFile = it },
@@ -108,18 +124,21 @@ fun ExerciseVideosScreen(
 @Composable
 private fun StageTabs(
     videos: List<ExerciseVideoItem>,
+    selected: Int,
+    onSelect: (Int) -> Unit,
     onStartRoutine: (String) -> Unit,
     onPlayFullscreen: (String) -> Unit,
 ) {
-    var selected by remember(videos) { mutableIntStateOf(0) }
-    val current = videos[selected.coerceIn(0, videos.lastIndex)]
+    // selected 는 ExerciseVideosScreen 이 보유(전체화면/루틴 진입 후 복귀 시 탭 유지, 지영 리뷰 #254 P1).
+    val safeSelected = selected.coerceIn(0, videos.lastIndex)
+    val current = videos[safeSelected]
 
     Column {
-        TabRow(selectedTabIndex = selected) {
+        TabRow(selectedTabIndex = safeSelected) {
             videos.forEachIndexed { index, v ->
                 Tab(
-                    selected = index == selected,
-                    onClick = { selected = index },
+                    selected = index == safeSelected,
+                    onClick = { onSelect(index) },
                     text = { Text(v.label, style = MaterialTheme.typography.bodyLarge) },
                 )
             }
@@ -195,7 +214,10 @@ private fun VideoArea(
                         painter = painterResource(poster),
                         contentDescription = "${item.label} 시작하기",
                         contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize().clickable { onPlayFullscreen(url) },
+                        // TalkBack에서 버튼 역할로 안내(지영 리뷰 #254 비차단). 포스터에 그려진 문구 외 역할을 명확히.
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clickable(onClickLabel = "재생", role = Role.Button) { onPlayFullscreen(url) },
                     )
                 } else {
                     // 포스터 없는 스트리밍 단계(방어적) — 종전대로 인라인 재생.
@@ -229,9 +251,13 @@ private fun VideoArea(
  */
 @UnstableApi
 @Composable
-private fun FullscreenLandscapeVideo(url: String, onExit: () -> Unit) {
+private fun FullscreenLandscapeVideo(url: String, onExit: () -> Unit, onWatched: (Float) -> Unit = {}) {
     val activity = LocalContext.current as? Activity
     DisposableEffect(Unit) {
+        // 시청 분 측정(#234 운동 완료 배선용, 정인 계약): 진입(재생 시작)~이탈(닫기/뒤로=세로 복원) 벽시계 경과.
+        //   목표가 '하루 10분 몸 움직이기'라 배속과 무관한 실제 따라 한 시간=벽시계 분으로 잰다. onDispose에서
+        //   onWatched(분) 발화 → 호출부(정인)가 서버 당일 누적에 합산. 0분(순간 열고닫음) 방어는 호출부에서.
+        val startedAt = SystemClock.elapsedRealtime()
         val prevOrientation = activity?.requestedOrientation
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         val insets = activity?.window?.let { w -> WindowCompat.getInsetsController(w, w.decorView) }
@@ -240,6 +266,7 @@ private fun FullscreenLandscapeVideo(url: String, onExit: () -> Unit) {
         onDispose {
             activity?.requestedOrientation = prevOrientation ?: ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             insets?.show(WindowInsetsCompat.Type.systemBars())
+            onWatched((SystemClock.elapsedRealtime() - startedAt) / 60_000f)
         }
     }
     BackHandler { onExit() }
@@ -247,13 +274,16 @@ private fun FullscreenLandscapeVideo(url: String, onExit: () -> Unit) {
         StreamingVideoPlayer(
             url = url,
             modifier = Modifier.fillMaxSize(),
+            autoPlay = true, // 포스터 탭 = 재생 의사 → 한 번 탭으로 바로 재생(지영 리뷰 #254 P2)
             speed = AppSettings.exerciseSpeedFor(AppSettings.exerciseDifficulty),
         )
         // 닫기(세로 복귀) — 어르신용으로 크게, 반투명 배경으로 밝은 영상 위에서도 잘 보이게. 좌상단.
+        //   가로에서 노치/펀치홀에 안 가리게 displayCutout inset 적용(지영 리뷰 #254 비차단).
         TextButton(
             onClick = onExit,
             modifier = Modifier
                 .align(Alignment.TopStart)
+                .windowInsetsPadding(WindowInsets.displayCutout)
                 .padding(Dimens.Space16)
                 .background(Color.Black.copy(alpha = 0.5f), MaterialTheme.shapes.large),
         ) {
