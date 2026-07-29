@@ -3,10 +3,10 @@ services:
     image: mysql:8.0
     restart: always
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-Ozcoding1234@}
-      MYSQL_DATABASE: ${DB_NAME:-ai_health}
-      MYSQL_USER: ${DB_USER:-ozcoding}
-      MYSQL_PASSWORD: ${DB_PASSWORD:-Password1234@}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD must be set}
+      MYSQL_DATABASE: ${DB_NAME:?DB_NAME must be set}
+      MYSQL_USER: ${DB_USER:?DB_USER must be set}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
       TZ: "Asia/Seoul"
     ports:
       - "${DB_EXPOSE_PORT:-3306}:${DB_PORT:-3306}"
@@ -27,6 +27,8 @@ services:
   fastapi:
     image: ${DOCKER_USER:-ah0404}/${DOCKER_REPOSITORY:-senior-challenge}:app-${APP_VERSION:-v1.0.0}
     env_file: ../../.env
+    environment:
+      ENV: prod
     restart: always
     ports:
       - "${APP_EXPOSE_PORT:-8000}:8000"
