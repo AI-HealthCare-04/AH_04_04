@@ -24,8 +24,8 @@ class OnboardingResetTest {
         vm.birthYear = "1950"; vm.birthMonth = "3"; vm.birthDay = "5"
         vm.sex = "female"
         vm.waistCm = "80"
-        vm.walkingPractice = true
-        vm.strengthExercise = false
+        vm.walkDays = 5
+        vm.muscDays = 2
         vm.kidneyStatus = "dialysis"
         vm.proteinStatus = "restricted"
         vm.chairStandSec = "12.5"
@@ -39,8 +39,8 @@ class OnboardingResetTest {
         assertEquals("", vm.birthDay)
         assertNull(vm.sex)
         assertEquals("", vm.waistCm)
-        assertNull(vm.walkingPractice)
-        assertNull(vm.strengthExercise)
+        assertEquals(0, vm.walkDays)
+        assertEquals(0, vm.muscDays)
         assertEquals("unknown", vm.kidneyStatus)
         assertEquals("unknown", vm.proteinStatus)
         assertEquals("", vm.chairStandSec)

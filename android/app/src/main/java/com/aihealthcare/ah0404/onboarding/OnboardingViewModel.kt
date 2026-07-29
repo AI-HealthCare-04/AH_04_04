@@ -123,8 +123,10 @@ class OnboardingViewModel(
         if (todayMonth < m || (todayMonth == m && todayDay < d)) age -= 1
         return age
     }
-    var walkingPractice by mutableStateOf<Boolean?>(null)
-    var strengthExercise by mutableStateOf<Boolean?>(null)
+    // 활동 일수(#261): 예/아니오 boolean → 주당 일수. 걷기 0~7(국건영 BE3_31), 근력 0~5(BE5_1 top-coding).
+    //   기본 0(주 0일도 유효한 답)이라 별도 null 검증 없이 항상 유효 — 스테퍼가 범위를 강제한다.
+    var walkDays by mutableStateOf(0)
+    var muscDays by mutableStateOf(0)
     var kidneyStatus by mutableStateOf("unknown")
     var proteinStatus by mutableStateOf("unknown")
     var chairStandSec by mutableStateOf("")
@@ -175,7 +177,7 @@ class OnboardingViewModel(
         sex = null
         heightCm = ""; weightKg = ""; waistCm = ""
         heightEstimated = false; weightEstimated = false
-        walkingPractice = null; strengthExercise = null
+        walkDays = 0; muscDays = 0
         kidneyStatus = "unknown"; proteinStatus = "unknown"
         chairStandSec = ""
         lastSubmittedProfile = null
@@ -227,8 +229,8 @@ class OnboardingViewModel(
         val estimate = if (hasEstimatedValue) estimateBody(sex, ageYears()) else null
         val h = if (heightEstimated) estimate!!.first.toDouble() else heightCm.toDoubleOrNull()
         val w = if (weightEstimated) estimate!!.second.toDouble() else weightKg.toDoubleOrNull()
-        if (sex == null || h == null || w == null || walkingPractice == null || strengthExercise == null) {
-            error = "키·몸무게·성별·운동 여부를 모두 입력해 주세요."; return@launchStep
+        if (sex == null || h == null || w == null) {
+            error = "키·몸무게·성별을 모두 입력해 주세요."; return@launchStep
         }
         // 양수 가드(재란 #75 nit): "0"/음수 수동 입력이 백엔드 gt=0 에서 422 나기 전에 막는다.
         if (h <= 0 || w <= 0) {
@@ -239,8 +241,8 @@ class OnboardingViewModel(
             sex = sex!!,
             heightCm = h,
             weightKg = w,
-            walkingPractice = walkingPractice!!,
-            strengthExercise = strengthExercise!!,
+            walkDays = walkDays,
+            muscDays = muscDays,
             sessionId = sessionId,
             // 허리둘레는 양수일 때만 전송, 그 외(빈값·0·음수)는 생략(선택 필드).
             waistCm = waistCm.toDoubleOrNull()?.takeIf { it > 0 },

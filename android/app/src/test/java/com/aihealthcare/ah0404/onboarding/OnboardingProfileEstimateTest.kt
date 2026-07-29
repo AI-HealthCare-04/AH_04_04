@@ -141,7 +141,7 @@ class OnboardingProfileEstimateTest {
     fun submit_rejects_under_65() = runTest {
         val vm = vm(2026, 7, 15).apply {
             birthYear = "1990"; birthMonth = "1"; birthDay = "1" // 36세
-            sex = "male"; walkingPractice = true; strengthExercise = false
+            sex = "male"; walkDays = 5; muscDays = 2
             setHeight("170"); setWeight("65")
         }
         vm.submitProfile(); advanceUntilIdle()
@@ -161,7 +161,7 @@ class OnboardingProfileEstimateTest {
     fun submit_rejects_nonpositive_height() = runTest {
         val vm = vm().apply {
             birthYear = "1958"; birthMonth = "3"; birthDay = "1"
-            sex = "male"; walkingPractice = true; strengthExercise = false
+            sex = "male"; walkDays = 5; muscDays = 2
             setWeight("60"); setHeight("0")
         }
         vm.submitProfile(); advanceUntilIdle()
