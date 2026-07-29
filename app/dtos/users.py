@@ -36,7 +36,7 @@ class UserWithdrawRequest(BaseModel):
 # [응답] 설정 조회/변경 공통 응답. 항상 전체 설정을 반환한다.
 # 기본값은 personalized_settings 모델 기본값과 동일하게 맞춘다(font/sound=medium, pet_type="default").
 # font/sound는 DB enum(small/medium/large)과 동일하게 타입을 좁혀 계약을 보호한다.
-# notification_enabled는 알림 기능 미구현으로 계약에서 제외한다(v7.8).
+# 알림 기능은 MVP 범위 밖이므로 설정 계약과 DB 스키마에 포함하지 않는다.
 class UserSettingsResponse(BaseModel):
     font_size: FontSize = FontSize.MEDIUM
     sound_size: SoundSize = SoundSize.MEDIUM

@@ -18,7 +18,6 @@ def test_core_db_metadata_tables() -> None:
         "personalized_settings",
         "physical_activity_logs",
         "physical_assessments",
-        "point_balances",
         "risk_predictions",
         "sensor_sessions",
         "terms_agreements",
@@ -28,8 +27,26 @@ def test_core_db_metadata_tables() -> None:
 
 
 def test_deferred_tables_are_not_in_initial_metadata() -> None:
+    assert "point_balances" not in Base.metadata.tables
     assert "point_earn_logs" not in Base.metadata.tables
     assert "point_spend_logs" not in Base.metadata.tables
+
+
+def test_removed_unused_columns_are_not_in_metadata() -> None:
+    settings_columns = Base.metadata.tables["personalized_settings"].columns
+    template_columns = Base.metadata.tables["mission_templates"].columns
+    sensor_columns = Base.metadata.tables["sensor_sessions"].columns
+
+    assert "notification_enabled" not in settings_columns
+    assert {
+        "exercise_category",
+        "activity_type",
+        "estimated_intensity",
+        "met_value",
+        "evidence_message",
+        "is_repeatable",
+    }.isdisjoint(template_columns.keys())
+    assert "sensor_type" not in sensor_columns
 
 
 def test_user_identity_does_not_store_email_or_age() -> None:

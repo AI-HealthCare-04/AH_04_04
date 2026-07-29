@@ -9,7 +9,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dtos.sensor import SensorSessionCreateRequest, SensorSessionCreateResponse
-from app.models.enums import RecognitionStatus, SensorType
+from app.models.enums import RecognitionStatus
 from app.models.missions import SensorSession
 from app.models.users import User
 from app.repositories.sensor_repository import SensorRepository
@@ -30,8 +30,6 @@ class SensorService:
 
         sensor_session = SensorSession(
             mission_log_id=data.mission_log_id,
-            # 가속도계 단일 센서라 요청에서 sensor_type을 받지 않고 서버가 상수로 저장한다(v7.8).
-            sensor_type=SensorType.ACCELEROMETER,
             detected_count=data.detected_count,
             duration_sec=data.duration_sec,
             motion_score=data.motion_score,

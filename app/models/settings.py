@@ -10,7 +10,6 @@ class PersonalizedSetting(Base, TimestampMixin):
 
     setting_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id"), nullable=False, unique=True)
-    notification_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     font_size: Mapped[FontSize] = mapped_column(
         Enum(FontSize, values_callable=enum_values, name="font_size_enum"),
         nullable=False,

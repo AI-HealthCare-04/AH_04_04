@@ -119,13 +119,6 @@ class MissionType(StrEnum):
     GAME = "game"
 
 
-class ExerciseCategory(StrEnum):
-    WARM_UP = "warm_up"
-    SEATED = "seated"
-    STANDING = "standing"
-    COOL_DOWN = "cool_down"
-
-
 class ActivityType(StrEnum):
     WALKING = "walking"
     CHAIR_STAND = "chair_stand"
@@ -159,12 +152,6 @@ class PerceivedDifficulty(StrEnum):
     EASY = "easy"
     JUST_RIGHT = "just_right"
     HARD = "hard"
-
-
-class SensorType(StrEnum):
-    ACCELEROMETER = "accelerometer"
-    GYROSCOPE = "gyroscope"
-    STEP_COUNTER = "step_counter"
 
 
 class RecognitionStatus(StrEnum):
