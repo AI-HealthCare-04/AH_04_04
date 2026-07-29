@@ -189,7 +189,7 @@ private fun HomeContent(
                 hourOfDay = hourOfDay,
                 hasFreshHomeData = !refreshError,
                 daysSinceLastVisit = daysSinceLastVisit(previousVisit?.lastVisitEpochDay, todayEpochDay),
-                excludedMessageId = previousVisit?.lastMessageId,
+                excludedMessageIds = shownMessageIdsForToday(previousVisit, todayEpochDay),
                 shownStreakKey = previousVisit?.lastStreakKey,
             ),
         )
@@ -204,6 +204,7 @@ private fun HomeContent(
                     lastVisitEpochDay = todayEpochDay,
                     lastMessageId = bubbleMessage.id,
                     lastStreakKey = bubbleMessage.deduplicationKey,
+                    shownMessageIds = setOf(bubbleMessage.id),
                 ),
             )
         }
