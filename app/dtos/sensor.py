@@ -8,16 +8,16 @@
 # =====================================================================================
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 RecognitionStatusLiteral = Literal["success", "low_confidence", "failed", "manual_override"]
 
 
 class SensorSessionCreateRequest(BaseModel):
     mission_log_id: int
-    detected_count: int | None = None
-    duration_sec: int | None = None
-    motion_score: float | None = None
+    detected_count: int | None = Field(default=None, ge=0)
+    duration_sec: int | None = Field(default=None, ge=0)
+    motion_score: float | None = Field(default=None, ge=0)
     recognition_status: RecognitionStatusLiteral
     raw_summary: dict[str, Any] | None = None
 
