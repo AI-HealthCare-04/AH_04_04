@@ -28,21 +28,21 @@
       "name": "고관절 늘리기", "guide": "반대쪽도 늘려요", "safety": "의자를 꼭 잡으세요" },
 
     { "type": "image", "asset": "inner_thigh_left", "sec": 15, "mode": "timer",
-      "name": "안 허벅지 늘리기", "guide": "다리를 넓게 벌려 한쪽으로 체중을 실어요", "safety": "의자를 꼭 잡으세요" },
+      "name": "안 허벅지 늘리기", "guide": "다리를 넓게 벌려 한쪽으로 체중을 실어요" },
     { "type": "image", "asset": "inner_thigh_right", "sec": 15, "mode": "timer",
-      "name": "안 허벅지 늘리기", "guide": "반대쪽으로 체중을 실어요", "safety": "의자를 꼭 잡으세요" },
+      "name": "안 허벅지 늘리기", "guide": "반대쪽으로 체중을 실어요" },
 
     { "type": "notice", "sec": 3, "name": "의자에 앉아주세요", "guide": "이제 앉아서 마무리해요" },
 
     { "type": "video", "asset": "cat_camel_loop", "sec": 21, "mode": "count", "count": 6,
       "name": "고양이 낙타 스트레칭", "guide": "등을 둥글게 말았다가 활짝 펴요" },
 
-    { "type": "image", "asset": "neck_1", "sec": 5, "mode": "timer", "name": "목 늘리기", "guide": "고개를 천천히 앞으로 숙여요" },
-    { "type": "image", "asset": "neck_2", "sec": 5, "mode": "timer", "name": "목 늘리기", "guide": "고개를 천천히 뒤로 젖혀요" },
+    { "type": "image", "asset": "neck_5", "sec": 5, "mode": "timer", "name": "목 늘리기", "guide": "고개를 천천히 앞으로 숙여요" },
+    { "type": "image", "asset": "neck_6", "sec": 5, "mode": "timer", "name": "목 늘리기", "guide": "고개를 천천히 뒤로 젖혀요" },
     { "type": "image", "asset": "neck_3", "sec": 5, "mode": "timer", "name": "목 늘리기", "guide": "고개를 옆으로 기울여요" },
     { "type": "image", "asset": "neck_4", "sec": 5, "mode": "timer", "name": "목 늘리기", "guide": "반대쪽으로 기울여요" },
-    { "type": "image", "asset": "neck_5", "sec": 5, "mode": "timer", "name": "목 늘리기", "guide": "대각선 아래를 바라봐요" },
-    { "type": "image", "asset": "neck_6", "sec": 5, "mode": "timer", "name": "목 늘리기", "guide": "반대쪽 대각선을 바라봐요" },
+    { "type": "image", "asset": "neck_1", "sec": 5, "mode": "timer", "name": "목 늘리기", "guide": "대각선 아래를 바라봐요" },
+    { "type": "image", "asset": "neck_2", "sec": 5, "mode": "timer", "name": "목 늘리기", "guide": "반대쪽 대각선을 바라봐요" },
 
     { "type": "video", "asset": "breathing_loop", "sec": 24, "mode": "count", "count": 6,
       "name": "호흡 정리", "guide": "팔을 올리며 숨을 들이쉬고, 내리며 내쉬어요" },
