@@ -6,7 +6,8 @@ package com.aihealthcare.ah0404.routine
  * 루틴 추가 = assets/routines 폴더에 json 파일 추가만으로 되게 한다.
  */
 
-enum class StepType { INTRO, VIDEO, IMAGE, NOTICE, OUTRO }
+// IMAGE_TOGGLE = 정지 2컷을 interval 주기로 번갈아 표시(고양이 낙타 등 AI 영상이 실패하는 동작). image와 별개 타입.
+enum class StepType { INTRO, VIDEO, IMAGE, IMAGE_TOGGLE, NOTICE, OUTRO }
 
 /** timer=원형 카운트다운 / count=횟수 표시 / none=표시 없음(intro·notice·outro) */
 enum class StepMode { TIMER, COUNT, NONE }
@@ -21,6 +22,10 @@ data class Step(
     val count: Int? = null,   // mode=count일 때 목표 횟수
     val mirror: Boolean = false,    // true면 좌우 반전(측면 뷰에만 사용)
     val safety: String? = null,     // 있으면 안전 경고 상시 노출
+    // image_toggle 전용: 번갈아 표시할 이미지들(assets/exercise), 교차 주기(초), 자세별 자막.
+    val assets: List<String>? = null,
+    val interval: Double? = null,
+    val guideByFrame: List<String>? = null,
 )
 
 data class Routine(
