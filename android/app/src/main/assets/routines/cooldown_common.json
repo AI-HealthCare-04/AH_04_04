@@ -28,9 +28,9 @@
       "name": "고관절 늘리기", "guide": "반대쪽도 늘려요", "safety": "의자를 꼭 잡으세요" },
 
     { "type": "image", "asset": "inner_thigh_left", "sec": 15, "mode": "timer",
-      "name": "안 허벅지 늘리기", "guide": "다리를 넓게 벌려 한쪽으로 체중을 실어요" },
+      "name": "안 허벅지 늘리기", "guide": "다리를 넓게 벌려 한쪽으로 체중을 실어요", "safety": "의자를 꼭 잡으세요" },
     { "type": "image", "asset": "inner_thigh_right", "sec": 15, "mode": "timer",
-      "name": "안 허벅지 늘리기", "guide": "반대쪽으로 체중을 실어요" },
+      "name": "안 허벅지 늘리기", "guide": "반대쪽으로 체중을 실어요", "safety": "의자를 꼭 잡으세요" },
 
     { "type": "notice", "sec": 3, "name": "의자에 앉아주세요", "guide": "이제 앉아서 마무리해요" },
 

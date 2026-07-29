@@ -69,13 +69,13 @@ fun ExerciseVideosScreen(
     ) {
         TopBar(title = "영상 따라 운동하기", onBack = onBack)
 
-        // 번들 몸풀기는 네트워크와 무관하게 '즉시' 시작 가능해야 한다(오프라인/느린망 포함).
-        //   서버 목록이 오면 탭으로, 아직이면(로딩/빈/에러) 폴백에서 몸풀기 버튼을 바로 보여준다.
+        // 번들 루틴(몸풀기·마무리)은 네트워크와 무관하게 '즉시' 시작 가능해야 한다(오프라인/느린망 포함).
+        //   서버 목록이 오면 탭으로, 아직이면(로딩/빈/에러) 폴백에서 번들 루틴 버튼들을 바로 보여준다.
         if (vm.videos.isNotEmpty()) {
             StageTabs(vm.videos, onStartRoutine = { routineFile = it })
         } else {
-            WarmupFallback(
-                onStart = { routineFile = "warmup_common.json" },
+            RoutineFallback(
+                onStart = { routineFile = it },
                 loading = vm.loading,
                 retry = if (vm.error) vm::load else null,
             )
@@ -102,12 +102,21 @@ private fun StageTabs(videos: List<ExerciseVideoItem>, onStartRoutine: (String) 
     }
 }
 
-/** 번들 루틴(RoutinePlayer)으로 재생하는 단계 → 그 단계의 루틴 JSON 파일. 스트리밍이 아니라 조합형 가이드 루틴이다. */
-private fun bundledRoutineFile(stage: String): String? = when (stage) {
-    "warmup" -> "warmup_common.json"
-    "cooldown" -> "cooldown_common.json"
-    else -> null
-}
+/** 번들 루틴(RoutinePlayer로 재생하는 조합형 가이드 운동). 스트리밍 목록과 무관하게 오프라인에서도 항상 재생 가능. */
+internal data class BundledRoutine(val stage: String, val label: String, val file: String)
+
+/**
+ * 앱에 번들된 루틴들(단일 출처). 탭 경로(stage→file)와 목록 실패 폴백(라벨 버튼) 둘 다 여기서 파생돼,
+ * 새 번들 루틴 추가 시 한 곳만 고치면 두 경로에 모두 노출된다(마무리 누락 재발 방지, 지영 리뷰 #240).
+ */
+internal val BUNDLED_ROUTINES: List<BundledRoutine> = listOf(
+    BundledRoutine(stage = "warmup", label = "몸풀기 운동", file = "warmup_common.json"),
+    BundledRoutine(stage = "cooldown", label = "마무리 운동", file = "cooldown_common.json"),
+)
+
+/** 번들 루틴 단계 → 루틴 JSON 파일(없으면 스트리밍 단계). 탭(VideoArea)이 번들/스트리밍을 가르는 데 쓴다. */
+private fun bundledRoutineFile(stage: String): String? =
+    BUNDLED_ROUTINES.firstOrNull { it.stage == stage }?.file
 
 @UnstableApi
 @Composable
@@ -158,20 +167,26 @@ private fun VideoArea(item: ExerciseVideoItem, onStartRoutine: (String) -> Unit)
 }
 
 /**
- * 백엔드 목록이 아직 없어도(로딩/오프라인/준비중) 번들 몸풀기는 '즉시' 시작할 수 있게 하는 폴백.
- * 서버 로딩은 몸풀기 버튼을 막지 않고 "다른 운동 불러오는 중"으로만 별도 표시한다.
+ * 백엔드 목록이 아직 없어도(로딩/오프라인/오류) 번들 루틴(몸풀기·마무리)은 '즉시' 시작할 수 있게 하는 폴백.
+ * 목록 실패 상태에서도 [BUNDLED_ROUTINES] 를 모두 노출한다 — 오프라인에서 마무리에 진입 못 하던 문제 해소(지영 #240).
+ * 서버 로딩은 이 버튼들을 막지 않고 "다른 운동 불러오는 중"으로만 별도 표시한다.
  */
 @Composable
-private fun WarmupFallback(onStart: () -> Unit, loading: Boolean, retry: (() -> Unit)?) {
+private fun RoutineFallback(onStart: (String) -> Unit, loading: Boolean, retry: (() -> Unit)?) {
     Box(Modifier.fillMaxSize().padding(Dimens.ScreenPadding), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(Dimens.Space12),
+        ) {
             Text("🤸", style = MaterialTheme.typography.headlineLarge)
             Text(
-                "따라 하는 몸풀기 운동을 지금 할 수 있어요.",
+                "따라 하는 운동을 지금 할 수 있어요.",
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Medium,
             )
-            Button(onClick = onStart) { Text("몸풀기 운동 시작하기") }
+            BUNDLED_ROUTINES.forEach { routine ->
+                Button(onClick = { onStart(routine.file) }) { Text("${routine.label} 시작하기") }
+            }
             when {
                 loading -> Text(
                     "다른 운동을 불러오는 중…",
