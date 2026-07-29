@@ -199,7 +199,7 @@ async def test_get_recent_predictions_returns_chronological_continuous_trend() -
             created_at=datetime(2026, 7, 9, 12, 0, 0),
             internal_risk_level=RiskLevel.LOW,
             internal_risk_score=Decimal("0.400"),
-            model_version="awgs2019-v1",
+            model_version="awgs2025-days-v2",
             model_variant=ModelVariant.WITH_WAIST,
         ),
     ]
@@ -255,8 +255,8 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
         weight_kg=Decimal("58.00"),
         bmi=Decimal("22.7"),
         waist_cm=Decimal("82.00"),
-        walking_practice=True,
-        strength_exercise=False,
+        walk_days=5,
+        musc_days=0,
         activity_input_source=ActivityInputSource.SELF_REPORT,
         activity_window_days=None,
         kidney_status=KidneyStatus.NONE,
@@ -338,8 +338,8 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
     assert profile_repo.created_profile.activity_input_source == ActivityInputSource.SERVICE_LOG
     assert profile_repo.created_profile.activity_window_days == 14
     assert profile_repo.created_profile.input_method == InputMethod.SERVICE_LOG
-    assert profile_repo.created_profile.walking_practice is True
-    assert profile_repo.created_profile.strength_exercise is True
+    assert profile_repo.created_profile.walk_days == 5
+    assert profile_repo.created_profile.musc_days == 2
     assert profile_repo.created_profile.has_estimated_value is True
     assert dashboard_repo.called_with is not None
     assert dashboard_repo.called_with[0] == 1

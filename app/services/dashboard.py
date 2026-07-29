@@ -60,7 +60,7 @@ class DashboardService:
             height_cm=(float(profile.height_cm) if profile else None),
             weight_kg=(float(profile.weight_kg) if profile else None),
             waist_cm=(float(profile.waist_cm) if profile and profile.waist_cm is not None else None),
-            walk_days=min(walk_days, 5),
+            walk_days=min(walk_days, 7),
             musc_days=min(musc_days, 5),
         )
 

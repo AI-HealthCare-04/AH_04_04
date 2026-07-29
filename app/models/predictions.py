@@ -15,7 +15,7 @@ class RiskPrediction(Base):
     prediction_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id"), nullable=False, index=True)
     profile_id: Mapped[int] = mapped_column(ForeignKey("health_profiles.profile_id"), nullable=False, index=True)
-    model_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    model_version: Mapped[str] = mapped_column(String(100), nullable=False)
     model_variant: Mapped[ModelVariant] = mapped_column(
         Enum(ModelVariant, values_callable=enum_values, name="model_variant_enum"),
         nullable=False,

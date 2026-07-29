@@ -16,7 +16,7 @@ class DashboardPredictionInputs(BaseModel):
     height_cm: float | None = None
     weight_kg: float | None = None
     waist_cm: float | None = None     # 미측정이면 null → 허리 제외형(minimal) 모델
-    walk_days: int = Field(ge=0, le=5)  # 최근 7일 '걷기' 성공 요일 수(챌린지 기록 파생, 0~5)
+    walk_days: int = Field(ge=0, le=7)  # 최근 7일 '걷기' 성공 요일 수(챌린지 기록 파생, 0~7)
     musc_days: int = Field(ge=0, le=5)  # 최근 7일 '운동' 성공 요일 수(0~5)
 
 

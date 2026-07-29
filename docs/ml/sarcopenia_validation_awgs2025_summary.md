@@ -1,44 +1,41 @@
-# AWGS 2025 Deployment Validation Summary
+# AWGS 2025 Days Deployment Validation Summary
 
 ## Setup
 
-- Source: KNHANES 2022–2024
+- Source: KNHANES 2022-2024
 - Population: age 65 or older with concurrent BIA and grip-strength measurements
 - Labeled sample: 4,279 participants; 568 positive cases; observed prevalence 13.27%
 - Target: `sarcopenia_awgs2025`
-- Definition: low ASMI **or** low ASM/BMI, together with low grip strength
+- Definition: low ASMI or low ASM/BMI, together with low grip strength
 - Model: unweighted logistic regression using app-collectable inputs
+- Activity features:
+  - `walk_days`: 0-7 days per week with at least 30 minutes of walking
+  - `musc_days`: 0-5 strength-training days per week, where 5 means 5 or more days
 
-The final deployment artifacts were fitted on all available 2022–2024 labeled rows. Validation results below come
-from cross-validation or a held-out random 80/20 split, not from the final full-data fit itself.
+The final deployment artifacts were fitted on all available 2022-2024 labeled rows. Validation results below come
+from cross-validation or a held-out random 80/20 split, not from the final full-data fit itself. The reported results
+are internal validation; a future untouched cohort remains desirable.
 
-### Why the evaluation strategy changed
+## Why activity inputs changed
 
-The previous v1 model trained on 2022–2023 and treated 2024 as a temporal external-validation set. That result cannot
-be carried forward as validation of v2 because AWGS 2025 changes the target population, and the final v2 artifacts use
-all three years for training. For v2, 2022–2024 were pooled and evaluated with stratified cross-validation plus a
-random 80/20 holdout before the final full-data fit. This prioritizes a stable number of positive cases: the pooled
-AWGS 2025 cohort has 568 positives, which would become substantially smaller and less stable if a single year were
-reserved. The reported v2 results are therefore internal validation, not a replacement claim for temporal or external
-validation. A future untouched cohort remains desirable.
+The previous AWGS 2025 deployment used binary activity-practice inputs. The days v3 deployment replaces those flags
+with KNHANES-compatible day counts so the service can show a more meaningful predicted-score trend as users complete
+walking and strength challenges.
+
+KNHANES stores walking days with 0-7 day resolution, while the strength-training item is top-coded at 5 or more days.
+The service therefore keeps `walk_days` on a 0-7 scale and caps only `musc_days` at 5.
 
 ## Performance
 
 | variant | evaluation | AUROC | AUPRC | Brier | ECE |
 | --- | --- | ---: | ---: | ---: | ---: |
-| with waist | 5-fold cross-validation | 0.835 | 0.459 | 0.091 | 0.008 |
-| with waist | random 80/20 holdout | 0.820 | — | 0.0952 | 0.0132 |
-| minimal | evaluation summary | 0.822 | — | — | — |
+| with waist | 5-fold cross-validation | 0.836 | - | - | - |
+| minimal | 5-fold cross-validation | 0.822 | - | - | - |
 
-The holdout calibration curve closely followed the identity line. The Brier and ECE results support preserving the
-continuous probability for longitudinal use. This is internal validation; it does not turn the output into a clinical
-diagnosis or replace external validation on the production population.
+The days-based activity variables are intended mainly to support longitudinal sensitivity to challenge success counts.
+Overall discrimination is materially similar to the previous binary-input AWGS 2025 deployment.
 
 ## Continuous score and transitional threshold
-
-The former runtime already persisted a continuous `risk_score`, but API responses and the client primarily consumed
-three tiers through `care_stage`. The product direction now requires change-over-time visualization, so downstream
-work will preserve and expose the calibrated continuous value rather than collapsing every observation to a tier.
 
 `selected_threshold=0.20` is retained as a transitional high-tier/action boundary so the existing `risk_level` and
 `care_stage` pipeline continues to operate until the continuous API and client migration are complete. The current
@@ -66,21 +63,18 @@ Both joblib bundles contain:
 - `model_version`
 
 The repository contract tests verify these fields, the exact feature order, binary model classes, the AWGS 2025
-target, threshold `0.20`, and v2 model versions.
+target, threshold `0.20`, and days v3 model versions.
 
 ### SHA-256
 
 | artifact | SHA-256 |
 | --- | --- |
-| `sarcopenia_model_minimal.joblib` | `D4ECC8980E61403E5CEA1338A0D02F12ED361D98FDA2D78799B1B8B0B5B40D08` |
-| `sarcopenia_model_with_waist.joblib` | `3271F0B0C057B1149713281BDB0DACD3A81B52BD284D99A05973E7CF79FA4E14` |
+| `sarcopenia_model_minimal.joblib` | `987287E8BE9DAA87487595865D2113B7F298CDD3248ED107ADCD7B580AC4FFE5` |
+| `sarcopenia_model_with_waist.joblib` | `EC8379081480587EC2AE757B63242D79B95FC071FCE74CAC00DA9EBE1D9B47F7` |
 
 ## Interpretation limits
 
-- AWGS 2025 and the former target define different positive populations, so their discrimination metrics should not
-  be interpreted as a direct model-quality contest.
+- The reported v3 results are internal validation, not temporal or external validation.
 - The labeled sample selection can under-represent frailer and oldest participants.
 - App users may have a different input distribution from KNHANES participants.
-- Model-version boundaries must be retained when continuous scores are later exposed as a trend.
-- The former temporal/DXA validation record is preserved under `docs/ml/archive/` as v1 historical evidence; it must
-  not be presented as validation of the AWGS 2025 v2 artifacts.
+- Model-version boundaries must be retained when continuous scores are exposed as a trend.

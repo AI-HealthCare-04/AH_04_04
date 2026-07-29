@@ -24,7 +24,7 @@ from app.models.users import User
 from app.repositories.dashboard_repository import DashboardRepository
 from app.repositories.health_profile_repository import HealthProfileRepository
 from app.repositories.risk_prediction_repository import RiskPredictionRepository
-from app.services.activity_metrics import derive_activity_practice_flags
+from app.services.activity_metrics import derive_activity_day_counts
 
 
 class RiskPredictionService:
@@ -144,7 +144,7 @@ class RiskPredictionService:
             start_date,
             end_date,
         )
-        walking_practice, strength_exercise = derive_activity_practice_flags(
+        walk_days, musc_days = derive_activity_day_counts(
             activity_logs,
             activity_window_days=activity_window_days,
         )
@@ -157,8 +157,8 @@ class RiskPredictionService:
             weight_kg=source_profile.weight_kg,
             bmi=source_profile.bmi,
             waist_cm=source_profile.waist_cm,
-            walking_practice=walking_practice,
-            strength_exercise=strength_exercise,
+            walk_days=walk_days,
+            musc_days=musc_days,
             activity_input_source=ActivityInputSource.SERVICE_LOG,
             activity_window_days=activity_window_days,
             kidney_status=source_profile.kidney_status,
