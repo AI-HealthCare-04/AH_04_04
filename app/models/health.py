@@ -1,7 +1,19 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Date,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -19,9 +31,10 @@ from app.models.enums import (
 
 class HealthCheckSession(Base):
     __tablename__ = "health_check_sessions"
+    __table_args__ = (Index("ix_health_check_sessions_user_status_id", "user_id", "status", "session_id"),)
 
     session_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id"), nullable=False)
     status: Mapped[HealthCheckStatus] = mapped_column(
         Enum(HealthCheckStatus, values_callable=enum_values, name="health_check_status_enum"),
         nullable=False,
@@ -37,9 +50,10 @@ class HealthCheckSession(Base):
 
 class HealthProfile(Base):
     __tablename__ = "health_profiles"
+    __table_args__ = (Index("ix_health_profiles_user_created_id", "user_id", "created_at", "profile_id"),)
 
     profile_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id"), nullable=False)
     session_id: Mapped[int | None] = mapped_column(
         ForeignKey("health_check_sessions.session_id"),
         nullable=True,
