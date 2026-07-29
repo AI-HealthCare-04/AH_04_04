@@ -8,6 +8,10 @@ DB 재생성을 수행하면 사용자, 건강 프로필, 체력검사, 미션 �
 
 중요 데이터가 생긴 뒤에는 이 절차를 사용하지 말고, 먼저 별도의 백업·복구 정책을 수립한다.
 
+**전환 트리거:** 실사용자 온보딩이 시작되거나 보존해야 할 데이터가 생기는 즉시 이 문서를
+사용 중지 대상으로 표시하고 백업·복구 정책 이슈를 생성한다. 해당 정책이 준비되기 전에는
+이 문서의 DB 재생성 절차를 실행하지 않는다.
+
 ## 정상 배포 동작
 
 자동 배포와 `scripts/deployment.sh`는 다음 순서로 배포한다.
@@ -97,7 +101,24 @@ MySQL DDL은 완전히 트랜잭션으로 복구되지 않을 수 있다. 따라
    $COMPOSE up -d
    ```
 
-9. `/health`, 게스트 로그인, 미션 목록 조회를 smoke test한다.
+9. `/health`, 게스트 로그인, 미션 목록 조회를 smoke test한다. 아래 `BASE_URL`은 실제
+   도메인 또는 EC2 주소로 바꾼다.
+
+   ```bash
+   BASE_URL="https://<domain-or-EC2-IP>"
+
+   curl -fsS "${BASE_URL}/health"
+
+   ACCESS_TOKEN="$(
+     curl -fsS -X POST "${BASE_URL}/api/v1/auth/guest" \
+       | python3 -c 'import json, sys; print(json.load(sys.stdin)["access_token"])'
+   )"
+   test -n "${ACCESS_TOKEN}"
+
+   curl -fsS \
+     -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+     "${BASE_URL}/api/v1/missions"
+   ```
 
 ## 롤백 범위
 
