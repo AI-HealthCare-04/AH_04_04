@@ -81,7 +81,6 @@ Authorization: Bearer <access_token>
 ```json
 {
   "mission_log_id": 10,
-  "sensor_type": "step_counter",
   "detected_count": 1100,
   "duration_sec": 720,
   "motion_score": 0.87,
@@ -89,7 +88,7 @@ Authorization: Bearer <access_token>
   "raw_summary": { "avg_cadence": 95 }
 }
 ```
-- `sensor_type`: `accelerometer` | `gyroscope` | `step_counter`
+- 현재 MVP는 걷기 가속도계 결과만 지원하므로 `sensor_type`을 받거나 저장하지 않습니다.
 - `recognition_status`: `success` | `low_confidence` | `failed` | `manual_override`
 
 **응답 201**

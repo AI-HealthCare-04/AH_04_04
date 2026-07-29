@@ -25,7 +25,6 @@ from app.models.enums import (
     ActivityLevel,
     ActivitySource,
     ActivityType,
-    ExerciseCategory,
     GameType,
     InputMethod,
     Intensity,
@@ -33,7 +32,6 @@ from app.models.enums import (
     MissionType,
     PerceivedDifficulty,
     RecognitionStatus,
-    SensorType,
     SyncStatus,
     TargetUnit,
     enum_values,
@@ -55,27 +53,12 @@ class MissionTemplate(Base, TimestampMixin):
         nullable=False,
     )
     display_order: Mapped[int] = mapped_column(Integer, nullable=False)
-    exercise_category: Mapped[ExerciseCategory | None] = mapped_column(
-        Enum(ExerciseCategory, values_callable=enum_values, name="exercise_category_enum"),
-        nullable=True,
-    )
-    activity_type: Mapped[ActivityType | None] = mapped_column(
-        Enum(ActivityType, values_callable=enum_values, name="activity_type_enum"),
-        nullable=True,
-    )
     default_target_value: Mapped[int] = mapped_column(Integer, nullable=False)
     target_unit: Mapped[TargetUnit] = mapped_column(
         Enum(TargetUnit, values_callable=enum_values, name="target_unit_enum"),
         nullable=False,
     )
-    estimated_intensity: Mapped[Intensity | None] = mapped_column(
-        Enum(Intensity, values_callable=enum_values, name="intensity_enum"),
-        nullable=True,
-    )
-    met_value: Mapped[Decimal | None] = mapped_column(Numeric(4, 2), nullable=True)
-    evidence_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     requires_safety_notice: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    is_repeatable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     daily_count_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     reward_points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     requires_kidney_check: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -154,10 +137,6 @@ class SensorSession(Base):
 
     sensor_session_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     mission_log_id: Mapped[int] = mapped_column(ForeignKey("mission_logs.mission_log_id"), nullable=False, index=True)
-    sensor_type: Mapped[SensorType] = mapped_column(
-        Enum(SensorType, values_callable=enum_values, name="sensor_type_enum"),
-        nullable=False,
-    )
     detected_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     duration_sec: Mapped[int | None] = mapped_column(Integer, nullable=True)
     motion_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)

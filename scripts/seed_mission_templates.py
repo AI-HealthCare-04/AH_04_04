@@ -17,8 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.db.session import AsyncSessionLocal
 from app.models.enums import (
     ActivityLevel,
-    ActivityType,
-    Intensity,
     MissionType,
     TargetUnit,
 )
@@ -54,10 +52,8 @@ MISSION_TEMPLATES: list[dict] = [
         "description": "천천히 동네를 걸어요. 하루 20분을 채우면 완료예요. (여러 번 나눠 걸어도 합산돼요)",
         "level": ActivityLevel.EASY,
         "display_order": 10,
-        "activity_type": ActivityType.WALKING,
         "default_target_value": 20,
         "target_unit": TargetUnit.MINUTES,
-        "estimated_intensity": Intensity.LOW,
         "reward_points": 10,
     },
     {
@@ -66,10 +62,8 @@ MISSION_TEMPLATES: list[dict] = [
         "description": "천천히 동네를 걸어요. 하루 30분을 채우면 완료예요. (여러 번 나눠 걸어도 합산돼요)",
         "level": ActivityLevel.NORMAL,
         "display_order": 10,
-        "activity_type": ActivityType.WALKING,
         "default_target_value": 30,
         "target_unit": TargetUnit.MINUTES,
-        "estimated_intensity": Intensity.LOW,
         "reward_points": 10,
     },
     {
@@ -78,16 +72,14 @@ MISSION_TEMPLATES: list[dict] = [
         "description": "천천히 동네를 걸어요. 하루 40분을 채우면 완료예요. (여러 번 나눠 걸어도 합산돼요)",
         "level": ActivityLevel.HARD,
         "display_order": 10,
-        "activity_type": ActivityType.WALKING,
         "default_target_value": 40,
         "target_unit": TargetUnit.MINUTES,
-        "estimated_intensity": Intensity.LOW,
         "reward_points": 10,
     },
     # 운동 (안전 고지 필요)
     # 몸풀기/앉아서/서서/마무리는 '운동하기' 한 미션 안의 앱 UI 단계이고, 백엔드는 단일 미션으로 둔다.
     #   → 완료 기준: 3가지(=3회) 운동 수행(각 4분 기준 총 10분 이상). 성공 판정은 앱이 계산해 전송한다.
-    #   → 세션 전체 미션이라 단일 단계 값(exercise_category/activity_type)은 두지 않는다(None).
+    #   → 세션 전체 미션이며 단계별 운동 종류는 클라이언트 수행 상세에만 기록한다.
     {
         "mission_type": MissionType.EXERCISE,
         "title": "영상 따라 운동하기",
@@ -98,7 +90,6 @@ MISSION_TEMPLATES: list[dict] = [
         "display_order": 20,
         "default_target_value": 10,
         "target_unit": TargetUnit.MINUTES,
-        "estimated_intensity": Intensity.LOW,
         "requires_safety_notice": True,
         "reward_points": 10,
     },

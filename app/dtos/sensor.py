@@ -4,7 +4,7 @@
 #
 # ⚠️ recognition_status 값은 확정값(success/low_confidence/failed/manual_override)을 씁니다.
 #    (모델 enum이 아니라 확정값을 Literal로 직접 검증합니다.)
-#    sensor_type은 v7.8에서 제거됨 — 가속도계 단일이라 서버가 상수(SensorType.ACCELEROMETER)로 저장합니다.
+#    sensor_type은 v7.8에서 제거됨 — 가속도계 단일이라 DB에도 별도 종류를 저장하지 않습니다.
 # =====================================================================================
 from typing import Any, Literal
 

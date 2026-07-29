@@ -32,17 +32,3 @@ class DailyActivitySummary(Base):
         onupdate=func.now(),
         nullable=False,
     )
-
-
-class PointBalance(Base):
-    __tablename__ = "point_balances"
-
-    point_balance_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id"), nullable=False, unique=True)
-    current_points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
-    )
