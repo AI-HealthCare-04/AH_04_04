@@ -150,3 +150,34 @@ def test_timestamp_columns_have_defaults() -> None:
         if "updated_at" in table.columns:
             assert table.columns["updated_at"].server_default is not None
             assert table.columns["updated_at"].onupdate is not None
+
+
+def test_core_read_indexes_match_repository_query_patterns() -> None:
+    expected = {
+        "mission_logs": {
+            "ix_mission_logs_user_created_at": ("user_id", "created_at"),
+        },
+        "health_profiles": {
+            "ix_health_profiles_user_created_id": ("user_id", "created_at", "profile_id"),
+        },
+        "risk_predictions": {
+            "ix_risk_predictions_user_created_id": ("user_id", "created_at", "prediction_id"),
+        },
+        "health_check_sessions": {
+            "ix_health_check_sessions_user_status_id": ("user_id", "status", "session_id"),
+        },
+        "oauth_login_nonces": {
+            "ix_oauth_login_nonces_created_at": ("created_at",),
+        },
+    }
+    for table_name, expected_indexes in expected.items():
+        table = Base.metadata.tables[table_name]
+        actual = {
+            index.name: tuple(column.name for column in index.columns)
+            for index in table.indexes
+        }
+        assert expected_indexes.items() <= actual.items()
+
+    assert "ix_daily_activity_summaries_user_id" not in {
+        index.name for index in Base.metadata.tables["daily_activity_summaries"].indexes
+    }
