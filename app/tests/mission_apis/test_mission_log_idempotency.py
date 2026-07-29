@@ -26,6 +26,7 @@ API = "/api/v1"
 
 # 앱이 "이 기록을 만든 시각"으로 보내는 값. 재전송이면 이 값이 같다.
 DEVICE_TIME = "2026-07-22T10:00:00.123456+09:00"
+SAME_DEVICE_TIME_UTC = "2026-07-22T01:00:00.123456Z"
 OTHER_DEVICE_TIME = "2026-07-22T14:30:00.654321+09:00"
 
 
@@ -104,6 +105,41 @@ async def test_resend_with_same_device_time_returns_existing_log(
     points = (await db_client.get(f"{API}/users/me/points", headers=auth)).json()
     assert points["current_points"] == 5
     assert len(points["earn_logs"]) == 1
+
+
+# -------------------------------------------------------------------------------------
+# 1b. 같은 순간을 UTC/KST로 달리 표현해도 같은 수행으로 멱등 처리한다
+# -------------------------------------------------------------------------------------
+async def test_resend_with_equivalent_utc_and_kst_device_times_is_deduplicated(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    auth, user_id = await _guest(db_client)
+    template_id = await _seed_template(db_sessionmaker, mission_type=MissionType.GAME, reward_points=5)
+
+    first = await db_client.post(
+        f"{API}/mission-logs",
+        json=_game_body(template_id, SAME_DEVICE_TIME_UTC),
+        headers=auth,
+    )
+    again = await db_client.post(
+        f"{API}/mission-logs",
+        json=_game_body(template_id, DEVICE_TIME),
+        headers=auth,
+    )
+
+    assert first.status_code == status.HTTP_201_CREATED
+    assert again.status_code == status.HTTP_200_OK
+    assert again.json()["deduplicated"] is True
+    assert again.json()["mission_log_id"] == first.json()["mission_log_id"]
+    assert await _count_logs(db_sessionmaker, user_id) == 1
+
+    async with db_sessionmaker() as session:
+        stored = await session.scalar(select(MissionLog).where(MissionLog.user_id == user_id))
+        assert stored is not None
+        expected = datetime(2026, 7, 22, 10, 0, 0, 123456)
+        assert stored.created_on_device_at == expected
+        # performed_at은 기존 DATETIME(초 정밀도), 멱등키는 DATETIME(6)이다.
+        assert stored.performed_at == expected.replace(microsecond=0)
 
 
 # -------------------------------------------------------------------------------------

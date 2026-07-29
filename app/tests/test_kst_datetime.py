@@ -10,11 +10,15 @@ from datetime import UTC, datetime
 from pydantic import BaseModel
 
 from app.core import config
-from app.dtos.base import KstDatetime
+from app.dtos.base import KstDatetime, KstNaiveDatetime
 
 
 class _Model(BaseModel):
     at: KstDatetime
+
+
+class _InputModel(BaseModel):
+    at: KstNaiveDatetime
 
 
 def _serialized(value: datetime) -> str:
@@ -34,3 +38,19 @@ def test_utc_aware_is_normalized_to_kst() -> None:
 def test_kst_aware_stays_kst() -> None:
     # 이미 KST aware면 값·오프셋 그대로.
     assert _serialized(datetime(2026, 7, 13, 9, 15, 0, tzinfo=config.TIMEZONE)) == "2026-07-13T09:15:00+09:00"
+
+
+def test_utc_input_is_normalized_to_kst_naive_for_mysql_datetime() -> None:
+    assert _InputModel(at=datetime(2026, 7, 13, 0, 15, 0, tzinfo=UTC)).at == datetime(
+        2026,
+        7,
+        13,
+        9,
+        15,
+        0,
+    )
+
+
+def test_naive_input_remains_kst_local_time_for_backward_compatibility() -> None:
+    value = datetime(2026, 7, 13, 9, 15, 0)
+    assert _InputModel(at=value).at == value
