@@ -1,9 +1,7 @@
 # =====================================================================================
 # Sensor 도메인 Service — 센서 세션 저장.
 #
-# ⚠️ recognition_status는 v7.1 값(success/low_confidence/failed/manual_override)을 그대로
-#    DB에 넣습니다. dev 모델 enum이 아직 recognized/... 라서, 0002 마이그레이션 머지 전에는
-#    실제 저장이 enum 위반으로 실패할 수 있습니다. (코드는 v7.1 기준, 저장 테스트는 0002 이후)
+# recognition_status는 DTO와 DB enum이 공유하는 확정값을 사용합니다.
 # =====================================================================================
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,7 +31,6 @@ class SensorService:
             detected_count=data.detected_count,
             duration_sec=data.duration_sec,
             motion_score=data.motion_score,
-            # ⚠️ 0002 머지 전에는 "success"/"manual_override"가 모델 enum에 없어 여기서 ValueError가 날 수 있음.
             recognition_status=RecognitionStatus(data.recognition_status),
             raw_summary=data.raw_summary,
         )

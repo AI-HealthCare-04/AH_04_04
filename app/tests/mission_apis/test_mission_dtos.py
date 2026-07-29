@@ -5,7 +5,12 @@
 import pytest
 from pydantic import ValidationError
 
-from app.dtos.mission import MissionLogCreateRequest
+from app.dtos.mission import (
+    ExerciseDetail,
+    GameDetail,
+    MissionLogCreateRequest,
+    MissionLogUpdateRequest,
+)
 from app.dtos.sensor import SensorSessionCreateRequest
 
 
@@ -47,7 +52,42 @@ def test_mission_log_create_rejects_bad_game_type() -> None:
 def test_sensor_session_accepts_recognition_status() -> None:
     # 확정값 (sensor_type은 v7.8에서 제거 — 가속도계 단일)
     for value in ("success", "low_confidence", "failed", "manual_override"):
-        req = SensorSessionCreateRequest.model_validate(
-            {"mission_log_id": 1, "recognition_status": value}
-        )
+        req = SensorSessionCreateRequest.model_validate({"mission_log_id": 1, "recognition_status": value})
         assert req.recognition_status == value
+
+
+@pytest.mark.parametrize("field", ["score", "duration_sec", "success_count", "mistake_count"])
+def test_game_detail_rejects_negative_numeric_fields(field: str) -> None:
+    with pytest.raises(ValidationError):
+        GameDetail.model_validate({"game_type": "card_match", field: -1})
+
+
+@pytest.mark.parametrize("field", ["reps", "sets", "met_value"])
+def test_exercise_detail_rejects_negative_numeric_fields(field: str) -> None:
+    with pytest.raises(ValidationError):
+        ExerciseDetail.model_validate({field: -1})
+
+
+@pytest.mark.parametrize("field", ["actual_value", "target_value"])
+def test_mission_log_create_rejects_negative_numeric_fields(field: str) -> None:
+    with pytest.raises(ValidationError):
+        MissionLogCreateRequest.model_validate(
+            {
+                "mission_template_id": 1,
+                "mission_type": "exercise",
+                "status": "completed",
+                field: -1,
+            }
+        )
+
+
+@pytest.mark.parametrize("field", ["actual_value", "target_value"])
+def test_mission_log_update_rejects_negative_numeric_fields(field: str) -> None:
+    with pytest.raises(ValidationError):
+        MissionLogUpdateRequest.model_validate({field: -1})
+
+
+@pytest.mark.parametrize("field", ["detected_count", "duration_sec", "motion_score"])
+def test_sensor_session_rejects_negative_numeric_fields(field: str) -> None:
+    with pytest.raises(ValidationError):
+        SensorSessionCreateRequest.model_validate({"mission_log_id": 1, "recognition_status": "success", field: -1})

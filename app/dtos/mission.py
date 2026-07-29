@@ -69,10 +69,10 @@ class MealDetail(BaseModel):
 
 class GameDetail(BaseModel):
     game_type: GameType
-    score: int | None = None
-    duration_sec: int | None = None
-    success_count: int | None = None
-    mistake_count: int | None = None
+    score: int | None = Field(default=None, ge=0)
+    duration_sec: int | None = Field(default=None, ge=0)
+    success_count: int | None = Field(default=None, ge=0)
+    mistake_count: int | None = Field(default=None, ge=0)
     completed: bool = False
 
 
@@ -86,8 +86,8 @@ class MissionLogCreateRequest(BaseModel):
     safety_notice_confirmed_at: datetime | None = None
 
     # status=completed (식사/게임 즉시완료)
-    actual_value: float | None = None
-    target_value: float | None = None
+    actual_value: float | None = Field(default=None, ge=0)
+    target_value: float | None = Field(default=None, ge=0)
     target_unit: TargetUnit | None = None
     success: bool | None = None
     input_method: InputMethod | None = None
@@ -118,13 +118,13 @@ class MissionLogCreateResponse(BaseModel):
 class ExerciseDetail(BaseModel):
     activity_type: ActivityType | None = None
     intensity: Intensity | None = None
-    reps: int | None = None
-    sets: int | None = None
+    reps: int | None = Field(default=None, ge=0)
+    sets: int | None = Field(default=None, ge=0)
     # 걷기(WalkingDetail)와 같은 경계 방어. 운동 성공도 '당일 누적 시간'으로 판정하게 되면서,
     #   음수 시간을 보내 누적을 되돌려 '하루 1회' 적립을 우회하는 길이 여기에도 열린다.
     #   미측정(None)은 허용하되 0 이하는 거부한다.
     duration_min: float | None = Field(default=None, gt=0)
-    met_value: float | None = None
+    met_value: float | None = Field(default=None, ge=0)
 
 
 class WalkingDetail(BaseModel):
@@ -139,8 +139,8 @@ class MissionLogUpdateRequest(BaseModel):
     status: MissionStatus = MissionStatus.COMPLETED
 
     # 운동 완료
-    actual_value: float | None = None
-    target_value: float | None = None
+    actual_value: float | None = Field(default=None, ge=0)
+    target_value: float | None = Field(default=None, ge=0)
     target_unit: TargetUnit | None = None
     success: bool | None = None
     input_method: InputMethod | None = None
