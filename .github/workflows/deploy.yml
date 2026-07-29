@@ -173,11 +173,12 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
-          # 컨테이너가 뜬 직후엔 아직 못 받으므로 재시도한다. nginx는 /api/만 프록시하므로
-          # fastapi가 호스트에 노출한 8000 포트로 직접 확인한다.
+          # 컨테이너가 뜬 직후엔 아직 못 받으므로 재시도한다. fastapi 호스트 포트 매핑이 제거돼
+          # (#262 후속) 공개 HTTPS 경로로 확인한다 — nginx location = /health 가 fastapi 로 프록시하므로
+          # 사용자가 실제로 타는 nginx→fastapi 전체 경로가 함께 검증된다(직접 8000 확인보다 정확).
           script: |
-            curl -fsS --max-time 5 --retry 12 --retry-delay 5 --retry-all-errors \
-              http://localhost:8000/health
+            curl -fsS --max-time 10 --retry 12 --retry-delay 5 --retry-all-errors \
+              https://aigo-health.duckdns.org/health
 
       # 이전 버전 이미지 정리는 헬스체크를 통과한 뒤에만 한다.
       # 배포 스텝 안에서 돌리면, 헬스체크가 실패할 때는 이미 이전 이미지가 지워진 뒤라
