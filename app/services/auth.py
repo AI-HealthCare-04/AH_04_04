@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 import httpx
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
@@ -76,10 +77,22 @@ class AuthService:
                 user = await self.user_repo.restore(deleted)
                 is_new_user = False
             else:
-                user = await self.user_repo.create_social_user(
-                    provider, profile.social_id, profile.nickname or generate_nickname()
-                )
-                is_new_user = True
+                try:
+                    # 신규 사용자의 동시 로그인은 두 트랜잭션이 모두 "사용자 없음"을
+                    # 확인한 뒤 같은 (provider, social_id)를 생성하려 경쟁할 수 있다.
+                    # 사용자 INSERT만 SAVEPOINT로 감싸야 충돌을 복구하면서도 앞서
+                    # 기록한 OAuth nonce 소비 내역은 바깥 트랜잭션에 보존된다.
+                    async with self.session.begin_nested():
+                        user = await self.user_repo.create_social_user(
+                            provider, profile.social_id, profile.nickname or generate_nickname()
+                        )
+                    is_new_user = True
+                except IntegrityError:
+                    user = await self.user_repo.get_by_provider_social_id(provider, profile.social_id)
+                    if user is None:
+                        raise
+                    await self.user_repo.update_last_login(user)
+                    is_new_user = False
         await self.session.commit()
         await self.session.refresh(user)
         access_token = str(self.jwt_service.create_access_token(user))

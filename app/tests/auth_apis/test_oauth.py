@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -9,6 +10,9 @@ from httpx import AsyncClient
 from starlette import status
 
 from app.core import config
+from app.models.enums import AuthProvider
+from app.models.users import User
+from app.repositories.user_repository import UserRepository
 from app.services import auth as auth_module
 from app.services.oauth import OAuthProfile, _cache_ttl, _verify_id_token
 
@@ -116,3 +120,50 @@ async def test_google_login_rejects_reused_nonce(db_client: AsyncClient, monkeyp
     second = await db_client.post("/api/v1/auth/login/google", json=body)
     assert first.status_code == status.HTTP_200_OK
     assert second.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+async def test_concurrent_google_logins_with_different_nonces_reuse_created_user(
+    db_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(config, "GOOGLE_CLIENT_ID", "client-id")
+
+    async def fake_verify(token: str, nonce: str, client: httpx.AsyncClient) -> OAuthProfile:
+        return OAuthProfile(social_id="g-concurrent", nickname="동시 로그인 사용자")
+
+    original_get = UserRepository.get_by_provider_social_id
+    both_reads_finished = asyncio.Event()
+    read_count = 0
+
+    async def synchronize_first_read(
+        self: UserRepository,
+        provider: AuthProvider,
+        social_id: str,
+    ) -> User | None:
+        nonlocal read_count
+        user = await original_get(self, provider, social_id)
+        if user is None:
+            read_count += 1
+            if read_count == 2:
+                both_reads_finished.set()
+            await asyncio.wait_for(both_reads_finished.wait(), timeout=3)
+        return user
+
+    monkeypatch.setattr(auth_module, "verify_google_id_token", fake_verify)
+    monkeypatch.setattr(UserRepository, "get_by_provider_social_id", synchronize_first_read)
+    first_body = {"id_token": "signed-token", "nonce": "concurrent-nonce-value-1"}
+    second_body = {"id_token": "signed-token", "nonce": "concurrent-nonce-value-2"}
+
+    first, second = await asyncio.gather(
+        db_client.post("/api/v1/auth/login/google", json=first_body),
+        db_client.post("/api/v1/auth/login/google", json=second_body),
+    )
+
+    assert first.status_code == status.HTTP_200_OK
+    assert second.status_code == status.HTTP_200_OK
+    assert first.json()["user"]["user_id"] == second.json()["user"]["user_id"]
+    assert sorted((first.json()["is_new_user"], second.json()["is_new_user"])) == [False, True]
+
+    # 충돌한 요청도 nonce 소비가 rollback되지 않아 각각 재사용이 차단되어야 한다.
+    assert (await db_client.post("/api/v1/auth/login/google", json=first_body)).status_code == status.HTTP_401_UNAUTHORIZED
+    assert (await db_client.post("/api/v1/auth/login/google", json=second_body)).status_code == status.HTTP_401_UNAUTHORIZED
