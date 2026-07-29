@@ -1,6 +1,8 @@
 package com.aihealthcare.ah0404.exercise
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,9 +27,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
+import com.aihealthcare.ah0404.R
 import com.aihealthcare.ah0404.media.StreamingVideoPlayer
 import com.aihealthcare.ah0404.settings.AppSettings
 import com.aihealthcare.ah0404.network.ExerciseVideoItem
@@ -118,9 +124,21 @@ internal val BUNDLED_ROUTINES: List<BundledRoutine> = listOf(
 private fun bundledRoutineFile(stage: String): String? =
     BUNDLED_ROUTINES.firstOrNull { it.stage == stage }?.file
 
+/**
+ * 스트리밍 운동 단계의 포스터(선택 이미지). 있으면 바로 재생하지 않고 포스터를 먼저 보여주고, 탭하면 재생한다.
+ * 없으면 종전대로 바로 재생. (근력=seated, 서서=standing)
+ */
+private fun exercisePosterRes(stage: String): Int? = when (stage) {
+    "seated" -> R.drawable.exercise_poster_seated
+    "standing" -> R.drawable.exercise_poster_standing
+    else -> null
+}
+
 @UnstableApi
 @Composable
 private fun VideoArea(item: ExerciseVideoItem, onStartRoutine: (String) -> Unit) {
+    // 스트리밍 단계에서 포스터를 탭해 재생을 시작했는가. 탭(단계)이 바뀌면 다시 포스터부터.
+    var playing by remember(item.stage) { mutableStateOf(false) }
     Box(
         Modifier
             .fillMaxWidth()
@@ -145,12 +163,38 @@ private fun VideoArea(item: ExerciseVideoItem, onStartRoutine: (String) -> Unit)
                     Button(onClick = { onStartRoutine(bundledRoutine) }) { Text("운동 시작하기") }
                 }
             }
-            // 그 외 단계: 스트리밍 영상(서버 업로드 시).
-            item.available && url != null -> StreamingVideoPlayer(
-                url = url,
-                modifier = Modifier.fillMaxSize(),
-                speed = AppSettings.exerciseSpeedFor(AppSettings.exerciseDifficulty), // 운동 난이도별 재생 속도
-            )
+            // 스트리밍 단계: 포스터가 있으면 포스터→탭→재생(바로 재생 대신 선택 화면), 없으면 종전대로 바로 재생.
+            item.available && url != null -> {
+                val poster = exercisePosterRes(item.stage)
+                if (poster != null && !playing) {
+                    Box(
+                        Modifier.fillMaxSize().clickable { playing = true },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Image(
+                            painter = painterResource(poster),
+                            contentDescription = "${item.label} 시작하기",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        Text(
+                            "▶  눌러서 재생",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            modifier = Modifier
+                                .background(Color.Black.copy(alpha = 0.5f), MaterialTheme.shapes.large)
+                                .padding(horizontal = Dimens.Space16, vertical = Dimens.Space8),
+                        )
+                    }
+                } else {
+                    StreamingVideoPlayer(
+                        url = url,
+                        modifier = Modifier.fillMaxSize(),
+                        speed = AppSettings.exerciseSpeedFor(AppSettings.exerciseDifficulty), // 운동 난이도별 재생 속도
+                    )
+                }
+            }
             // 준비중(서버 업로드 전) — 탭은 유지하되 안내.
             else -> {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
