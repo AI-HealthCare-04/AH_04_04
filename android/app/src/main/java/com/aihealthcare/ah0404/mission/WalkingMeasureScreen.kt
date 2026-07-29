@@ -85,6 +85,20 @@ internal fun shouldShowPlacementHint(elapsedSec: Int, steps: Int): Boolean =
     steps == 0 && elapsedSec >= PLACEMENT_HINT_AFTER_SEC
 
 /**
+ * 목표 단위(target_unit)에 맞는 '걸음 수 안내' 문구를 고른다(#232, 리뷰 반영). null 이면 노출하지 않는다.
+ *
+ * 시간(minutes) 목표 미션에서만 "걸음 수는 참고용 — 성공은 걸은 시간"이 참이다. 앱은 걸음(steps) 목표
+ * 미션도 지원하며([walkingGoalReached] 가 steps 를 걸음 수로 성공 판정), 이때 화면 목표는 "N 걸음"이라
+ * "성공은 시간" 문구를 띄우면 목표와 모순된다. 걸음/미지 단위에는 노출하지 않는다(null).
+ * 단위 계약("minutes"/"steps"/else)은 [walkingGoalReached] 와 공유하며, 카피 선택을 순수 함수로
+ * 분리해 화면·기기 없이 단위 검증한다.
+ */
+internal fun walkingStepsReferenceNoteText(targetUnit: String): String? = when (targetUnit) {
+    "minutes" -> "걸음 수는 참고용이에요 — 미션 성공은 걸은 시간으로 정해져요."
+    else -> null // "steps"(걸음이 곧 성공 지표) 및 알 수 없는 단위: 오해 소지 문구를 띄우지 않는다.
+}
+
+/**
  * ============================================================================
  *  WalkingMeasureScreen : 걷기 미션 측정 화면 (#90 A-4b)
  * ============================================================================
@@ -289,6 +303,7 @@ fun WalkingMeasureScreen(
 
             WalkingSessionViewModel.Phase.MEASURING -> MeasuringContent(
                 ui = ui,
+                targetUnit = mission.targetUnit,
                 onFinish = vm::finish,
             )
 
@@ -299,6 +314,7 @@ fun WalkingMeasureScreen(
                 DoneContent(
                     ui = ui,
                     goalText = "${mission.targetValue} ${targetUnitLabel(mission.targetUnit)}",
+                    targetUnit = mission.targetUnit,
                     submitState = vm.submitState,
                     onRetry = { vm.submitWalking(mission.missionTemplateId) },
                     onConfirm = leave,
@@ -342,6 +358,7 @@ private fun ReadyContent(
 @Composable
 private fun MeasuringContent(
     ui: WalkingSessionViewModel.UiState,
+    targetUnit: String,
     onFinish: () -> Unit,
 ) {
     val walking = ui.walking
@@ -390,8 +407,9 @@ private fun MeasuringContent(
     // 🟡 #132: 보행 직후 곧바로 앉기 과다카운트 완화 안내(실사용 노출 지점).
     WalkSitGuidanceNote()
 
-    // #232: 걸음 수는 참고용(미션 성공은 시간 기반)임을 알려, 걸음이 낮게/높게 나와도 혼란을 줄인다.
-    WalkingStepsReferenceNote()
+    // #232: 시간 목표 미션에서만 '걸음 수=참고용' 문구를 노출한다 — 걸음 목표 미션은 걸음이 곧 성공 지표라
+    //   "성공은 시간" 문구가 목표("N 걸음")와 모순된다(리뷰 반영). 노출 여부는 순수 함수로 판정·검증한다.
+    walkingStepsReferenceNoteText(targetUnit)?.let { WalkingStepsReferenceNote(it) }
 
     AigoPrimaryButton(text = "측정 종료", onClick = onFinish)
 }
@@ -400,6 +418,7 @@ private fun MeasuringContent(
 private fun DoneContent(
     ui: WalkingSessionViewModel.UiState,
     goalText: String,
+    targetUnit: String,
     submitState: WalkingSessionViewModel.SubmitState,
     onRetry: () -> Unit,
     onConfirm: () -> Unit,
@@ -417,8 +436,8 @@ private fun DoneContent(
         ResultRow("오늘 목표", goalText)
     }
 
-    // #232: 걸음 수는 참고용(미션 성공은 시간 기반)임을 기록 화면에서도 동일 카피로 안내한다.
-    WalkingStepsReferenceNote()
+    // #232: 측정 화면과 동일 규칙 — 시간 목표 미션에서만 '걸음 수=참고용' 문구를 노출한다(리뷰 반영).
+    walkingStepsReferenceNoteText(targetUnit)?.let { WalkingStepsReferenceNote(it) }
 
     // 서버 저장 상태(#91). 성공은 조용히 안내, 실패는 재시도 버튼으로 사용자가 다시 시도한다.
     //   (자동 재전송 outbox 는 post-v1 #105 — v1 은 재시도 버튼으로 처리)

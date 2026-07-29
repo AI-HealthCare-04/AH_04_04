@@ -36,7 +36,8 @@ fun WalkingPlacementHint(modifier: Modifier = Modifier) {
             verticalArrangement = Arrangement.spacedBy(Dimens.Space4),
         ) {
             Text(
-                "🚶 걸음이 잘 잡히지 않고 있어요",
+                // 아직 걷지 않은 사용자(측정 시작 후 대기)에게도 뜰 수 있어 '실패' 단정 대신 중립 문두를 쓴다(리뷰 반영).
+                "🚶 아직 걸음이 잡히지 않아요",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onTertiaryContainer,
             )
@@ -50,17 +51,17 @@ fun WalkingPlacementHint(modifier: Modifier = Modifier) {
 }
 
 /**
- * '걸음 수는 참고 정보'임을 알리는 보조 문구(#232).
+ * '걸음 수는 참고 정보'임을 알리는 보조 문구(#232). 표시만 담당하는 순수 컴포넌트다.
  *
- * 미션 성공 판정은 서버가 당일 누적 '시간'으로 하므로(#91), 걸음 수는 정확 측정값이 아니라
- *   참고 지표다. 측정 화면·기록 화면 양쪽에 같은 카피로 노출해, 걸음 수가 낮게/높게 나와도
- *   미션 성공과 무관함을 알린다(과다카운트·과소계수 잔여 문제의 사용자 혼란 완화).
- * 카드가 아닌 옅은 캡션으로 둬 화면 잡음을 줄인다.
+ * 시간(minutes) 목표 미션에서만 미션 성공이 당일 누적 '시간'으로 정해지므로(#91) 걸음 수가
+ *   참고 지표다. 걸음(steps) 목표 미션은 걸음이 곧 성공 지표라 이 문구가 목표와 모순되므로,
+ *   노출 여부·카피는 호출부의 순수 함수(walkingStepsReferenceNoteText)가 결정하고 여기서는
+ *   전달받은 [text] 만 그린다(리뷰 반영). 카드가 아닌 옅은 캡션으로 둬 화면 잡음을 줄인다.
  */
 @Composable
-fun WalkingStepsReferenceNote(modifier: Modifier = Modifier) {
+fun WalkingStepsReferenceNote(text: String, modifier: Modifier = Modifier) {
     Text(
-        text = "걸음 수는 참고용이에요 — 미션 성공은 걸은 시간으로 정해져요.",
+        text = text,
         modifier = modifier.fillMaxWidth(),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
