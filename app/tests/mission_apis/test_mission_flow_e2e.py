@@ -74,7 +74,7 @@ def _meal_body(template_id: int, *, foods: list[str] | None = None, success: boo
         "mission_type": "meal",
         "status": "completed",
         "success": success,
-        "meal_detail": {"protein_foods": picks, "protein_meal_count": len(picks)},
+        "meal_detail": {"protein_foods": picks},
     }
 
 
@@ -90,9 +90,7 @@ def _game_body(template_id: int, *, success: bool = True) -> dict:
 
 async def _count_logs(sm: async_sessionmaker[AsyncSession], user_id: int) -> int:
     async with sm() as s:
-        return (
-            await s.scalar(select(func.count()).select_from(MissionLog).where(MissionLog.user_id == user_id))
-        ) or 0
+        return (await s.scalar(select(func.count()).select_from(MissionLog).where(MissionLog.user_id == user_id))) or 0
 
 
 async def _today_meal_log(sm: async_sessionmaker[AsyncSession], user_id: int) -> MealLog | None:
@@ -199,9 +197,7 @@ async def test_meal_concurrent_saves_do_not_duplicate(
     # 서로 다른 카테고리 조합(=다른 payload)이라 재전송 dedup(자연키)로도 안 걸린다.
     #   사용자 단위 잠금이 없으면 두 요청이 각각 '오늘 기록 없음'을 읽고 새 로그를 만들어 이중 적립된다.
     r1, r2 = await asyncio.gather(
-        db_client.post(
-            f"{API}/mission-logs", json=_meal_body(template_id, foods=["meat", "egg", "soy"]), headers=auth
-        ),
+        db_client.post(f"{API}/mission-logs", json=_meal_body(template_id, foods=["meat", "egg", "soy"]), headers=auth),
         db_client.post(
             f"{API}/mission-logs", json=_meal_body(template_id, foods=["fish", "dairy", "nuts"]), headers=auth
         ),
@@ -291,6 +287,9 @@ async def test_exercise_start_then_complete_awards_points(
         json={
             "status": "completed",
             "success": True,
+            "actual_value": 999,
+            "target_value": 999,
+            "target_unit": "count",
             "exercise_detail": {"activity_type": "seated_exercise", "duration_min": 10},
         },
         headers=auth,
@@ -305,6 +304,13 @@ async def test_exercise_start_then_complete_awards_points(
     #   (앱이 "목표 10분 중 4분" 같은 진행을 그릴 수 있게 — 예전에는 걷기 전용이라 None 이었다.)
     assert done_body["daily_total_min"] == 10.0
     assert done_body["daily_total_steps"] is None  # 걸음은 여전히 걷기 전용
+
+    async with db_sessionmaker() as session:
+        stored = await session.get(MissionLog, log_id)
+        assert stored is not None
+        assert float(stored.actual_value or 0) == 10.0
+        assert float(stored.target_value or 0) == 1.0
+        assert stored.target_unit == TargetUnit.MINUTES
 
     home = (await db_client.get(f"{API}/home", headers=auth)).json()
     assert home["point_balance"]["current_points"] == 15

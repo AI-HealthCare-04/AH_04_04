@@ -159,9 +159,7 @@ class MealLog(Base):
     )
     meal_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     protein_foods: Mapped[list[str]] = mapped_column(JSON, nullable=False)
-    protein_meal_count: Mapped[int] = mapped_column(Integer, nullable=False)
     raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    counted_for_daily: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
@@ -191,7 +189,6 @@ class PhysicalActivityLog(Base):
     reps: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sets: Mapped[int | None] = mapped_column(Integer, nullable=True)
     met_value: Mapped[Decimal | None] = mapped_column(Numeric(4, 2), nullable=True)
-    moderate_equivalent_min: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
     source: Mapped[ActivitySource] = mapped_column(
         Enum(ActivitySource, values_callable=enum_values, name="activity_source_enum"),
         nullable=False,

@@ -353,8 +353,6 @@ class MissionService:
             #   created_on_device_at(=dedup 자연키)은 '첫 저장' 값으로 유지한다 — 갱신하면 첫 저장의 오프라인
             #   재전송이 dedup 을 놓쳐 오래된 payload 로 되돌릴 수 있다. 재전송은 기존(최신) 기록을 그대로 받는다.
             existing_meal.protein_foods = foods
-            existing_meal.protein_meal_count = count
-            existing_meal.counted_for_daily = counted_for_daily
             # 자유텍스트도 최신 요청 값으로 갱신(지영 리뷰 #224): 카테고리만 갱신하고 raw_text 를
             #   남겨두면 '최신 카테고리 + 옛 설명' 혼합 상태가 된다.
             existing_meal.raw_text = raw_text
@@ -365,9 +363,7 @@ class MissionService:
                 mission_log.earned_points = earned_points
                 mission_log.performed_at = data.created_on_device_at
             log_id = existing_meal.mission_log_id
-            log_status = (
-                mission_log.status.value if mission_log is not None else MissionStatus.COMPLETED.value
-            )
+            log_status = mission_log.status.value if mission_log is not None else MissionStatus.COMPLETED.value
         else:
             log = MissionLog(
                 user_id=user.user_id,
@@ -387,9 +383,7 @@ class MissionService:
                     mission_log_id=log.mission_log_id,
                     meal_date=today_kst(),
                     protein_foods=foods,
-                    protein_meal_count=count,
                     raw_text=raw_text,
-                    counted_for_daily=counted_for_daily,
                 )
             )
             log_id = log.mission_log_id
@@ -482,6 +476,10 @@ class MissionService:
         # 걷기 종료: physical_activity_logs 저장 + 같은 날 합산
         if data.walking_detail is not None:
             wd = data.walking_detail
+            # 물리 활동 snapshot은 클라이언트의 중복 입력 대신 서버 판정값을 저장한다.
+            log.actual_value = Decimal(str(wd.duration_min))
+            log.target_value = Decimal(str(template.default_target_value)) if template else None
+            log.target_unit = template.target_unit if template else None
             await self.repo.add_physical_activity_log(
                 PhysicalActivityLog(
                     mission_log_id=log.mission_log_id,
@@ -511,6 +509,9 @@ class MissionService:
             ed = data.exercise_detail
             # _validate_completion_detail 에서 운동 완료 시 duration_min 필수를 이미 강제했다.
             duration_min = ed.duration_min if ed.duration_min is not None else 0.0
+            log.actual_value = Decimal(str(duration_min))
+            log.target_value = Decimal(str(template.default_target_value)) if template else None
+            log.target_unit = template.target_unit if template else None
             await self.repo.add_physical_activity_log(
                 PhysicalActivityLog(
                     mission_log_id=log.mission_log_id,

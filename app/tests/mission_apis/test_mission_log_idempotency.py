@@ -200,7 +200,7 @@ async def test_meal_resend_keeps_daily_count_intact(
         "status": "completed",
         "success": True,
         "created_on_device_at": DEVICE_TIME,
-        "meal_detail": {"protein_foods": ["meat", "egg", "soy"], "protein_meal_count": 3},
+        "meal_detail": {"protein_foods": ["meat", "egg", "soy"]},
     }
 
     first = await db_client.post(f"{API}/mission-logs", json=body, headers=auth)
