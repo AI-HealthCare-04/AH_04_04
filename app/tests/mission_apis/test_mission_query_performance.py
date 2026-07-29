@@ -1,11 +1,13 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from httpx import AsyncClient
+from pytest import MonkeyPatch
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+import app.repositories.mission_repository as mission_repository_module
 from app.models.enums import ActivityLevel, AuthProvider, MissionStatus, MissionType, OnboardingStatus, TargetUnit
-from app.models.missions import MissionLog, MissionTemplate
+from app.models.missions import MealLog, MissionLog, MissionTemplate
 from app.models.users import User
 from app.repositories.mission_repository import MissionRepository
 
@@ -107,3 +109,68 @@ async def test_mission_list_batches_today_meal_lookup(
     assert response.status_code == 200
     assert len(response.json()["missions"]) == 10
     assert meal_selects == 1
+
+
+async def test_meal_lookups_use_app_kst_business_date(
+    db_sessionmaker: async_sessionmaker[AsyncSession],
+    monkeypatch: MonkeyPatch,
+) -> None:
+    kst_day = date(2026, 7, 29)
+    monkeypatch.setattr(mission_repository_module, "today_kst", lambda: kst_day)
+
+    async with db_sessionmaker() as session:
+        user = User(
+            provider=AuthProvider.GUEST,
+            social_id="meal-kst-date-user",
+            nickname="QA",
+            onboarding_status=OnboardingStatus.COMPLETED,
+        )
+        template = MissionTemplate(
+            mission_type=MissionType.MEAL,
+            title="QA meal date",
+            level=ActivityLevel.EASY,
+            display_order=1,
+            default_target_value=1,
+            target_unit=TargetUnit.COUNT,
+            reward_points=1,
+        )
+        session.add_all([user, template])
+        await session.flush()
+
+        today_log = MissionLog(
+            user_id=user.user_id,
+            mission_template_id=template.mission_template_id,
+            mission_type=MissionType.MEAL,
+            status=MissionStatus.COMPLETED,
+        )
+        next_day_log = MissionLog(
+            user_id=user.user_id,
+            mission_template_id=template.mission_template_id,
+            mission_type=MissionType.MEAL,
+            status=MissionStatus.COMPLETED,
+        )
+        session.add_all([today_log, next_day_log])
+        await session.flush()
+        session.add_all(
+            [
+                MealLog(
+                    mission_log_id=today_log.mission_log_id,
+                    meal_date=kst_day,
+                    protein_foods=["today"],
+                ),
+                MealLog(
+                    mission_log_id=next_day_log.mission_log_id,
+                    meal_date=date(2026, 7, 30),
+                    protein_foods=["next-day"],
+                ),
+            ]
+        )
+        await session.commit()
+
+        repo = MissionRepository(session)
+        single = await repo.get_today_meal_log(user.user_id, template.mission_template_id)
+        batch = await repo.get_today_meal_logs(user.user_id, [template.mission_template_id])
+
+    assert single is not None
+    assert single.protein_foods == ["today"]
+    assert batch[template.mission_template_id].protein_foods == ["today"]

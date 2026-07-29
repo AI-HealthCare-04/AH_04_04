@@ -126,8 +126,9 @@ class MissionRepository:
         await self.session.flush()
 
     async def get_today_meal_log(self, user_id: int, mission_template_id: int) -> MealLog | None:
-        """오늘(current_date) 이 사용자·미션의 식사 기록. 재저장 upsert·today_log 복원에 쓴다. 없으면 None.
+        """KST 오늘 이 사용자·미션의 식사 기록. 재저장 upsert·today_log 복원에 쓴다. 없으면 None.
         MealLog 에는 user_id 가 없어 MissionLog 와 조인해 사용자로 거른다."""
+        today = today_kst()
         stmt = (
             select(MealLog)
             .join(MissionLog, MealLog.mission_log_id == MissionLog.mission_log_id)
@@ -135,7 +136,7 @@ class MissionRepository:
                 MissionLog.user_id == user_id,
                 MissionLog.mission_template_id == mission_template_id,
                 MissionLog.mission_type == MissionType.MEAL,
-                MealLog.meal_date == func.current_date(),
+                MealLog.meal_date == today,
             )
             .order_by(MealLog.meal_log_id.desc())
             .limit(1)
@@ -150,6 +151,7 @@ class MissionRepository:
         """여러 식사 템플릿의 오늘 최신 기록을 한 쿼리로 조회한다."""
         if not mission_template_ids:
             return {}
+        today = today_kst()
         stmt = (
             select(MissionLog.mission_template_id, MealLog)
             .join(MealLog, MealLog.mission_log_id == MissionLog.mission_log_id)
@@ -157,7 +159,7 @@ class MissionRepository:
                 MissionLog.user_id == user_id,
                 MissionLog.mission_template_id.in_(mission_template_ids),
                 MissionLog.mission_type == MissionType.MEAL,
-                MealLog.meal_date == func.current_date(),
+                MealLog.meal_date == today,
             )
             .order_by(MealLog.meal_log_id.desc())
         )
