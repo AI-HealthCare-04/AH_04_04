@@ -110,9 +110,9 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
-          # infra/nginx/default.conf는 올리지 않는다.
-          # 레포의 것은 server_name이 비어 있는 템플릿이고, 실제 도메인/HTTPS 설정이 반영된
-          # 파일이 이미 서버에 있다(deployment.sh가 sed로 생성해 올린 것). 덮어쓰면 nginx가 죽는다.
+          # infra/nginx/default.conf는 자동으로 올리지 않는다.
+          # 레포의 conf가 단일 원천이지만, conf 반영은 문법 검증(nginx -t) 후 reload가 필요해
+          # 수동 절차로 분리한다(infra/nginx/default.conf 상단 주석의 반영 절차 참고).
           source: "prod.env,infra/docker/docker-compose.prod.yml"
           target: ~/project
 
