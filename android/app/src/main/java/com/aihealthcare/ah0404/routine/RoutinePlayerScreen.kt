@@ -81,7 +81,7 @@ private val SafetyColor = Color(0xFFC62828)
 fun RoutinePlayerScreen(
     routineFile: String = "warmup_common.json",
     onExit: () -> Unit = {},
-    onComplete: () -> Unit = {},
+    onComplete: (durationMin: Float) -> Unit = {},
 ) {
     val context = LocalContext.current
     val routine = remember { RoutineLoader.load(context, routineFile) }
@@ -186,7 +186,9 @@ fun RoutinePlayerScreen(
     LaunchedEffect(finished) {
         if (finished) {
             bgmPlayer.pause(); clipPlayer.stop()
-            onComplete()
+            // 완주 시 실제 재생 길이(각 step sec 합, 분)를 넘긴다 — 루틴을 이미 로드한 플레이어가 단일 출처.
+            //   totalSec은 표시용이라 step 합을 쓴다. #234 운동 완료 배선(정인)이 이 분을 서버 당일 10분 누적에 합산.
+            onComplete(routine.steps.sumOf { it.sec } / 60f)
         }
     }
 

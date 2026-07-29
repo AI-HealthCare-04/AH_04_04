@@ -68,11 +68,16 @@
         <!-- 세로 고정: 전 화면이 시니어 대상 세로 전용 UI(가로 레이아웃 없음). 자동회전 시
              MainActivity 재생성으로 탭·측정 상태(센서 걸음수 등)가 전부 리셋되는 문제 방지(#122).
              대형 화면은 위 RESTRICTED_RESIZABILITY opt-out으로 함께 보장.
-             대형/폴더블 권장 경고는 v1의 의도적 결정이라 무시. -->
+             대형/폴더블 권장 경고는 v1의 의도적 결정이라 무시.
+             configChanges(orientation|screenSize): screenOrientation=portrait로 자동회전은 여전히 막되,
+             운동영상 '가로 전체화면'이 프로그램적으로 강제하는 가로 전환에서만 액티비티 재생성을 막는다
+             (그 순간은 걷기 측정 화면이 아니므로 #122 상태 리셋과 무관). 글꼴/다크모드 등 다른 구성 변경은
+             configChanges에 없어 종전대로 재생성된다. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:configChanges="orientation|screenSize|keyboardHidden"
             android:screenOrientation="portrait"
             android:theme="@style/Theme.MyApplication"
             android:windowSoftInputMode="adjustResize"
