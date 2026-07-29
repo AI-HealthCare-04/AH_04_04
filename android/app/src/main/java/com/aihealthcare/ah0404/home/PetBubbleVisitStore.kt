@@ -15,6 +15,7 @@ internal data class PetBubbleVisitState(
     val lastVisitEpochDay: Long,
     val lastMessageId: String?,
     val lastStreakKey: String? = null,
+    val shownMessageIds: Set<String> = emptySet(),
 )
 
 /** KST는 일광절약시간이 없는 UTC+9 고정 시간대라 epoch millis를 안전하게 날짜 번호로 바꿀 수 있다. */
@@ -63,6 +64,9 @@ internal class PetBubbleVisitStore(context: Context) {
                 lastVisitEpochDay = preferences.getLong(visitKey, -1L),
                 lastMessageId = preferences.getString(messageKey(userId), null),
                 lastStreakKey = preferences.getString(streakKey(userId), null),
+                shownMessageIds = preferences.getStringSet(messageIdsKey(userId), null)
+                    ?.toSet()
+                    ?: setOfNotNull(preferences.getString(messageKey(userId), null)),
             ).takeIf { it.lastVisitEpochDay >= 0L }
         }.getOrElse {
             clear(userId)
@@ -73,11 +77,13 @@ internal class PetBubbleVisitStore(context: Context) {
     fun write(userId: Int, state: PetBubbleVisitState): Boolean {
         if (userId <= 0 || state.lastVisitEpochDay < 0L || state.lastMessageId.isNullOrBlank()) return false
         return runCatching {
+            val merged = mergePetBubbleVisitState(read(userId), state)
             val editor = preferences.edit()
-                .putLong(visitKey(userId), state.lastVisitEpochDay)
-                .putString(messageKey(userId), state.lastMessageId)
+                .putLong(visitKey(userId), merged.lastVisitEpochDay)
+                .putString(messageKey(userId), merged.lastMessageId)
+                .putStringSet(messageIdsKey(userId), merged.shownMessageIds)
             // 일반 말풍선 기록이 뒤이어도 같은 스트릭 칭찬의 노출 이력은 보존한다.
-            state.lastStreakKey?.let { editor.putString(streakKey(userId), it) }
+            merged.lastStreakKey?.let { editor.putString(streakKey(userId), it) }
             editor.apply()
             true
         }.getOrDefault(false)
@@ -89,6 +95,7 @@ internal class PetBubbleVisitStore(context: Context) {
                 .remove(visitKey(userId))
                 .remove(messageKey(userId))
                 .remove(streakKey(userId))
+                .remove(messageIdsKey(userId))
                 .apply()
         }
     }
@@ -96,4 +103,37 @@ internal class PetBubbleVisitStore(context: Context) {
     private fun visitKey(userId: Int) = "user_${userId}_last_visit_epoch_day"
     private fun messageKey(userId: Int) = "user_${userId}_last_message_id"
     private fun streakKey(userId: Int) = "user_${userId}_last_streak_key"
+    private fun messageIdsKey(userId: Int) = "user_${userId}_shown_message_ids"
 }
+
+/**
+ * 같은 사용자·KST 날짜의 말풍선 이력을 누적한다.
+ *
+ * SharedPreferences 쓰기가 연달아 발생해도 마지막 write가 앞선 문구 이력을 덮어쓰지 않게,
+ * 저장 직전 상태와 새 상태를 병합한다. 날짜가 바뀌면 일반 문구 이력만 초기화하고 스트릭
+ * 중복 방지 키는 보존한다(키 자체에 서버 기준일이 포함돼 다음 마일스톤을 막지 않는다).
+ */
+internal fun mergePetBubbleVisitState(
+    previous: PetBubbleVisitState?,
+    next: PetBubbleVisitState,
+): PetBubbleVisitState {
+    val sameKstDay = previous?.lastVisitEpochDay == next.lastVisitEpochDay
+    val shownMessageIds = buildSet {
+        if (sameKstDay) addAll(previous.shownMessageIds)
+        addAll(next.shownMessageIds)
+        next.lastMessageId?.takeIf { it.isNotBlank() }?.let(::add)
+    }
+    return next.copy(
+        lastStreakKey = next.lastStreakKey ?: previous?.lastStreakKey,
+        shownMessageIds = shownMessageIds,
+    )
+}
+
+/** 이전 방문이 오늘인 경우에만 당일 노출 이력을 선택 정책에 전달한다. */
+internal fun shownMessageIdsForToday(
+    state: PetBubbleVisitState?,
+    todayEpochDay: Long,
+): Set<String> = state
+    ?.takeIf { it.lastVisitEpochDay == todayEpochDay }
+    ?.shownMessageIds
+    .orEmpty()

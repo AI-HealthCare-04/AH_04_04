@@ -14,7 +14,7 @@ internal data class PetBubbleContext(
     val hourOfDay: Int,
     val hasFreshHomeData: Boolean = true,
     val daysSinceLastVisit: Long? = null,
-    val excludedMessageId: String? = null,
+    val excludedMessageIds: Set<String> = emptySet(),
     val streakCurrentDays: Int = 0,
     val streakCompletedToday: Boolean = false,
     val streakAsOfDate: String? = null,
@@ -40,7 +40,7 @@ internal fun selectPetBubbleMessage(
     randomIndex: (Int) -> Int = { Random.Default.nextInt(it) },
 ): PetBubbleMessage {
     if ((context.daysSinceLastVisit ?: -1L) >= PET_REVISIT_AFTER_DAYS) {
-        return chooseFromGroups(listOf(revisitMessages), context.excludedMessageId, randomIndex)
+        return chooseFromGroups(listOf(revisitMessages), context.excludedMessageIds, randomIndex)
     }
 
     if (context.hasFreshHomeData) {
@@ -52,7 +52,7 @@ internal fun selectPetBubbleMessage(
             if (context.todayWalkingSteps > 0) add(walkingStepMessages(context.todayWalkingSteps))
         }
         if (achievementGroups.isNotEmpty()) {
-            return chooseFromGroups(achievementGroups, context.excludedMessageId, randomIndex)
+            return chooseFromGroups(achievementGroups, context.excludedMessageIds, randomIndex)
         }
     }
 
@@ -65,7 +65,7 @@ internal fun selectPetBubbleMessage(
         add(timeGreetingMessages(context.hourOfDay))
         add(generalEncouragementMessages(context.nickname))
     }
-    return chooseFromGroups(groups, context.excludedMessageId, randomIndex)
+    return chooseFromGroups(groups, context.excludedMessageIds, randomIndex)
 }
 
 internal fun isLateNight(hourOfDay: Int): Boolean = hourOfDay >= 22 || hourOfDay < 6
@@ -111,11 +111,11 @@ internal fun streakDeduplicationKey(asOfDate: String, currentDays: Int): String 
 
 private fun chooseFromGroups(
     groups: List<List<PetBubbleMessage>>,
-    excludedMessageId: String?,
+    excludedMessageIds: Set<String>,
     randomIndex: (Int) -> Int,
 ): PetBubbleMessage {
     val filteredGroups = groups
-        .map { group -> group.filterNot { it.id == excludedMessageId } }
+        .map { group -> group.filterNot { it.id in excludedMessageIds } }
         .filter { it.isNotEmpty() }
     val availableGroups = filteredGroups.ifEmpty { groups }
     val group = availableGroups[randomIndex(availableGroups.size).floorMod(availableGroups.size)]
