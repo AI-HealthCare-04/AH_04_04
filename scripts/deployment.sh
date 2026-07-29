@@ -94,7 +94,10 @@ ssh -i "${ssh_key_path}" "ubuntu@${ec2_ip}" \
   # 2) DB 스키마 최신화 (Dockerfile이 uvicorn만 실행하므로 배포 시 명시적으로 마이그레이션).
   #    --no-deps: 위에서 이미 띄운 mysql을 다시 건드리지 않는다.
   $COMPOSE run --rm --no-deps fastapi uv run --no-sync alembic upgrade head
-  # 3) 마이그레이션 성공 후에만 전체 서비스 기동 (실패 시 set -e로 여기서 중단)
+  # 3) 빈 DB 재생성 후에도 미션 기준 데이터가 준비되도록 멱등 seed를 실행한다.
+  #    migration/seed 중 하나라도 실패하면 set -e로 신규 앱 기동 전에 중단한다.
+  $COMPOSE run --rm --no-deps fastapi uv run --no-sync python -m scripts.seed_mission_templates
+  # 4) 마이그레이션·seed 성공 후에만 전체 서비스 기동
   $COMPOSE up -d
   docker image prune -af
 EOF

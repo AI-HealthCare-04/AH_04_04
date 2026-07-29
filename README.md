@@ -132,6 +132,9 @@ cd ~/project && DOCKER_USER=menteur DOCKER_REPOSITORY=ai-health APP_VERSION=<되
 
 배포 성공 시 이전 이미지는 정리되므로, 서버에 없으면 Docker Hub에서 다시 pull됩니다.
 
+DB migration이 비정상적으로 실패했고 보존할 중요 사용자 데이터가 없는 내부 심사용 MVP라면,
+[`docs/mvp-db-recovery.md`](docs/mvp-db-recovery.md)의 DB 재생성 절차를 사용합니다.
+
 ## 현재 MVP 범위
 
 포함:
