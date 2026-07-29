@@ -204,15 +204,20 @@ fun RoutinePlayerScreen(
         //   step이 바뀌면 프레임을 0으로 리셋하고, 자세가 바뀔 때 자막(guideByFrame)도 함께 바꾼다.
         var toggleFrame by remember(step) { mutableIntStateOf(0) }
         if (step.type == StepType.IMAGE_TOGGLE) {
-            LaunchedEffect(step) {
+            // 정지(paused) 중에는 토글을 멈추고, 재개 시 이미 진행한 toggleFrame부터 남은 컷만 이어간다(지영 리뷰 #250).
+            //   paused를 키에 넣어 정지 전환 때 effect가 취소되게 하고(정지 중 이미지·자막 고정), toggleFrame은
+            //   remember(step)라 정지/재개로 리셋되지 않으므로 재개 때 현재 프레임 이후만 진행한다. repeat 재시작이
+            //   아니라 toggleFrame<maxToggles 조건으로 이어가야 재개 때 초과 토글(첫 이미지로 되돌아감)이 없다.
+            LaunchedEffect(step, paused) {
+                if (paused) return@LaunchedEffect
                 val interval = step.interval ?: 3.5
                 val intervalMs = (interval * 1000).toLong()
                 // step.sec 동안 sec/interval 컷을 보여주고 **마지막 컷에서 멈춘다**. while(true)로 두면 종료 시점(sec)에
                 //   토글이 한 번 더 돌아 첫 이미지로 되돌아간 뒤 다음 step으로 넘어가는 깜빡임이 생긴다(끝에 여분 교차 방지).
                 val maxToggles = ((step.sec / interval).toInt() - 1).coerceAtLeast(0)
-                repeat(maxToggles) {
+                while (toggleFrame < maxToggles) {
                     delay(intervalMs)
-                    toggleFrame++
+                    if (toggleFrame < maxToggles) toggleFrame++
                 }
             }
         }
