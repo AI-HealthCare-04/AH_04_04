@@ -46,6 +46,9 @@ object RoutineLoader {
                 count = if (s.has("count")) s.getInt("count") else null,
                 mirror = s.optBoolean("mirror", false),
                 safety = s.optString("safety", "").ifEmpty { null },
+                assets = jsonStringList(s, "assets"),
+                interval = if (s.has("interval")) s.getDouble("interval") else null,
+                guideByFrame = jsonStringList(s, "guideByFrame"),
             )
         }
 
@@ -88,6 +91,14 @@ object RoutineLoader {
             if ((s.type == StepType.VIDEO || s.type == StepType.IMAGE) && s.asset == null) {
                 errors += "$where type=${s.type.name.lowercase()} 인데 asset이 없습니다"
             }
+            if (s.type == StepType.IMAGE_TOGGLE) {
+                if (s.assets == null || s.assets.size < 2) {
+                    errors += "$where type=image_toggle 인데 assets가 2개 미만입니다 (현재 ${s.assets?.size ?: 0})"
+                }
+                if (s.interval == null || s.interval <= 0) {
+                    errors += "$where type=image_toggle 인데 interval이 없거나 0 이하입니다 (현재 ${s.interval})"
+                }
+            }
         }
         return errors
     }
@@ -123,12 +134,23 @@ object RoutineLoader {
             if (s.type == StepType.IMAGE && s.asset != null && !assetImageExists(context, s.asset)) {
                 Log.w(TAG, "$file steps[$i]: 이미지 assets/exercise/${s.asset}.jpg 없음 (플레이스홀더 표시)")
             }
+            if (s.type == StepType.IMAGE_TOGGLE) {
+                s.assets?.forEach { a ->
+                    if (!assetImageExists(context, a)) {
+                        Log.w(TAG, "$file steps[$i]: 이미지 assets/exercise/$a.jpg 없음 (플레이스홀더 표시)")
+                    }
+                }
+            }
         }
         val sum = routine.steps.sumOf { it.sec }
         if (routine.totalSec != sum) {
             Log.w(TAG, "$file: totalSec(${routine.totalSec}) != 각 단계 합($sum) — 표시용 값 갱신 권장")
         }
     }
+
+    /** JSON 문자열 배열을 List<String>로. 키가 없으면 null. (image_toggle의 assets·guideByFrame용) */
+    private fun jsonStringList(obj: JSONObject, key: String): List<String>? =
+        if (obj.has(key)) obj.getJSONArray(key).let { arr -> (0 until arr.length()).map { arr.getString(it) } } else null
 
     private inline fun <reified T : Enum<T>> parseEnum(raw: String, field: String, file: String, idx: Int): T =
         enumValues<T>().firstOrNull { it.name.equals(raw, ignoreCase = true) }

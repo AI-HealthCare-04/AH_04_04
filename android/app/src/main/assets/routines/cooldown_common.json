@@ -34,8 +34,10 @@
 
     { "type": "notice", "sec": 3, "name": "의자에 앉아주세요", "guide": "이제 앉아서 마무리해요" },
 
-    { "type": "video", "asset": "cat_camel_loop", "sec": 21, "mode": "count", "count": 6,
-      "name": "고양이 낙타 스트레칭", "guide": "등을 둥글게 말았다가 활짝 펴요" },
+    { "type": "image_toggle", "assets": ["cat_pose", "camel_pose"], "interval": 3.5,
+      "sec": 21, "mode": "count", "count": 3,
+      "name": "고양이 낙타 스트레칭", "guide": "등을 둥글게 말았다가 가슴을 활짝 펴요",
+      "guideByFrame": ["등을 둥글게 말아요", "가슴을 활짝 펴요"] },
 
     { "type": "image", "asset": "neck_5", "sec": 5, "mode": "timer", "name": "목 늘리기", "guide": "고개를 천천히 앞으로 숙여요" },
     { "type": "image", "asset": "neck_6", "sec": 5, "mode": "timer", "name": "목 늘리기", "guide": "고개를 천천히 뒤로 젖혀요" },

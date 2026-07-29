@@ -71,6 +71,32 @@ class RoutineValidationTest {
     }
 
     @Test
+    fun `image_toggle는 assets 2개와 interval이 있으면 정상`() {
+        val r = routine(
+            listOf(
+                Step(
+                    type = StepType.IMAGE_TOGGLE, sec = 21, name = "고양이 낙타", mode = StepMode.COUNT, count = 6,
+                    assets = listOf("cat_pose", "camel_pose"), interval = 3.5,
+                ),
+            ),
+        )
+        assertTrue(RoutineLoader.validateStructure(r).isEmpty())
+    }
+
+    @Test
+    fun `image_toggle는 assets가 2개 미만이거나 interval이 없으면 오류`() {
+        val fewAssets = routine(
+            listOf(Step(type = StepType.IMAGE_TOGGLE, sec = 21, name = "x", mode = StepMode.COUNT, count = 6, assets = listOf("cat_pose"), interval = 3.5)),
+        )
+        assertTrue(RoutineLoader.validateStructure(fewAssets).any { it.contains("assets") })
+
+        val noInterval = routine(
+            listOf(Step(type = StepType.IMAGE_TOGGLE, sec = 21, name = "x", mode = StepMode.COUNT, count = 6, assets = listOf("a", "b"), interval = null)),
+        )
+        assertTrue(RoutineLoader.validateStructure(noInterval).any { it.contains("interval") })
+    }
+
+    @Test
     fun `video 또는 image인데 asset이 없으면 오류`() {
         assertTrue(
             RoutineLoader.validateStructure(routine(listOf(step(type = StepType.VIDEO, asset = null))))

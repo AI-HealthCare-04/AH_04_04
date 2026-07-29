@@ -28,6 +28,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -198,10 +200,31 @@ fun RoutinePlayerScreen(
     ) {
         if (step == null) return@Column
 
+        // image_toggle: interval 주기로 두 정지 이미지를 번갈아 표시(고양이 낙타 등 AI 영상이 실패하는 동작).
+        //   step이 바뀌면 프레임을 0으로 리셋하고, 자세가 바뀔 때 자막(guideByFrame)도 함께 바꾼다.
+        var toggleFrame by remember(step) { mutableIntStateOf(0) }
+        if (step.type == StepType.IMAGE_TOGGLE) {
+            LaunchedEffect(step) {
+                val interval = step.interval ?: 3.5
+                val intervalMs = (interval * 1000).toLong()
+                // step.sec 동안 sec/interval 컷을 보여주고 **마지막 컷에서 멈춘다**. while(true)로 두면 종료 시점(sec)에
+                //   토글이 한 번 더 돌아 첫 이미지로 되돌아간 뒤 다음 step으로 넘어가는 깜빡임이 생긴다(끝에 여분 교차 방지).
+                val maxToggles = ((step.sec / interval).toInt() - 1).coerceAtLeast(0)
+                repeat(maxToggles) {
+                    delay(intervalMs)
+                    toggleFrame++
+                }
+            }
+        }
+        val displayGuide = step.guideByFrame
+            ?.takeIf { step.type == StepType.IMAGE_TOGGLE && it.isNotEmpty() }
+            ?.let { it[toggleFrame % it.size] }
+            ?: step.guide
+
         // 영상이 주인공 → 헤더·타이머는 절제(동작명 30sp/안내 20sp/타이머 100dp)해 weight 미디어에 세로를 몰아줌.
         Text(step.name, fontSize = 30.sp, lineHeight = 38.sp, fontWeight = FontWeight.Bold, color = InkColor, textAlign = TextAlign.Center)
-        if (step.guide.isNotEmpty()) {
-            Text(step.guide, fontSize = 20.sp, lineHeight = 28.sp, color = InkColor, textAlign = TextAlign.Center, maxLines = 2)
+        if (displayGuide.isNotEmpty()) {
+            Text(displayGuide, fontSize = 20.sp, lineHeight = 28.sp, color = InkColor, textAlign = TextAlign.Center, maxLines = 2)
         }
         step.safety?.let {
             Text("⚠ $it", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = SafetyColor, textAlign = TextAlign.Center)
@@ -235,6 +258,24 @@ fun RoutinePlayerScreen(
                             )
                         } else {
                             Text("[이미지: ${step.asset}]", fontSize = 20.sp, color = Color.Gray)
+                        }
+                    }
+                    StepType.IMAGE_TOGGLE -> {
+                        // 두 정지 이미지를 200ms 크로스페이드로 부드럽게 교차(딱 끊기면 시니어가 놀람, 명세 §3-0).
+                        val assets = step.assets.orEmpty()
+                        val currentAsset = assets.getOrNull(toggleFrame % assets.size.coerceAtLeast(1))
+                        Crossfade(targetState = currentAsset, animationSpec = tween(200), label = "poseToggle") { a ->
+                            val bmp = rememberAssetImage(context, a)
+                            if (bmp != null) {
+                                Image(
+                                    bitmap = bmp,
+                                    contentDescription = step.name,
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            } else {
+                                Text("[이미지: $a]", fontSize = 20.sp, color = Color.Gray)
+                            }
                         }
                     }
                     else -> Text(step.name, fontSize = 34.sp, lineHeight = 42.sp, fontWeight = FontWeight.Bold, color = InkColor, textAlign = TextAlign.Center)
