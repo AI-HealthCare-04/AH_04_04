@@ -21,7 +21,14 @@ enum class MissionDestination {
     /** 게임: 미니게임 영상 화면(MiniGameScreen). 서버 /videos 로 스트리밍하는 짧은 재미 영상. */
     MINI_GAME,
 
-    /** 아직 수행 화면이 없는 유형(식사 등): '준비 중' 안내 화면. */
+    /**
+     * 식사: 단백질 식사 기록 화면(ProteinChallengeScreen). 신장질환자를 제외한 사용자가
+     * 오늘 먹은 단백질 카테고리를 골라 저장한다. 걷기와 달리 이 화면이 유일한 기록 지점이다
+     * (즉시완료 미션이라 별도 세션 흐름이 없다).
+     */
+    PROTEIN_MEAL,
+
+    /** 아직 수행 화면이 없는 유형: '준비 중' 안내 화면. */
     COMING_SOON,
 }
 
@@ -34,5 +41,25 @@ internal fun missionDestination(missionType: String): MissionDestination =
         "walking" -> MissionDestination.WALKING
         "exercise" -> MissionDestination.EXERCISE_VIDEOS
         "game" -> MissionDestination.MINI_GAME
+        "meal" -> MissionDestination.PROTEIN_MEAL
         else -> MissionDestination.COMING_SOON
     }
+
+/**
+ * 미션 카드 하단 CTA 문구 — 목적지가 실제 수행/기록 화면인 유형은 그에 맞는 행동을 안내한다(리뷰 #225).
+ * '준비 중'은 **수행 화면이 정말 없는 유형(COMING_SOON)에만** 쓴다 — 운동 영상(#219)·미니게임(#220)·
+ * 식사 기록처럼 실화면이 있는 유형에 '준비 중'을 표시하면 사용자가 기능이 없는 줄 안다(리뷰 #225 2차).
+ * 순수 함수 — 라우팅 규칙과 함께 JVM 단위테스트로 고정한다.
+ */
+internal fun missionCtaLabel(missionType: String): String =
+    when (missionDestination(missionType)) {
+        MissionDestination.WALKING -> "눌러서 측정 시작 →"
+        MissionDestination.PROTEIN_MEAL -> "눌러서 기록하기 →"
+        MissionDestination.EXERCISE_VIDEOS -> "눌러서 운동 영상 보기 →"
+        MissionDestination.MINI_GAME -> "눌러서 게임 하기 →"
+        MissionDestination.COMING_SOON -> "준비 중 · 눌러서 보기 →"
+    }
+
+/** CTA 를 강조색으로 그릴지 — 실제 수행/기록 화면으로 바로 이어지는 유형만 강조한다. */
+internal fun missionCtaHighlighted(missionType: String): Boolean =
+    missionDestination(missionType) != MissionDestination.COMING_SOON

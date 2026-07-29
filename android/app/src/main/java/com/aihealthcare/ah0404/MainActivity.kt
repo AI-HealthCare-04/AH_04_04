@@ -43,6 +43,8 @@ import com.aihealthcare.ah0404.home.HomeScreen
 import com.aihealthcare.ah0404.mission.ComingSoonScreen
 import com.aihealthcare.ah0404.mission.MiniGameScreen
 import com.aihealthcare.ah0404.mission.MissionDestination
+import com.aihealthcare.ah0404.mission.MissionViewModel
+import com.aihealthcare.ah0404.mission.ProteinChallengeScreen
 import com.aihealthcare.ah0404.mission.MissionScreen
 import com.aihealthcare.ah0404.mission.WalkingMeasureScreen
 import com.aihealthcare.ah0404.mission.missionDestination
@@ -250,7 +252,24 @@ private fun MainContent(
         return
     }
 
-    // '준비 중' 오버레이(#93). 수행 화면이 아직 없는 유형(운동·식사·게임)을 누르면 진입.
+    // 단백질 식사 기록 오버레이. 미션 목록에서 식사 미션을 고르면 진입(이 화면이 유일한 기록 지점).
+    var proteinMission by rememberSaveable(stateSaver = MissionStateSaver) {
+        mutableStateOf<Mission?>(null)
+    }
+    // Activity 범위 MissionViewModel — MissionScreen 과 같은 인스턴스다. 저장 성공 시 목록을 재조회해
+    //   today_log 를 서버 권위값으로 갱신한다(리뷰 #225 P1: 갱신 없이는 VM 이 보존한 stale 목록으로
+    //   재진입 선택 복원이 저장 직후 깨진다).
+    val missionVm: MissionViewModel = viewModel()
+    proteinMission?.let { mission ->
+        ProteinChallengeScreen(
+            mission = mission,
+            onBack = { proteinMission = null },
+            onSaved = { missionVm.loadMissions() },
+        )
+        return
+    }
+
+    // '준비 중' 오버레이(#93). 수행 화면이 아직 없는 유형을 누르면 진입.
     var comingSoonMission by rememberSaveable(stateSaver = MissionStateSaver) {
         mutableStateOf<Mission?>(null)
     }
@@ -318,7 +337,6 @@ private fun MainContent(
                 onGoMissions = { selectedTab = MainTab.MISSIONS },
                 onOpenSettings = { selectedTab = MainTab.SETTINGS },
                 onOpenRecords = { selectedTab = MainTab.RECORDS },
-                onOpenExercise = { subScreen = "exercise" },
                 modifier = contentModifier,
             )
             MainTab.MISSIONS -> MissionScreen(
@@ -331,6 +349,7 @@ private fun MainContent(
                         // 홈의 '영상 따라 운동하기'와 같은 목적지 — 미션 탭만 '준비 중'으로 막던 문제 해소(#162).
                         MissionDestination.EXERCISE_VIDEOS -> subScreen = "exercise"
                         MissionDestination.MINI_GAME -> subScreen = "minigame"
+                        MissionDestination.PROTEIN_MEAL -> proteinMission = mission
                         MissionDestination.COMING_SOON -> comingSoonMission = mission
                     }
                 },

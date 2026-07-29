@@ -113,13 +113,13 @@ class WalkingSessionViewModel(
     }
 
     /**
-     * 화면이 세션 상태 변화(confirmed/steps) 때 호출 — 이번에 **새로 발생한** 피드백 신호만 반환한다.
+     * 화면이 세션 상태 변화 때 호출 — 이번에 **새로 발생한** 피드백 신호만 반환한다.
      * 트래커가 VM 수명이라 구성 변경 후 같은 상태를 다시 전달해도 중복되지 않는다.
      *
-     * @param goalSteps 목표 걸음 수(단위가 걸음일 때만). null/0 이하면 목표 도달 신호를 내지 않는다.
+     * @param goalReached 오늘 목표(분/걸음)에 도달했는가. 화면이 [walkingGoalReached] 로 단위에 맞게 계산해 넘긴다.
      */
-    fun drainFeedbackCues(goalSteps: Int?): List<WalkingFeedbackCue> =
-        feedbackTracker.onUpdate(uiState.confirmed, uiState.steps, goalSteps)
+    fun drainFeedbackCues(goalReached: Boolean): List<WalkingFeedbackCue> =
+        feedbackTracker.onUpdate(uiState.confirmed, goalReached)
 
     /** 화면이 측정 중 동안 주기적으로 호출 — 세션에서 걸음/상태/경과를 읽어 반영한다. */
     fun poll() {

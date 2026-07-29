@@ -318,12 +318,13 @@ class WalkingSessionViewModelTest {
         fake.steps = 100
         vm.poll()
 
+        // 목표 도달 판정(분/걸음)은 화면의 walkingGoalReached 몫이라, VM 엔 goalReached 불린만 온다.
         assertEquals(
             listOf(WalkingFeedbackCue.STARTED, WalkingFeedbackCue.GOAL_REACHED),
-            vm.drainFeedbackCues(goalSteps = 100),
+            vm.drainFeedbackCues(goalReached = true),
         )
         // 재구성 후 같은 상태 재전달 → 중복 없음.
-        assertEquals(emptyList<WalkingFeedbackCue>(), vm.drainFeedbackCues(goalSteps = 100))
+        assertEquals(emptyList<WalkingFeedbackCue>(), vm.drainFeedbackCues(goalReached = true))
     }
 
     @Test
@@ -337,26 +338,26 @@ class WalkingSessionViewModelTest {
         fake.state = WalkingStepDetectorLogic.State.WALKING
         fake.steps = 5
         vm.poll()
-        assertEquals(listOf(WalkingFeedbackCue.STARTED), vm.drainFeedbackCues(goalSteps = null))
+        assertEquals(listOf(WalkingFeedbackCue.STARTED), vm.drainFeedbackCues(goalReached = false))
 
         vm.reset()          // 화면 이탈 — 실제 앱에서 leave() 가 하는 일(MEASURING 이탈 + 트래커 초기화)
         vm.startMeasuring() // 새 세션
         fake.state = WalkingStepDetectorLogic.State.WALKING
         fake.steps = 5
         vm.poll()
-        assertEquals(listOf(WalkingFeedbackCue.STARTED), vm.drainFeedbackCues(goalSteps = null))
+        assertEquals(listOf(WalkingFeedbackCue.STARTED), vm.drainFeedbackCues(goalReached = false))
     }
 
     @Test
-    fun no_goal_cue_when_unit_is_not_steps() {
-        // 목표 단위가 걸음이 아니면(goalSteps=null) 목표 도달 신호를 내지 않는다.
+    fun no_goal_cue_when_goal_not_reached() {
+        // 목표 미도달(goalReached=false)이면 목표 도달 신호를 내지 않는다(도달 판정은 화면 walkingGoalReached 몫).
         val fake = FakeController()
         val vm = WalkingSessionViewModel(fake)
         vm.startMeasuring()
         fake.state = WalkingStepDetectorLogic.State.WALKING
         fake.steps = 9999
         vm.poll()
-        assertEquals(listOf(WalkingFeedbackCue.STARTED), vm.drainFeedbackCues(goalSteps = null))
+        assertEquals(listOf(WalkingFeedbackCue.STARTED), vm.drainFeedbackCues(goalReached = false))
     }
 
     @Test
