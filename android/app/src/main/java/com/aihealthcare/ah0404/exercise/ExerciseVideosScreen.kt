@@ -27,7 +27,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -167,26 +166,14 @@ private fun VideoArea(item: ExerciseVideoItem, onStartRoutine: (String) -> Unit)
             item.available && url != null -> {
                 val poster = exercisePosterRes(item.stage)
                 if (poster != null && !playing) {
-                    Box(
-                        Modifier.fillMaxSize().clickable { playing = true },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Image(
-                            painter = painterResource(poster),
-                            contentDescription = "${item.label} 시작하기",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                        Text(
-                            "▶  눌러서 재생",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            modifier = Modifier
-                                .background(Color.Black.copy(alpha = 0.5f), MaterialTheme.shapes.large)
-                                .padding(horizontal = Dimens.Space16, vertical = Dimens.Space8),
-                        )
-                    }
+                    // 포스터 자체에 ▶ 재생 버튼·안내 문구가 그려져 있어 별도 오버레이는 두지 않는다(중복 방지).
+                    //   16:9 포스터를 16:9 박스에 Fit — 잘림 없이 카드 전체가 보인다. 탭하면 스트리밍 재생.
+                    Image(
+                        painter = painterResource(poster),
+                        contentDescription = "${item.label} 시작하기",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize().clickable { playing = true },
+                    )
                 } else {
                     StreamingVideoPlayer(
                         url = url,
