@@ -288,7 +288,7 @@ class PetBubbleMessagesTest {
         val message = selectPetBubbleMessage(
             context(
                 daysSinceLastVisit = 0,
-                excludedMessageId = "afternoon_easy",
+                excludedMessageIds = setOf("afternoon_easy"),
                 hourOfDay = 12,
             ),
             choosing(0, 0),
@@ -302,12 +302,41 @@ class PetBubbleMessagesTest {
         val message = selectPetBubbleMessage(
             context(
                 daysSinceLastVisit = 7,
-                excludedMessageId = "revisit_welcome",
+                excludedMessageIds = setOf("revisit_welcome"),
             ),
             choosing(0, 0),
         )
 
         assertEquals("revisit_missed", message.id)
+    }
+
+    @Test
+    fun sameDayMessages_doNotRepeatUntilTheAvailablePoolIsExhausted() {
+        val shown = mutableSetOf<String>()
+
+        // 오후 인사 2개 + 일반 격려 5개를 모두 한 번씩 소비하기 전에는 A→B→A 반복이 없어야 한다.
+        repeat(7) {
+            val message = selectPetBubbleMessage(
+                context(
+                    daysSinceLastVisit = 0,
+                    excludedMessageIds = shown.toSet(),
+                    hourOfDay = 12,
+                ),
+                choosing(0, 0),
+            )
+            assertTrue("같은 KST 날짜에는 아직 안 본 문구를 선택해야 합니다.", shown.add(message.id))
+        }
+
+        // 유효 후보를 전부 소비한 뒤에는 홈 말풍선이 사라지지 않도록 기존 풀을 다시 사용할 수 있다.
+        val messageAfterExhaustion = selectPetBubbleMessage(
+            context(
+                daysSinceLastVisit = 0,
+                excludedMessageIds = shown.toSet(),
+                hourOfDay = 12,
+            ),
+            choosing(0, 0),
+        )
+        assertTrue(messageAfterExhaustion.id in shown)
     }
 
     private fun context(
@@ -320,7 +349,7 @@ class PetBubbleMessagesTest {
         hourOfDay: Int = 12,
         hasFreshHomeData: Boolean = true,
         daysSinceLastVisit: Long? = null,
-        excludedMessageId: String? = null,
+        excludedMessageIds: Set<String> = emptySet(),
         streakCurrentDays: Int = 0,
         streakCompletedToday: Boolean = false,
         streakAsOfDate: String? = null,
@@ -337,7 +366,7 @@ class PetBubbleMessagesTest {
         hourOfDay = hourOfDay,
         hasFreshHomeData = hasFreshHomeData,
         daysSinceLastVisit = daysSinceLastVisit,
-        excludedMessageId = excludedMessageId,
+        excludedMessageIds = excludedMessageIds,
         streakCurrentDays = streakCurrentDays,
         streakCompletedToday = streakCompletedToday,
         streakAsOfDate = streakAsOfDate,
