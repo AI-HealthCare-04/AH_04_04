@@ -2,7 +2,9 @@ package com.aihealthcare.ah0404.fitness
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.os.Bundle
 import android.speech.tts.TextToSpeech
+import com.aihealthcare.ah0404.settings.AppSettings
 import java.util.Locale
 
 /**
@@ -42,13 +44,19 @@ class StsAssessmentTts(context: Context) {
     /** 카운트 — 항상 최신 것으로 교체(QUEUE_FLUSH). 빈 문자열은 발화하지 않는다. */
     fun speakCount(word: String) {
         if (!ready || !languageAvailable || word.isBlank()) return
-        tts?.speak(word, TextToSpeech.QUEUE_FLUSH, null, "sts_count")
+        tts?.speak(word, TextToSpeech.QUEUE_FLUSH, volumeParams(), "sts_count")
     }
 
     /** 안내문 — 순서대로(QUEUE_ADD). */
     fun speakGuide(text: String) {
         if (!ready || !languageAvailable || text.isBlank()) return
-        tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "sts_guide")
+        tts?.speak(text, TextToSpeech.QUEUE_ADD, volumeParams(), "sts_guide")
+    }
+
+    // 사용자 소리 크기 설정(sound_size)을 발화 음량에 반영(#237). STS는 자체 TTS 인스턴스라 공용 배선과 별개로
+    //   발화마다 현재 설정값을 실어 준다(전에는 params=null 이라 항상 기본 음량이었다).
+    private fun volumeParams() = Bundle().apply {
+        putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, AppSettings.soundScale.coerceIn(0f, 1f))
     }
 
     /** 현재 발화 중단(화면 이탈·중단 버튼). */

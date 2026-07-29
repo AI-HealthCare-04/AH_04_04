@@ -62,6 +62,8 @@ import kotlinx.serialization.json.Json
 import com.aihealthcare.ah0404.onboarding.OnboardingScreen
 import com.aihealthcare.ah0404.profile.ProfileScreen
 import com.aihealthcare.ah0404.record.RecordScreen
+import com.aihealthcare.ah0404.feedback.AppFeedback
+import com.aihealthcare.ah0404.settings.AppSettings
 import com.aihealthcare.ah0404.settings.SettingsScreen
 import com.aihealthcare.ah0404.settings.SupportScreen
 import com.aihealthcare.ah0404.ui.components.AigoDialog
@@ -89,6 +91,14 @@ class MainActivity : ComponentActivity() {
             MyApplicationTheme {
                 val context = LocalContext.current
                 val activity = context as Activity
+
+                // 소리 크기(sound_size) 설정을 앱 전체 공용 TTS(AppFeedback.tts)에 적용한다(#237).
+                //   전에는 걷기 측정 화면에서만 배선돼, 그 화면을 거치지 않으면 다른 화면 TTS(달성 축하·펫·안내 등)가
+                //   기본 음량(1.0)으로 나왔다. 앱 최상위에서 한 번 배선해 전 화면에 일관 적용하고 설정 변경도 즉시 따라간다.
+                LaunchedEffect(AppSettings.soundScale) {
+                    AppFeedback.tts.setVolume(AppSettings.soundScale)
+                }
+
                 val authLoginViewModel: AuthLoginViewModel = viewModel()
                 val authLoginState by authLoginViewModel.state.collectAsState()
                 var demoMode by remember { mutableStateOf(false) }
