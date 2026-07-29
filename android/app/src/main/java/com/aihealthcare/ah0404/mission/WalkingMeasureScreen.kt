@@ -47,7 +47,6 @@ import com.aihealthcare.ah0404.network.HomeApi
 import com.aihealthcare.ah0404.network.Mission
 import com.aihealthcare.ah0404.network.retrofit
 import com.aihealthcare.ah0404.pet.PetWalkingView
-import com.aihealthcare.ah0404.settings.AppSettings
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoHeroCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
@@ -158,8 +157,7 @@ fun WalkingMeasureScreen(
         }
     }
 
-    // 사용자 소리 크기 설정(sound_size)을 TTS 음량에 연동(별도 AudioManager 없음). 설정 변경도 따라간다.
-    LaunchedEffect(AppSettings.soundScale) { AppFeedback.tts.setVolume(AppSettings.soundScale) }
+    // (소리 크기 → 공용 TTS 음량 연동은 앱 최상위(MainActivity)에서 전역 배선한다 — #237. 여기 중복 제거.)
 
     // #199 WALK-02: 포그라운드 서비스의 "걷기 측정 중 · N보" 지속 알림이 실제로 보이려면 Android 13+ 에서
     //   POST_NOTIFICATIONS 런타임 허용이 필요하다. 매니페스트 선언·서비스의 checkSelfPermission 은 이미
