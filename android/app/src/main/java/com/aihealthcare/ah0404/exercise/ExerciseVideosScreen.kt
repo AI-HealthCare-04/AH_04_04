@@ -1,5 +1,8 @@
 package com.aihealthcare.ah0404.exercise
 
+import android.app.Activity
+import android.content.pm.ActivityInfo
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -18,6 +21,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -27,9 +31,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
 import com.aihealthcare.ah0404.R
@@ -67,6 +76,14 @@ fun ExerciseVideosScreen(
         return
     }
 
+    // 스트리밍 운동(근력·서서)은 포스터 탭 시 '가로 전체화면'으로 크게 재생한다(세로 고정 앱에서 이 화면만 가로).
+    //   기기 크기가 달라도 fillMaxSize + 가로라 알아서 꽉 찬다(고정 픽셀 없음). 나가면 세로로 복원.
+    var fullscreenUrl by remember { mutableStateOf<String?>(null) }
+    fullscreenUrl?.let { url ->
+        FullscreenLandscapeVideo(url = url, onExit = { fullscreenUrl = null })
+        return
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -77,7 +94,7 @@ fun ExerciseVideosScreen(
         // 번들 루틴(몸풀기·마무리)은 네트워크와 무관하게 '즉시' 시작 가능해야 한다(오프라인/느린망 포함).
         //   서버 목록이 오면 탭으로, 아직이면(로딩/빈/에러) 폴백에서 번들 루틴 버튼들을 바로 보여준다.
         if (vm.videos.isNotEmpty()) {
-            StageTabs(vm.videos, onStartRoutine = { routineFile = it })
+            StageTabs(vm.videos, onStartRoutine = { routineFile = it }, onPlayFullscreen = { fullscreenUrl = it })
         } else {
             RoutineFallback(
                 onStart = { routineFile = it },
@@ -89,7 +106,11 @@ fun ExerciseVideosScreen(
 }
 
 @Composable
-private fun StageTabs(videos: List<ExerciseVideoItem>, onStartRoutine: (String) -> Unit) {
+private fun StageTabs(
+    videos: List<ExerciseVideoItem>,
+    onStartRoutine: (String) -> Unit,
+    onPlayFullscreen: (String) -> Unit,
+) {
     var selected by remember(videos) { mutableIntStateOf(0) }
     val current = videos[selected.coerceIn(0, videos.lastIndex)]
 
@@ -103,7 +124,7 @@ private fun StageTabs(videos: List<ExerciseVideoItem>, onStartRoutine: (String) 
                 )
             }
         }
-        VideoArea(current, onStartRoutine = onStartRoutine)
+        VideoArea(current, onStartRoutine = onStartRoutine, onPlayFullscreen = onPlayFullscreen)
     }
 }
 
@@ -135,9 +156,11 @@ private fun exercisePosterRes(stage: String): Int? = when (stage) {
 
 @UnstableApi
 @Composable
-private fun VideoArea(item: ExerciseVideoItem, onStartRoutine: (String) -> Unit) {
-    // 스트리밍 단계에서 포스터를 탭해 재생을 시작했는가. 탭(단계)이 바뀌면 다시 포스터부터.
-    var playing by remember(item.stage) { mutableStateOf(false) }
+private fun VideoArea(
+    item: ExerciseVideoItem,
+    onStartRoutine: (String) -> Unit,
+    onPlayFullscreen: (String) -> Unit,
+) {
     Box(
         Modifier
             .fillMaxWidth()
@@ -165,16 +188,17 @@ private fun VideoArea(item: ExerciseVideoItem, onStartRoutine: (String) -> Unit)
             // 스트리밍 단계: 포스터가 있으면 포스터→탭→재생(바로 재생 대신 선택 화면), 없으면 종전대로 바로 재생.
             item.available && url != null -> {
                 val poster = exercisePosterRes(item.stage)
-                if (poster != null && !playing) {
-                    // 포스터 자체에 ▶ 재생 버튼·안내 문구가 그려져 있어 별도 오버레이는 두지 않는다(중복 방지).
-                    //   16:9 포스터를 16:9 박스에 Fit — 잘림 없이 카드 전체가 보인다. 탭하면 스트리밍 재생.
+                if (poster != null) {
+                    // 포스터(세로 선택 카드) → 탭하면 가로 전체화면으로 크게 재생(포스터에 ▶·안내가 그려져 있어 오버레이 생략).
+                    //   16:9 포스터를 16:9 박스에 Fit — 잘림 없이 카드 전체가 보인다.
                     Image(
                         painter = painterResource(poster),
                         contentDescription = "${item.label} 시작하기",
                         contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize().clickable { playing = true },
+                        modifier = Modifier.fillMaxSize().clickable { onPlayFullscreen(url) },
                     )
                 } else {
+                    // 포스터 없는 스트리밍 단계(방어적) — 종전대로 인라인 재생.
                     StreamingVideoPlayer(
                         url = url,
                         modifier = Modifier.fillMaxSize(),
@@ -193,6 +217,52 @@ private fun VideoArea(item: ExerciseVideoItem, onStartRoutine: (String) -> Unit)
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * 가로 전체화면 영상 재생 — 세로 고정 앱에서 '이 화면만' 가로로 눕히고 시스템바를 숨겨 영상을 크게 보여준다.
+ *   기기 크기가 달라도 fillMaxSize라 알아서 꽉 찬다(고정 픽셀 없음). 나가면(뒤로/닫기) 세로·시스템바를 복원한다.
+ *   MainActivity의 configChanges(orientation|screenSize) 덕에 이 가로 전환이 액티비티를 재생성하지 않는다
+ *   (screenOrientation=portrait는 유지 → 자동회전은 여전히 막힘, 여기서 강제한 가로만 처리. #122 세로 고정 의도 보존).
+ */
+@UnstableApi
+@Composable
+private fun FullscreenLandscapeVideo(url: String, onExit: () -> Unit) {
+    val activity = LocalContext.current as? Activity
+    DisposableEffect(Unit) {
+        val prevOrientation = activity?.requestedOrientation
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        val insets = activity?.window?.let { w -> WindowCompat.getInsetsController(w, w.decorView) }
+        insets?.hide(WindowInsetsCompat.Type.systemBars())
+        insets?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        onDispose {
+            activity?.requestedOrientation = prevOrientation ?: ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            insets?.show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+    BackHandler { onExit() }
+    Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+        StreamingVideoPlayer(
+            url = url,
+            modifier = Modifier.fillMaxSize(),
+            speed = AppSettings.exerciseSpeedFor(AppSettings.exerciseDifficulty),
+        )
+        // 닫기(세로 복귀) — 어르신용으로 크게, 반투명 배경으로 밝은 영상 위에서도 잘 보이게. 좌상단.
+        TextButton(
+            onClick = onExit,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(Dimens.Space16)
+                .background(Color.Black.copy(alpha = 0.5f), MaterialTheme.shapes.large),
+        ) {
+            Text(
+                "✕  닫기",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.titleMedium,
+            )
         }
     }
 }
