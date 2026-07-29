@@ -3,8 +3,9 @@ import uuid
 import zoneinfo
 from enum import StrEnum
 from pathlib import Path
+from typing import Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,7 +26,7 @@ class Config(BaseSettings):
     DB_HOST: str = "localhost"
     DB_PORT: int = 3306
     DB_USER: str = "root"
-    DB_PASSWORD: str = "pw1234"
+    DB_PASSWORD: str = ""
     DB_NAME: str = "ai_health"
     DB_CONNECT_TIMEOUT: int = 5
     DB_CONNECTION_POOL_MAXSIZE: int = 10
@@ -60,3 +61,21 @@ class Config(BaseSettings):
     KAKAO_CLIENT_ID: str = ""  # 카카오 REST API 키
     KAKAO_CLIENT_SECRET: str = ""  # 카카오는 선택(보안 강화 옵션)
     KAKAO_REDIRECT_URI: str = ""
+
+    @model_validator(mode="after")
+    def reject_insecure_prod_secrets(self) -> Self:
+        if self.ENV is not Env.PROD:
+            return self
+
+        invalid_fields: list[str] = []
+        if not self.SECRET_KEY.strip() or self.SECRET_KEY.startswith("default-secret-key"):
+            invalid_fields.append("SECRET_KEY")
+        if self.SECRET_KEY == "change-me-prod-secret":
+            invalid_fields.append("SECRET_KEY")
+        if not self.DB_PASSWORD.strip() or self.DB_PASSWORD in {"pw1234", "Password1234@"}:
+            invalid_fields.append("DB_PASSWORD")
+
+        if invalid_fields:
+            fields = ", ".join(dict.fromkeys(invalid_fields))
+            raise ValueError(f"운영 환경에 안전한 필수 비밀값이 필요합니다: {fields}")
+        return self
