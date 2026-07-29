@@ -39,7 +39,7 @@ def _meal_request(eaten: list[str]) -> MissionLogCreateRequest:
         mission_type=MissionType.MEAL,
         status=MissionStatus.COMPLETED,
         success=True,  # 클라가 뭐라 보내든 서버가 다시 판정한다
-        meal_detail=MealDetail(protein_foods=eaten, protein_meal_count=len(eaten)),
+        meal_detail=MealDetail(protein_foods=eaten),
     )
 
 
@@ -175,14 +175,11 @@ def test_duplicate_categories_counted_once() -> None:
     assert resp.success is True  # 중복 제거 후 1종 ≥ 목표(1)
     stored = cast(SimpleNamespace, cap["added_meal"])
     assert stored.protein_foods == ["meat"]  # 정규화(중복 제거·순서 유지) 목록으로 저장
-    assert stored.protein_meal_count == 1  # 클라이언트 count 가 아니라 서버가 센 값
 
 
 def test_resave_updates_existing_record_not_append() -> None:
     # 같은 날 재저장 → 기존 기록을 갱신(새 로그 생성 안 함, upsert).
-    existing_meal = SimpleNamespace(
-        mission_log_id=99, protein_foods=["meat"], protein_meal_count=1, counted_for_daily=False
-    )
+    existing_meal = SimpleNamespace(mission_log_id=99, protein_foods=["meat"])
     existing_mlog = SimpleNamespace(
         status=MissionStatus.COMPLETED, success=False, counted_for_daily=False, earned_points=0, performed_at=None
     )
@@ -193,6 +190,5 @@ def test_resave_updates_existing_record_not_append() -> None:
 
     assert cap["created"] is None  # 새 로그 생성 안 함(갱신)
     assert existing_meal.protein_foods == ["meat", "egg", "soy", "dairy"]  # 최신 선택으로 갱신
-    assert existing_meal.protein_meal_count == 4
     assert existing_mlog.success is True  # 4종 → 완료로 갱신
     assert resp.mission_log_id == 99

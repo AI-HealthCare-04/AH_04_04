@@ -63,7 +63,6 @@ class MissionListResponse(BaseModel):
 
 class MealDetail(BaseModel):
     protein_foods: list[str]
-    protein_meal_count: int
     raw_text: str | None = None
 
 

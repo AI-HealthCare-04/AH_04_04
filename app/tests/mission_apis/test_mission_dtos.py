@@ -21,12 +21,12 @@ def test_mission_log_create_accepts_valid_meal() -> None:
             "mission_type": "meal",
             "status": "completed",
             "success": True,
-            "meal_detail": {"protein_foods": ["egg", "tofu"], "protein_meal_count": 1},
+            "meal_detail": {"protein_foods": ["egg", "tofu"]},
         }
     )
     assert req.mission_type.value == "meal"
     assert req.meal_detail is not None
-    assert req.meal_detail.protein_meal_count == 1
+    assert req.meal_detail.protein_foods == ["egg", "tofu"]
 
 
 def test_mission_log_create_rejects_bad_mission_type() -> None:
