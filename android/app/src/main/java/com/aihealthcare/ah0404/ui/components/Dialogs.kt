@@ -15,6 +15,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.window.Dialog
 import com.aihealthcare.ah0404.ui.theme.Dimens
@@ -27,6 +28,7 @@ import com.aihealthcare.ah0404.ui.theme.DialogShape
  *  = 고령 사용자용 큰 터치). 등장 시 페이드 + 살짝 스케일 인.
  *
  * @param dismissText null 이면 확인 버튼만 있는 단일 액션 팝업.
+ * @param containerColor 배경색. 기본은 surface, 안전 확인 등은 앰버(AigoWarningContainer)로 지정.
  */
 @Composable
 fun AigoDialog(
@@ -37,6 +39,7 @@ fun AigoDialog(
     onDismissRequest: () -> Unit,
     dismissText: String? = null,
     onDismiss: (() -> Unit)? = null,
+    containerColor: Color = MaterialTheme.colorScheme.surface,
 ) {
     Dialog(onDismissRequest = onDismissRequest) {
         var visible by remember { mutableStateOf(false) }
@@ -51,7 +54,7 @@ fun AigoDialog(
                 this.alpha = alpha
             },
             shape = DialogShape,
-            color = MaterialTheme.colorScheme.surface,
+            color = containerColor,
         ) {
             Column(Modifier.padding(Dimens.Space24)) {
                 Text(title, style = MaterialTheme.typography.titleLarge)
