@@ -52,6 +52,8 @@ import com.aihealthcare.ah0404.settings.AppSettings
 import com.aihealthcare.ah0404.network.ExerciseVideoItem
 import com.aihealthcare.ah0404.routine.RoutinePlayerScreen
 import com.aihealthcare.ah0404.settings.TopBar
+import com.aihealthcare.ah0404.ui.components.AigoDialog
+import com.aihealthcare.ah0404.ui.theme.AigoWarningContainer
 import com.aihealthcare.ah0404.ui.theme.Dimens
 
 /**
@@ -75,6 +77,10 @@ fun ExerciseVideosScreen(
     var selectedTab by remember(vm.videos) { mutableIntStateOf(0) }
     var routineFile by remember { mutableStateOf<String?>(null) }
     var fullscreenUrl by remember { mutableStateOf<String?>(null) }
+    // 안전 고지 게이트(#234): 운동을 '처음 시작할 때' 1회 확인. 확인값(safetyConfirmed)은 이 방문 동안 유지되어
+    //   운동 완료 전송의 safety_notice_confirmed 로 쓰인다(정인 레이어 B 배선). pendingStart 는 확인 대기 중 보류된 시작 동작.
+    var safetyConfirmed by remember { mutableStateOf(false) }
+    var pendingStart by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     // 번들 루틴(몸풀기·마무리)은 백엔드 목록과 무관하게 오프라인에서도 재생 가능(심사 환경 안정 버전).
     //   여러 동작을 조합한 가이드 루틴이라 단일 스트리밍 영상이 아니라 번들 RoutinePlayer 로 띄운다(#72 스트리밍과 별개).
@@ -95,6 +101,18 @@ fun ExerciseVideosScreen(
         return
     }
 
+    // 확인 전 시작을 누르면 보류(pendingStart)하고 안전 안내를 띄운다. 확인하면 보류된 동작을 실행하고
+    //   이후 이 방문 동안엔 다시 묻지 않는다(덜 번거롭게 — 완료 전송엔 safetyConfirmed 로 반영).
+    pendingStart?.let { action ->
+        ExerciseSafetyDialog(
+            onConfirm = { safetyConfirmed = true; pendingStart = null; action() },
+            onDismiss = { pendingStart = null },
+        )
+    }
+    val guardedStart: (() -> Unit) -> Unit = { action ->
+        if (safetyConfirmed) action() else pendingStart = action
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -104,22 +122,41 @@ fun ExerciseVideosScreen(
 
         // 번들 루틴(몸풀기·마무리)은 네트워크와 무관하게 '즉시' 시작 가능해야 한다(오프라인/느린망 포함).
         //   서버 목록이 오면 탭으로, 아직이면(로딩/빈/에러) 폴백에서 번들 루틴 버튼들을 바로 보여준다.
+        //   시작 동작은 guardedStart 로 감싸 안전 고지 확인(#234) 게이트를 먼저 거친다.
         if (vm.videos.isNotEmpty()) {
             StageTabs(
                 vm.videos,
                 selected = selectedTab,
                 onSelect = { selectedTab = it },
-                onStartRoutine = { routineFile = it },
-                onPlayFullscreen = { fullscreenUrl = it },
+                onStartRoutine = { file -> guardedStart { routineFile = file } },
+                onPlayFullscreen = { url -> guardedStart { fullscreenUrl = url } },
             )
         } else {
             RoutineFallback(
-                onStart = { routineFile = it },
+                onStart = { file -> guardedStart { routineFile = file } },
                 loading = vm.loading,
                 retry = if (vm.error) vm::load else null,
             )
         }
     }
+}
+
+/**
+ * 운동 진입 안전 고지 확인 게이트(#234). 서버가 운동 완료에 `safety_notice_confirmed=true`를 요구하므로,
+ * 실제 확인을 거친 값만 넘기기 위해 시작 전 1회 안내를 띄운다. 안전 확인용 앰버 배경(디자인 시스템).
+ */
+@Composable
+private fun ExerciseSafetyDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AigoDialog(
+        title = "🧡 운동 전, 안전하게 준비해요",
+        message = "• 무리하지 말고 편한 만큼만 천천히 해요. 어지럽거나 아프면 곧바로 멈춰 주세요.\n" +
+            "• 튼튼한 의자를 옆에 준비해 두세요. 서서 하는 동작은 의자나 벽을 잡고 균형을 지켜요.\n" +
+            "• 넘어지거나 부딪히지 않게, 주변의 다른 물건은 미리 치워 주세요.",
+        confirmText = "네, 확인했어요",
+        onConfirm = onConfirm,
+        onDismissRequest = onDismiss,
+        containerColor = AigoWarningContainer,
+    )
 }
 
 @Composable
