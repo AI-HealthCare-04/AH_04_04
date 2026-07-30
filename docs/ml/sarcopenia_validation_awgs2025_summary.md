@@ -14,12 +14,12 @@
 
 The final deployment artifacts were fitted on all available 2022-2024 labeled rows. Validation results below come
 from cross-validation or a held-out random 80/20 split, not from the final full-data fit itself. The reported results
-are internal validation; a future untouched cohort remains desirable.
+are internal validation only; this AWGS 2025 days deployment has no temporal or external validation result yet.
 
 ## Why activity inputs changed
 
-The previous AWGS 2025 deployment used binary activity-practice inputs. The days v3 deployment replaces those flags
-with KNHANES-compatible day counts so the service can show a more meaningful predicted-score trend as users complete
+Earlier internal AWGS 2025 model candidates used binary activity-practice inputs. The days v3 deployment uses
+KNHANES-compatible day counts so the service can show a more meaningful predicted-score trend as users complete
 walking and strength challenges.
 
 KNHANES stores walking days with 0-7 day resolution, while the strength-training item is top-coded at 5 or more days.
@@ -33,7 +33,7 @@ The service therefore keeps `walk_days` on a 0-7 scale and caps only `musc_days`
 | minimal | 5-fold cross-validation | 0.822 | - | - | - |
 
 The days-based activity variables are intended mainly to support longitudinal sensitivity to challenge success counts.
-Overall discrimination is materially similar to the previous binary-input AWGS 2025 deployment.
+Overall discrimination is materially similar to the earlier binary-input AWGS 2025 candidate.
 
 ## Continuous score and transitional threshold
 
@@ -44,8 +44,8 @@ continuous graph scale, and the planned trend must use `risk_score` together wit
 
 ## Variant policy
 
-- Use `self_report_plus_waist` when `waist_cm` is present.
-- Use `self_report_minimal` when waist circumference is unavailable.
+- Use `self_report_plus_waist_days` when `waist_cm` is present.
+- Use `self_report_minimal_days` when waist circumference is unavailable.
 - Do not impute waist circumference merely to select the waist-aware model; the analysis did not show a benefit over
   the minimal fallback for imputed waist values.
 

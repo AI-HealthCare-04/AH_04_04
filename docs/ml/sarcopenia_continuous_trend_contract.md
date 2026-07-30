@@ -44,6 +44,9 @@ The history endpoint now returns records from oldest to newest for chart consump
 is updated, this also changes the visible order of its existing timeline because that screen renders the server order
 without sorting. Coordinate the merge and deployment order with the Android trend-chart change.
 
+This contract is model-family neutral. It should describe how to handle any future model-version boundary without
+referring to retired AWGS-era labels in the public API or client behavior.
+
 ## Terms and user communication
 
 The draft service terms, privacy policy, and sensitive-health consent are updated in the same PR to disclose the
