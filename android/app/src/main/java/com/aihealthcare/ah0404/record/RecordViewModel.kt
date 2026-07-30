@@ -82,7 +82,11 @@ class RecordViewModel(
                 .onFailure { historyError = true; Log.w(TAG, "예측 추이 조회 실패: ${it.message}") }
             logsResult
                 .onSuccess { logs ->
-                    completedMissions = logs.count { it.success }
+                    // "완료한 미션 수" = 오늘 실제로 완료 집계된 미션 수. success 가 아니라 counted_for_daily 로 센다:
+                    //   운동(누적 10분) 미션은 10분을 넘긴 뒤의 세션도 success=true 로그를 남기지만 counted_for_daily=false
+                    //   (그날 이미 집계됨) → success 로 세면 한 미션을 여러 번 한 게 여러 건으로 부풀려진다(#234).
+                    //   counted_for_daily 는 미션당 하루 1회만 true 라 earnedPoints 합(집계 1회분)과도 일관된다.
+                    completedMissions = logs.count { it.countedForDaily }
                     totalPoints = logs.sumOf { it.earnedPoints }
                 }
                 .onFailure { activityError = true; Log.w(TAG, "미션 로그 조회 실패: ${it.message}") }
