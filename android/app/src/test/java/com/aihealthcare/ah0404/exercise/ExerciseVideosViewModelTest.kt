@@ -59,6 +59,9 @@ class ExerciseVideosViewModelTest {
         val createdKeys = mutableListOf<String?>()
         // >0 이면 그만큼 createMissionLog 를 예외로 실패시킨다(전송 실패→재시도 경로 검증용, #234-2).
         var failCreateTimes = 0
+        // createMissionLog 응답 status/success — "completed" 면 이미 완료된 자연 키의 재전송 조기종료 경로를 재현한다(#280).
+        var createStatus = "in_progress"
+        var createSuccess = true
         // 완료 응답의 서버 판정값(#235 누적시간 표시 검증용). 기본=목표 달성(성공·당일 10분).
         var completeSuccess = true
         var completeDailyTotal: Float? = 10f
@@ -79,8 +82,8 @@ class ExerciseVideosViewModelTest {
             if (failCreateTimes > 0) { failCreateTimes--; throw RuntimeException("network down") }
             return MissionLogCreateResponse(
                 missionLogId = 100,
-                status = "in_progress",
-                success = true,
+                status = createStatus,
+                success = createSuccess,
                 countedForDaily = false,
                 earnedPoints = 0,
                 dailyResult = "none",
@@ -379,6 +382,32 @@ class ExerciseVideosViewModelTest {
         advanceUntilIdle()
         assertEquals("전날 값이 남지 않고 새 날 누적으로 초기화", 2f, vm.todayExerciseMin)
         assertFalse("전날 달성 상태가 스티키하게 남지 않는다", vm.todayGoalReached)
+    }
+
+    /**
+     * 재전송 조기종료 오염 방지(리뷰 #280): 이미 완료된 자연 키를 재전송하면 POST 가 과거 completed 로그를 반환하고
+     *  응답은 dailyTotalMin=null, success=<그 로그 완료 당시 값>이다. 이 success 는 '오늘' 누적의 권위 판정이 아니므로,
+     *  누적값이 없는 응답으로는 분도 달성도 갱신하지 않아야 오늘 상태(예: 2분·미달)가 어제 값으로 오염되지 않는다.
+     */
+    @Test
+    fun `과거 completed 로그의 재전송(누적 null·success=true)은 오늘 미달 상태를 오염시키지 않는다`() = runTest {
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        val vm = vmWith(fake)
+
+        // 오늘 첫 세션: 2분·미달
+        fake.completeRespByDuration = mapOf(2f to (2f to false))
+        vm.beginExerciseSession(); vm.submitExercise(2f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+        assertEquals(2f, vm.todayExerciseMin)
+        assertFalse(vm.todayGoalReached)
+
+        // 어제 서버엔 완료됐지만 outbox 에 남은 로그를 지금 재전송 → POST 가 과거 completed 를 반환(조기종료: 누적 null·success=true).
+        fake.createStatus = "completed"; fake.createSuccess = true
+        vm.beginExerciseSession(); vm.submitExercise(5f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+
+        assertEquals("누적값 없는 응답은 오늘 분을 바꾸지 않는다", 2f, vm.todayExerciseMin)
+        assertFalse("과거 로그의 success=true 가 오늘 달성으로 오염시키지 않는다", vm.todayGoalReached)
     }
 
     @Test

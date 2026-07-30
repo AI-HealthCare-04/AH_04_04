@@ -194,9 +194,14 @@ class ExerciseVideosViewModel(
                     publishPending()
                     // 누적 운동시간 표시(#235): 직렬화 덕에 이 응답이 지금까지의 마지막 전송 결과 = 최신 권위값이다.
                     //   그대로 대입한다(무조건 last-wins). 당일 내 여러 세션은 마지막이 최댓값이라 자연히 커지고, 자정을 넘긴
-                    //   다음 날 첫 세션의 더 작은 누적/미달도 마지막 값이라 정상적으로 초기화된다. null 누적(재전송 조기종료)은 분 유지.
-                    r.dailyTotalMin?.let { todayExerciseMin = it }
-                    todayGoalReached = r.success
+                    //   다음 날 첫 세션의 더 작은 누적/미달도 마지막 값이라 정상적으로 초기화된다.
+                    //   단, dailyTotalMin==null(재전송 조기종료: 자연 키로 찾은 과거 completed 로그 반환)이면 그 success 는
+                    //   '그 로그가 완료됐던 당시' 값이지 오늘 누적의 권위 판정이 아니다(리뷰 #280). 오늘 상태를 오염시키지
+                    //   않도록 **누적값이 있을 때만 분·달성을 한 묶음으로** 갱신하고, null 응답은 둘 다 건드리지 않는다.
+                    r.dailyTotalMin?.let { total ->
+                        todayExerciseMin = total
+                        todayGoalReached = r.success
+                    }
                     Log.i(
                         TAG,
                         "운동 완료 전송 OK: status=${r.finalStatus}, counted=${r.countedForDaily}, dailyTotalMin=${r.dailyTotalMin}",
