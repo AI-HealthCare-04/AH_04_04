@@ -80,7 +80,9 @@ class RiskPredictionService:
             return RiskPredictionHistoryResponse(predictions=[])
         predictions = await self.prediction_repo.get_recent_predictions(user.user_id, limit)
         chronological = list(reversed(predictions))
-        # 점수 파생용 성별·나이는 사용자 단위로 안정적이라 최신 프로필 한 번만 조회해 전 이력에 재사용한다.
+        # 이력 점수는 **조회 시점 나이 코호트로 재파생**한다(잣대 통일 — 추이선 전체가 같은 코호트라 y축 일관,
+        #   생일이 지나면 과거 점수가 소급 변동하지만 허용). 성별·생년월일은 사용자 단위로 안정적이라
+        #   최신 프로필 한 번만 조회해 전 이력에 재사용한다.
         profile = await self.profile_repo.get_latest_profile(user.user_id)
         items: list[RiskPredictionHistoryItem] = []
         previous: RiskPrediction | None = None

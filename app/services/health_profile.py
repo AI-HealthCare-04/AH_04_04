@@ -79,6 +79,16 @@ class HealthProfileService:
         weight = data.weight_kg if data.weight_kg is not None else latest.weight_kg
         waist = data.waist_cm if "waist_cm" in data.model_fields_set else latest.waist_cm
         kidney = data.kidney_status if data.kidney_status is not None else latest.kidney_status
+        # 유효 변경이 하나도 없으면(빈 요청·모든 값이 최신과 동일) append-only 스냅샷을 늘리지 않는다(리뷰 #272-2).
+        #   허리 명시적 null 로 기존 값을 지우는 것은 유효 변경으로 본다(waist != latest.waist_cm 로 잡힘).
+        if (
+            height == latest.height_cm
+            and weight == latest.weight_kg
+            and waist == latest.waist_cm
+            and kidney == latest.kidney_status
+        ):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="변경된 내용이 없습니다.")
+
         # 키·몸무게를 직접 입력했으면 추정치가 아니다. 둘 다 미편집이면 이전 추정 플래그를 유지한다.
         estimated = latest.has_estimated_value and data.height_cm is None and data.weight_kg is None
 

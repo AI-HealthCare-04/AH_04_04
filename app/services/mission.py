@@ -10,7 +10,7 @@
 #   - 걷기(walking)는 같은 날 자동 서버 합산 → daily_total_min 반환
 #   - 성공 시에만 포인트 지급 (mission_scoring.compute_earned_points)
 # =====================================================================================
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from fastapi import HTTPException, status
@@ -576,8 +576,8 @@ class MissionService:
         on_date: date | None,
         date_from: date | None,
         date_to: date | None,
-    ) -> list[tuple[MissionLog, str]]:
-        """기록 탭 달력·일별 추이용(#기록탭 §5.1/§5.2) — 템플릿명·완료시각 포함 조회."""
+    ) -> list[tuple[MissionLog, str, datetime]]:
+        """기록 탭 달력·일별 추이용(#기록탭 §5.1/§5.2) — 템플릿명·실제 완료시각 포함, 완료 상태만."""
         return await self.repo.list_mission_logs_detailed(
             user.user_id, date_from=date_from, date_to=date_to, on_date=on_date
         )

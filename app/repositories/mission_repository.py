@@ -16,6 +16,7 @@ from app.models.enums import (
     ActivityLevel,
     ActivityType,
     DailyResult,
+    MissionStatus,
     MissionType,
 )
 from app.models.missions import (
@@ -125,31 +126,38 @@ class MissionRepository:
         date_from: date | None,
         date_to: date | None,
         on_date: date | None,
-    ) -> list[tuple[MissionLog, str]]:
-        """기록 탭 달력·일별 추이용(#기록탭 §5.1/§5.2). 미션 로그에 템플릿명을 조인해 (로그, 제목)로 반환.
+    ) -> list[tuple[MissionLog, str, datetime]]:
+        """기록 탭 달력·일별 추이용(#기록탭 §5.1/§5.2). (로그, 제목, **완료 시각**)로 반환.
 
-        기간 필터는 세 가지: on_date(단일일, 하위호환) 또는 date_from~date_to(포함 범위).
-        범위는 [date_from 00:00, date_to+1일 00:00) 로 date_to 당일을 포함한다.
-        완료 시각은 mission_logs.created_at(서버 기록 시각)을 그대로 쓴다.
+        완료 시각은 `mission_logs.created_at`(= 생성/시작 시각)이 아니다(리뷰 #272 블로커):
+          - 걷기·운동은 IN_PROGRESS 로 먼저 생성 후 PATCH 완료 시 `physical_activity_logs` 를 완료 시점 now()로
+            남기므로 그 `created_at` 이 실제 완료 시각(자정을 걸쳐도 완료일에 귀속).
+          - 식사·게임(즉시완료)은 mission_logs 자체가 완료 시점 생성이라 그 `created_at` 이 완료 시각.
+          → COALESCE(pal.created_at, mission_logs.created_at). 진행 중(IN_PROGRESS) 로그는 status 필터로 제외.
+
+        기간 필터는 on_date(단일일, 하위호환) 또는 date_from~date_to(포함 범위, [from 00:00, to+1일 00:00)).
+        조회·정렬 모두 위 완료 시각 기준으로 통일한다.
         """
+        completed_at = func.coalesce(PhysicalActivityLog.created_at, MissionLog.created_at)
         stmt = (
-            select(MissionLog, MissionTemplate.title)
+            select(MissionLog, MissionTemplate.title, completed_at)
             .join(MissionTemplate, MissionLog.mission_template_id == MissionTemplate.mission_template_id)
-            .where(MissionLog.user_id == user_id)
+            .outerjoin(PhysicalActivityLog, PhysicalActivityLog.mission_log_id == MissionLog.mission_log_id)
+            .where(MissionLog.user_id == user_id, MissionLog.status == MissionStatus.COMPLETED)
         )
         if on_date is not None:
             start, end = self._day_bounds(on_date)
-            stmt = stmt.where(MissionLog.created_at >= start, MissionLog.created_at < end)
+            stmt = stmt.where(completed_at >= start, completed_at < end)
         else:
             if date_from is not None:
                 start, _ = self._day_bounds(date_from)
-                stmt = stmt.where(MissionLog.created_at >= start)
+                stmt = stmt.where(completed_at >= start)
             if date_to is not None:
                 _, end = self._day_bounds(date_to)
-                stmt = stmt.where(MissionLog.created_at < end)
-        stmt = stmt.order_by(MissionLog.created_at.desc())
+                stmt = stmt.where(completed_at < end)
+        stmt = stmt.order_by(completed_at.desc())
         result = await self.session.execute(stmt)
-        return [(row[0], row[1]) for row in result.all()]
+        return [(row[0], row[1], row[2]) for row in result.all()]
 
     # ---------------- 상세 로그 (mission_log 1:1) ----------------
 

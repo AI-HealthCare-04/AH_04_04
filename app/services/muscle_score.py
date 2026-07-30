@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 
 from app.models.enums import ModelVariant
@@ -51,11 +50,18 @@ class CohortTable:
         return by_age.get(key)
 
 
-@lru_cache(maxsize=1)
+# 성공 로드된 표만 캐시한다. **파일 없음(None)은 캐시하지 않는다**(리뷰 #272 내 클로드):
+#   lru_cache 로 None 을 캐시하면 표를 나중에 배치해도 프로세스 재시작 전까지 점수가 안 켜지는 함정이 된다.
+_cached_table: CohortTable | None = None
+
+
 def load_cohort_table() -> CohortTable | None:
-    """모델팀 산출물을 로드. 파일 부재 시 None(점수 미제공). 결과는 캐시된다."""
+    """모델팀 산출물을 로드. 파일 부재 시 None(점수 미제공, **캐시 안 함**). 로드 성공분만 캐시한다."""
+    global _cached_table
+    if _cached_table is not None:
+        return _cached_table
     if not COHORT_TABLE_PATH.exists():
-        return None
+        return None  # 표가 나중에 들어오면 재시작 없이 다음 요청에서 로드된다.
     raw = json.loads(COHORT_TABLE_PATH.read_text(encoding="utf-8"))
     cohorts: dict[str, dict[str, dict[str, CohortQuantiles]]] = {}
     for feature_set, by_sex in raw.get("cohorts", {}).items():
@@ -65,7 +71,8 @@ def load_cohort_table() -> CohortTable | None:
                 age_key: CohortQuantiles(p_low=float(q["q5"]), p_high=float(q["q95"]))
                 for age_key, q in by_age.items()
             }
-    return CohortTable(cohort_version=str(raw.get("cohort_version", "unknown")), cohorts=cohorts)
+    _cached_table = CohortTable(cohort_version=str(raw.get("cohort_version", "unknown")), cohorts=cohorts)
+    return _cached_table
 
 
 def feature_set_of(model_variant: ModelVariant) -> str | None:

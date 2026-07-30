@@ -671,6 +671,58 @@ async def test_get_mission_logs_range_includes_title_and_completed_at(
     assert empty.json()["logs"] == []
 
 
+# 리뷰 #272 블로커: 진행 중(IN_PROGRESS) 로그 제외 + 완료 시각 = 실제 완료 시각(created_at=시작 아님)
+async def test_get_mission_logs_excludes_in_progress_and_uses_completion_time(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    auth, _ = await _guest(db_client)
+    walk_tid = await _seed_template(
+        db_sessionmaker, mission_type=MissionType.WALKING, reward_points=5, target_unit=TargetUnit.MINUTES
+    )
+    today = today_kst().isoformat()
+
+    # 시작만 하고 완료 안 한 걷기(IN_PROGRESS)는 기록 탭 조회에서 제외돼야 한다.
+    start = await db_client.post(
+        f"{API}/mission-logs",
+        json={"mission_template_id": walk_tid, "mission_type": "walking", "status": "in_progress"},
+        headers=auth,
+    )
+    log_id = start.json()["mission_log_id"]
+    before = await db_client.get(f"{API}/mission-logs", params={"from": today, "to": today}, headers=auth)
+    assert before.json()["logs"] == []  # 진행 중 로그는 완료로 노출되지 않는다.
+
+    # 완료하면 나타나고 completed_at(실제 완료 시각 = physical_activity_logs.created_at)이 채워진다.
+    done = await db_client.patch(
+        f"{API}/mission-logs/{log_id}",
+        json={"status": "completed", "success": True, "walking_detail": {"duration_min": 12, "steps": 1500}},
+        headers=auth,
+    )
+    assert done.status_code == status.HTTP_200_OK
+    after = await db_client.get(f"{API}/mission-logs", params={"from": today, "to": today}, headers=auth)
+    logs = after.json()["logs"]
+    assert len(logs) == 1
+    assert logs[0]["title"] == "walking 미션"
+    assert logs[0]["completed_at"]
+
+
+# 리뷰 #272-3: 조회 파라미터 방어(date+from/to 혼용·from>to·기간 상한·짝 누락)
+async def test_mission_logs_query_validation_returns_400(db_client: AsyncClient) -> None:
+    auth, _ = await _guest(db_client)
+    today = today_kst().isoformat()
+    both = await db_client.get(f"{API}/mission-logs", params={"date": today, "from": today, "to": today}, headers=auth)
+    assert both.status_code == status.HTTP_400_BAD_REQUEST
+    reversed_range = await db_client.get(
+        f"{API}/mission-logs", params={"from": "2026-07-30", "to": "2026-07-01"}, headers=auth
+    )
+    assert reversed_range.status_code == status.HTTP_400_BAD_REQUEST
+    too_wide = await db_client.get(
+        f"{API}/mission-logs", params={"from": "2026-01-01", "to": "2026-12-31"}, headers=auth
+    )
+    assert too_wide.status_code == status.HTTP_400_BAD_REQUEST
+    half = await db_client.get(f"{API}/mission-logs", params={"from": today}, headers=auth)
+    assert half.status_code == status.HTTP_400_BAD_REQUEST
+
+
 # -------------------------------------------------------------------------------------
 # 기록 탭(#기록탭 §5.3/§5.4): 걷기 일별 막대 + 챌린지 유형별 누적 도넛
 # -------------------------------------------------------------------------------------

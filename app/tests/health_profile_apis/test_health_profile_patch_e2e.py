@@ -89,3 +89,23 @@ async def test_patch_without_profile_returns_404(db_client: AsyncClient) -> None
     auth = await _guest(db_client)  # 온보딩 전 — 프로필 없음
     resp = await db_client.patch(f"{API}/health-profiles/me", json={"height_cm": 170}, headers=auth)
     assert resp.status_code == status.HTTP_404_NOT_FOUND
+
+
+# 리뷰 #272-2: 유효 변경 없는 PATCH(빈 요청·동일 값)는 append-only 스냅샷을 늘리지 않도록 400.
+async def test_patch_empty_body_rejected(db_client: AsyncClient) -> None:
+    auth = await _guest(db_client)
+    await _create_profile(db_client, auth)
+    resp = await db_client.patch(f"{API}/health-profiles/me", json={}, headers=auth)
+    assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
+
+async def test_patch_no_effective_change_rejected(db_client: AsyncClient) -> None:
+    auth = await _guest(db_client)
+    await _create_profile(db_client, auth)  # 키 168·몸무게 63.5·허리 84·신장 none
+    # 최신과 동일한 값만 보냄 → 유효 변경 없음 → 400
+    resp = await db_client.patch(
+        f"{API}/health-profiles/me",
+        json={"height_cm": 168, "weight_kg": 63.5, "waist_cm": 84, "kidney_status": "none"},
+        headers=auth,
+    )
+    assert resp.status_code == status.HTTP_400_BAD_REQUEST
