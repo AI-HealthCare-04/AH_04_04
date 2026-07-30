@@ -32,6 +32,8 @@ class RiskPredictionResponse(BaseModel):
     profile_id: int
     model_variant: str
     risk_score: float = Field(ge=0, le=1)
+    muscle_score: int | None = Field(default=None, ge=0, le=100)
+    score_band: str | None = None
     care_stage: CareStage
     display_message: str
     disclaimer: str = "본 결과는 참고용이며 의학적 진단이 아닙니다."
@@ -45,6 +47,8 @@ class RiskPredictionReassessResponse(BaseModel):
     profile_id: int
     prediction_id: int
     risk_score: float = Field(ge=0, le=1)
+    muscle_score: int | None = Field(default=None, ge=0, le=100)
+    score_band: str | None = None
     care_stage: CareStage
     display_message: str
     disclaimer: str = "본 결과는 참고용이며 의학적 진단이 아닙니다."
@@ -57,6 +61,8 @@ class RiskPredictionHistoryItem(BaseModel):
     prediction_id: int
     created_at: KstDatetime
     risk_score: float = Field(ge=0, le=1)
+    muscle_score: int | None = Field(default=None, ge=0, le=100)
+    score_band: str | None = None
     change_percentage_points: float | None = Field(ge=-100, le=100)
     comparison_status: RiskComparisonStatus
     # 기존 Android 계약 호환용. 연속형 화면 전환 후 제거 또는 내부 한정 예정이다.

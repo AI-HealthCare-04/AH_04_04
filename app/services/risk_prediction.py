@@ -16,7 +16,7 @@ from app.dtos.risk_prediction import (
     RiskPredictionReassessResponse,
     RiskPredictionResponse,
 )
-from app.ml.predictor import RiskPredictor, features_from_health_profile
+from app.ml.predictor import AgeNotSupportedError, RiskPredictor, features_from_health_profile
 from app.models.enums import ActivityInputSource, InputMethod, OnboardingStatus, RiskLevel
 from app.models.health import HealthProfile
 from app.models.predictions import RiskPrediction
@@ -92,7 +92,13 @@ class RiskPredictionService:
         *,
         complete_onboarding: bool = False,
     ) -> RiskPrediction:
-        result = await self.predictor.predict(features_from_health_profile(profile))
+        try:
+            result = await self.predictor.predict(features_from_health_profile(profile))
+        except AgeNotSupportedError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Sarcopenia prediction is supported for users aged 65 or older.",
+            ) from exc
         prediction = RiskPrediction(
             user_id=user.user_id,
             profile_id=profile.profile_id,
@@ -100,6 +106,19 @@ class RiskPredictionService:
             model_variant=result.model_variant,
             internal_risk_score=Decimal(str(round(result.risk_score, 3))),
             internal_risk_level=result.risk_level,
+            muscle_score=getattr(result, "muscle_score", None),
+            score_band=getattr(result, "score_band", None),
+            score_p_low=(
+                Decimal(str(round(result.score_p_low, 5)))
+                if getattr(result, "score_p_low", None) is not None
+                else None
+            ),
+            score_p_high=(
+                Decimal(str(round(result.score_p_high, 5)))
+                if getattr(result, "score_p_high", None) is not None
+                else None
+            ),
+            score_cohort_age=getattr(result, "score_cohort_age", None),
             input_snapshot=result.input_snapshot,
         )
         await self.prediction_repo.create_risk_prediction(prediction)
@@ -116,6 +135,8 @@ class RiskPredictionService:
             profile_id=prediction.profile_id,
             model_variant=prediction.model_variant.value,
             risk_score=self._public_risk_score(prediction),
+            muscle_score=getattr(prediction, "muscle_score", None),
+            score_band=getattr(prediction, "score_band", None),
             care_stage=care_stage,
             display_message=self._display_message(care_stage),
         )
@@ -126,6 +147,8 @@ class RiskPredictionService:
             profile_id=prediction.profile_id,
             prediction_id=prediction.prediction_id,
             risk_score=self._public_risk_score(prediction),
+            muscle_score=getattr(prediction, "muscle_score", None),
+            score_band=getattr(prediction, "score_band", None),
             care_stage=care_stage,
             display_message=self._display_message(care_stage),
         )
@@ -190,6 +213,8 @@ class RiskPredictionService:
             prediction_id=prediction.prediction_id,
             created_at=prediction.created_at,
             risk_score=score,
+            muscle_score=getattr(prediction, "muscle_score", None),
+            score_band=getattr(prediction, "score_band", None),
             change_percentage_points=change_percentage_points,
             comparison_status=comparison_status,
             care_stage=RiskPredictionService._care_stage_from_risk_level(prediction.internal_risk_level),

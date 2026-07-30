@@ -7,9 +7,12 @@ import pytest
 from sqlalchemy import String
 
 from app.ml.predictor import (
+    AGE_TOPCODE,
     MINIMAL_ARTIFACT_PATH,
     WITH_WAIST_ARTIFACT_PATH,
+    AgeNotSupportedError,
     RiskPredictor,
+    compute_muscle_score,
     features_from_health_profile,
     has_waist_input,
     load_model_bundle,
@@ -106,6 +109,12 @@ async def test_risk_predictor_loads_artifact_and_predicts() -> None:
     assert result.model_version == "sarcopenia_lr_self_report_minimal_days_awgs2025_days_v3"
     assert result.feature_set == "self_report_minimal_days"
     assert result.threshold == pytest.approx(0.20)
+    assert result.muscle_score is not None
+    assert 0 <= result.muscle_score <= 100
+    assert result.score_band in {"좋음", "유지", "주의"}
+    assert result.score_p_low is not None
+    assert result.score_p_high is not None
+    assert result.score_cohort_age == "74"
     assert set(result.input_snapshot) == {
         "age",
         "sex",
@@ -136,7 +145,55 @@ async def test_risk_predictor_uses_waist_model_when_waist_is_present() -> None:
     assert result.model_version == "sarcopenia_lr_self_report_plus_waist_days_awgs2025_days_v3"
     assert result.feature_set == "self_report_plus_waist_days"
     assert result.threshold == pytest.approx(0.20)
+    assert result.muscle_score is not None
+    assert result.score_band in {"좋음", "유지", "주의"}
     assert result.input_snapshot["waist_cm"] == 82.0
+
+
+async def test_risk_predictor_rejects_under_65() -> None:
+    with pytest.raises(AgeNotSupportedError):
+        await RiskPredictor().predict(
+            {
+                "age": 64,
+                "sex": "female",
+                "height_cm": 153.0,
+                "weight_kg": 48.0,
+                "bmi": 20.5,
+                "walk_days": 3,
+                "musc_days": 1,
+            }
+        )
+
+
+def test_normalize_features_topcodes_age_80_plus() -> None:
+    features = normalize_features(
+        {
+            "age": 90,
+            "sex": "male",
+            "height_cm": 168.0,
+            "weight_kg": 63.5,
+            "bmi": 22.5,
+            "walk_days": 5,
+            "musc_days": 2,
+        }
+    )
+
+    assert features["age"] == AGE_TOPCODE
+
+
+def test_compute_muscle_score_uses_80_plus_cohort() -> None:
+    score, band, p_low, p_high, age_key = compute_muscle_score(
+        0.2,
+        feature_set="minimal",
+        sex=1,
+        age=80,
+    )
+
+    assert score is not None
+    assert band in {"좋음", "유지", "주의"}
+    assert p_low is not None
+    assert p_high is not None
+    assert age_key == "80+"
 
 
 @pytest.mark.parametrize(
