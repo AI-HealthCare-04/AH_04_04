@@ -59,7 +59,7 @@ class RecordViewModelTest {
         vm.refresh()
 
         assertEquals(2, vm.history.size)
-        assertEquals(2, vm.completedMissions) // success=true 2건
+        assertEquals(2, vm.completedMissions) // counted_for_daily=true 2건
         assertEquals(15, vm.totalPoints)      // 10 + 5 + 0
         assertFalse(vm.historyError)
         assertFalse(vm.activityError)
@@ -88,6 +88,34 @@ class RecordViewModelTest {
         assertEquals(3, vm.history.size)
         assertEquals(2, vm.completedMissions)
         assertEquals(30, vm.totalPoints)
+    }
+
+    /**
+     * "완료한 미션 수"는 success 로그 개수가 아니라 실제 집계(counted_for_daily) 건수여야 한다(#234).
+     *  운동(누적 10분) 미션을 하루에 여러 번 하면 10분 넘긴 뒤 세션도 success=true 로 남지만
+     *  counted_for_daily 는 첫 달성 1건만 true → 한 미션(운동)이 "4개 완료"로 부풀던 실단말 버그의 회귀 방지.
+     */
+    @Test
+    fun counts_completed_missions_by_daily_count_not_success_logs() = runBlocking {
+        val api = FakeRecordApi(
+            history = { risk("good") },
+            logs = {
+                MissionLogListResponse(
+                    listOf(
+                        MissionLogItem(79, "exercise", success = true, countedForDaily = true, earnedPoints = 10),
+                        MissionLogItem(80, "exercise", success = true, countedForDaily = false, earnedPoints = 0),
+                        MissionLogItem(81, "exercise", success = true, countedForDaily = false, earnedPoints = 0),
+                        MissionLogItem(82, "exercise", success = true, countedForDaily = false, earnedPoints = 0),
+                    )
+                )
+            },
+        )
+        val vm = RecordViewModel(api)
+
+        vm.refresh()
+
+        assertEquals(1, vm.completedMissions) // success 4건이 아니라 실제 집계 1건
+        assertEquals(10, vm.totalPoints)      // 보상도 1회분만
     }
 
     @Test
