@@ -104,6 +104,29 @@ jobs:
             --protocol tcp --port 22 \
             --cidr "${{ steps.ip.outputs.addr }}/32"
 
+      # ── 선행 게이트(#269 리뷰): 아래 헬스체크는 #268 nginx conf 의 `location = /health` 가
+      #    "라이브" nginx 에 반영돼 있어야 성립한다. conf 는 자동 업로드하지 않으므로(#268 상단
+      #    주석의 수동 절차: scp → nginx -t → reload → /health 200) 머지 여부만으로는 부족하다.
+      #    반영 전에 이 배포가 나가면 새 fastapi 가 정상이어도 헬스체크가 404 로 실패하므로,
+      #    구버전이 아직 떠 있는 지금 시점에 /health 라우트 존재부터 확인하고 아니면 즉시 중단한다
+      #    (아직 아무것도 배포하지 않아 서비스 영향 없음).
+      - name: 선행 게이트 — 라이브 nginx 에 /health 라우트 확인(#268 반영 여부)
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            if ! curl -fsS --max-time 10 \
+                --resolve aigo-health.duckdns.org:443:127.0.0.1 \
+                https://aigo-health.duckdns.org/health; then
+              echo "::error::라이브 nginx 에 /health 라우트가 없습니다(#268 conf 미반영)."
+              echo "  infra/nginx/default.conf 상단 주석 절차대로 conf 를 먼저 반영하세요:"
+              echo "  scp default.conf → docker exec docker-nginx-1 nginx -t → nginx -s reload → /health 200 확인"
+              exit 1
+            fi
+
       - name: 배포 파일 업로드
         uses: appleboy/scp-action@ff85246acaad7bdce478db94a363cd2bf7c90345 # v1.0.0
         with:
@@ -173,11 +196,27 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
-          # 컨테이너가 뜬 직후엔 아직 못 받으므로 재시도한다. nginx는 /api/만 프록시하므로
-          # fastapi가 호스트에 노출한 8000 포트로 직접 확인한다.
+          # 컨테이너가 뜬 직후엔 아직 못 받으므로 재시도한다. fastapi 호스트 포트 매핑이 제거돼
+          # (#262 후속) HTTPS 경로로 확인한다 — nginx location = /health 가 fastapi 로 프록시하므로
+          # 사용자가 실제로 타는 TLS(SNI·인증서)→nginx→fastapi 경로가 함께 검증된다.
+          # --resolve 로 127.0.0.1 을 직접 찍는 이유(#269 리뷰): EC2 에서 자기 공인 DuckDNS/EIP 로
+          # 왕복하면 외부 DNS 장애·hairpin NAT 때문에 앱과 무관한 실패가 생긴다. loopback+SNI 는
+          # 같은 검증을 하면서 외부 DNS 에 의존하지 않는다.
           script: |
-            curl -fsS --max-time 5 --retry 12 --retry-delay 5 --retry-all-errors \
-              http://localhost:8000/health
+            set -euo pipefail
+            # ① 서비스 헬스: TLS 종단부터 fastapi 응답까지 (증거는 이 스텝 로그의 응답 본문)
+            curl -fsS --max-time 10 --retry 12 --retry-delay 5 --retry-all-errors \
+              --resolve aigo-health.duckdns.org:443:127.0.0.1 \
+              https://aigo-health.duckdns.org/health
+            echo
+            # ② 8000 비노출 증거(#262 후속의 목적 그 자체): 호스트에 8000 리스너가 없어야 한다.
+            #    compose 내부 fastapi:8000 upstream 은 그대로라 서비스에는 영향이 없다.
+            if ss -ltn 'sport = :8000' | grep -q LISTEN; then
+              echo "::error::호스트 8000 포트가 여전히 노출돼 있습니다(compose 포트 매핑 확인)"
+              ss -ltnp 'sport = :8000' || true
+              exit 1
+            fi
+            echo "OK: 호스트 8000 리스너 없음(ss 확인) — nginx 단일 진입점 유지"
 
       # 이전 버전 이미지 정리는 헬스체크를 통과한 뒤에만 한다.
       # 배포 스텝 안에서 돌리면, 헬스체크가 실패할 때는 이미 이전 이미지가 지워진 뒤라

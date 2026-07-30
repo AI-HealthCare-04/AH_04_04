@@ -30,8 +30,9 @@ services:
     environment:
       ENV: prod
     restart: always
-    ports:
-      - "${APP_EXPOSE_PORT:-8000}:8000"
+    # 호스트 포트를 노출하지 않는다(#262 후속): 외부 트래픽은 nginx(443)가 유일한 입구이고,
+    #   nginx 는 docker network 의 upstream(fastapi:8000)으로 직접 접근한다. SG 차단에 더해
+    #   매핑 자체를 없애 HTTPS 우회 경로를 이중으로 막는다. 배포 헬스체크도 공개 HTTPS 로 전환됨.
     networks:
       - app-network
     depends_on:
