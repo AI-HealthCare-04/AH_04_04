@@ -26,14 +26,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.aihealthcare.ah0404.network.HealthProfileLatest
+import com.aihealthcare.ah0404.network.OnbEnums
 import com.aihealthcare.ah0404.network.UserInfoResponse
 import com.aihealthcare.ah0404.settings.TopBar
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoDialog
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
 import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
+import com.aihealthcare.ah0404.ui.components.AigoSegmentedSelector
 import com.aihealthcare.ah0404.ui.components.AigoTextField
+import com.aihealthcare.ah0404.ui.components.SegmentOption
 import com.aihealthcare.ah0404.ui.theme.Dimens
 
 /**
@@ -47,8 +52,9 @@ fun ProfileScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     vm: ProfileViewModel = viewModel(),
+    healthVm: HealthInfoViewModel = viewModel(),
 ) {
-    LaunchedEffect(Unit) { vm.load() }
+    LaunchedEffect(Unit) { vm.load(); healthVm.load() }
 
     Column(
         modifier = modifier
@@ -72,6 +78,8 @@ fun ProfileScreen(
                     ProfileContent(vm, info)
                 }
             }
+            // 신체 정보 편집(#기록탭 §2) — 키/몸무게/허리/신장건강정보.
+            HealthInfoSection(healthVm)
         }
     }
 
@@ -84,7 +92,87 @@ fun ProfileScreen(
             onDismissRequest = vm::dismissSaveError,
         )
     }
+    healthVm.saveError?.let { msg ->
+        AigoDialog(
+            title = "알림",
+            message = msg,
+            confirmText = "확인",
+            onConfirm = healthVm::dismissSaveError,
+            onDismissRequest = healthVm::dismissSaveError,
+        )
+    }
+    healthVm.savedMessage?.let { msg ->
+        AigoDialog(
+            title = "저장 완료",
+            message = msg,
+            confirmText = "확인",
+            onConfirm = healthVm::dismissSavedMessage,
+            onDismissRequest = healthVm::dismissSavedMessage,
+        )
+    }
 }
+
+/** 신체 정보 편집 카드(#기록탭 §2). 키·몸무게·허리둘레·신장건강정보 수정 → 새 스냅샷 저장. */
+@Composable
+private fun HealthInfoSection(healthVm: HealthInfoViewModel) {
+    val profile = healthVm.profile
+    when {
+        healthVm.error && profile == null -> ErrorCard(onRetry = healthVm::load)
+        profile == null -> LoadingCard()
+        else -> HealthInfoEditor(healthVm, profile)
+    }
+}
+
+private val KIDNEY_LABELS = mapOf(
+    "none" to "해당 없음",
+    "kidney_disease" to "신장질환 있음",
+    "dialysis" to "투석 중",
+    "unknown" to "잘 모르겠어요",
+)
+
+@Composable
+private fun HealthInfoEditor(healthVm: HealthInfoViewModel, profile: HealthProfileLatest) {
+    // 편집 상태는 profile 이 갱신되면 초기화(저장 후 최신값 반영).
+    var height by remember(profile) { mutableStateOf(numberText(profile.heightCm)) }
+    var weight by remember(profile) { mutableStateOf(numberText(profile.weightKg)) }
+    var waist by remember(profile) { mutableStateOf(profile.waistCm?.let(::numberText) ?: "") }
+    var kidney by remember(profile) { mutableStateOf(profile.kidneyStatus) }
+
+    AigoCard {
+        Text("신체 정보", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(Dimens.Space12))
+        AigoTextField(height, { height = it }, "키 (cm)", keyboardType = KeyboardType.Number)
+        Spacer(Modifier.height(Dimens.Space8))
+        AigoTextField(weight, { weight = it }, "몸무게 (kg)", keyboardType = KeyboardType.Number)
+        Spacer(Modifier.height(Dimens.Space8))
+        AigoTextField(waist, { waist = it }, "허리둘레 (cm, 선택)", keyboardType = KeyboardType.Number)
+        Spacer(Modifier.height(Dimens.Space12))
+        Text("신장 건강 정보", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(Dimens.Space8))
+        AigoSegmentedSelector(
+            options = OnbEnums.KIDNEY_STATUS.map { SegmentOption(it, KIDNEY_LABELS[it] ?: it) },
+            selected = kidney,
+            onSelect = { kidney = it },
+        )
+        Spacer(Modifier.height(Dimens.Space16))
+        AigoPrimaryButton(
+            text = if (healthVm.saving) "저장 중…" else "저장",
+            onClick = { healthVm.save(height, weight, waist, kidney) {} },
+            enabled = !healthVm.saving,
+        )
+        Spacer(Modifier.height(Dimens.Space8))
+        // 하단 고정 안내(§2) — 저장 반영 시점을 문구와 동작으로 일치시킨다.
+        Text(
+            "지금 수정하신 정보는 다음 근육 건강 정보부터 반영됩니다",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** 소수 반올림 없는 표시용 문자열: 170.0 → "170", 63.5 → "63.5". */
+private fun numberText(value: Double): String =
+    if (value % 1.0 == 0.0) value.toInt().toString() else value.toString()
 
 @Composable
 private fun ProfileContent(vm: ProfileViewModel, info: UserInfoResponse) {
