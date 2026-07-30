@@ -340,20 +340,45 @@ class ExerciseVideosViewModelTest {
     }
 
     @Test
-    fun `완료 응답이 역순 도착해도 더 큰 누적값·달성 상태로 수렴한다`() = runTest {
+    fun `병렬 완료 전송을 직렬화해 마지막 전송값으로 수렴한다`() = runTest {
         val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
-        // 서버 처리 순서는 A(6분/미달) → B(11분/달성)지만, 응답은 B 가 먼저·A 가 늦게 도착하도록 지연을 뒤집는다.
+        // A(6분/미달) 를 먼저 전송하지만 응답이 더 오래 걸리게 지연을 준다. 직렬화가 없으면(예전 병렬 대입) B(11분/달성)가
+        //   먼저 적용된 뒤 늦은 A 가 6분/미달로 되돌려 최종이 틀어진다. 직렬화되면 A→B 순서로만 적용돼 최종은 B.
         fake.completeRespByDuration = mapOf(6f to (6f to false), 11f to (11f to true))
         fake.completeDelayByDuration = mapOf(6f to 100L, 11f to 10L)
         val vm = vmWith(fake)
 
-        vm.beginExerciseSession(); vm.submitExercise(6f, safetyNoticeConfirmed = true)  // A: 먼저 전송, 응답 늦음
-        vm.beginExerciseSession(); vm.submitExercise(11f, safetyNoticeConfirmed = true) // B: 나중 전송, 응답 빠름
+        vm.beginExerciseSession(); vm.submitExercise(6f, safetyNoticeConfirmed = true)  // A: 먼저 전송(응답 늦음)
+        vm.beginExerciseSession(); vm.submitExercise(11f, safetyNoticeConfirmed = true) // B: 나중 전송(응답 빠름)
         advanceUntilIdle()
 
         assertEquals("두 세션 모두 완료 전송", 2, fake.completeCalls)
-        assertEquals("늦게 온 A(6분)가 최신 B(11분)를 되돌리지 않는다(최댓값 수렴)", 11f, vm.todayExerciseMin)
-        assertTrue("한 번 달성하면 늦은 미달 응답이 되돌리지 못한다(스티키)", vm.todayGoalReached)
+        assertEquals("직렬 적용의 마지막 = 나중 전송 B(11분), 늦은 A 가 끼어들지 못한다", 11f, vm.todayExerciseMin)
+        assertTrue("마지막 전송이 달성이므로 달성 표시", vm.todayGoalReached)
+    }
+
+    /**
+     * 날짜 경계 회귀 방지(리뷰 #280): 최댓값·스티키 방식이면 자정을 넘겨도 전날 11분·달성이 남지만, 직렬 last-wins 는
+     *  다음 날 첫 세션의 더 작은 누적/미달을 그대로 반영해 정상 초기화한다(서버 daily_total 이 새 날엔 다시 작아지므로).
+     */
+    @Test
+    fun `다음 날 첫 운동의 더 작은 누적·미달로 표시가 초기화된다`() = runTest {
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        val vm = vmWith(fake)
+
+        // 전날: 11분·달성
+        fake.completeRespByDuration = mapOf(11f to (11f to true))
+        vm.beginExerciseSession(); vm.submitExercise(11f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+        assertEquals(11f, vm.todayExerciseMin)
+        assertTrue(vm.todayGoalReached)
+
+        // 자정 넘긴 다음 날 첫 운동: 서버 당일 누적이 2분·미달로 리셋됨.
+        fake.completeRespByDuration = mapOf(2f to (2f to false))
+        vm.beginExerciseSession(); vm.submitExercise(2f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+        assertEquals("전날 값이 남지 않고 새 날 누적으로 초기화", 2f, vm.todayExerciseMin)
+        assertFalse("전날 달성 상태가 스티키하게 남지 않는다", vm.todayGoalReached)
     }
 
     @Test
