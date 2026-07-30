@@ -41,6 +41,7 @@ import com.aihealthcare.ah0404.network.TokenHolder
 import com.aihealthcare.ah0404.fitness.StsAssessmentScreen
 import com.aihealthcare.ah0404.fitness.formatStsSeconds
 import com.aihealthcare.ah0404.ui.components.AigoCheckboxRow
+import com.aihealthcare.ah0404.ui.components.AigoDayStepper
 import com.aihealthcare.ah0404.ui.components.AigoDialog
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
 import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
@@ -301,7 +302,6 @@ private fun FieldWithUnknown(
 
 @Composable
 private fun ProfileStep(vm: OnboardingViewModel) {
-    val yesNo = listOf(SegmentOption(true, "예"), SegmentOption(false, "아니요"))
     StepScaffold(
         title = "건강 프로필",
         subtitle = "맞춤 미션을 위해 기본 정보를 알려주세요.",
@@ -349,11 +349,11 @@ private fun ProfileStep(vm: OnboardingViewModel) {
                 unknownEnabled = true,
             )
 
-            Text("최근 걷기 운동을 하고 있나요?", style = MaterialTheme.typography.titleMedium)
-            AigoSegmentedSelector(yesNo, vm.walkingPractice, { vm.walkingPractice = it }, horizontal = true)
+            Text("일주일에 며칠 걷기 운동을 하세요?", style = MaterialTheme.typography.titleMedium)
+            AigoDayStepper(value = vm.walkDays, onValueChange = { vm.walkDays = it }, max = 7)
 
-            Text("최근 근력 운동을 하고 있나요?", style = MaterialTheme.typography.titleMedium)
-            AigoSegmentedSelector(yesNo, vm.strengthExercise, { vm.strengthExercise = it }, horizontal = true)
+            Text("일주일에 며칠 근력 운동을 하세요?", style = MaterialTheme.typography.titleMedium)
+            AigoDayStepper(value = vm.muscDays, onValueChange = { vm.muscDays = it }, max = 5)
 
             Text("신장 상태", style = MaterialTheme.typography.titleMedium)
             AigoSegmentedSelector(

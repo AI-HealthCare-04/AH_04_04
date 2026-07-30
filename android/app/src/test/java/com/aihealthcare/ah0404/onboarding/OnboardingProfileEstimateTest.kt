@@ -141,12 +141,38 @@ class OnboardingProfileEstimateTest {
     fun submit_rejects_under_65() = runTest {
         val vm = vm(2026, 7, 15).apply {
             birthYear = "1990"; birthMonth = "1"; birthDay = "1" // 36세
-            sex = "male"; walkingPractice = true; strengthExercise = false
+            sex = "male"; walkDays = 5; muscDays = 2
             setHeight("170"); setWeight("65")
         }
         vm.submitProfile(); advanceUntilIdle()
         assertTrue(vm.error?.contains("65세") == true)
         assertFalse(vm.step == OnbStep.ASSESSMENT)
+    }
+
+    // ── #267 지영님 블로커: 활동 일수 미응답(null)은 제출 차단 — '미응답'과 '주 0일'을 구분해야 예측 입력이 왜곡되지 않는다 ──
+    @Test
+    fun submit_rejects_when_activity_days_unanswered() = runTest {
+        val vm = vm().apply {
+            birthYear = "1958"; birthMonth = "3"; birthDay = "1" // 68세
+            sex = "male"; setHeight("170"); setWeight("65")
+            // walkDays·muscDays 는 기본 null(미응답) — 사용자가 스테퍼를 안 건드린 상태
+        }
+        vm.submitProfile(); advanceUntilIdle()
+        assertTrue(vm.error?.contains("일수를 선택") == true)
+        assertFalse(vm.step == OnbStep.ASSESSMENT)
+    }
+
+    // 0일("안 해요")도 사용자가 명시적으로 고르면 정상 통과해야 한다(0 자체는 유효한 답).
+    @Test
+    fun submit_accepts_explicit_zero_activity_days() = runTest {
+        val vm = vm().apply {
+            birthYear = "1958"; birthMonth = "3"; birthDay = "1"
+            sex = "male"; setHeight("170"); setWeight("65")
+            walkDays = 0; muscDays = 0
+        }
+        vm.submitProfile(); advanceUntilIdle()
+        // 활동 일수 검증은 통과 — 이후 실패해도 '일수를 선택' 에러는 아니어야 한다(FakeApi 는 네트워크에서 TODO).
+        assertFalse("0일도 유효 응답 — 일수 미선택 에러가 뜨면 안 됨", vm.error?.contains("일수를 선택") == true)
     }
 
     @Test
@@ -161,7 +187,7 @@ class OnboardingProfileEstimateTest {
     fun submit_rejects_nonpositive_height() = runTest {
         val vm = vm().apply {
             birthYear = "1958"; birthMonth = "3"; birthDay = "1"
-            sex = "male"; walkingPractice = true; strengthExercise = false
+            sex = "male"; walkDays = 5; muscDays = 2
             setWeight("60"); setHeight("0")
         }
         vm.submitProfile(); advanceUntilIdle()

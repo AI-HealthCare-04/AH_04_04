@@ -107,8 +107,9 @@ data class HealthProfileRequest(
     val sex: String,
     @SerialName("height_cm") val heightCm: Double,
     @SerialName("weight_kg") val weightKg: Double,
-    @SerialName("walking_practice") val walkingPractice: Boolean,
-    @SerialName("strength_exercise") val strengthExercise: Boolean,
+    // #261/PR #260: 예/아니오 boolean → 주당 일수(walk_days 0~7, musc_days 0~5)로 이관. AWGS2025 예측 입력.
+    @SerialName("walk_days") val walkDays: Int,
+    @SerialName("musc_days") val muscDays: Int,
     // 필수(상수 기본값) — 항상 전송
     @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     @SerialName("activity_input_source") val activityInputSource: String = "self_report",
