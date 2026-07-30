@@ -125,6 +125,9 @@ fun RoutinePlayerScreen(
     var elapsedMs by remember { mutableLongStateOf(0L) }
     var finished by remember { mutableStateOf(false) }
     var showExit by remember { mutableStateOf(false) }
+    // 실제 진행 시간(#234 P1-B): 단계별 elapsedMs 와 달리 루틴 전체에서 '실제로 흐른' 시간만 누적한다(일시정지
+    //   제외, 각 단계 리셋 안 됨). '다음'으로 스킵하면 그 단계는 스킵 시점까지만 반영 → 완료 전송이 실제 수행 분만 싣는다.
+    var playedMs by remember { mutableLongStateOf(0L) }
 
     val step = routine.steps.getOrNull(stepIndex)
 
@@ -164,7 +167,7 @@ fun RoutinePlayerScreen(
         val totalMs = st.sec * 1000L
         while (elapsedMs < totalMs) {
             delay(50)
-            if (!paused) elapsedMs += 50
+            if (!paused) { elapsedMs += 50; playedMs += 50 } // playedMs 는 단계 넘어가도 리셋 안 됨(실제 진행 누적)
         }
         if (stepIndex + 1 < routine.steps.size) stepIndex++ else finished = true
     }
@@ -186,9 +189,9 @@ fun RoutinePlayerScreen(
     LaunchedEffect(finished) {
         if (finished) {
             bgmPlayer.pause(); clipPlayer.stop()
-            // 완주 시 실제 재생 길이(각 step sec 합, 분)를 넘긴다 — 루틴을 이미 로드한 플레이어가 단일 출처.
-            //   totalSec은 표시용이라 step 합을 쓴다. #234 운동 완료 배선(정인)이 이 분을 서버 당일 10분 누적에 합산.
-            onComplete(routine.steps.sumOf { it.sec } / 60f)
+            // 완료 시 '실제로 진행한 분'(playedMs)을 넘긴다 — 전체 step 합이 아니라 실제 흐른 시간이라 '다음' 스킵·
+            //   일시정지가 반영된다(리뷰 P1-B). #234 운동 완료 배선이 이 분을 서버 당일 10분 누적에 합산.
+            onComplete(playedMs / 60_000f)
         }
     }
 
@@ -337,13 +340,25 @@ fun RoutinePlayerScreen(
     if (showExit) {
         AlertDialog(
             onDismissRequest = { showExit = false },
-            confirmButton = { TextButton(onClick = { showExit = false; onExit() }) { Text("나가기", fontSize = 22.sp) } },
+            confirmButton = {
+                TextButton(onClick = {
+                    showExit = false
+                    // 중도 종료도 '지금까지 실제로 진행한 분'(playedMs)을 저장한다(리뷰 #234-3: 스트리밍과 동일 기준 —
+                    //   스트리밍은 닫아도 실재생분을 보내는데 루틴만 완주해야 인정하면 5분 하다 나갈 때 다 사라짐).
+                    //   단 [MIN_ROUTINE_PLAYED_MS] 미만은 실수 진입으로 보고 버린다. onComplete 가 전송 후 화면을
+                    //   닫으므로 이 경로에선 onExit 를 따로 부르지 않는다(0분 등은 VM 이 한 번 더 거른다).
+                    if (playedMs >= MIN_ROUTINE_PLAYED_MS) onComplete(playedMs / 60_000f) else onExit()
+                }) { Text("나가기", fontSize = 22.sp) }
+            },
             dismissButton = { TextButton(onClick = { showExit = false }) { Text("계속하기", fontSize = 22.sp) } },
             title = { Text("운동을 그만할까요?", fontSize = 26.sp, fontWeight = FontWeight.Bold) },
-            text = { Text("지금 나가면 진행 상황이 저장되지 않아요.", fontSize = 22.sp) },
+            text = { Text("지금까지 진행한 시간은 저장돼요.", fontSize = 22.sp) },
         )
     }
 }
+
+/** 루틴 중도 종료 시 이보다 짧으면(실수 진입 등) 적립하지 않는다(리뷰 #234-3: 5~10초 미만 무시). */
+private const val MIN_ROUTINE_PLAYED_MS = 5_000L
 
 /** 원형 카운트다운 게이지 + 가운데 남은 초. 어르신이 숫자만으론 놓치므로 게이지 병행. */
 @Composable

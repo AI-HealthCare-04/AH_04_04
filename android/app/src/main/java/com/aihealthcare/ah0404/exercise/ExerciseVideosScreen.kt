@@ -38,12 +38,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
 import com.aihealthcare.ah0404.R
@@ -77,10 +80,29 @@ fun ExerciseVideosScreen(
     var selectedTab by remember(vm.videos) { mutableIntStateOf(0) }
     var routineFile by remember { mutableStateOf<String?>(null) }
     var fullscreenUrl by remember { mutableStateOf<String?>(null) }
-    // 안전 고지 게이트(#234): 운동을 '처음 시작할 때' 1회 확인. 확인값(safetyConfirmed)은 이 방문 동안 유지되어
-    //   운동 완료 전송의 safety_notice_confirmed 로 쓰인다(정인 레이어 B 배선). pendingStart 는 확인 대기 중 보류된 시작 동작.
+    // 안전 고지 게이트(#234, 리뷰 P1-C): 운동을 '처음 시작할 때' 1회 확인. 서버는 운동(requires_safety_notice=true)에서
+    //   확인 안 되면 시작 POST 를 400 으로 막으므로(services/mission.py), 조작된 true 없이 사용자가 실제로 확인한 값만
+    //   완료 전송의 safety_notice_confirmed(=safetyConfirmed, 이 방문 동안 유지)로 넘긴다. pendingStart 는 확인 대기 중 보류된 시작 동작.
     var safetyConfirmed by remember { mutableStateOf(false) }
     var pendingStart by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    // 전송 실패로 남은 세션들(키별 보존)을 두 시점에 같은 키로 재시도한다(리뷰 #234 재검토). 같은 자연 키라 서버
+    //   중복 없이 안전하고, POST 성공/PATCH 실패로 in_progress 만 남은 경우를 완료로 되살린다(#172). 남은 게 없으면 no-op.
+    //   ① ON_RESUME: 앱을 백그라운드 갔다 돌아올 때. ② 목록 복귀: 운동을 마치고 이 화면으로 돌아온 직후(실패는 보통
+    //   화면이 이미 RESUMED 인 동안 나므로 ON_RESUME 만으론 그 직후 재시도가 안 됨 → 복귀 시점에도 시도). 영속 아님.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) vm.retryPending()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    // 루틴/전체화면을 닫고 목록으로 돌아오면(둘 다 null) 남은 전송을 재시도한다. 방금 실패한 건은 in-flight 가드로
+    //   걸러지므로 이중 전송되지 않고, 이후(다음 운동 종료·재진입) 복귀 때 안전히 재시도된다.
+    LaunchedEffect(routineFile, fullscreenUrl) {
+        if (routineFile == null && fullscreenUrl == null) vm.retryPending()
+    }
 
     // 번들 루틴(몸풀기·마무리)은 백엔드 목록과 무관하게 오프라인에서도 재생 가능(심사 환경 안정 버전).
     //   여러 동작을 조합한 가이드 루틴이라 단일 스트리밍 영상이 아니라 번들 RoutinePlayer 로 띄운다(#72 스트리밍과 별개).
@@ -88,8 +110,12 @@ fun ExerciseVideosScreen(
         RoutinePlayerScreen(
             routineFile = file,
             onExit = { routineFile = null },
-            // durationMin(실제 재생 분)은 #234 운동 완료 배선(정인 레이어 B)에서 vm.submitExercise로 사용. 지금은 미사용.
-            onComplete = { _ -> routineFile = null },
+            // 완주 시 실제 진행 분(#234): 확인 게이트를 통과해야만 여기 도달하므로 safetyConfirmed=true.
+            //   VM 이 0분·미확인·템플릿 부재를 걸러 서버 당일 10분 누적에 합산한다.
+            onComplete = { durationMin ->
+                vm.submitExercise(durationMin, safetyConfirmed)
+                routineFile = null
+            },
         )
         return
     }
@@ -97,7 +123,12 @@ fun ExerciseVideosScreen(
     // 스트리밍 운동(근력·서서)은 포스터 탭 시 '가로 전체화면'으로 크게 재생한다(세로 고정 앱에서 이 화면만 가로).
     //   기기 크기가 달라도 fillMaxSize + 가로라 알아서 꽉 찬다(고정 픽셀 없음). 나가면 세로로 복원.
     fullscreenUrl?.let { url ->
-        FullscreenLandscapeVideo(url = url, onExit = { fullscreenUrl = null })
+        FullscreenLandscapeVideo(
+            url = url,
+            onExit = { fullscreenUrl = null },
+            // 실제 재생 분(#234, P1-A: 일시정지·버퍼·백그라운드 제외). 게이트 통과 후라 safetyConfirmed=true.
+            onWatched = { durationMin -> vm.submitExercise(durationMin, safetyConfirmed) },
+        )
         return
     }
 
@@ -110,7 +141,10 @@ fun ExerciseVideosScreen(
         )
     }
     val guardedStart: (() -> Unit) -> Unit = { action ->
-        if (safetyConfirmed) action() else pendingStart = action
+        // 실제 재생을 시작하는 순간(확인 통과 후) 이 세션의 자연 키를 새로 잡는다(#234-1): 세션마다 새 키라
+        //   별개로 합산되고, 완료 전송이 실패해 재시도할 땐 같은 키를 재사용해 중복 집계를 막는다.
+        val start = { vm.beginExerciseSession(); action() }
+        if (safetyConfirmed) start() else pendingStart = start
     }
 
     Column(
@@ -139,6 +173,7 @@ fun ExerciseVideosScreen(
             )
         }
     }
+
 }
 
 /**
@@ -291,11 +326,12 @@ private fun VideoArea(
 @Composable
 private fun FullscreenLandscapeVideo(url: String, onExit: () -> Unit, onWatched: (Float) -> Unit = {}) {
     val activity = LocalContext.current as? Activity
+    // 실제 재생 시간만 적립(#234, 리뷰 P1-A): ExoPlayer 의 isPlaying 구간만 합산 → 일시정지·버퍼링·백그라운드
+    //   정지 시간은 빠진다. (종전 벽시계 방식은 멈춰 둔 시간까지 세어 하루 10분 목표가 과대 계상됐다.)
+    val stopwatch = remember { PlaybackStopwatch() }
     DisposableEffect(Unit) {
-        // 시청 분 측정(#234 운동 완료 배선용, 정인 계약): 진입(재생 시작)~이탈(닫기/뒤로=세로 복원) 벽시계 경과.
-        //   목표가 '하루 10분 몸 움직이기'라 배속과 무관한 실제 따라 한 시간=벽시계 분으로 잰다. onDispose에서
-        //   onWatched(분) 발화 → 호출부(정인)가 서버 당일 누적에 합산. 0분(순간 열고닫음) 방어는 호출부에서.
-        val startedAt = SystemClock.elapsedRealtime()
+        // 진입~이탈 사이 상태를 관리: 가로 강제·시스템바 숨김, 이탈 시 복원 + 실제 재생 분을 onWatched 로 발화.
+        //   0분(순간 열고닫음/한 번도 재생 안 됨) 방어는 호출부(VM)에서. 배속과 무관하게 '실제 따라 한 시간'을 잰다.
         val prevOrientation = activity?.requestedOrientation
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         val insets = activity?.window?.let { w -> WindowCompat.getInsetsController(w, w.decorView) }
@@ -304,7 +340,7 @@ private fun FullscreenLandscapeVideo(url: String, onExit: () -> Unit, onWatched:
         onDispose {
             activity?.requestedOrientation = prevOrientation ?: ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             insets?.show(WindowInsetsCompat.Type.systemBars())
-            onWatched((SystemClock.elapsedRealtime() - startedAt) / 60_000f)
+            onWatched(stopwatch.elapsedMinutes(SystemClock.elapsedRealtime()))
         }
     }
     BackHandler { onExit() }
@@ -314,6 +350,8 @@ private fun FullscreenLandscapeVideo(url: String, onExit: () -> Unit, onWatched:
             modifier = Modifier.fillMaxSize(),
             autoPlay = true, // 포스터 탭 = 재생 의사 → 한 번 탭으로 바로 재생(지영 리뷰 #254 P2)
             speed = AppSettings.exerciseSpeedFor(AppSettings.exerciseDifficulty),
+            // 실재생 구간만 스톱워치에 반영(P1-A). 재생 시작=true 구간만 누적한다.
+            onIsPlayingChanged = { isPlaying -> stopwatch.onIsPlayingChanged(isPlaying, SystemClock.elapsedRealtime()) },
         )
         // 닫기(세로 복귀) — 어르신용으로 크게, 반투명 배경으로 밝은 영상 위에서도 잘 보이게. 좌상단.
         //   가로에서 노치/펀치홀에 안 가리게 displayCutout inset 적용(지영 리뷰 #254 비차단).
@@ -332,6 +370,39 @@ private fun FullscreenLandscapeVideo(url: String, onExit: () -> Unit, onWatched:
                 style = MaterialTheme.typography.titleMedium,
             )
         }
+    }
+}
+
+/**
+ * ExoPlayer 의 isPlaying 구간만 합산해 '실제 재생 시간'을 재는 스톱워치(#234 P1-A).
+ *   재생 시작(true)에 구간을 열고, 일시정지·버퍼링·끝·백그라운드 정지(false)에 구간을 닫아 누적한다 →
+ *   멈춰 둔 시간은 빠진다. 이탈 시 [elapsedMinutes] 로 열린 구간을 닫아 총 재생 '분'을 얻는다.
+ *   시각(now)은 호출부가 SystemClock.elapsedRealtime() 로 주입(테스트·단조증가 보장).
+ */
+internal class PlaybackStopwatch {
+    private var accumulatedMs = 0L
+    private var resumedAtMs = -1L // 현재 열린 재생 구간 시작(없으면 -1)
+
+    fun onIsPlayingChanged(isPlaying: Boolean, now: Long) {
+        if (isPlaying) {
+            if (resumedAtMs < 0) resumedAtMs = now // 재생 시작 — 구간 열기(이미 열려 있으면 무시)
+        } else {
+            close(now) // 정지/버퍼/끝 — 구간 닫아 누적
+        }
+    }
+
+    /** 열린 재생 구간을 닫아 누적에 반영(중복 호출 안전 — 열린 구간이 없으면 무시). */
+    private fun close(now: Long) {
+        if (resumedAtMs >= 0) {
+            accumulatedMs += now - resumedAtMs
+            resumedAtMs = -1
+        }
+    }
+
+    /** 지금까지의 총 재생 시간(분). 열린 구간이 있으면 먼저 닫는다. */
+    fun elapsedMinutes(now: Long): Float {
+        close(now)
+        return accumulatedMs / 60_000f
     }
 }
 

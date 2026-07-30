@@ -113,7 +113,14 @@ data class WalkingDetail(
     val steps: Int? = null,
 )
 
-// [요청] 미션 완료(PATCH). 걷기는 walking_detail 만 채운다.
+// [요청 일부] 운동 완료 상세. 판정 필드는 걷기와 동일하게 duration_min(필수). 서버가 당일 '분'을 누적 합산해
+//   목표(하루 10분, #168/migration 0010)와 비교한다 → 앱은 세션별 수행 분만 실어 보내면 된다(클라 누적 불필요).
+@Serializable
+data class ExerciseDetail(
+    @SerialName("duration_min") val durationMin: Float,
+)
+
+// [요청] 미션 완료(PATCH). 걷기는 walking_detail, 운동은 exercise_detail 을 채운다.
 // ⚠️ success 를 반드시 보낸다(누락 시 서버가 실패로 처리할 수 있음).
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
@@ -123,6 +130,7 @@ data class MissionLogUpdateRequest(
     // (계약: 완료 status="completed" 는 반드시 전송)
     @EncodeDefault(EncodeDefault.Mode.ALWAYS) val status: String = "completed",
     @SerialName("walking_detail") val walkingDetail: WalkingDetail? = null,
+    @SerialName("exercise_detail") val exerciseDetail: ExerciseDetail? = null,
 )
 
 @Serializable

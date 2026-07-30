@@ -1,8 +1,19 @@
 package com.aihealthcare.ah0404.exercise
 
+import com.aihealthcare.ah0404.mission.ExerciseFlowUseCase
 import com.aihealthcare.ah0404.network.ExerciseVideoApi
 import com.aihealthcare.ah0404.network.ExerciseVideoItem
 import com.aihealthcare.ah0404.network.ExerciseVideosResponse
+import com.aihealthcare.ah0404.network.LoginResponse
+import com.aihealthcare.ah0404.network.Mission
+import com.aihealthcare.ah0404.network.MissionApi
+import com.aihealthcare.ah0404.network.MissionLogCreateRequest
+import com.aihealthcare.ah0404.network.MissionLogCreateResponse
+import com.aihealthcare.ah0404.network.MissionLogUpdateRequest
+import com.aihealthcare.ah0404.network.MissionLogUpdateResponse
+import com.aihealthcare.ah0404.network.MissionsResponse
+import com.aihealthcare.ah0404.network.SensorSessionCreateRequest
+import com.aihealthcare.ah0404.network.SensorSessionCreateResponse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -13,12 +24,15 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
 /**
- * ExerciseVideosViewModel 테스트 — GET /exercise-videos(#72) 로드/정렬/오류.
+ * ExerciseVideosViewModel 테스트 — GET /exercise-videos(#72) 로드/정렬/오류 + 운동 완료 전송(#234).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ExerciseVideosViewModelTest {
@@ -29,6 +43,73 @@ class ExerciseVideosViewModelTest {
     private class FakeApi(val result: () -> ExerciseVideosResponse) : ExerciseVideoApi {
         override suspend fun getExerciseVideos() = result()
     }
+
+    /**
+     * MissionApi fake — getMissions 로 넘겨줄 미션 목록을 지정하고, 완료 전송(createMissionLog→completeMissionLog)
+     * 호출을 기록한다. VM 의 missionApi(템플릿 해석)와 exerciseFlow(전송) 둘 다 같은 fake 로 물려 한 눈에 검증한다.
+     */
+    private class FakeMissionApi(private val missions: List<Mission>) : MissionApi {
+        var createdTemplateId: Int? = null
+        var createdType: String? = null
+        var createdSafetyConfirmed: Boolean? = null
+        var completeCalls = 0
+        var lastDurationMin: Float? = null
+        // 매 POST 의 자연 키(created_on_device_at)를 순서대로 기록 — 재시도가 같은 키를 쓰는지 검증용(#234-1).
+        val createdKeys = mutableListOf<String?>()
+        // >0 이면 그만큼 createMissionLog 를 예외로 실패시킨다(전송 실패→재시도 경로 검증용, #234-2).
+        var failCreateTimes = 0
+
+        override suspend fun guestLogin(): LoginResponse = error("unused")
+
+        override suspend fun getMissions(status: String): MissionsResponse = MissionsResponse(missions)
+
+        override suspend fun createMissionLog(body: MissionLogCreateRequest): MissionLogCreateResponse {
+            createdKeys.add(body.createdOnDeviceAt)
+            createdTemplateId = body.missionTemplateId
+            createdType = body.missionType
+            createdSafetyConfirmed = body.safetyNoticeConfirmed
+            if (failCreateTimes > 0) { failCreateTimes--; throw RuntimeException("network down") }
+            return MissionLogCreateResponse(
+                missionLogId = 100,
+                status = "in_progress",
+                success = true,
+                countedForDaily = false,
+                earnedPoints = 0,
+                dailyResult = "none",
+            )
+        }
+
+        override suspend fun completeMissionLog(
+            missionLogId: Int,
+            body: MissionLogUpdateRequest,
+        ): MissionLogUpdateResponse {
+            completeCalls++
+            lastDurationMin = body.exerciseDetail?.durationMin
+            return MissionLogUpdateResponse(
+                missionLogId = missionLogId,
+                status = "completed",
+                success = true,
+                countedForDaily = true,
+                dailyResult = "success",
+                syncStatus = "synced",
+                dailyTotalMin = 10f,
+            )
+        }
+
+        override suspend fun createSensorSession(body: SensorSessionCreateRequest): SensorSessionCreateResponse =
+            error("운동 흐름은 센서 세션을 만들지 않는다")
+    }
+
+    private fun exerciseMission(templateId: Int) = Mission(
+        missionTemplateId = templateId,
+        missionType = "exercise",
+        title = "영상 따라 운동하기",
+        level = "easy",
+        targetValue = 10,
+        targetUnit = "minutes",
+        requiresSafetyNotice = true,
+        rewardPoints = 10,
+    )
 
     private fun item(stage: String, order: Int, available: Boolean = false, url: String? = null) =
         ExerciseVideoItem(stage, stage, order, url, null, available)
@@ -63,5 +144,123 @@ class ExerciseVideosViewModelTest {
         assertTrue(vm.error)
         assertTrue(vm.videos.isEmpty())
         assertTrue(vm.loaded)
+    }
+
+    private fun vmWith(missionApi: FakeMissionApi) = ExerciseVideosViewModel(
+        api = FakeApi { ExerciseVideosResponse(emptyList()) },
+        missionApi = missionApi,
+        exerciseFlow = ExerciseFlowUseCase(missionApi),
+    )
+
+    @Test
+    fun `submitExercise 는 단일 운동 미션 템플릿으로 exercise_detail 을 실어 완료한다`() = runTest {
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        val vm = vmWith(fake)
+        vm.submitExercise(4f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+
+        assertEquals("GET /missions 로 해석한 운동 템플릿 id 로 시작", 7, fake.createdTemplateId)
+        assertEquals("exercise", fake.createdType)
+        assertEquals("확인 게이트 결과를 그대로 서버에 싣는다", true, fake.createdSafetyConfirmed)
+        assertEquals(1, fake.completeCalls)
+        assertEquals("세션 분을 그대로 실어 보낸다", 4f, fake.lastDurationMin)
+        assertTrue("성공하면 재시도 대기가 남지 않는다", vm.pendingResends.isEmpty())
+    }
+
+    @Test
+    fun `전송 실패 후 재시도는 같은 자연 키로 보내 중복 집계를 막는다`() = runTest {
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        fake.failCreateTimes = 1 // 첫 POST 는 네트워크 실패
+        val vm = vmWith(fake)
+
+        vm.beginExerciseSession() // 재생 시작 시 세션 키 확정
+        vm.submitExercise(4f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+
+        assertEquals("첫 시도는 POST 에서 실패", 1, fake.createdKeys.size)
+        assertEquals("실패했으니 완료 단계까지 못 감", 0, fake.completeCalls)
+        assertEquals("실패한 세션을 분과 함께 보존", 4f, vm.pendingResends.single().durationMin)
+
+        vm.retryPending()
+        advanceUntilIdle()
+
+        assertEquals("재시도로 두 번째 POST", 2, fake.createdKeys.size)
+        assertEquals("재시도는 시작 때 잡은 것과 같은 자연 키여야 한다", fake.createdKeys[0], fake.createdKeys[1])
+        assertNotNull("자연 키가 실제로 채워져 있어야 dedup 이 성립", fake.createdKeys[0])
+        assertEquals("재시도로 완료 전송 성공", 1, fake.completeCalls)
+        assertTrue("성공했으니 재시도 대기 해제", vm.pendingResends.isEmpty())
+    }
+
+    @Test
+    fun `A 실패 후 B 성공해도 A 는 남고 A 만 재시도로 저장된다`() = runTest {
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        fake.failCreateTimes = 1 // 첫 세션(A) POST 만 실패, 이후(B·재시도) 성공
+        val vm = vmWith(fake)
+
+        // 세션 A — 실패
+        vm.beginExerciseSession()
+        vm.submitExercise(4f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+        val keyA = fake.createdKeys[0]
+        assertEquals("A 는 실패해 보존", listOf(4f), vm.pendingResends.map { it.durationMin })
+
+        // 세션 B — 성공. 단일 슬롯이면 이 성공 경로가 A 까지 지웠을 것.
+        vm.beginExerciseSession()
+        vm.submitExercise(5f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+        assertEquals("B 성공 후에도 A 는 그대로 남아 있어야 한다", listOf(4f), vm.pendingResends.map { it.durationMin })
+        assertNotEquals("A·B 는 서로 다른 자연 키", keyA, fake.createdKeys.last())
+        assertEquals("여기까지 완료된 건 B 하나", 1, fake.completeCalls)
+
+        // A 재시도 — 성공
+        vm.retryPending()
+        advanceUntilIdle()
+        assertTrue("A 까지 저장돼 남은 대기 없음", vm.pendingResends.isEmpty())
+        assertEquals("A·B 둘 다 완료", 2, fake.completeCalls)
+        assertEquals("A 재시도는 A 의 원래 키를 그대로 사용", keyA, fake.createdKeys.last())
+    }
+
+    @Test
+    fun `템플릿 미해석이어도 세션을 버리지 않고 재시도 대기로 보존한다`() = runTest {
+        val fake = FakeMissionApi(emptyList()) // 로그인 전/운동 미션 부재로 템플릿 미해석
+        val vm = vmWith(fake)
+        vm.beginExerciseSession()
+        vm.submitExercise(4f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+
+        assertEquals("보낼 대상이 없어 시작조차 안 함", 0, fake.completeCalls)
+        assertEquals("잃지 않게 보존해 이후(로그인) 재시도에 맡긴다", 4f, vm.pendingResends.single().durationMin)
+    }
+
+    @Test
+    fun `submitExercise 는 0분 이하면 아무것도 보내지 않는다`() = runTest {
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        val vm = vmWith(fake)
+        vm.submitExercise(0f, safetyNoticeConfirmed = true)
+        vm.submitExercise(-1f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+
+        assertNull("서버 gt=0 을 치기 전에 막는다 — 시작조차 안 함", fake.createdTemplateId)
+        assertEquals(0, fake.completeCalls)
+    }
+
+    @Test
+    fun `submitExercise 는 안전 고지 미확인이면 아무것도 보내지 않는다`() = runTest {
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        vmWith(fake).submitExercise(4f, safetyNoticeConfirmed = false)
+        advanceUntilIdle()
+
+        assertNull("확인 게이트를 통과하지 않으면 시작조차 안 한다(서버 400 방어)", fake.createdTemplateId)
+        assertEquals(0, fake.completeCalls)
+    }
+
+    @Test
+    fun `submitExercise 는 운동 미션이 없으면 전송을 생략한다`() = runTest {
+        val fake = FakeMissionApi(emptyList()) // 걷기/식사만 있고 운동 템플릿 부재(또는 비로그인)
+        vmWith(fake).submitExercise(4f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+
+        assertNull("보낼 대상이 없어 시작하지 않는다", fake.createdTemplateId)
+        assertEquals(0, fake.completeCalls)
     }
 }
