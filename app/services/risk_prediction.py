@@ -17,7 +17,7 @@ from app.dtos.risk_prediction import (
     RiskPredictionReassessResponse,
     RiskPredictionResponse,
 )
-from app.ml.predictor import RiskPredictor, calculate_age, features_from_health_profile
+from app.ml.predictor import AgeNotSupportedError, RiskPredictor, features_from_health_profile
 from app.models.enums import ActivityInputSource, InputMethod, OnboardingStatus, RiskLevel
 from app.models.health import HealthProfile
 from app.models.predictions import RiskPrediction
@@ -26,7 +26,6 @@ from app.repositories.dashboard_repository import DashboardRepository
 from app.repositories.health_profile_repository import HealthProfileRepository
 from app.repositories.risk_prediction_repository import RiskPredictionRepository
 from app.services.activity_metrics import derive_activity_day_counts
-from app.services.muscle_score import MuscleScore, compute_muscle_score
 
 
 class RiskPredictionService:
@@ -46,9 +45,8 @@ class RiskPredictionService:
         if profile is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Health profile not found.")
         prediction = await self._predict_and_save(user, profile, complete_onboarding=True)
-        muscle = self._muscle_score(prediction, profile)
         return RiskPredictionCreateResponse(
-            **self._to_response(prediction, muscle).model_dump(),
+            **self._to_response(prediction).model_dump(),
             onboarding_status=user.onboarding_status.value,
         )
 
@@ -72,67 +70,47 @@ class RiskPredictionService:
         prediction = await self.prediction_repo.get_latest_prediction(user.user_id)
         if prediction is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Risk prediction not found.")
-        profile = await self.profile_repo.get_latest_profile(user.user_id)
-        return self._to_response(prediction, self._muscle_score(prediction, profile))
+        return self._to_response(prediction)
 
     async def get_recent_predictions(self, user: User, limit: int = 7) -> RiskPredictionHistoryResponse:
         if limit <= 0:
             return RiskPredictionHistoryResponse(predictions=[])
         predictions = await self.prediction_repo.get_recent_predictions(user.user_id, limit)
         chronological = list(reversed(predictions))
-        # 이력 점수는 **조회 시점 나이 코호트로 재파생**한다(잣대 통일 — 추이선 전체가 같은 코호트라 y축 일관,
-        #   생일이 지나면 과거 점수가 소급 변동하지만 허용). 성별·생년월일은 사용자 단위로 안정적이라
-        #   최신 프로필 한 번만 조회해 전 이력에 재사용한다.
-        profile = await self.profile_repo.get_latest_profile(user.user_id)
         items: list[RiskPredictionHistoryItem] = []
         previous: RiskPrediction | None = None
-        cohort_version: str | None = None
         for prediction in chronological:
-            muscle = self._muscle_score(prediction, profile)
-            if muscle is not None:
-                cohort_version = muscle.cohort_version
-            items.append(self._to_history_item(prediction, previous, muscle))
+            items.append(self._to_history_item(prediction, previous))
             previous = prediction
-        return RiskPredictionHistoryResponse(predictions=items, cohort_version=cohort_version)
+        return RiskPredictionHistoryResponse(
+            predictions=items,
+        )
 
     async def get_score_simulation(self, user: User) -> ScoreSimulationResponse:
-        """what-if 점수 곡선(#기록탭 §4): 걷기 0~7·근력 0~5 각 지점의 예측확률을 점수로 변환.
+        """what-if 점수 곡선(#기록탭 §4): 걷기 0~7·근력 0~5 각 지점의 근육 건강 점수.
 
-        나머지 신체값은 최신 프로필로 고정하고 일수만 바꿔 예측한다. 표 미도착/65세 미만이면 각 score=null.
+        신체값은 최신 프로필로 고정하고 일수만 바꿔 예측한다. 점수는 **예측기(#273)가 산출한 result.muscle_score**
+        를 그대로 쓴다(앱·서버 어디서도 재계산하지 않음). 65세 미만(AgeNotSupportedError)·코호트 미조회면 각 지점 null.
         """
         profile = await self.profile_repo.get_latest_profile(user.user_id)
         if profile is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Health profile not found.")
-        sex = profile.sex.value
-        age = calculate_age(profile.birth_date)
         base_features = features_from_health_profile(profile)
-
         cohort_version: str | None = None
 
         async def _score_at(overrides: dict[str, float]) -> int | None:
             nonlocal cohort_version
-            result = await self.predictor.predict({**base_features, **overrides})
-            muscle = compute_muscle_score(
-                probability=result.risk_score, sex=sex, age=age, model_variant=result.model_variant
-            )
-            if muscle is not None:
-                cohort_version = muscle.cohort_version
-            return muscle.score if muscle else None
+            try:
+                result = await self.predictor.predict({**base_features, **overrides})
+            except AgeNotSupportedError:
+                return None
+            if result.muscle_score is not None:
+                cohort_version = result.score_cohort_version
+            return result.muscle_score
 
         walk = [ScoreSimPoint(days=d, score=await _score_at({"walk_days": float(d)})) for d in range(0, 8)]
         musc = [ScoreSimPoint(days=d, score=await _score_at({"musc_days": float(d)})) for d in range(0, 6)]
         return ScoreSimulationResponse(walk=walk, musc=musc, cohort_version=cohort_version)
-
-    def _muscle_score(self, prediction: RiskPrediction, profile: HealthProfile | None) -> MuscleScore | None:
-        """예측확률 + 최신 프로필(성별·나이) + 예측 변형으로 근육 건강 점수를 파생. 전제 미충족 시 None."""
-        if profile is None:
-            return None
-        return compute_muscle_score(
-            probability=self._public_risk_score(prediction),
-            sex=profile.sex.value,
-            age=calculate_age(profile.birth_date),
-            model_variant=prediction.model_variant,
-        )
 
     async def _predict_and_save(
         self,
@@ -141,7 +119,18 @@ class RiskPredictionService:
         *,
         complete_onboarding: bool = False,
     ) -> RiskPrediction:
-        result = await self.predictor.predict(features_from_health_profile(profile))
+        try:
+            result = await self.predictor.predict(features_from_health_profile(profile))
+        except AgeNotSupportedError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail={
+                    "code": "sarcopenia_prediction_preparing",
+                    "message": "근감소증 예측은 만 65세 이상부터 제공됩니다.",
+                },
+            ) from exc
+        score_p_low = getattr(result, "score_p_low", None)
+        score_p_high = getattr(result, "score_p_high", None)
         prediction = RiskPrediction(
             user_id=user.user_id,
             profile_id=profile.profile_id,
@@ -149,6 +138,12 @@ class RiskPredictionService:
             model_variant=result.model_variant,
             internal_risk_score=Decimal(str(round(result.risk_score, 3))),
             internal_risk_level=result.risk_level,
+            muscle_score=getattr(result, "muscle_score", None),
+            score_band=getattr(result, "score_band", None),
+            score_p_low=Decimal(str(round(score_p_low, 5))) if score_p_low is not None else None,
+            score_p_high=Decimal(str(round(score_p_high, 5))) if score_p_high is not None else None,
+            score_cohort_age=getattr(result, "score_cohort_age", None),
+            score_cohort_version=getattr(result, "score_cohort_version", None),
             input_snapshot=result.input_snapshot,
         )
         await self.prediction_repo.create_risk_prediction(prediction)
@@ -158,20 +153,18 @@ class RiskPredictionService:
         await self.session.refresh(prediction)
         return prediction
 
-    def _to_response(
-        self, prediction: RiskPrediction, muscle: MuscleScore | None = None
-    ) -> RiskPredictionResponse:
+    def _to_response(self, prediction: RiskPrediction) -> RiskPredictionResponse:
         care_stage = self._care_stage_from_risk_level(prediction.internal_risk_level)
         return RiskPredictionResponse(
             prediction_id=prediction.prediction_id,
             profile_id=prediction.profile_id,
             model_variant=prediction.model_variant.value,
             risk_score=self._public_risk_score(prediction),
+            muscle_score=getattr(prediction, "muscle_score", None),
+            score_band=getattr(prediction, "score_band", None),
+            cohort_version=getattr(prediction, "score_cohort_version", None),
             care_stage=care_stage,
             display_message=self._display_message(care_stage),
-            score=muscle.score if muscle else None,
-            score_band=muscle.band if muscle else None,
-            cohort_version=muscle.cohort_version if muscle else None,
         )
 
     def _to_reassess_response(self, prediction: RiskPrediction) -> RiskPredictionReassessResponse:
@@ -180,6 +173,9 @@ class RiskPredictionService:
             profile_id=prediction.profile_id,
             prediction_id=prediction.prediction_id,
             risk_score=self._public_risk_score(prediction),
+            muscle_score=getattr(prediction, "muscle_score", None),
+            score_band=getattr(prediction, "score_band", None),
+            cohort_version=getattr(prediction, "score_cohort_version", None),
             care_stage=care_stage,
             display_message=self._display_message(care_stage),
         )
@@ -228,7 +224,6 @@ class RiskPredictionService:
     def _to_history_item(
         prediction: RiskPrediction,
         previous: RiskPrediction | None = None,
-        muscle: MuscleScore | None = None,
     ) -> RiskPredictionHistoryItem:
         score = RiskPredictionService._public_risk_score(prediction)
         change_percentage_points: float | None = None
@@ -245,11 +240,12 @@ class RiskPredictionService:
             prediction_id=prediction.prediction_id,
             created_at=prediction.created_at,
             risk_score=score,
+            muscle_score=getattr(prediction, "muscle_score", None),
+            score_band=getattr(prediction, "score_band", None),
+            cohort_version=getattr(prediction, "score_cohort_version", None),
             change_percentage_points=change_percentage_points,
             comparison_status=comparison_status,
             care_stage=RiskPredictionService._care_stage_from_risk_level(prediction.internal_risk_level),
-            score=muscle.score if muscle else None,
-            score_band=muscle.band if muscle else None,
         )
 
     @staticmethod

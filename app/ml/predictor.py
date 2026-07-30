@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
@@ -15,10 +17,22 @@ import pandas as pd  # type: ignore[import-untyped]
 from app.core.utils.clock import today_kst
 from app.models.enums import ModelVariant, RiskLevel
 
+logger = logging.getLogger(__name__)
+
 ARTIFACT_DIR = Path(__file__).resolve().parent / "artifacts"
 MINIMAL_ARTIFACT_PATH = ARTIFACT_DIR / "sarcopenia_model_minimal.joblib"
 WITH_WAIST_ARTIFACT_PATH = ARTIFACT_DIR / "sarcopenia_model_with_waist.joblib"
+COHORT_TABLE_PATH = ARTIFACT_DIR / "cohort_unified_65plus.json"
 MEDIUM_RISK_THRESHOLD_RATIO = 0.5
+
+# v1 = 65세 이상 전용. 국건영 원자료 나이 top-coding(80+)과 학습 구간에 맞춤.
+AGE_MIN = 65
+AGE_TOPCODE = 80
+
+# 점수 구간 컷오프 기본값(모델 config가 없을 때 폴백). 실제 값은 model_config.yaml의 score 섹션에서 읽는다.
+DEFAULT_SCORE_GOOD_MIN = 75      # score >= 75  -> 좋음
+DEFAULT_SCORE_CAUTION_MAX = 29   # score <= 29  -> 주의 (그 사이 = 유지)
+DEFAULT_DISPLAY_FLOOR = 5        # 화면 표시 하한(계산·저장은 0~100 유지, 프런트가 적용)
 
 MINIMAL_FEATURE_COLUMNS: tuple[str, ...] = (
     "age",
@@ -42,16 +56,31 @@ WITH_WAIST_FEATURE_COLUMNS: tuple[str, ...] = (
 )
 
 
+class AgeNotSupportedError(ValueError):
+    """v1은 65세 이상만 지원. 그 미만 나이는 예측을 내지 않고 호출부가 '준비 중' 안내로 처리한다."""
+
+    def __init__(self, age: Any):
+        self.age = age
+        super().__init__(f"Sarcopenia score is provided for age >= {AGE_MIN} only (got age={age}).")
+
+
 @dataclass(frozen=True)
 class RiskPredictionResult:
-    risk_score: float
-    risk_level: RiskLevel
+    risk_score: float           # 근감소증 추정 확률 (모델 원출력, 0~1) — 온보딩/내부용
+    risk_level: RiskLevel       # 확률 기반 3구간(유지, 온보딩용)
     model_version: str
     model_variant: ModelVariant
     input_snapshot: dict[str, Any]
     threshold: float
     model_name: str
     feature_set: str
+    # --- 기록탭 긍정 점수(또래 대비, 높을수록 좋음) ---
+    muscle_score: int | None = None      # 0~100 정수 (계산·저장값). None이면 코호트표 조회 실패
+    score_band: str | None = None        # "good" / "maintain" / "caution"
+    score_p_low: float | None = None     # 조회에 쓴 코호트 P5
+    score_p_high: float | None = None    # 조회에 쓴 코호트 P95
+    score_cohort_age: str | None = None  # "72" 또는 "80+" 등 실제 조회 키
+    score_cohort_version: str | None = None
 
 
 @lru_cache(maxsize=2)
@@ -60,6 +89,49 @@ def load_model_bundle(artifact_path: Path) -> dict[str, Any]:
     if not isinstance(bundle, dict) or "model" not in bundle:
         raise ValueError("Invalid sarcopenia model artifact: expected a dict with a 'model' key.")
     return bundle
+
+
+@lru_cache(maxsize=1)
+def load_score_config() -> dict[str, float]:
+    """model_config.yaml의 score 섹션에서 컷오프를 읽는다(없으면 기본값)."""
+    good_min: float = float(DEFAULT_SCORE_GOOD_MIN)
+    caution_max: float = float(DEFAULT_SCORE_CAUTION_MAX)
+    floor: float = float(DEFAULT_DISPLAY_FLOOR)
+    cfg_path = ARTIFACT_DIR / "model_config.yaml"
+    try:
+        import yaml  # type: ignore[import-untyped]
+
+        cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+        score = cfg.get("score", {}) or {}
+        good_min = float(score.get("good_min", good_min))
+        caution_max = float(score.get("caution_max", caution_max))
+        floor = float(score.get("display_floor", floor))
+    except Exception:
+        logger.warning("Failed to load sarcopenia score config; using defaults.", exc_info=True)
+    return {"good_min": good_min, "caution_max": caution_max, "display_floor": floor}
+
+
+@lru_cache(maxsize=1)
+def load_cohort_version() -> str | None:
+    if not COHORT_TABLE_PATH.exists():
+        return None
+    data = json.loads(COHORT_TABLE_PATH.read_text(encoding="utf-8"))
+    meta = data.get("meta", {}) or {}
+    version = meta.get("cohort_version")
+    return str(version) if version is not None else None
+
+
+@lru_cache(maxsize=1)
+def load_cohort_table() -> dict[tuple[str, int, str], tuple[float, float]]:
+    """(feature_set, sex, age_key) -> (p_low, p_high). age_key는 '65'~'79' 또는 '80+'."""
+    lut: dict[tuple[str, int, str], tuple[float, float]] = {}
+    if not COHORT_TABLE_PATH.exists():
+        return lut
+    data = json.loads(COHORT_TABLE_PATH.read_text(encoding="utf-8"))
+    for c in data.get("cohorts", []):
+        key = (str(c["feature_set"]), int(c["sex"]), str(c["age"]))
+        lut[key] = (float(c["p_low"]), float(c["p_high"]))
+    return lut
 
 
 def calculate_age(birth_date: date, today: date | None = None) -> int:
@@ -103,8 +175,13 @@ def has_waist_input(features: Mapping[str, Any]) -> bool:
 
 
 def normalize_features(features: Mapping[str, Any], *, include_waist: bool = False) -> dict[str, Any]:
+    age = _to_float(features.get("age"))
+    # 학습 원자료가 80세 top-coding이므로 모델 입력 나이는 80으로 상한(80+ 외삽 방지).
+    if age is not None and age > AGE_TOPCODE:
+        age = float(AGE_TOPCODE)
+
     normalized: dict[str, Any] = {
-        "age": _to_float(features.get("age")),
+        "age": age,
         "sex": _normalize_sex(features.get("sex")),
         "height_cm": _to_float(features.get("height_cm")),
         "weight_kg": _to_float(features.get("weight_kg")),
@@ -147,6 +224,44 @@ def _risk_level(score: float, threshold: float) -> RiskLevel:
     return RiskLevel.LOW
 
 
+def _cohort_age_key(age: float) -> str:
+    """코호트표 조회 키. 80세 이상은 '80+', 그 외는 정수 나이 문자열."""
+    a = int(round(age))
+    if a >= AGE_TOPCODE:
+        return f"{AGE_TOPCODE}+"
+    return str(a)
+
+
+def compute_muscle_score(
+    probability: float,
+    *,
+    feature_set: str,
+    sex: int | None,
+    age: float | None,
+) -> tuple[int | None, str | None, float | None, float | None, str | None]:
+    """또래 대비 긍정 점수(선형 P5/P95). (score, band, p_low, p_high, age_key)."""
+    if sex is None or age is None:
+        return None, None, None, None, None
+    lut = load_cohort_table()
+    age_key = _cohort_age_key(age)
+    entry = lut.get((feature_set, int(sex), age_key))
+    if entry is None:
+        return None, None, None, None, age_key
+    p_low, p_high = entry
+    if p_high <= p_low:
+        return None, None, p_low, p_high, age_key
+    raw = 100.0 * (p_high - probability) / (p_high - p_low)
+    score = int(round(min(100.0, max(0.0, raw))))
+
+    cfg = load_score_config()
+    if score >= cfg["good_min"]:
+        band = "good"
+    elif score <= cfg["caution_max"]:
+        band = "caution"
+    else:
+        band = "maintain"
+    return score, band, p_low, p_high, age_key
+
 
 class RiskPredictor:
     def __init__(
@@ -162,6 +277,11 @@ class RiskPredictor:
         return await loop.run_in_executor(None, self.predict_sync, features)
 
     def predict_sync(self, features: Mapping[str, Any]) -> RiskPredictionResult:
+        # v1 연령 게이트: 65세 미만은 예측하지 않는다(65+ 모델 외삽 방지).
+        raw_age = _to_float(features.get("age"))
+        if raw_age is None or raw_age < AGE_MIN:
+            raise AgeNotSupportedError(raw_age)
+
         include_waist = has_waist_input(features)
         artifact_path = self.with_waist_artifact_path if include_waist else self.minimal_artifact_path
         bundle = load_model_bundle(artifact_path)
@@ -177,6 +297,17 @@ class RiskPredictor:
         score = float(probabilities[positive_index])
         threshold = float(bundle.get("selected_threshold") or 0.5)
         level = _risk_level(score, threshold)
+
+        feature_set = str(bundle.get("feature_set", "unknown"))
+        # 코호트표 조회 키는 minimal / with_waist (번들 feature_set 문자열과 다름)
+        cohort_feature_set = "with_waist" if include_waist else "minimal"
+        muscle_score, band, p_low, p_high, age_key = compute_muscle_score(
+            score,
+            feature_set=cohort_feature_set,
+            sex=snapshot.get("sex"),
+            age=snapshot.get("age"),
+        )
+
         return RiskPredictionResult(
             risk_score=score,
             risk_level=level,
@@ -185,5 +316,11 @@ class RiskPredictor:
             input_snapshot=snapshot,
             threshold=threshold,
             model_name=str(bundle.get("model_name", "unknown")),
-            feature_set=str(bundle.get("feature_set", "unknown")),
+            feature_set=feature_set,
+            muscle_score=muscle_score,
+            score_band=band,
+            score_p_low=p_low,
+            score_p_high=p_high,
+            score_cohort_age=age_key,
+            score_cohort_version=load_cohort_version() if muscle_score is not None else None,
         )

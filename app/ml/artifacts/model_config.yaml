@@ -41,3 +41,19 @@ selected_threshold: 0.20
 smote:
   enabled: false
   random_state: 42
+
+# --- v1 age gate (enforced by predictor.py) ---
+age_gate:
+  min: 65
+  topcode: 80
+  behavior: raise_AgeNotSupportedError
+
+# --- Record-tab positive muscle score (peer-relative, linear P5/P95) ---
+score:
+  method: linear_p5_p95
+  cohort_table: cohort_unified_65plus.json
+  formula: "round(100*(p_high-p)/(p_high-p_low)), clamp[0,100]"
+  good_min: 75
+  caution_max: 29
+  display_floor: 5
+  note: "Cutoffs are product defaults; predictor reads these values at runtime."

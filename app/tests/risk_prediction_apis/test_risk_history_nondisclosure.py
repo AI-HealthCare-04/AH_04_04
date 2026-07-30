@@ -1,6 +1,7 @@
-"""연속 위험도 공개 범위와 내부 모델 정보 비노출 계약 회귀 방지.
+"""위험도 이력 응답의 공개 범위 회귀 방지.
 
-연속 risk_score와 변화량은 공개한다. 내부 등급·모델 식별자는 노출하지 않고
+연속 위험도와 근육 건강 점수는 기록탭 표시용 공개 필드다.
+반면 내부 위험도 등급, 모델 버전, 모델 변형은 노출하지 않고,
 서버가 비교 가능 여부를 comparison_status로 추상화한다.
 """
 
@@ -8,30 +9,33 @@ from app.apis.v1.risk_prediction_routers import get_risk_prediction_history
 from app.dtos.risk_prediction import RiskPredictionHistoryItem
 
 
-def test_history_item_exposes_score_without_internal_model_fields() -> None:
+def test_history_item_exposes_display_scores_without_internal_model_fields() -> None:
     fields = set(RiskPredictionHistoryItem.model_fields.keys())
-    assert "risk_level" not in fields, "내부 위험도 등급이 이력 응답에 노출되면 안 됩니다(#57 비노출)"
-    assert "risk_score" in fields, "연속 위험도 추이를 위해 risk_score가 공개돼야 합니다"
-    assert "model_version" not in fields, "모델 버전 비교는 서버가 comparison_status로 추상화해야 합니다"
-    assert "model_variant" not in fields, "내부 모델 변형은 사용자 이력 응답에 불필요합니다"
+
+    assert "risk_score" in fields
+    assert "muscle_score" in fields
+    assert "score_band" in fields
+    assert "cohort_version" in fields
+    assert "risk_level" not in fields
+    assert "model_version" not in fields
+    assert "model_variant" not in fields
 
 
 def test_history_item_shape_is_display_safe() -> None:
-    # 표시용으로 허용된 필드만 존재해야 한다(예상 밖 내부값이 추가로 새는 것도 차단).
-    #   기록 탭 점수 추이(#기록탭 §3.2)로 score·score_band 추가 — 둘 다 표시 안전값(내부 등급·모델식별자 아님).
+    # 표시용으로 허용된 필드만 존재해야 한다.
     assert set(RiskPredictionHistoryItem.model_fields.keys()) == {
         "prediction_id",
         "created_at",
         "risk_score",
+        "muscle_score",
+        "score_band",
+        "cohort_version",
         "change_percentage_points",
         "comparison_status",
         "care_stage",
-        "score",
-        "score_band",
     }
 
 
 def test_history_endpoint_is_wired() -> None:
-    # `_13`이 붙을 표시용 이력 엔드포인트가 실제로 배선돼 있는지 최소 확인.
-    # (response_model=RiskPredictionHistoryResponse → 위 안전 DTO로 직렬화되므로 내부값 유출 없음)
+    # response_model 배선이 유지되는지 최소 확인한다.
     assert callable(get_risk_prediction_history)
