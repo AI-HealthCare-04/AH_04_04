@@ -162,7 +162,7 @@ fun RecordScreen(
                     fontWeight = FontWeight.Bold,
                 )
                 Spacer(Modifier.height(Dimens.Space12))
-                val missions = successMissionsOn(vm.monthLogs, day)
+                val missions = completedMissionsOn(vm.monthLogs, day)
                 if (missions.isEmpty()) {
                     Text(
                         "이날은 완료한 미션이 없어요",

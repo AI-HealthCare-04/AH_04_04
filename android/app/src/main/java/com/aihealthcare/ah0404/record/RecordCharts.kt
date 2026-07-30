@@ -66,19 +66,21 @@ internal fun recentDateKeys(days: Int, todayMillis: Long): List<String> {
 }
 
 /**
- * 일별 '완료(성공)' 미션 개수(#기록탭 §5.1). 최근 [days]일 각 날짜의 success 로그 수.
- * 서버 기간 조회 결과(logs)를 완료 시각 날짜별로 센다. 데이터 없는 날은 0.
+ * 일별 '완료' 미션 개수(#기록탭 §5.1). 최근 [days]일 각 날짜의 **counted_for_daily** 로그 수.
+ *  기준은 앱 전체의 '미션 완료' 정의(홈 완료 개수·포인트 적립·#274)와 통일한다 — success 로 세면
+ *  목표를 넘긴 뒤의 추가 세션(예: 20분 목표에 21분째 걷기, success·미적립)까지 중복돼 홈과 어긋난다.
+ *  데이터 없는 날은 0.
  */
 internal fun dailyCompletionCounts(logs: List<MissionLogItem>, dateKeys: List<String>): List<Int> {
-    val byDay = logs.filter { it.success && it.completedAt != null }
+    val byDay = logs.filter { it.countedForDaily && it.completedAt != null }
         .groupingBy { dateKey(it.completedAt!!) }
         .eachCount()
     return dateKeys.map { byDay[it] ?: 0 }
 }
 
-/** 해당 날짜에 성공한 미션 목록(달력 팝업용). 완료 시각 오름차순. */
-internal fun successMissionsOn(logs: List<MissionLogItem>, dayKey: String): List<MissionLogItem> =
-    logs.filter { it.success && it.completedAt != null && dateKey(it.completedAt!!) == dayKey }
+/** 해당 날짜에 완료(집계·적립)된 미션 목록(달력 팝업용). counted_for_daily 기준, 완료 시각 오름차순. */
+internal fun completedMissionsOn(logs: List<MissionLogItem>, dayKey: String): List<MissionLogItem> =
+    logs.filter { it.countedForDaily && it.completedAt != null && dateKey(it.completedAt!!) == dayKey }
         .sortedBy { it.completedAt }
 
 /** ISO(KST) 시각 → "오전/오후 h:mm". 파싱 실패 시 빈 문자열. */

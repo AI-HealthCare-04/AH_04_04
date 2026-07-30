@@ -12,16 +12,22 @@ class RecordChartsTest {
 
     private val kst: TimeZone = TimeZone.getTimeZone("Asia/Seoul")
 
-    private fun log(day: String, success: Boolean, title: String = "미션", type: String = "walking") =
-        MissionLogItem(
-            missionLogId = day.hashCode(),
-            missionType = type,
-            title = title,
-            completedAt = "${day}T10:12:00+09:00",
-            success = success,
-            countedForDaily = success,
-            earnedPoints = if (success) 10 else 0,
-        )
+    // counted 를 success 와 별도로 줄 수 있게 한다: 목표를 넘긴 뒤의 추가 세션은 success=true·counted=false 다.
+    private fun log(
+        day: String,
+        success: Boolean,
+        title: String = "미션",
+        type: String = "walking",
+        counted: Boolean = success,
+    ) = MissionLogItem(
+        missionLogId = (day + title).hashCode(),
+        missionType = type,
+        title = title,
+        completedAt = "${day}T10:12:00+09:00",
+        success = success,
+        countedForDaily = counted,
+        earnedPoints = if (counted) 10 else 0,
+    )
 
     @Test
     fun recentDateKeys_returns_days_ending_today() {
@@ -30,25 +36,27 @@ class RecordChartsTest {
     }
 
     @Test
-    fun dailyCompletionCounts_counts_only_success_by_completed_date() {
+    fun dailyCompletionCounts_counts_counted_for_daily_not_extra_success_sessions() {
         val logs = listOf(
-            log("2026-07-29", true),
-            log("2026-07-30", true),
-            log("2026-07-30", true),
-            log("2026-07-30", false), // 실패는 제외
+            log("2026-07-29", success = true), // counted
+            log("2026-07-30", success = true, title = "첫 달성"), // counted
+            log("2026-07-30", success = true, title = "추가 세션", counted = false), // 목표 넘긴 뒤(성공·미적립) → 제외
+            log("2026-07-30", success = false, title = "실패"), // 제외
         )
         val keys = listOf("2026-07-28", "2026-07-29", "2026-07-30")
-        assertEquals(listOf(0, 1, 2), dailyCompletionCounts(logs, keys))
+        // 7/30 은 1 — 홈 완료 개수·포인트와 동일 기준(추가 성공 세션은 완료로 안 셈).
+        assertEquals(listOf(0, 1, 1), dailyCompletionCounts(logs, keys))
     }
 
     @Test
-    fun successMissionsOn_filters_and_sorts_by_time() {
+    fun completedMissionsOn_filters_counted_and_sorts_by_time() {
         val logs = listOf(
-            log("2026-07-30", true, title = "가볍게 걷기"),
-            log("2026-07-29", true, title = "다른날"),
-            log("2026-07-30", false, title = "실패"),
+            log("2026-07-30", success = true, title = "가볍게 걷기"),
+            log("2026-07-30", success = true, title = "추가 걷기", counted = false), // 성공·미적립 → 제외
+            log("2026-07-29", success = true, title = "다른날"),
+            log("2026-07-30", success = false, title = "실패"),
         )
-        val result = successMissionsOn(logs, "2026-07-30")
+        val result = completedMissionsOn(logs, "2026-07-30")
         assertEquals(1, result.size)
         assertEquals("가볍게 걷기", result.single().title)
     }
