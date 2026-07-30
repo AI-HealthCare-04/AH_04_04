@@ -1,3 +1,4 @@
+import asyncio
 from datetime import timedelta
 from decimal import Decimal
 
@@ -5,6 +6,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.clock import today_kst
+from app.dtos.dashboard import ScoreSimPoint, ScoreSimulationResponse
 from app.dtos.risk_prediction import (
     CareStage,
     RiskComparisonStatus,
@@ -84,6 +86,38 @@ class RiskPredictionService:
         return RiskPredictionHistoryResponse(
             predictions=items,
         )
+
+    async def get_score_simulation(self, user: User) -> ScoreSimulationResponse:
+        """what-if 점수 곡선(#기록탭 §4): 걷기 0~7·근력 0~5 각 지점의 근육 건강 점수.
+
+        신체값은 최신 프로필로 고정하고 일수만 바꿔 예측한다. 점수는 **예측기(#273)가 산출한 result.muscle_score**
+        를 그대로 쓴다(앱·서버 어디서도 재계산하지 않음). 65세 미만(AgeNotSupportedError)·코호트 미조회면 각 지점 null.
+        """
+        profile = await self.profile_repo.get_latest_profile(user.user_id)
+        if profile is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Health profile not found.")
+        base_features = features_from_health_profile(profile)
+
+        async def _score_at(overrides: dict[str, float]) -> tuple[int | None, str | None]:
+            try:
+                result = await self.predictor.predict({**base_features, **overrides})
+            except AgeNotSupportedError:
+                return None, None
+            if result.muscle_score is None:
+                return None, None
+            return result.muscle_score, result.score_cohort_version
+
+        # 각 지점 예측은 서로 독립이라 병렬 실행한다(리뷰 #272 perf) — 표 점화 후 14회 순차 예측 지연 방지.
+        walk_results, musc_results = await asyncio.gather(
+            asyncio.gather(*[_score_at({"walk_days": float(d)}) for d in range(0, 8)]),
+            asyncio.gather(*[_score_at({"musc_days": float(d)}) for d in range(0, 6)]),
+        )
+        walk = [ScoreSimPoint(days=d, score=score) for d, (score, _) in enumerate(walk_results)]
+        musc = [ScoreSimPoint(days=d, score=score) for d, (score, _) in enumerate(musc_results)]
+        cohort_version = next(
+            (cv for score, cv in [*walk_results, *musc_results] if cv is not None), None
+        )
+        return ScoreSimulationResponse(walk=walk, musc=musc, cohort_version=cohort_version)
 
     async def _predict_and_save(
         self,

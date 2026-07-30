@@ -171,6 +171,9 @@ class MissionLogUpdateResponse(BaseModel):
 class MissionLogListItem(BaseModel):
     mission_log_id: int
     mission_type: str
+    # 기록 탭 달력·일별 추이(#기록탭 §5.1/§5.2)용으로 추가: 미션명 + 완료(기록) 시각(KST).
+    title: str
+    completed_at: KstDatetime
     success: bool
     counted_for_daily: bool
     earned_points: int
