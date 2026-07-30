@@ -190,6 +190,8 @@ android {
     testOptions {
         // 유닛테스트에서 android.util.Log 등 프레임워크 스텁이 예외 대신 기본값을 반환하도록.
         unitTests.isReturnDefaultValues = true
+        // Robolectric(#277)이 병합된 매니페스트·리소스로 실제 안드 프레임워크(SharedPreferences 등)를 JVM 에서 돌릴 수 있게.
+        unitTests.isIncludeAndroidResources = true
     }
     lint {
         // CI 도입 시점의 기존 lint 부채는 baseline으로 고정하고, 이후 새 문제만 실패시킨다.
@@ -240,6 +242,7 @@ dependencies {
     implementation(libs.kakao.user)
     testImplementation(libs.junit)
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+    testImplementation(libs.robolectric) // SharedPreferences 등 프레임워크 의존 유닛테스트(#277)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
