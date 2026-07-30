@@ -25,6 +25,9 @@ def test_accepts_ephemeral_database_names(name: str) -> None:
         "test_",
         "qa_;DROP_DATABASE",
         "qa_한글",
+        "qa_K",
+        "teſt_database",
+        "qa_İ",
     ],
 )
 def test_rejects_non_ephemeral_or_unsafe_database_names(name: str) -> None:
