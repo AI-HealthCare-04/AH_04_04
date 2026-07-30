@@ -77,8 +77,9 @@ fun ExerciseVideosScreen(
     var selectedTab by remember(vm.videos) { mutableIntStateOf(0) }
     var routineFile by remember { mutableStateOf<String?>(null) }
     var fullscreenUrl by remember { mutableStateOf<String?>(null) }
-    // 안전 고지 게이트(#234): 운동을 '처음 시작할 때' 1회 확인. 확인값(safetyConfirmed)은 이 방문 동안 유지되어
-    //   운동 완료 전송의 safety_notice_confirmed 로 쓰인다(정인 레이어 B 배선). pendingStart 는 확인 대기 중 보류된 시작 동작.
+    // 안전 고지 게이트(#234, 리뷰 P1-C): 운동을 '처음 시작할 때' 1회 확인. 서버는 운동(requires_safety_notice=true)에서
+    //   확인 안 되면 시작 POST 를 400 으로 막으므로(services/mission.py), 조작된 true 없이 사용자가 실제로 확인한 값만
+    //   완료 전송의 safety_notice_confirmed(=safetyConfirmed, 이 방문 동안 유지)로 넘긴다. pendingStart 는 확인 대기 중 보류된 시작 동작.
     var safetyConfirmed by remember { mutableStateOf(false) }
     var pendingStart by remember { mutableStateOf<(() -> Unit)?>(null) }
 
@@ -88,8 +89,12 @@ fun ExerciseVideosScreen(
         RoutinePlayerScreen(
             routineFile = file,
             onExit = { routineFile = null },
-            // durationMin(실제 재생 분)은 #234 운동 완료 배선(정인 레이어 B)에서 vm.submitExercise로 사용. 지금은 미사용.
-            onComplete = { _ -> routineFile = null },
+            // 완주 시 실제 진행 분(#234): 확인 게이트를 통과해야만 여기 도달하므로 safetyConfirmed=true.
+            //   VM 이 0분·미확인·템플릿 부재를 걸러 서버 당일 10분 누적에 합산한다.
+            onComplete = { durationMin ->
+                vm.submitExercise(durationMin, safetyConfirmed)
+                routineFile = null
+            },
         )
         return
     }
@@ -97,7 +102,12 @@ fun ExerciseVideosScreen(
     // 스트리밍 운동(근력·서서)은 포스터 탭 시 '가로 전체화면'으로 크게 재생한다(세로 고정 앱에서 이 화면만 가로).
     //   기기 크기가 달라도 fillMaxSize + 가로라 알아서 꽉 찬다(고정 픽셀 없음). 나가면 세로로 복원.
     fullscreenUrl?.let { url ->
-        FullscreenLandscapeVideo(url = url, onExit = { fullscreenUrl = null })
+        FullscreenLandscapeVideo(
+            url = url,
+            onExit = { fullscreenUrl = null },
+            // 실제 재생 분(#234, P1-A: 일시정지·버퍼·백그라운드 제외). 게이트 통과 후라 safetyConfirmed=true.
+            onWatched = { durationMin -> vm.submitExercise(durationMin, safetyConfirmed) },
+        )
         return
     }
 
@@ -139,6 +149,7 @@ fun ExerciseVideosScreen(
             )
         }
     }
+
 }
 
 /**
@@ -291,11 +302,12 @@ private fun VideoArea(
 @Composable
 private fun FullscreenLandscapeVideo(url: String, onExit: () -> Unit, onWatched: (Float) -> Unit = {}) {
     val activity = LocalContext.current as? Activity
+    // 실제 재생 시간만 적립(#234, 리뷰 P1-A): ExoPlayer 의 isPlaying 구간만 합산 → 일시정지·버퍼링·백그라운드
+    //   정지 시간은 빠진다. (종전 벽시계 방식은 멈춰 둔 시간까지 세어 하루 10분 목표가 과대 계상됐다.)
+    val stopwatch = remember { PlaybackStopwatch() }
     DisposableEffect(Unit) {
-        // 시청 분 측정(#234 운동 완료 배선용, 정인 계약): 진입(재생 시작)~이탈(닫기/뒤로=세로 복원) 벽시계 경과.
-        //   목표가 '하루 10분 몸 움직이기'라 배속과 무관한 실제 따라 한 시간=벽시계 분으로 잰다. onDispose에서
-        //   onWatched(분) 발화 → 호출부(정인)가 서버 당일 누적에 합산. 0분(순간 열고닫음) 방어는 호출부에서.
-        val startedAt = SystemClock.elapsedRealtime()
+        // 진입~이탈 사이 상태를 관리: 가로 강제·시스템바 숨김, 이탈 시 복원 + 실제 재생 분을 onWatched 로 발화.
+        //   0분(순간 열고닫음/한 번도 재생 안 됨) 방어는 호출부(VM)에서. 배속과 무관하게 '실제 따라 한 시간'을 잰다.
         val prevOrientation = activity?.requestedOrientation
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         val insets = activity?.window?.let { w -> WindowCompat.getInsetsController(w, w.decorView) }
@@ -304,7 +316,7 @@ private fun FullscreenLandscapeVideo(url: String, onExit: () -> Unit, onWatched:
         onDispose {
             activity?.requestedOrientation = prevOrientation ?: ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             insets?.show(WindowInsetsCompat.Type.systemBars())
-            onWatched((SystemClock.elapsedRealtime() - startedAt) / 60_000f)
+            onWatched(stopwatch.elapsedMinutes(SystemClock.elapsedRealtime()))
         }
     }
     BackHandler { onExit() }
@@ -314,6 +326,8 @@ private fun FullscreenLandscapeVideo(url: String, onExit: () -> Unit, onWatched:
             modifier = Modifier.fillMaxSize(),
             autoPlay = true, // 포스터 탭 = 재생 의사 → 한 번 탭으로 바로 재생(지영 리뷰 #254 P2)
             speed = AppSettings.exerciseSpeedFor(AppSettings.exerciseDifficulty),
+            // 실재생 구간만 스톱워치에 반영(P1-A). 재생 시작=true 구간만 누적한다.
+            onIsPlayingChanged = { isPlaying -> stopwatch.onIsPlayingChanged(isPlaying, SystemClock.elapsedRealtime()) },
         )
         // 닫기(세로 복귀) — 어르신용으로 크게, 반투명 배경으로 밝은 영상 위에서도 잘 보이게. 좌상단.
         //   가로에서 노치/펀치홀에 안 가리게 displayCutout inset 적용(지영 리뷰 #254 비차단).
@@ -332,6 +346,39 @@ private fun FullscreenLandscapeVideo(url: String, onExit: () -> Unit, onWatched:
                 style = MaterialTheme.typography.titleMedium,
             )
         }
+    }
+}
+
+/**
+ * ExoPlayer 의 isPlaying 구간만 합산해 '실제 재생 시간'을 재는 스톱워치(#234 P1-A).
+ *   재생 시작(true)에 구간을 열고, 일시정지·버퍼링·끝·백그라운드 정지(false)에 구간을 닫아 누적한다 →
+ *   멈춰 둔 시간은 빠진다. 이탈 시 [elapsedMinutes] 로 열린 구간을 닫아 총 재생 '분'을 얻는다.
+ *   시각(now)은 호출부가 SystemClock.elapsedRealtime() 로 주입(테스트·단조증가 보장).
+ */
+internal class PlaybackStopwatch {
+    private var accumulatedMs = 0L
+    private var resumedAtMs = -1L // 현재 열린 재생 구간 시작(없으면 -1)
+
+    fun onIsPlayingChanged(isPlaying: Boolean, now: Long) {
+        if (isPlaying) {
+            if (resumedAtMs < 0) resumedAtMs = now // 재생 시작 — 구간 열기(이미 열려 있으면 무시)
+        } else {
+            close(now) // 정지/버퍼/끝 — 구간 닫아 누적
+        }
+    }
+
+    /** 열린 재생 구간을 닫아 누적에 반영(중복 호출 안전 — 열린 구간이 없으면 무시). */
+    private fun close(now: Long) {
+        if (resumedAtMs >= 0) {
+            accumulatedMs += now - resumedAtMs
+            resumedAtMs = -1
+        }
+    }
+
+    /** 지금까지의 총 재생 시간(분). 열린 구간이 있으면 먼저 닫는다. */
+    fun elapsedMinutes(now: Long): Float {
+        close(now)
+        return accumulatedMs / 60_000f
     }
 }
 
