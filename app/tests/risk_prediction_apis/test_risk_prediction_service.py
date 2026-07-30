@@ -212,6 +212,11 @@ async def test_get_recent_predictions_returns_chronological_continuous_trend() -
     repo.get_recent_predictions = fake_get_recent_predictions
     service = RiskPredictionService(session=None)  # type: ignore[arg-type]
     service.prediction_repo = repo  # type: ignore[assignment]
+    # 점수 파생용 프로필 조회는 이 테스트 범위 밖 — None 프로필로 스텁하면 score=null(추이 필드만 검증).
+    async def _no_profile(user_id: int) -> None:
+        return None
+
+    service.profile_repo = SimpleNamespace(get_latest_profile=_no_profile)  # type: ignore[assignment]
     user = SimpleNamespace(user_id=1)
 
     response = await service.get_recent_predictions(user, limit=3)  # type: ignore[arg-type]

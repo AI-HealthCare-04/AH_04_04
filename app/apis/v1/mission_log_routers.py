@@ -60,17 +60,25 @@ async def get_mission_logs(
     user: Annotated[User, Depends(get_request_user)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
     date: Annotated[date_type | None, Query()] = None,
+    date_from: Annotated[date_type | None, Query(alias="from")] = None,
+    date_to: Annotated[date_type | None, Query(alias="to")] = None,
 ) -> MissionLogListResponse:
-    logs = await MissionService(session).list_mission_logs(user=user, on_date=date)
+    # 기록 탭 달력·일별 추이(#기록탭 §5.1/§5.2): 단일일(date) 하위호환 + 기간(from~to, 포함) 조회.
+    #   응답에 미션명(title)·완료시각(completed_at)을 실어 달력 바텀시트·선그래프가 바로 쓴다.
+    rows = await MissionService(session).list_mission_logs_detailed(
+        user=user, on_date=date, date_from=date_from, date_to=date_to
+    )
     return MissionLogListResponse(
         logs=[
             MissionLogListItem(
                 mission_log_id=log.mission_log_id,
                 mission_type=log.mission_type.value,
+                title=title,
+                completed_at=log.created_at,
                 success=log.success,
                 counted_for_daily=log.counted_for_daily,
                 earned_points=log.earned_points,
             )
-            for log in logs
+            for log, title in rows
         ]
     )

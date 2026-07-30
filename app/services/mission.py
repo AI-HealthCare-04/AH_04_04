@@ -570,6 +570,18 @@ class MissionService:
     async def list_mission_logs(self, user: User, on_date: date | None) -> list[MissionLog]:
         return await self.repo.list_mission_logs(user.user_id, on_date)
 
+    async def list_mission_logs_detailed(
+        self,
+        user: User,
+        on_date: date | None,
+        date_from: date | None,
+        date_to: date | None,
+    ) -> list[tuple[MissionLog, str]]:
+        """기록 탭 달력·일별 추이용(#기록탭 §5.1/§5.2) — 템플릿명·완료시각 포함 조회."""
+        return await self.repo.list_mission_logs_detailed(
+            user.user_id, date_from=date_from, date_to=date_to, on_date=on_date
+        )
+
     async def get_today_walking_totals(self, user: User) -> tuple[float, int]:
         # 홈 '오늘 걷기' 위젯용 당일 누적 실적(분·걸음). 걷기 완료 응답과 같은 원천·같은 단일 SELECT를
         #   재사용해 홈·완료가 동일 스냅샷의 일관된 쌍을 본다(분·걸음 torn-read 방지, KST 오늘). 없으면 (0.0, 0).

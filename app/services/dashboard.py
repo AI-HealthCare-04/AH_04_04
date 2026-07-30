@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.utils.clock import today_kst
 from app.dtos.dashboard import (
     ActivityTrendPoint,
+    ChallengeTotalsResponse,
+    ChallengeTypeTotal,
     DashboardPredictionInputs,
     DashboardSummaryResponse,
     HomeActivityProfile,
@@ -23,8 +25,11 @@ from app.dtos.dashboard import (
     PointEarnLogItem,
     PointsResponse,
     RiskChangePoint,
+    ScoreSimulationResponse,
     StampDay,
     StampsResponse,
+    WalkingDailyResponse,
+    WalkingDayPoint,
 )
 from app.models.dashboard import DailyActivitySummary
 from app.models.enums import ActivityLevel, DailyResult, MissionType
@@ -176,6 +181,36 @@ class DashboardService:
             )
             for item in history.predictions
         ]
+
+    _WALKING_DAILY_MAX_DAYS = 31
+
+    async def get_walking_daily(self, user: User, days: int) -> WalkingDailyResponse:
+        # 최근 days일(오늘 포함) 걷기 걸음·분. 걷기 없는 날도 0으로 채워 앱 막대 바인딩을 단순화한다(#기록탭 §5.3).
+        if days < 1 or days > self._WALKING_DAILY_MAX_DAYS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"days는 1~{self._WALKING_DAILY_MAX_DAYS} 사이여야 합니다.",
+            )
+        end = today_kst()
+        start = end - timedelta(days=days - 1)
+        per_day = await self.repo.get_walking_daily(user.user_id, start, end)
+        points = []
+        for offset in range(days):
+            day = start + timedelta(days=offset)
+            steps, minutes = per_day.get(day, (0, 0.0))
+            points.append(WalkingDayPoint(date=day, steps=steps, minutes=round(minutes, 1)))
+        return WalkingDailyResponse(days=points)
+
+    async def get_score_simulation(self, user: User) -> ScoreSimulationResponse:
+        # what-if 점수 곡선(#기록탭 §4). 예측 도메인 서비스에 위임(예측기·코호트 파생의 단일 출처).
+        return await self.risk_service.get_score_simulation(user)
+
+    async def get_challenge_totals(self, user: User) -> ChallengeTotalsResponse:
+        # 유형별 누적 성공 횟수(#기록탭 §5.4). 0회 유형도 포함해 앱이 범례를 회색으로 표시할 수 있게 한다.
+        counts = await self.repo.get_challenge_totals(user.user_id)
+        ordered = (MissionType.WALKING, MissionType.EXERCISE, MissionType.MEAL, MissionType.GAME)
+        by_type = [ChallengeTypeTotal(mission_type=t.value, count=counts.get(t, 0)) for t in ordered]
+        return ChallengeTotalsResponse(total=sum(item.count for item in by_type), by_type=by_type)
 
     async def get_points(self, user: User) -> PointsResponse:
         # 잔액·적립이력 모두 mission_logs.earned_points에서 파생한다.

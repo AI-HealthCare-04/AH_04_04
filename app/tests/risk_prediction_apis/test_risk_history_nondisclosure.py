@@ -18,6 +18,7 @@ def test_history_item_exposes_score_without_internal_model_fields() -> None:
 
 def test_history_item_shape_is_display_safe() -> None:
     # 표시용으로 허용된 필드만 존재해야 한다(예상 밖 내부값이 추가로 새는 것도 차단).
+    #   기록 탭 점수 추이(#기록탭 §3.2)로 score·score_band 추가 — 둘 다 표시 안전값(내부 등급·모델식별자 아님).
     assert set(RiskPredictionHistoryItem.model_fields.keys()) == {
         "prediction_id",
         "created_at",
@@ -25,6 +26,8 @@ def test_history_item_shape_is_display_safe() -> None:
         "change_percentage_points",
         "comparison_status",
         "care_stage",
+        "score",
+        "score_band",
     }
 
 

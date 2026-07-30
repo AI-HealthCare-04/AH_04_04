@@ -119,6 +119,38 @@ class MissionRepository:
         result = await self.session.scalars(stmt)
         return list(result.all())
 
+    async def list_mission_logs_detailed(
+        self,
+        user_id: int,
+        date_from: date | None,
+        date_to: date | None,
+        on_date: date | None,
+    ) -> list[tuple[MissionLog, str]]:
+        """기록 탭 달력·일별 추이용(#기록탭 §5.1/§5.2). 미션 로그에 템플릿명을 조인해 (로그, 제목)로 반환.
+
+        기간 필터는 세 가지: on_date(단일일, 하위호환) 또는 date_from~date_to(포함 범위).
+        범위는 [date_from 00:00, date_to+1일 00:00) 로 date_to 당일을 포함한다.
+        완료 시각은 mission_logs.created_at(서버 기록 시각)을 그대로 쓴다.
+        """
+        stmt = (
+            select(MissionLog, MissionTemplate.title)
+            .join(MissionTemplate, MissionLog.mission_template_id == MissionTemplate.mission_template_id)
+            .where(MissionLog.user_id == user_id)
+        )
+        if on_date is not None:
+            start, end = self._day_bounds(on_date)
+            stmt = stmt.where(MissionLog.created_at >= start, MissionLog.created_at < end)
+        else:
+            if date_from is not None:
+                start, _ = self._day_bounds(date_from)
+                stmt = stmt.where(MissionLog.created_at >= start)
+            if date_to is not None:
+                _, end = self._day_bounds(date_to)
+                stmt = stmt.where(MissionLog.created_at < end)
+        stmt = stmt.order_by(MissionLog.created_at.desc())
+        result = await self.session.execute(stmt)
+        return [(row[0], row[1]) for row in result.all()]
+
     # ---------------- 상세 로그 (mission_log 1:1) ----------------
 
     async def add_meal_log(self, meal_log: MealLog) -> None:

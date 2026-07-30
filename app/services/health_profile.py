@@ -5,7 +5,12 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.clock import today_kst
-from app.dtos.health_profile import HealthProfileCreateRequest, HealthProfileCreateResponse, HealthProfileResponse
+from app.dtos.health_profile import (
+    HealthProfileCreateRequest,
+    HealthProfileCreateResponse,
+    HealthProfilePatchRequest,
+    HealthProfileResponse,
+)
 from app.models.enums import KidneyStatus, ProteinRestrictionStatus
 from app.models.health import HealthProfile
 from app.models.users import User
@@ -56,6 +61,51 @@ class HealthProfileService:
             bmi=profile.bmi,
             protein_challenge_allowed=profile.protein_challenge_allowed,
         )
+
+    async def update_profile(self, user: User, data: HealthProfilePatchRequest) -> HealthProfileResponse:
+        """설정 '내 정보' 편집(#기록탭 §2) — 최신 스냅샷에 편집분을 덮어 **새 health_profile 행을 생성**한다.
+
+        health_profiles 는 append-only(updated_at 없음)이고 risk_predictions 가 특정 스냅샷을 참조하므로,
+        in-place 수정 대신 새 행을 쌓는다. 새 컬럼은 만들지 않는다(기존 컬럼 재사용).
+        다음 추론이 get_latest_profile 로 이 행을 쓰므로 "다음 근육 건강 정보부터 반영"(스펙 §2)과 일치.
+        """
+        latest = await self.repo.get_latest_profile(user.user_id)
+        if latest is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Health profile not found.")
+
+        provided = data.model_fields_set  # 미전송 vs 명시적 null 을 구분(허리 '측정 안 함' 지우기 지원)
+        height = data.height_cm if "height_cm" in provided else latest.height_cm
+        weight = data.weight_kg if "weight_kg" in provided else latest.weight_kg
+        waist = data.waist_cm if "waist_cm" in provided else latest.waist_cm
+        kidney = data.kidney_status if "kidney_status" in provided else latest.kidney_status
+        # 키·몸무게를 직접 입력했으면 추정치가 아니다. 둘 다 미편집이면 이전 추정 플래그를 유지한다.
+        estimated = latest.has_estimated_value and "height_cm" not in provided and "weight_kg" not in provided
+
+        new_profile = HealthProfile(
+            user_id=user.user_id,
+            session_id=None,  # 편집은 건강검진 세션과 무관
+            birth_date=latest.birth_date,
+            sex=latest.sex,
+            height_cm=height,
+            weight_kg=weight,
+            bmi=self.calculate_bmi(height, weight),
+            waist_cm=waist,
+            walk_days=latest.walk_days,
+            musc_days=latest.musc_days,
+            activity_input_source=latest.activity_input_source,
+            activity_window_days=latest.activity_window_days,
+            kidney_status=kidney,
+            protein_restriction_status=latest.protein_restriction_status,
+            protein_challenge_allowed=self.is_protein_challenge_allowed(
+                kidney, latest.protein_restriction_status
+            ),
+            input_method=latest.input_method,
+            has_estimated_value=estimated,
+        )
+        await self.repo.create_profile(new_profile)
+        await self.session.commit()
+        await self.session.refresh(new_profile)
+        return self.to_response(new_profile)
 
     async def get_latest_profile(self, user: User) -> HealthProfileResponse:
         profile = await self.repo.get_latest_profile(user.user_id)

@@ -13,6 +13,7 @@
 #   - 완료된 로그 재완료는 409 (포인트 이중 적립 없음)
 # =====================================================================================
 import asyncio
+from datetime import timedelta
 
 from httpx import AsyncClient, Response
 from sqlalchemy import func, select
@@ -628,3 +629,100 @@ async def test_available_meal_updates_on_reentry(
 
     after = (await db_client.get(f"{API}/home", headers=auth)).json()
     assert after["available_mission_summary"]["meal"] == 0
+
+
+# -------------------------------------------------------------------------------------
+# 기록 탭(#기록탭 §5.1/§5.2): GET /mission-logs 기간 조회 + 미션명·완료시각 포함
+# -------------------------------------------------------------------------------------
+async def test_get_mission_logs_range_includes_title_and_completed_at(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    auth, _ = await _guest(db_client)
+    meal_tid = await _seed_template(
+        db_sessionmaker, mission_type=MissionType.MEAL, reward_points=10, daily_count_limit=1
+    )
+    game_tid = await _seed_template(db_sessionmaker, mission_type=MissionType.GAME, reward_points=5, display_order=2)
+
+    await db_client.post(f"{API}/mission-logs", json=_meal_body(meal_tid), headers=auth)
+    await db_client.post(f"{API}/mission-logs", json=_game_body(game_tid), headers=auth)
+
+    today = today_kst().isoformat()
+
+    # 기간(from~to, 포함) 조회 — 달력 바텀시트·선그래프가 쓸 미션명·완료시각을 함께 준다.
+    resp = await db_client.get(f"{API}/mission-logs", params={"from": today, "to": today}, headers=auth)
+    assert resp.status_code == status.HTTP_200_OK
+    logs = resp.json()["logs"]
+    assert len(logs) == 2
+    for item in logs:
+        assert item["title"]  # 템플릿명 조인
+        assert item["completed_at"]  # 완료(기록) 시각
+        assert item["mission_type"] in {"meal", "game"}
+    assert {i["title"] for i in logs} == {"meal 미션", "game 미션"}
+
+    # 단일일(date) 하위호환 경로도 같은 필드를 준다.
+    single = await db_client.get(f"{API}/mission-logs", params={"date": today}, headers=auth)
+    assert single.status_code == status.HTTP_200_OK
+    assert len(single.json()["logs"]) == 2
+
+    # 오늘을 포함하지 않는 과거 범위는 비어 있다.
+    past = (today_kst() - timedelta(days=3)).isoformat()
+    empty = await db_client.get(f"{API}/mission-logs", params={"from": past, "to": past}, headers=auth)
+    assert empty.status_code == status.HTTP_200_OK
+    assert empty.json()["logs"] == []
+
+
+# -------------------------------------------------------------------------------------
+# 기록 탭(#기록탭 §5.3/§5.4): 걷기 일별 막대 + 챌린지 유형별 누적 도넛
+# -------------------------------------------------------------------------------------
+async def test_walking_daily_and_challenge_totals(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    auth, _ = await _guest(db_client)
+    walk_tid = await _seed_template(
+        db_sessionmaker, mission_type=MissionType.WALKING, reward_points=5, target_unit=TargetUnit.MINUTES
+    )
+    meal_tid = await _seed_template(
+        db_sessionmaker, mission_type=MissionType.MEAL, reward_points=10, daily_count_limit=1, display_order=2
+    )
+    game_tid = await _seed_template(db_sessionmaker, mission_type=MissionType.GAME, reward_points=5, display_order=3)
+
+    async def _walk(minutes: float, steps: int) -> None:
+        start = await db_client.post(
+            f"{API}/mission-logs",
+            json={"mission_template_id": walk_tid, "mission_type": "walking", "status": "in_progress"},
+            headers=auth,
+        )
+        log_id = start.json()["mission_log_id"]
+        await db_client.patch(
+            f"{API}/mission-logs/{log_id}",
+            json={"status": "completed", "success": True, "walking_detail": {"duration_min": minutes, "steps": steps}},
+            headers=auth,
+        )
+
+    await _walk(10, 1200)
+    await _walk(15, 1500)
+    await db_client.post(f"{API}/mission-logs", json=_meal_body(meal_tid), headers=auth)
+    await db_client.post(f"{API}/mission-logs", json=_game_body(game_tid), headers=auth)
+
+    # 걷기 일별 막대: 오늘 = 두 세션 합(25분·2700걸음), 걷기 없는 날은 0으로 채워진다.
+    wd = await db_client.get(f"{API}/dashboard/walking-daily", params={"days": 7}, headers=auth)
+    assert wd.status_code == status.HTTP_200_OK
+    days = wd.json()["days"]
+    assert len(days) == 7
+    today = today_kst().isoformat()
+    today_row = next(d for d in days if d["date"] == today)
+    assert today_row["minutes"] == 25 and today_row["steps"] == 2700
+    assert all(d["steps"] == 0 and d["minutes"] == 0 for d in days if d["date"] != today)
+
+    # 챌린지 도넛: 유형별 누적 성공 횟수(walking 2, meal 1, game 1, exercise 0). 0회 유형도 포함·순서 고정.
+    ct = await db_client.get(f"{API}/dashboard/challenge-totals", headers=auth)
+    assert ct.status_code == status.HTTP_200_OK
+    body = ct.json()
+    assert [t["mission_type"] for t in body["by_type"]] == ["walking", "exercise", "meal", "game"]
+    assert {t["mission_type"]: t["count"] for t in body["by_type"]} == {
+        "walking": 2,
+        "exercise": 0,
+        "meal": 1,
+        "game": 1,
+    }
+    assert body["total"] == 4
