@@ -107,6 +107,7 @@ def test_risk_prediction_response_includes_public_model_context() -> None:
     assert response.risk_score == 0.427
     assert response.muscle_score is None
     assert response.score_band is None
+    assert response.cohort_version is None
     assert response.care_stage == CareStage.ACTION_NEEDED
     assert response.disclaimer == "본 결과는 참고용이며 의학적 진단이 아닙니다."
 
@@ -150,6 +151,7 @@ def test_reassess_response_uses_v73_contract_without_model_variant() -> None:
         "risk_score": 0.427,
         "muscle_score": None,
         "score_band": None,
+        "cohort_version": None,
         "care_stage": "maintain",
         "display_message": RiskPredictionService._display_message(CareStage.MAINTAIN),
         "disclaimer": "본 결과는 참고용이며 의학적 진단이 아닙니다.",
@@ -175,6 +177,7 @@ def test_history_item_exposes_continuous_score_without_internal_model_fields() -
     assert item.risk_score == 0.427
     assert item.muscle_score is None
     assert item.score_band is None
+    assert item.cohort_version is None
     assert item.change_percentage_points is None
     assert item.comparison_status == RiskComparisonStatus.BASELINE
     assert item.care_stage == CareStage.MAINTAIN
@@ -285,6 +288,8 @@ async def test_predict_and_save_returns_422_for_under_65_model_gate() -> None:
         await service._predict_and_save(cast(User, SimpleNamespace(user_id=1)), profile)
 
     assert exc_info.value.status_code == 422
+    assert isinstance(exc_info.value.detail, dict)
+    assert exc_info.value.detail["code"] == "sarcopenia_prediction_preparing"
 
 
 async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  # noqa: C901
@@ -348,10 +353,11 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
                 risk_score=0.42,
                 risk_level=RiskLevel.MEDIUM,
                 muscle_score=81,
-                score_band="좋음",
+                score_band="good",
                 score_p_low=0.01,
                 score_p_high=0.50,
                 score_cohort_age="72",
+                score_cohort_version="knhanes2022_2024_v1",
                 input_snapshot={},
             )
 
@@ -393,13 +399,15 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
     assert dashboard_repo.called_with[0] == 1
     assert prediction_repo.created_prediction is not None
     assert prediction_repo.created_prediction.muscle_score == 81
-    assert prediction_repo.created_prediction.score_band == "좋음"
+    assert prediction_repo.created_prediction.score_band == "good"
     assert prediction_repo.created_prediction.score_p_low == Decimal("0.01000")
     assert prediction_repo.created_prediction.score_p_high == Decimal("0.50000")
     assert prediction_repo.created_prediction.score_cohort_age == "72"
+    assert prediction_repo.created_prediction.score_cohort_version == "knhanes2022_2024_v1"
     assert response.profile_id == 72
     assert response.prediction_id == 90
     assert response.muscle_score == 81
-    assert response.score_band == "좋음"
+    assert response.score_band == "good"
+    assert response.cohort_version == "knhanes2022_2024_v1"
     assert response.activity_input_source == ActivityInputSource.SERVICE_LOG
     assert session.committed is True

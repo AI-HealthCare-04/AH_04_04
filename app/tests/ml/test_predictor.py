@@ -111,10 +111,11 @@ async def test_risk_predictor_loads_artifact_and_predicts() -> None:
     assert result.threshold == pytest.approx(0.20)
     assert result.muscle_score is not None
     assert 0 <= result.muscle_score <= 100
-    assert result.score_band in {"좋음", "유지", "주의"}
+    assert result.score_band in {"good", "maintain", "caution"}
     assert result.score_p_low is not None
     assert result.score_p_high is not None
     assert result.score_cohort_age == "74"
+    assert result.score_cohort_version == "knhanes2022_2024_v1"
     assert set(result.input_snapshot) == {
         "age",
         "sex",
@@ -146,7 +147,7 @@ async def test_risk_predictor_uses_waist_model_when_waist_is_present() -> None:
     assert result.feature_set == "self_report_plus_waist_days"
     assert result.threshold == pytest.approx(0.20)
     assert result.muscle_score is not None
-    assert result.score_band in {"좋음", "유지", "주의"}
+    assert result.score_band in {"good", "maintain", "caution"}
     assert result.input_snapshot["waist_cm"] == 82.0
 
 
@@ -190,7 +191,7 @@ def test_compute_muscle_score_uses_80_plus_cohort() -> None:
     )
 
     assert score is not None
-    assert band in {"좋음", "유지", "주의"}
+    assert band in {"good", "maintain", "caution"}
     assert p_low is not None
     assert p_high is not None
     assert age_key == "80+"

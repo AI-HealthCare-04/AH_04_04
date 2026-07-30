@@ -22,9 +22,11 @@ def upgrade() -> None:
     op.add_column("risk_predictions", sa.Column("score_p_low", sa.Numeric(8, 5), nullable=True))
     op.add_column("risk_predictions", sa.Column("score_p_high", sa.Numeric(8, 5), nullable=True))
     op.add_column("risk_predictions", sa.Column("score_cohort_age", sa.String(length=4), nullable=True))
+    op.add_column("risk_predictions", sa.Column("score_cohort_version", sa.String(length=50), nullable=True))
 
 
 def downgrade() -> None:
+    op.drop_column("risk_predictions", "score_cohort_version")
     op.drop_column("risk_predictions", "score_cohort_age")
     op.drop_column("risk_predictions", "score_p_high")
     op.drop_column("risk_predictions", "score_p_low")

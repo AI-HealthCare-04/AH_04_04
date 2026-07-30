@@ -31,5 +31,6 @@ class RiskPrediction(Base):
     score_p_low: Mapped[Decimal | None] = mapped_column(Numeric(8, 5), nullable=True)
     score_p_high: Mapped[Decimal | None] = mapped_column(Numeric(8, 5), nullable=True)
     score_cohort_age: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    score_cohort_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
     input_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

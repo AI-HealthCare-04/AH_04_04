@@ -97,7 +97,10 @@ class RiskPredictionService:
         except AgeNotSupportedError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="Sarcopenia prediction is supported for users aged 65 or older.",
+                detail={
+                    "code": "sarcopenia_prediction_preparing",
+                    "message": "근감소증 예측은 만 65세 이상부터 제공됩니다.",
+                },
             ) from exc
         score_p_low = getattr(result, "score_p_low", None)
         score_p_high = getattr(result, "score_p_high", None)
@@ -113,6 +116,7 @@ class RiskPredictionService:
             score_p_low=Decimal(str(round(score_p_low, 5))) if score_p_low is not None else None,
             score_p_high=Decimal(str(round(score_p_high, 5))) if score_p_high is not None else None,
             score_cohort_age=getattr(result, "score_cohort_age", None),
+            score_cohort_version=getattr(result, "score_cohort_version", None),
             input_snapshot=result.input_snapshot,
         )
         await self.prediction_repo.create_risk_prediction(prediction)
@@ -131,6 +135,7 @@ class RiskPredictionService:
             risk_score=self._public_risk_score(prediction),
             muscle_score=getattr(prediction, "muscle_score", None),
             score_band=getattr(prediction, "score_band", None),
+            cohort_version=getattr(prediction, "score_cohort_version", None),
             care_stage=care_stage,
             display_message=self._display_message(care_stage),
         )
@@ -143,6 +148,7 @@ class RiskPredictionService:
             risk_score=self._public_risk_score(prediction),
             muscle_score=getattr(prediction, "muscle_score", None),
             score_band=getattr(prediction, "score_band", None),
+            cohort_version=getattr(prediction, "score_cohort_version", None),
             care_stage=care_stage,
             display_message=self._display_message(care_stage),
         )
@@ -209,6 +215,7 @@ class RiskPredictionService:
             risk_score=score,
             muscle_score=getattr(prediction, "muscle_score", None),
             score_band=getattr(prediction, "score_band", None),
+            cohort_version=getattr(prediction, "score_cohort_version", None),
             change_percentage_points=change_percentage_points,
             comparison_status=comparison_status,
             care_stage=RiskPredictionService._care_stage_from_risk_level(prediction.internal_risk_level),

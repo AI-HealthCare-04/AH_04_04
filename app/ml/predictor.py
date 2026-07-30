@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
@@ -15,6 +16,8 @@ import pandas as pd  # type: ignore[import-untyped]
 
 from app.core.utils.clock import today_kst
 from app.models.enums import ModelVariant, RiskLevel
+
+logger = logging.getLogger(__name__)
 
 ARTIFACT_DIR = Path(__file__).resolve().parent / "artifacts"
 MINIMAL_ARTIFACT_PATH = ARTIFACT_DIR / "sarcopenia_model_minimal.joblib"
@@ -73,10 +76,11 @@ class RiskPredictionResult:
     feature_set: str
     # --- 기록탭 긍정 점수(또래 대비, 높을수록 좋음) ---
     muscle_score: int | None = None      # 0~100 정수 (계산·저장값). None이면 코호트표 조회 실패
-    score_band: str | None = None        # "좋음" / "유지" / "주의"
+    score_band: str | None = None        # "good" / "maintain" / "caution"
     score_p_low: float | None = None     # 조회에 쓴 코호트 P5
     score_p_high: float | None = None    # 조회에 쓴 코호트 P95
     score_cohort_age: str | None = None  # "72" 또는 "80+" 등 실제 조회 키
+    score_cohort_version: str | None = None
 
 
 @lru_cache(maxsize=2)
@@ -103,8 +107,18 @@ def load_score_config() -> dict[str, float]:
         caution_max = float(score.get("caution_max", caution_max))
         floor = float(score.get("display_floor", floor))
     except Exception:
-        pass
+        logger.warning("Failed to load sarcopenia score config; using defaults.", exc_info=True)
     return {"good_min": good_min, "caution_max": caution_max, "display_floor": floor}
+
+
+@lru_cache(maxsize=1)
+def load_cohort_version() -> str | None:
+    if not COHORT_TABLE_PATH.exists():
+        return None
+    data = json.loads(COHORT_TABLE_PATH.read_text(encoding="utf-8"))
+    meta = data.get("meta", {}) or {}
+    version = meta.get("cohort_version")
+    return str(version) if version is not None else None
 
 
 @lru_cache(maxsize=1)
@@ -241,11 +255,11 @@ def compute_muscle_score(
 
     cfg = load_score_config()
     if score >= cfg["good_min"]:
-        band = "좋음"
+        band = "good"
     elif score <= cfg["caution_max"]:
-        band = "주의"
+        band = "caution"
     else:
-        band = "유지"
+        band = "maintain"
     return score, band, p_low, p_high, age_key
 
 
@@ -308,4 +322,5 @@ class RiskPredictor:
             score_p_low=p_low,
             score_p_high=p_high,
             score_cohort_age=age_key,
+            score_cohort_version=load_cohort_version() if muscle_score is not None else None,
         )
