@@ -93,7 +93,7 @@ async def get_challenge_totals(
     user: Annotated[User, Depends(get_request_user)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> ChallengeTotalsResponse:
-    # 기록 탭 챌린지 비율 도넛(#기록탭 §5.4): 유형별 누적 성공 횟수(0회 유형 포함).
+    # 기록 탭 챌린지 비율 도넛(#기록탭 §5.4): 유형별 완료 일수(모든 유형 하루 1회 상한, 0회 유형 포함).
     return await DashboardService(session).get_challenge_totals(user)
 
 

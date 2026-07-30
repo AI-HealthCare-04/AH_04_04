@@ -121,14 +121,14 @@ class WalkingDailyResponse(BaseModel):
     days: list[WalkingDayPoint]
 
 
-# [응답] 챌린지 유형별 누적 완료 도넛(#기록탭 §5.4). 0회 유형도 포함(범례 회색 표시용).
+# [응답] 챌린지 유형별 '완료 일수' 도넛(#기록탭 §5.4 선호도). 모든 유형 하루 1회 상한. 0회 유형도 포함(범례 회색).
 class ChallengeTypeTotal(BaseModel):
     mission_type: str  # walking | exercise | meal | game
-    count: int = Field(ge=0)
+    count: int = Field(ge=0)  # 해당 유형을 완료한 일수
 
 
 class ChallengeTotalsResponse(BaseModel):
-    total: int = Field(ge=0)
+    total: int = Field(ge=0)  # 유형별 완료 일수 합(도넛 중앙 '누적 N회')
     by_type: list[ChallengeTypeTotal]
 
 

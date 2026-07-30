@@ -209,7 +209,7 @@ class DashboardService:
         return await self.risk_service.get_score_simulation(user)
 
     async def get_challenge_totals(self, user: User) -> ChallengeTotalsResponse:
-        # 유형별 누적 성공 횟수(#기록탭 §5.4). 0회 유형도 포함해 앱이 범례를 회색으로 표시할 수 있게 한다.
+        # 유형별 완료 일수(#기록탭 §5.4 — 선호도, 모든 유형 하루 1회 상한). 0회 유형도 포함해 앱이 범례를 회색으로 표시.
         counts = await self.repo.get_challenge_totals(user.user_id)
         ordered = (MissionType.WALKING, MissionType.EXERCISE, MissionType.MEAL, MissionType.GAME)
         by_type = [ChallengeTypeTotal(mission_type=t.value, count=counts.get(t, 0)) for t in ordered]

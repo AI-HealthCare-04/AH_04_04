@@ -724,7 +724,7 @@ async def test_mission_logs_query_validation_returns_400(db_client: AsyncClient)
 
 
 # -------------------------------------------------------------------------------------
-# 기록 탭(#기록탭 §5.3/§5.4): 걷기 일별 막대 + 챌린지 유형별 누적 도넛
+# 기록 탭(#기록탭 §5.3/§5.4): 걷기 일별 막대 + 챌린지 유형별 완료 일수 도넛
 # -------------------------------------------------------------------------------------
 async def test_walking_daily_and_challenge_totals(
     db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
