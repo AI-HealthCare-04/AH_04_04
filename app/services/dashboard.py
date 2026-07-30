@@ -170,6 +170,9 @@ class DashboardService:
             RiskChangePoint(
                 at=item.created_at,
                 risk_score=item.risk_score,
+                muscle_score=getattr(item, "muscle_score", None),
+                score_band=getattr(item, "score_band", None),
+                cohort_version=getattr(item, "cohort_version", None),
                 change_percentage_points=item.change_percentage_points,
                 comparison_status=item.comparison_status,
                 care_stage=item.care_stage,
