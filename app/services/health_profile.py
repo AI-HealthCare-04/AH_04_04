@@ -73,13 +73,14 @@ class HealthProfileService:
         if latest is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Health profile not found.")
 
-        provided = data.model_fields_set  # 미전송 vs 명시적 null 을 구분(허리 '측정 안 함' 지우기 지원)
-        height = data.height_cm if "height_cm" in provided else latest.height_cm
-        weight = data.weight_kg if "weight_kg" in provided else latest.weight_kg
-        waist = data.waist_cm if "waist_cm" in provided else latest.waist_cm
-        kidney = data.kidney_status if "kidney_status" in provided else latest.kidney_status
+        # 키·몸무게·신장상태는 필수 값이라 null/미전송이면 최신값을 유지한다(지울 수 없음).
+        #   허리둘레만 명시적 null 로 '측정 안 함'을 지울 수 있어 model_fields_set 로 미전송과 구분한다.
+        height = data.height_cm if data.height_cm is not None else latest.height_cm
+        weight = data.weight_kg if data.weight_kg is not None else latest.weight_kg
+        waist = data.waist_cm if "waist_cm" in data.model_fields_set else latest.waist_cm
+        kidney = data.kidney_status if data.kidney_status is not None else latest.kidney_status
         # 키·몸무게를 직접 입력했으면 추정치가 아니다. 둘 다 미편집이면 이전 추정 플래그를 유지한다.
-        estimated = latest.has_estimated_value and "height_cm" not in provided and "weight_kg" not in provided
+        estimated = latest.has_estimated_value and data.height_cm is None and data.weight_kg is None
 
         new_profile = HealthProfile(
             user_id=user.user_id,
