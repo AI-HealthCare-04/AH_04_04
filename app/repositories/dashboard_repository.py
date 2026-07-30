@@ -158,15 +158,18 @@ class DashboardRepository:
         return {row[0]: (int(row[1]), float(row[2])) for row in rows}
 
     async def get_challenge_totals(self, user_id: int) -> dict[MissionType, int]:
-        """유형별 '누적 챌린지 완료 횟수'(#기록탭 §5.4 도넛). **counted_for_daily=True** 인 미션 로그를 유형별로 센다.
+        """유형별 '완료한 일수'(#기록탭 §5.4 도넛 — 유형별 선호도). counted_for_daily=True 인 로그의 **완료일 distinct 수**.
 
-        기준은 앱 전체의 '미션 완료' 정의와 통일한다: 홈 완료 개수(counted_breakdown_today)·포인트 적립
-        (compute_earned_points(counted_for_daily))·#274('완료한 미션 수') 모두 counted_for_daily 기준이다.
-        success 로 세면 목표를 넘긴 뒤의 추가 세션(예: 20분 목표에 21분째 걷기 — success=True·미적립)까지
-        중복 집계돼 홈·포인트와 어긋난다(비일관). 도넛은 '완료(집계·적립된) 횟수' 선호도이므로 counted 가 맞다.
+        기준은 counted_for_daily(앱 전체 '미션 완료' 정의: 홈 완료 개수·포인트·#274 와 동일)이되, **모든 유형을
+        하루 1회로 상한**한다 → 유형별 '며칠 했나' 선호도. 걷기·운동·식사는 이미 1일 1회(counted)라 그대로지만,
+        게임은 일일 제한이 없어 하루 여러 번 counted 될 수 있어(성공마다) 완료일 distinct 로 캡한다(재란님 결정).
+        완료일은 달력·일별 추이와 동일 기준: 걷기·운동은 physical_activity_logs.created_at(완료 시각),
+        식사·게임(즉시완료)은 mission_logs.created_at → COALESCE 후 DATE.
         """
+        completed_at = func.coalesce(PhysicalActivityLog.created_at, MissionLog.created_at)
         stmt = (
-            select(MissionLog.mission_type, func.count())
+            select(MissionLog.mission_type, func.count(func.distinct(func.date(completed_at))))
+            .outerjoin(PhysicalActivityLog, PhysicalActivityLog.mission_log_id == MissionLog.mission_log_id)
             .where(MissionLog.user_id == user_id, MissionLog.counted_for_daily.is_(True))
             .group_by(MissionLog.mission_type)
         )

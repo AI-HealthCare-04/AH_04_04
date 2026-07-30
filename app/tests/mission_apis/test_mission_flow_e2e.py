@@ -754,6 +754,8 @@ async def test_walking_daily_and_challenge_totals(
     await _walk(10, 1200)
     await _walk(15, 1500)
     await db_client.post(f"{API}/mission-logs", json=_meal_body(meal_tid), headers=auth)
+    # 게임 2판(같은 날) — 게임은 일일 제한이 없어 둘 다 counted 지만, 도넛은 유형별 '완료 일수'라 game=1 로 캡돼야 한다.
+    await db_client.post(f"{API}/mission-logs", json=_game_body(game_tid), headers=auth)
     await db_client.post(f"{API}/mission-logs", json=_game_body(game_tid), headers=auth)
 
     # 걷기 일별 막대: 오늘 = 두 세션 합(25분·2700걸음), 걷기 없는 날은 0으로 채워진다.
@@ -766,8 +768,8 @@ async def test_walking_daily_and_challenge_totals(
     assert today_row["minutes"] == 25 and today_row["steps"] == 2700
     assert all(d["steps"] == 0 and d["minutes"] == 0 for d in days if d["date"] != today)
 
-    # 챌린지 도넛: 유형별 누적 '완료(counted_for_daily)' 횟수. 걷기 2세션이어도 그날 목표를 처음 넘긴 1건만
-    #   counted → walking=1(홈 완료 개수·포인트와 일치). meal 1, game 1, exercise 0. 0회 유형 포함·순서 고정.
+    # 챌린지 도넛: 유형별 '완료한 일수'(모두 하루 1회 상한). 걷기 2세션→그날 1일, 게임 2판→그날 1일로 캡,
+    #   meal 1일, exercise 0. walking=1/meal=1/game=1/exercise=0, total=3. 0회 유형 포함·순서 고정.
     ct = await db_client.get(f"{API}/dashboard/challenge-totals", headers=auth)
     assert ct.status_code == status.HTTP_200_OK
     body = ct.json()
