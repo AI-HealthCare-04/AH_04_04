@@ -24,6 +24,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -52,15 +53,21 @@ class ExerciseVideosViewModelTest {
         var createdSafetyConfirmed: Boolean? = null
         var completeCalls = 0
         var lastDurationMin: Float? = null
+        // 매 POST 의 자연 키(created_on_device_at)를 순서대로 기록 — 재시도가 같은 키를 쓰는지 검증용(#234-1).
+        val createdKeys = mutableListOf<String?>()
+        // >0 이면 그만큼 createMissionLog 를 예외로 실패시킨다(전송 실패→재시도 경로 검증용, #234-2).
+        var failCreateTimes = 0
 
         override suspend fun guestLogin(): LoginResponse = error("unused")
 
         override suspend fun getMissions(status: String): MissionsResponse = MissionsResponse(missions)
 
         override suspend fun createMissionLog(body: MissionLogCreateRequest): MissionLogCreateResponse {
+            createdKeys.add(body.createdOnDeviceAt)
             createdTemplateId = body.missionTemplateId
             createdType = body.missionType
             createdSafetyConfirmed = body.safetyNoticeConfirmed
+            if (failCreateTimes > 0) { failCreateTimes--; throw RuntimeException("network down") }
             return MissionLogCreateResponse(
                 missionLogId = 100,
                 status = "in_progress",
@@ -147,7 +154,8 @@ class ExerciseVideosViewModelTest {
     @Test
     fun `submitExercise 는 단일 운동 미션 템플릿으로 exercise_detail 을 실어 완료한다`() = runTest {
         val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
-        vmWith(fake).submitExercise(4f, safetyNoticeConfirmed = true)
+        val vm = vmWith(fake)
+        vm.submitExercise(4f, safetyNoticeConfirmed = true)
         advanceUntilIdle()
 
         assertEquals("GET /missions 로 해석한 운동 템플릿 id 로 시작", 7, fake.createdTemplateId)
@@ -155,6 +163,43 @@ class ExerciseVideosViewModelTest {
         assertEquals("확인 게이트 결과를 그대로 서버에 싣는다", true, fake.createdSafetyConfirmed)
         assertEquals(1, fake.completeCalls)
         assertEquals("세션 분을 그대로 실어 보낸다", 4f, fake.lastDurationMin)
+        assertNull("성공하면 재시도 대기가 남지 않는다", vm.pendingResend)
+    }
+
+    @Test
+    fun `전송 실패 후 재시도는 같은 자연 키로 보내 중복 집계를 막는다`() = runTest {
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        fake.failCreateTimes = 1 // 첫 POST 는 네트워크 실패
+        val vm = vmWith(fake)
+
+        vm.beginExerciseSession() // 재생 시작 시 세션 키 확정
+        vm.submitExercise(4f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+
+        assertEquals("첫 시도는 POST 에서 실패", 1, fake.createdKeys.size)
+        assertEquals("실패했으니 완료 단계까지 못 감", 0, fake.completeCalls)
+        assertEquals("실패한 세션을 분과 함께 보존", 4f, vm.pendingResend?.durationMin)
+
+        vm.retryPendingResend()
+        advanceUntilIdle()
+
+        assertEquals("재시도로 두 번째 POST", 2, fake.createdKeys.size)
+        assertEquals("재시도는 시작 때 잡은 것과 같은 자연 키여야 한다", fake.createdKeys[0], fake.createdKeys[1])
+        assertNotNull("자연 키가 실제로 채워져 있어야 dedup 이 성립", fake.createdKeys[0])
+        assertEquals("재시도로 완료 전송 성공", 1, fake.completeCalls)
+        assertNull("성공했으니 재시도 대기 해제", vm.pendingResend)
+    }
+
+    @Test
+    fun `템플릿 미해석이어도 세션을 버리지 않고 재시도 대기로 보존한다`() = runTest {
+        val fake = FakeMissionApi(emptyList()) // 로그인 전/운동 미션 부재로 템플릿 미해석
+        val vm = vmWith(fake)
+        vm.beginExerciseSession()
+        vm.submitExercise(4f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+
+        assertEquals("보낼 대상이 없어 시작조차 안 함", 0, fake.completeCalls)
+        assertEquals("잃지 않게 보존해 이후(로그인) 재시도에 맡긴다", 4f, vm.pendingResend?.durationMin)
     }
 
     @Test

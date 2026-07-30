@@ -38,12 +38,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
 import com.aihealthcare.ah0404.R
@@ -83,6 +86,18 @@ fun ExerciseVideosScreen(
     var safetyConfirmed by remember { mutableStateOf(false) }
     var pendingStart by remember { mutableStateOf<(() -> Unit)?>(null) }
 
+    // 전송 실패로 남은 세션이 있으면 앱이 다시 앞으로 올 때(ON_RESUME) 같은 키로 재시도한다(리뷰 #234-2).
+    //   같은 자연 키라 서버 중복 없이 안전하고, POST 성공/PATCH 실패로 in_progress 만 남은 경우를 완료로 되살린다(#172).
+    //   남은 게 없으면 no-op. 영속 아님(앱 재시작 소실) — durable outbox 는 후속 이슈.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) vm.retryPendingResend()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     // 번들 루틴(몸풀기·마무리)은 백엔드 목록과 무관하게 오프라인에서도 재생 가능(심사 환경 안정 버전).
     //   여러 동작을 조합한 가이드 루틴이라 단일 스트리밍 영상이 아니라 번들 RoutinePlayer 로 띄운다(#72 스트리밍과 별개).
     routineFile?.let { file ->
@@ -120,7 +135,10 @@ fun ExerciseVideosScreen(
         )
     }
     val guardedStart: (() -> Unit) -> Unit = { action ->
-        if (safetyConfirmed) action() else pendingStart = action
+        // 실제 재생을 시작하는 순간(확인 통과 후) 이 세션의 자연 키를 새로 잡는다(#234-1): 세션마다 새 키라
+        //   별개로 합산되고, 완료 전송이 실패해 재시도할 땐 같은 키를 재사용해 중복 집계를 막는다.
+        val start = { vm.beginExerciseSession(); action() }
+        if (safetyConfirmed) start() else pendingStart = start
     }
 
     Column(
