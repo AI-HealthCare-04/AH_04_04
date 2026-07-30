@@ -48,6 +48,8 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.media3.common.util.UnstableApi
 import com.aihealthcare.ah0404.R
 import com.aihealthcare.ah0404.media.StreamingVideoPlayer
@@ -70,7 +72,7 @@ import com.aihealthcare.ah0404.ui.theme.Dimens
 fun ExerciseVideosScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
-    vm: ExerciseVideosViewModel = viewModel(),
+    vm: ExerciseVideosViewModel = exerciseVideosViewModel(),
 ) {
     LaunchedEffect(Unit) { vm.load() }
 
@@ -154,6 +156,12 @@ fun ExerciseVideosScreen(
     ) {
         TopBar(title = "영상 따라 운동하기", onBack = onBack)
 
+        // 전송 못 한 운동 기록이 남아 있으면(영속 outbox, #271) 사용자에게 알리고 수동 재시도를 제공한다.
+        //   자동 재시도(ON_RESUME·목록 복귀)가 계속 실패하는 경우의 탈출구 — 눌러도 in-flight 가드로 이중 전송되지 않는다.
+        if (vm.pendingResends.isNotEmpty()) {
+            PendingSyncBanner(count = vm.pendingResends.size, onRetry = vm::retryPending)
+        }
+
         // 번들 루틴(몸풀기·마무리)은 네트워크와 무관하게 '즉시' 시작 가능해야 한다(오프라인/느린망 포함).
         //   서버 목록이 오면 탭으로, 아직이면(로딩/빈/에러) 폴백에서 번들 루틴 버튼들을 바로 보여준다.
         //   시작 동작은 guardedStart 로 감싸 안전 고지 확인(#234) 게이트를 먼저 거친다.
@@ -174,6 +182,51 @@ fun ExerciseVideosScreen(
         }
     }
 
+}
+
+/**
+ * SharedPreferences 기반 영속 outbox(#271)를 주입한 [ExerciseVideosViewModel] 을 만든다.
+ *  `viewModel()` 기본 팩토리는 Context 를 넘길 수 없어 실제 저장소를 붙이지 못하므로(→ 미전송 세션이 재시작 시 소실),
+ *  applicationContext 로 만든 [SharedPrefsExerciseOutbox] 를 초기화 팩토리로 주입한다. 테스트/프리뷰는 vm 을 직접 넘겨 우회.
+ */
+@Composable
+private fun exerciseVideosViewModel(): ExerciseVideosViewModel {
+    val context = LocalContext.current.applicationContext
+    val factory = remember(context) {
+        viewModelFactory {
+            initializer { ExerciseVideosViewModel(outbox = SharedPrefsExerciseOutbox(context)) }
+        }
+    }
+    return viewModel(factory = factory)
+}
+
+/**
+ * 전송하지 못한 운동 기록 안내 배너(#271). 네트워크 장애 등으로 서버 반영이 밀린 세션이 있을 때만 뜨며,
+ * 자동 재시도와 별개로 '지금 바로' 보낼 수 있는 수동 탈출구를 제공한다. 안전 안내와 같은 앰버 배경으로 눈에 띄게.
+ */
+@Composable
+private fun PendingSyncBanner(count: Int, onRetry: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Dimens.ScreenPadding, vertical = Dimens.Space8)
+            .clip(MaterialTheme.shapes.large)
+            .background(AigoWarningContainer)
+            .padding(Dimens.CardPadding),
+        verticalArrangement = Arrangement.spacedBy(Dimens.Space8),
+    ) {
+        Text(
+            "아직 못 보낸 운동 기록이 ${count}개 있어요.",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+        )
+        Text(
+            "인터넷 연결이 좋아지면 자동으로 다시 보내요. 지금 바로 보내려면 아래를 눌러 주세요.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Button(onClick = onRetry, modifier = Modifier.align(Alignment.End)) { Text("지금 다시 보내기") }
+    }
 }
 
 /**
