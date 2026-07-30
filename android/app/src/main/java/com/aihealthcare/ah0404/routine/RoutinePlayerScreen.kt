@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -26,6 +27,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.animation.Crossfade
@@ -34,6 +36,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -62,7 +65,9 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import com.aihealthcare.ah0404.settings.AppSettings
 import kotlinx.coroutines.delay
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.min
 
@@ -106,6 +111,7 @@ fun RoutinePlayerScreen(
                             .build(),
                         /* handleAudioFocus = */ true, // 전화 오면 자동 일시정지 (켜기일 때만 요청)
                     )
+                    setPlaybackSpeed(AppSettings.playbackSpeed) // 영상·타이머와 동일 배속(3중 동기, 스펙 §4-4)
                     prepare()
                 }
             }
@@ -117,6 +123,7 @@ fun RoutinePlayerScreen(
         ExoPlayer.Builder(context).build().apply {
             repeatMode = Player.REPEAT_MODE_ALL
             volume = 0f
+            setPlaybackSpeed(AppSettings.playbackSpeed) // 전역 재생 속도(톱니로 조절, 기본 1.0)
         }
     }
 
@@ -128,8 +135,18 @@ fun RoutinePlayerScreen(
     // 실제 진행 시간(#234 P1-B): 단계별 elapsedMs 와 달리 루틴 전체에서 '실제로 흐른' 시간만 누적한다(일시정지
     //   제외, 각 단계 리셋 안 됨). '다음'으로 스킵하면 그 단계는 스킵 시점까지만 반영 → 완료 전송이 실제 수행 분만 싣는다.
     var playedMs by remember { mutableLongStateOf(0L) }
+    // 재생 속도(전역, 톱니로 조절). 영상·타이머·BGM 3곳에 동일 적용해 항상 동기(스펙 §4-4). 기본 1.0.
+    var speed by remember { mutableFloatStateOf(AppSettings.playbackSpeed) }
+    var showSpeed by remember { mutableStateOf(false) }
 
     val step = routine.steps.getOrNull(stepIndex)
+
+    // 속도 변경을 영상(클립)·BGM 에 즉시 반영. 타이머는 아래 루프가 speed 를 실시간으로 읽어 반영한다.
+    //   (재생 파라미터는 media item 과 무관한 player 속성이라 단계가 바뀌어도 유지된다.)
+    LaunchedEffect(speed) {
+        clipPlayer.setPlaybackSpeed(speed)
+        bgmPlayer.setPlaybackSpeed(speed)
+    }
 
     // BGM은 루틴 시작과 동시에 1회 play. (끄기면 준비 자체를 안 했으므로 재생도 안 한다)
     LaunchedEffect(Unit) { if (musicOn) bgmPlayer.playWhenReady = true }
@@ -164,10 +181,14 @@ fun RoutinePlayerScreen(
     LaunchedEffect(stepIndex) {
         elapsedMs = 0L
         val st = routine.steps.getOrNull(stepIndex) ?: run { finished = true; return@LaunchedEffect }
+        // elapsedMs 는 '동작 기준(콘텐츠) 시간'이라 sec*1000 과 직접 비교한다. 배속이면 한 틱(50ms 실시간)에
+        //   50*speed 만큼 콘텐츠 시간이 흘러 단계가 speed 배 빨리/느리게 끝난다(영상·타이머 동기). speed 를 루프에서
+        //   실시간으로 읽으므로 재생 중 속도 변경 시 남은 시간이 즉시 재계산된다(스펙 §4-4 주의). playedMs 는 실제
+        //   흐른 벽시계 시간(분 적립용)이라 배속과 무관하게 50ms 씩 누적한다.
         val totalMs = st.sec * 1000L
         while (elapsedMs < totalMs) {
             delay(50)
-            if (!paused) { elapsedMs += 50; playedMs += 50 } // playedMs 는 단계 넘어가도 리셋 안 됨(실제 진행 누적)
+            if (!paused) { elapsedMs += (50 * speed).toLong(); playedMs += 50 }
         }
         if (stepIndex + 1 < routine.steps.size) stepIndex++ else finished = true
     }
@@ -198,8 +219,9 @@ fun RoutinePlayerScreen(
     // ---------------- UI ----------------
     //   헤더(고정) + 미디어(weight: 남는 세로 공간) + 타이머(고정) + 컨트롤(고정, 항상 보임).
     //   고정 9:16이 폭을 채우면 너무 높아 하단 버튼이 화면 밖으로 밀리므로 미디어를 weight로 둔다(리뷰 #78).
+    Box(Modifier.fillMaxSize().background(BgColor)) {
     Column(
-        modifier = Modifier.fillMaxSize().background(BgColor).systemBarsPadding().padding(16.dp),
+        modifier = Modifier.fillMaxSize().systemBarsPadding().padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -336,6 +358,27 @@ fun RoutinePlayerScreen(
         }
     }
 
+        // 재생 속도 톱니 — 우상단(48dp+). 하단은 컨트롤 버튼이 꽉 차 상단 여백에 배치(스펙 §4-3).
+        SpeedGearButton(
+            speed = speed,
+            onClick = { showSpeed = true },
+            modifier = Modifier.align(Alignment.TopEnd).systemBarsPadding().padding(4.dp),
+        )
+    }
+
+    // 재생 속도 선택 — 0.75/1.0/1.25/1.5. 고르면 영상·타이머·BGM 에 동일 적용되고 전역 저장(다음 영상에도 이어짐).
+    if (showSpeed) {
+        SpeedPickerDialog(
+            current = speed,
+            onSelect = { picked ->
+                speed = picked
+                AppSettings.setPlaybackSpeed(context, picked)
+                showSpeed = false
+            },
+            onDismiss = { showSpeed = false },
+        )
+    }
+
     // 나가기 — 실수 이탈 방지 확인 다이얼로그
     if (showExit) {
         AlertDialog(
@@ -359,6 +402,64 @@ fun RoutinePlayerScreen(
 
 /** 루틴 중도 종료 시 이보다 짧으면(실수 진입 등) 적립하지 않는다(리뷰 #234-3: 5~10초 미만 무시). */
 private const val MIN_ROUTINE_PLAYED_MS = 5_000L
+
+/** 배속 표시 라벨(예: 1.0 → "1.0배"). 정수처럼 딱 떨어지는 값도 소수 한 자리로 통일. */
+private fun speedLabel(speed: Float): String {
+    val s = if (speed % 1f == 0f) "${speed.toInt()}.0" else speed.toString()
+    return "${s}배"
+}
+
+/** 재생 속도 톱니(우상단, 48dp+). 현재 배속을 함께 보여줘 어르신이 상태를 알기 쉽게. */
+@Composable
+private fun SpeedGearButton(speed: Float, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier.heightIn(min = 48.dp),
+        shape = MaterialTheme.shapes.large,
+        color = Color.White,
+        border = BorderStroke(1.dp, InkColor.copy(alpha = 0.3f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("⚙", fontSize = 20.sp)
+            Text(" ${speedLabel(speed)}", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = InkColor)
+        }
+    }
+}
+
+/** 재생 속도 선택 시트 — 0.75/1.0/1.25/1.5, 현재 선택 강조. 고르면 영상·타이머·BGM 에 즉시 동일 적용. */
+@Composable
+private fun SpeedPickerDialog(current: Float, onSelect: (Float) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("닫기", fontSize = 20.sp) } },
+        title = { Text("재생 속도", fontSize = 26.sp, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                AppSettings.SPEED_OPTIONS.forEach { opt ->
+                    val selected = abs(opt - current) < 0.001f
+                    if (selected) {
+                        Button(
+                            onClick = { onSelect(opt) },
+                            modifier = Modifier.fillMaxWidth().height(56.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        ) { Text("${speedLabel(opt)}  ✓", fontSize = 22.sp, fontWeight = FontWeight.Bold) }
+                    } else {
+                        OutlinedButton(
+                            onClick = { onSelect(opt) },
+                            modifier = Modifier.fillMaxWidth().height(56.dp),
+                            border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
+                        ) { Text(speedLabel(opt), fontSize = 22.sp) }
+                    }
+                }
+            }
+        },
+    )
+}
 
 /** 원형 카운트다운 게이지 + 가운데 남은 초. 어르신이 숫자만으론 놓치므로 게이지 병행. */
 @Composable

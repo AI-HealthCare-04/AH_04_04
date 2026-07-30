@@ -122,24 +122,7 @@ fun SettingsScreen(
                 Spacer(Modifier.height(Dimens.Space8))
                 AigoSegmentedSelector(sizeOptions, vm.soundSize, vm::changeSoundSize, horizontal = true)
             }
-            AigoCard {
-                Text("운동 난이도", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(Dimens.Space8))
-                // 로컬 설정(서버 미동기화). 기본값은 체력검사(STS) 결과 레벨을 따라가고, 여기서 직접 바꾸면 우선.
-                //   운동영상 재생 속도로 반영: 가볍게 0.8x / 보통 1.0x / 힘차게 1.25x.
-                AigoSegmentedSelector(
-                    listOf(
-                        SegmentOption(AppSettings.DIFF_EASY, "가볍게"),
-                        SegmentOption(AppSettings.DIFF_NORMAL, "보통"),
-                        SegmentOption(AppSettings.DIFF_HARD, "힘차게"),
-                    ),
-                    AppSettings.exerciseDifficulty,
-                    { AppSettings.setExerciseDifficulty(context, it) },
-                    horizontal = true,
-                )
-                Spacer(Modifier.height(Dimens.Space8))
-                Text("운동 영상이 이 속도로 재생돼요.", style = MaterialTheme.typography.bodyLarge)
-            }
+            // 운동 난이도 설정 제거(폐기): 재생 속도는 설정이 아니라 영상 안 톱니로 직접 조절한다.
             AigoCard {
                 Text("펫 종류", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(Dimens.Space8))

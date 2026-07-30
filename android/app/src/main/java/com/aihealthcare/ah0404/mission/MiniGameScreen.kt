@@ -15,7 +15,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.media3.common.util.UnstableApi
 import com.aihealthcare.ah0404.BuildConfig
 import com.aihealthcare.ah0404.media.StreamingVideoPlayer
-import com.aihealthcare.ah0404.settings.AppSettings
 import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
 import com.aihealthcare.ah0404.ui.theme.Dimens
 
@@ -24,7 +23,7 @@ import com.aihealthcare.ah0404.ui.theme.Dimens
  *
  * 운동영상 4단계 카탈로그(#72) 밖의 짧은 재미 영상을 서버 /videos 에서 스트리밍한다.
  *  - URL 은 서버 카탈로그가 아니라 앱에 직접 주입(BuildConfig.MINI_GAME_VIDEO_URL). 재생 컴포넌트 재사용.
- *  - 재생 속도는 운동 난이도(가볍게/보통/힘차게)를 따른다 — 박수·동작 기반 게임이라 빠를수록 어렵다(#219 일관).
+ *  - 재생 속도는 영상 안 톱니(⚙)로 조절(전역 [AppSettings.playbackSpeed], 기본 1.0배속) — 난이도 연동 폐기.
  *  - 뒤로가기는 호스트(MainActivity 서브스크린)가 처리하므로 여기선 onBack 버튼만 둔다(중복 방지, 리뷰 #220).
  *  - 미션 완료(포인트) 처리는 이 화면이 지지 않는다(#91 단일 기록 지점 원칙, 이중 경로 금지) — 후속.
  */
@@ -43,7 +42,6 @@ fun MiniGameScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
         StreamingVideoPlayer(
             url = BuildConfig.MINI_GAME_VIDEO_URL,
             autoPlay = true,
-            speed = AppSettings.exerciseSpeedFor(AppSettings.exerciseDifficulty), // 운동 난이도별 재생 속도(#219)
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
