@@ -21,11 +21,15 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import NullPool
 
 import app.models as _register_models  # noqa: F401  (모든 모델을 Base.metadata에 등록)
+from app.core.db.database_name_safety import validate_ephemeral_database_name
 from app.core.db.session import get_db_session
 from app.main import app
 from app.models.base import Base
 
-_TEST_DB_NAME = os.getenv("TEST_DB_NAME", "test_ah0404")
+_TEST_DB_NAME = validate_ephemeral_database_name(
+    os.getenv("TEST_DB_NAME", "test_ah0404"),
+    application_database=os.getenv("DB_NAME"),
+)
 
 
 def _mysql_url(database: str | None) -> URL:
@@ -81,14 +85,23 @@ async def _mysql_engine() -> AsyncGenerator[AsyncEngine]:
         finally:
             cursor.close()
 
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
     try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
         yield engine
     finally:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.drop_all)
         await engine.dispose()
+        cleanup_admin = create_async_engine(
+            _mysql_url(None),
+            isolation_level="AUTOCOMMIT",
+            poolclass=NullPool,
+            connect_args={"connect_timeout": 5},
+        )
+        try:
+            async with cleanup_admin.connect() as conn:
+                await conn.execute(text(f"DROP DATABASE IF EXISTS `{_TEST_DB_NAME}`"))
+        finally:
+            await cleanup_admin.dispose()
 
 
 @pytest_asyncio.fixture

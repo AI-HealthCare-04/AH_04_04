@@ -14,15 +14,26 @@ import asyncio
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 from sqlalchemy import URL, text
 from sqlalchemy.ext.asyncio import create_async_engine
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.core.db.database_name_safety import validate_ephemeral_database_name  # noqa: E402
 
 HOST = os.environ.get("DB_HOST", "127.0.0.1")
 PORT = int(os.environ.get("DB_PORT", "3306"))
 USER = os.environ.get("DB_USER", "root")
 PASSWORD = os.environ.get("DB_PASSWORD")
-MIG_DB = os.environ.get("MIG_DB", "test_ah0404_mig")
+try:
+    MIG_DB = validate_ephemeral_database_name(
+        os.environ.get("MIG_DB", "test_ah0404_mig"),
+        application_database=os.environ.get("DB_NAME"),
+    )
+except ValueError as exc:
+    sys.exit(f"안전하지 않은 MIG_DB: {exc}")
 
 if not PASSWORD:
     sys.exit("DB_PASSWORD 가 필요합니다 (CREATE DATABASE 권한 있는 유저, root 권장)")
