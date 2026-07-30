@@ -182,9 +182,13 @@ class ExerciseVideosViewModel(
                 pending.remove(key) // 이 키만 서버에 안전히 남음 — 보존 해제(다른 세션은 유지)
                 publishPending()
                 // 누적 운동시간 표시(#235): 서버가 합산한 당일 누적 분·목표달성을 화면에 반영해 완료 판정을 확인시킨다.
-                //   재전송 조기종료 경로는 dailyTotalMin 이 null(create 응답엔 누적 없음)이라 그때만 분은 갱신하지 않는다.
-                r.dailyTotalMin?.let { todayExerciseMin = it }
-                todayGoalReached = r.success
+                //   병렬 재시도(retryPending 이 키마다 별도 launch) 때문에 PATCH 응답이 역순 도착할 수 있다(리뷰 #280):
+                //   서버가 A=6분/미달 → B=11분/달성으로 처리해도 B 가 먼저, A 가 늦게 도착할 수 있어 무조건 대입하면
+                //   화면이 11분·달성에서 6분·미달로 되돌아간다. 당일 누적은 세션이 더해질수록 '단조 증가'하고 목표달성도
+                //   한 번 참이면 유지되므로(서버 판정 success=누적>=목표, services/mission.py), 서버 응답에 날짜/버전이
+                //   없어도 **더 큰 누적값만 반영 + 달성은 스티키**로 도착 순서와 무관하게 최신 권위값(=최댓값)에 수렴시킨다.
+                //   (재전송 조기종료 경로는 dailyTotalMin 이 null 이라 분은 건너뛰고, success=true 면 달성만 굳힌다.)
+                updateTodayExercise(r.dailyTotalMin, r.success)
                 Log.i(
                     TAG,
                     "운동 완료 전송 OK: status=${r.finalStatus}, counted=${r.countedForDaily}, dailyTotalMin=${r.dailyTotalMin}",
@@ -198,6 +202,19 @@ class ExerciseVideosViewModel(
                 inFlight.remove(key) // 전송 종료 — 다음 재시도가 이 키를 다시 시도할 수 있게 해제
             }
         }
+    }
+
+    /**
+     * 완료 응답의 당일 누적 분·목표달성을 화면 상태에 수렴 반영한다(#235, 리뷰 #280의 역순 도착 방어).
+     *  단조성 불변식(누적은 증가만, 달성은 참이면 유지)을 이용해 **더 큰 누적값만 반영하고 달성은 스티키**로 둔다 →
+     *  병렬 전송의 응답이 어떤 순서로 도착해도 최신 권위값(최댓값·달성)에 수렴한다. null 누적(재전송 조기종료)은 분을 건너뛴다.
+     */
+    private fun updateTodayExercise(dailyTotalMin: Float?, success: Boolean) {
+        if (dailyTotalMin != null) {
+            val current = todayExerciseMin
+            if (current == null || dailyTotalMin >= current) todayExerciseMin = dailyTotalMin
+        }
+        if (success) todayGoalReached = true
     }
 
     /** [pending] 변경을 관찰 상태에 반영하고 **영속 outbox 에도 스냅샷을 남긴다**(#271) — 전송 중 앱이 종료돼도 세션이 남게. */

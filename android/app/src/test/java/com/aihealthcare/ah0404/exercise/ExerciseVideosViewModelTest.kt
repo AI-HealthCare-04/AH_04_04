@@ -16,6 +16,7 @@ import com.aihealthcare.ah0404.network.SensorSessionCreateRequest
 import com.aihealthcare.ah0404.network.SensorSessionCreateResponse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -61,6 +62,10 @@ class ExerciseVideosViewModelTest {
         // 완료 응답의 서버 판정값(#235 누적시간 표시 검증용). 기본=목표 달성(성공·당일 10분).
         var completeSuccess = true
         var completeDailyTotal: Float? = 10f
+        // 세션 분(exercise_detail.duration_min)별 완료 응답 (당일 누적, 목표달성) — 병렬 전송의 응답을 개별 지정(리뷰 #280).
+        var completeRespByDuration: Map<Float, Pair<Float?, Boolean>> = emptyMap()
+        // 세션 분별 응답 지연(ms) — delay 로 응답 '도착 순서'를 뒤집어 역순 수렴을 검증한다.
+        var completeDelayByDuration: Map<Float, Long> = emptyMap()
 
         override suspend fun guestLogin(): LoginResponse = error("unused")
 
@@ -87,15 +92,18 @@ class ExerciseVideosViewModelTest {
             body: MissionLogUpdateRequest,
         ): MissionLogUpdateResponse {
             completeCalls++
-            lastDurationMin = body.exerciseDetail?.durationMin
+            val dur = body.exerciseDetail?.durationMin
+            lastDurationMin = dur
+            completeDelayByDuration[dur]?.let { delay(it) } // 응답 도착 순서를 인위적으로 뒤집기 위한 지연
+            val (total, ok) = completeRespByDuration[dur] ?: (completeDailyTotal to completeSuccess)
             return MissionLogUpdateResponse(
                 missionLogId = missionLogId,
                 status = "completed",
-                success = completeSuccess,
-                countedForDaily = completeSuccess,
-                dailyResult = if (completeSuccess) "success" else "none",
+                success = ok,
+                countedForDaily = ok,
+                dailyResult = if (ok) "success" else "none",
                 syncStatus = "synced",
-                dailyTotalMin = completeDailyTotal,
+                dailyTotalMin = total,
             )
         }
 
@@ -329,6 +337,23 @@ class ExerciseVideosViewModelTest {
 
         assertEquals("서버 당일 누적값(sum_exercise_minutes_today)을 그대로 노출", 10f, vm.todayExerciseMin)
         assertTrue("서버 success=목표(하루 10분) 달성 → 완료 안내", vm.todayGoalReached)
+    }
+
+    @Test
+    fun `완료 응답이 역순 도착해도 더 큰 누적값·달성 상태로 수렴한다`() = runTest {
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        // 서버 처리 순서는 A(6분/미달) → B(11분/달성)지만, 응답은 B 가 먼저·A 가 늦게 도착하도록 지연을 뒤집는다.
+        fake.completeRespByDuration = mapOf(6f to (6f to false), 11f to (11f to true))
+        fake.completeDelayByDuration = mapOf(6f to 100L, 11f to 10L)
+        val vm = vmWith(fake)
+
+        vm.beginExerciseSession(); vm.submitExercise(6f, safetyNoticeConfirmed = true)  // A: 먼저 전송, 응답 늦음
+        vm.beginExerciseSession(); vm.submitExercise(11f, safetyNoticeConfirmed = true) // B: 나중 전송, 응답 빠름
+        advanceUntilIdle()
+
+        assertEquals("두 세션 모두 완료 전송", 2, fake.completeCalls)
+        assertEquals("늦게 온 A(6분)가 최신 B(11분)를 되돌리지 않는다(최댓값 수렴)", 11f, vm.todayExerciseMin)
+        assertTrue("한 번 달성하면 늦은 미달 응답이 되돌리지 못한다(스티키)", vm.todayGoalReached)
     }
 
     @Test
