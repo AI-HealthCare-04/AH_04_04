@@ -22,6 +22,14 @@
 3. 산출물을 서버 `/opt/ah0404/media/terms/` 에 업로드(스크립트 출력의 scp 예시 참고).
    nginx 가 `https://aigo-health.duckdns.org/terms/<파일명(확장자 없이)>` 로 서빙한다
    (`infra/nginx/default.conf` 의 `/terms/` location — 반영 절차는 그 파일 상단 주석).
+   업로드 후 **4개 버전 URL 이 전부 200 + UTF-8 로 열리는지** 확인하고 기록한다(#268 리뷰):
+   ```bash
+   for t in service-1.0 privacy-1.0 sensitive-health-1.0 marketing-1.0; do
+     curl -fsSI https://aigo-health.duckdns.org/terms/$t | grep -iE '^(HTTP|content-type)'
+   done   # 기대: 각각 200 / content-type: text/html; charset=utf-8
+   ```
+   본문이 깨지지 않았는지는 게시 전 `app/tests/test_publish_terms.py` 가 잡는다(표·목록·인용이
+   원시 Markdown 기호로 새면 실패). 브라우저에서 privacy 의 표가 표로 보이는지도 한 번 눈으로 확인.
 4. 실제 URL 을 **배포 환경변수**(`TERMS_*_URL`) 3곳에 주입: GitHub secret `PROD_ENV`(자동 배포 원천),
    `envs/.prod.env`(수동 배포), 서버 `~/project/.env`(즉시 반영 시) → fastapi 재기동.
 5. 약관 내용/버전이 바뀌면: md 파일명·이 README·`terms_catalog.py` 의 `version` 을 갱신하고
