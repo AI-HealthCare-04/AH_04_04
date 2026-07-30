@@ -50,23 +50,8 @@ internal data class MuscleScoreUi(
     val trend: List<ScorePoint>,
     val walkSim: List<ScoreSimPoint>,
     val muscSim: List<ScoreSimPoint>,
-    val stsSeconds: Double?, // §3.4 5STS(초). null=미측정/스킵
+    val stsSeconds: Double?, // §3.4 5STS(초). null=미측정/스킵 → 안전망 카드 미표시
     val bmi: Double?,        // §3.4
-)
-
-/**
- * 목데이터(#기록탭 §3·§4). 앱은 점수를 **계산하지 않는다** — 서버 응답을 흉내낸 표시용 샘플이다.
- *  백엔드 배포 후 /risk-predictions/me/latest(score·score_band)·/dashboard/score-simulation 으로 교체.
- */
-internal fun mockMuscleScore(age: Int?): MuscleScoreUi = MuscleScoreUi(
-    age = age,
-    score = 72,
-    band = "maintain",
-    trend = listOf(ScorePoint("지난달 초", 64), ScorePoint("지난달 말", 68), ScorePoint("이번 달", 72)),
-    walkSim = (0..7).map { ScoreSimPoint(it, max(62, (62 + it * 3)).coerceAtMost(86)) },
-    muscSim = (0..5).map { ScoreSimPoint(it, (66 + it * 4).coerceAtMost(88)) },
-    stsSeconds = 13.5,
-    bmi = 26.0,
 )
 
 private const val DISPLAY_FLOOR = 5 // 표시 하한 5점(§3.1) — 계산·저장은 0~100, 화면 표시만 최저 5.

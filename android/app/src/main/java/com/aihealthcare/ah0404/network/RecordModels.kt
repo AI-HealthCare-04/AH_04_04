@@ -23,6 +23,9 @@ data class RiskHistoryItem(
     @SerialName("care_stage") val careStage: String, // Android 전환 기간의 임시 호환 필드
     @SerialName("prediction_id") val predictionId: Int = 0,
     @SerialName("risk_score") val riskScore: Double? = null,
+    // 근육 건강 점수(#기록탭 §3, #272/#273). 코호트표 미탑재·65세 미만이면 null.
+    @SerialName("muscle_score") val muscleScore: Int? = null,
+    @SerialName("score_band") val scoreBand: String? = null,
     @SerialName("change_percentage_points") val changePercentagePoints: Double? = null,
     @SerialName("comparison_status") val comparisonStatus: String = "baseline",
 )
@@ -31,6 +34,25 @@ data class RiskHistoryItem(
 data class RiskHistoryResponse(
     /** 서버 계약에 따라 오래된 기록부터 최신 기록 순서로 온다. */
     val predictions: List<RiskHistoryItem> = emptyList(),
+)
+
+/** GET /risk-predictions/me/latest — 근육 건강 점수 최신값(#기록탭 §3). 필요한 필드만(ignoreUnknownKeys). */
+@Serializable
+data class RiskLatestResponse(
+    @SerialName("muscle_score") val muscleScore: Int? = null,
+    @SerialName("score_band") val scoreBand: String? = null,
+    @SerialName("cohort_version") val cohortVersion: String? = null,
+)
+
+/** what-if 점수 시뮬레이션(#기록탭 §4). score=null 인 지점은 점수 미제공. */
+@Serializable
+data class ScoreSimPointDto(val days: Int, val score: Int? = null)
+
+@Serializable
+data class ScoreSimulationResponse(
+    val walk: List<ScoreSimPointDto> = emptyList(),
+    val musc: List<ScoreSimPointDto> = emptyList(),
+    @SerialName("cohort_version") val cohortVersion: String? = null,
 )
 
 @Serializable

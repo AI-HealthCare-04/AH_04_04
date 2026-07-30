@@ -3,6 +3,8 @@ package com.aihealthcare.ah0404.record
 import com.aihealthcare.ah0404.network.ChallengeTotalsResponse
 import com.aihealthcare.ah0404.network.MissionLogItem
 import com.aihealthcare.ah0404.network.MissionLogListResponse
+import com.aihealthcare.ah0404.network.RiskLatestResponse
+import com.aihealthcare.ah0404.network.ScoreSimulationResponse
 import com.aihealthcare.ah0404.network.PredictionInputsResponse
 import com.aihealthcare.ah0404.network.RecordApi
 import com.aihealthcare.ah0404.network.RiskHistoryItem
@@ -43,6 +45,8 @@ class RecordViewModelTest {
         override suspend fun getWalkingDaily(days: Int) = WalkingDailyResponse()
         override suspend fun getChallengeTotals() = ChallengeTotalsResponse()
         override suspend fun getStamps(month: String) = StampsResponse(month = month)
+        override suspend fun getLatestPrediction() = RiskLatestResponse()
+        override suspend fun getScoreSimulation() = ScoreSimulationResponse()
     }
 
     private fun risk(vararg stages: String) =
@@ -167,6 +171,8 @@ class RecordViewModelTest {
         override suspend fun getWalkingDaily(days: Int) = WalkingDailyResponse()
         override suspend fun getChallengeTotals() = ChallengeTotalsResponse()
         override suspend fun getStamps(month: String) = StampsResponse(month = month)
+        override suspend fun getLatestPrediction() = RiskLatestResponse()
+        override suspend fun getScoreSimulation() = ScoreSimulationResponse()
     }
 
     @Test

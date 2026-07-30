@@ -137,17 +137,24 @@ fun RecordScreen(
                 Spacer(Modifier.height(Dimens.Space8))
             }
 
-            // 근육 건강 정보(§3·§4) — WebView 은퇴, 네이티브 점수 화면. 점수는 목데이터(서버 배포 후 교체).
+            // 근육 건강 정보(§3·§4) — WebView 은퇴, 네이티브 점수 화면(실API). 점수 미도착이면 화면이 "준비 중" 처리.
             RecordTab.DASHBOARD -> Column(
                 Modifier
                     .weight(1f)
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState()),
             ) {
-                MuscleScoreScreen(
-                    ui = mockMuscleScore(vm.predictionPrefill?.age),
-                    onGoToMissions = onGoToMissions,
-                )
+                val ui = vm.muscleScore
+                if (ui == null) {
+                    Text(
+                        "불러오는 중이에요…",
+                        modifier = Modifier.padding(Dimens.ScreenPadding),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    MuscleScoreScreen(ui = ui, onGoToMissions = onGoToMissions)
+                }
             }
         }
     }

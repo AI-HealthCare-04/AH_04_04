@@ -55,6 +55,10 @@ class RecordViewModel(
     // 예측 대시보드(#193) 개인화 초기값. null 이면 대시보드가 HTML 기본값으로 열린다(엔드포인트 미배포/미완 시).
     var predictionPrefill by mutableStateOf<DashboardPrefill?>(null); private set
 
+    // 근육 건강 정보(#기록탭 §3·§4) UI 상태(실데이터). load 전엔 null → 화면은 로딩 표시.
+    //   MuscleScoreUi 가 internal 이라 프로퍼티도 internal(같은 모듈의 RecordScreen 만 소비).
+    internal var muscleScore by mutableStateOf<MuscleScoreUi?>(null); private set
+
     // ── 나의 기록 챌린지 통계(#기록탭 §5) ─────────────────────────────────────
     var lineLogs by mutableStateOf<List<MissionLogItem>>(emptyList()); private set   // §5.1 최근 14일 완료 선그래프
     var walkingDays by mutableStateOf<List<WalkingDayPoint>>(emptyList()); private set // §5.3 걷기 막대 7일
@@ -126,11 +130,16 @@ class RecordViewModel(
             val totalsCall = async { safeCall { api.getChallengeTotals() } }
             // 예측 대시보드 개인화(#193): 실패해도(미배포/프로필 미완) 화면은 막지 않고 기본값 폴백.
             val prefillCall = async { safeCall { api.getPredictionInputs() } }
+            // 근육 건강 정보(§3·§4) 실데이터. 미배포/미예측(404)이면 null → "준비 중"·연령 카드로 폴백.
+            val latestCall = async { safeCall { api.getLatestPrediction() } }
+            val simCall = async { safeCall { api.getScoreSimulation() } }
             val historyResult = historyCall.await()
             val lineResult = lineCall.await()
             val walkingResult = walkingCall.await()
             val totalsResult = totalsCall.await()
             val prefillResult = prefillCall.await()
+            val latestResult = latestCall.await()
+            val simResult = simCall.await()
 
             // 이 refresh 이후 더 최신 refresh 가 시작됐다면, 낡은 결과는 버린다(commit 안 함).
             if (gen != generation) return@coroutineScope
@@ -155,6 +164,20 @@ class RecordViewModel(
             prefillResult
                 .onSuccess { predictionPrefill = it.toDashboardPrefill() }
                 .onFailure { Log.w(TAG, "예측 입력 조회 실패(기본값 폴백): ${it.message}") }
+            simResult.onFailure { Log.w(TAG, "점수 시뮬레이션 조회 실패: ${it.message}") }
+            latestResult.onFailure { Log.w(TAG, "근육 건강 점수 조회 실패: ${it.message}") }
+            // 근육 건강 정보 UI 상태(§3·§4)는 실데이터로 구성한다 — 앱은 점수를 계산하지 않는다(서버 값 표시만).
+            //   5STS(초)는 아직 노출 API가 없어(백엔드 필요) stsSeconds=null → §3.4 안전망 카드는 미표시.
+            muscleScore = MuscleScoreUi(
+                age = predictionPrefill?.age,
+                score = latestResult.getOrNull()?.muscleScore,
+                band = latestResult.getOrNull()?.scoreBand,
+                trend = history.mapNotNull { h -> h.muscleScore?.let { ScorePoint(dayLabel(h.createdAt), it) } },
+                walkSim = simResult.getOrNull()?.walk?.mapNotNull { p -> p.score?.let { ScoreSimPoint(p.days, it) } } ?: emptyList(),
+                muscSim = simResult.getOrNull()?.musc?.mapNotNull { p -> p.score?.let { ScoreSimPoint(p.days, it) } } ?: emptyList(),
+                stsSeconds = null,
+                bmi = null,
+            )
             loaded = true
         }
         if (gen == generation) loading = false
@@ -167,6 +190,9 @@ class RecordViewModel(
 
     private fun todayKey(): String = dateKeyMillis(System.currentTimeMillis())
     private fun daysAgoKey(days: Int): String = dateKeyMillis(System.currentTimeMillis() - days.toLong() * 86_400_000L)
+
+    /** 추이 점 라벨: ISO(YYYY-MM-DD...) → "MM.DD". */
+    private fun dayLabel(iso: String): String = if (iso.length >= 10) iso.substring(5, 10).replace('-', '.') else iso
 
     private fun monthBounds(year: Int, month1: Int): Pair<String, String> {
         val first = GregorianCalendar(kst).apply { clear(); set(year, month1 - 1, 1) }

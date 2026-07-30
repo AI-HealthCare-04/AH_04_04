@@ -61,8 +61,20 @@ class HealthInfoViewModel(
             saveError = "키·몸무게를 0보다 큰 값으로 입력해 주세요."
             return
         }
-        // 허리둘레는 선택 — 비우면 '측정 안 함'(null)으로 저장(서버가 기존 값을 지운다).
-        val waist = waistText.trim().takeIf { it.isNotEmpty() }?.toDoubleOrNull()?.takeIf { it > 0 }
+        // 허리둘레는 선택 — **비우면** '측정 안 함'(null)으로 저장(서버가 기존 값을 지운다).
+        //   비어 있지 않은데 숫자가 아니거나 0 이하면 삭제 의도가 아니라 입력 오류이므로 저장을 막는다(리뷰 #275).
+        val waistTrimmed = waistText.trim()
+        val waist: Double?
+        if (waistTrimmed.isEmpty()) {
+            waist = null
+        } else {
+            val parsed = waistTrimmed.toDoubleOrNull()
+            if (parsed == null || parsed <= 0) {
+                saveError = "허리둘레는 0보다 큰 숫자로 입력하거나, 비워서 '측정 안 함'으로 두세요."
+                return
+            }
+            waist = parsed
+        }
         viewModelScope.launch {
             val myVersion = ++version
             saving = true

@@ -32,4 +32,12 @@ interface RecordApi {
     /** 월별 스탬프(#기록탭 §5.2 달력). month="YYYY-MM". */
     @GET("dashboard/stamps")
     suspend fun getStamps(@Query("month") month: String): StampsResponse
+
+    /** 근육 건강 점수 최신값(#기록탭 §3). 코호트표 미탑재·65세 미만이면 muscle_score=null. */
+    @GET("risk-predictions/me/latest")
+    suspend fun getLatestPrediction(): RiskLatestResponse
+
+    /** what-if 점수 시뮬레이션(#기록탭 §4) — 걷기 0~7·근력 0~5 각 지점 점수. */
+    @GET("dashboard/score-simulation")
+    suspend fun getScoreSimulation(): ScoreSimulationResponse
 }
