@@ -14,7 +14,9 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -53,6 +55,7 @@ import kotlin.math.roundToInt
  * 예측 이력은 연속 점수와 변화량으로 표시한다. 점수는 진단값이 아니며, 모델 버전이 바뀐
  * `model_changed` 지점에서는 서로 다른 모델의 점수를 하나의 추세처럼 연결하지 않는다.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RecordScreen(
     onBack: (() -> Unit)? = null,
@@ -60,8 +63,12 @@ fun RecordScreen(
     vm: RecordViewModel = viewModel(),
 ) {
     LaunchedEffect(Unit) { vm.load() }
-    // 상단 세그먼트: 기존 챌린지 기록 ↔ 근감소증 예측 대시보드(#193). 대시보드는 심사·평가용 WebView.
+    // 상단 세그먼트: 나의 기록(챌린지 통계) ↔ 근육 건강 정보(점수/시뮬레이션). (§1 명칭 변경)
     var tab by remember { mutableStateOf(RecordTab.RECORDS) }
+    // §5.2 달력 일자 탭 → 바텀시트로 그날 완료 미션 목록.
+    var selectedDay by remember { mutableStateOf<String?>(null) }
+    // §5.3 걷기 막대 축 전환(시간/걸음).
+    var walkMetric by remember { mutableStateOf(WalkingMetric.MINUTES) }
 
     Column(
         modifier = modifier
@@ -73,7 +80,7 @@ fun RecordScreen(
         AigoSegmentedSelector(
             options = listOf(
                 SegmentOption(RecordTab.RECORDS, "나의 기록"),
-                SegmentOption(RecordTab.DASHBOARD, "대시보드"),
+                SegmentOption(RecordTab.DASHBOARD, "근육 건강 정보"),
             ),
             selected = tab,
             onSelect = { tab = it },
@@ -92,43 +99,55 @@ fun RecordScreen(
                     .padding(Dimens.ScreenPadding),
                 verticalArrangement = Arrangement.spacedBy(Dimens.ElementGap),
             ) {
+                // §5.1 일별 미션 완료 선그래프(최근 14일)
                 AigoCard {
-                    Text(
-                        "근육 건강 변화",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Spacer(Modifier.height(Dimens.Space4))
-                    Text(
-                        "생활습관 관리를 위해 살펴보는 참고 점수예요.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    SectionTitle("최근 2주 미션 완료")
+                    val keys = remember { recentDateKeys(14, System.currentTimeMillis()) }
+                    val counts = remember(vm.lineLogs) { dailyCompletionCounts(vm.lineLogs, keys) }
                     Spacer(Modifier.height(Dimens.Space8))
-                    when {
-                        vm.historyError -> ErrorRow(onRetry = vm::load)
-                        vm.loading && vm.history.isEmpty() -> LoadingRow()
-                        vm.history.isEmpty() -> EmptyText(
-                            "아직 기록이 없어요. 건강 확인을 마치면 이곳에서 변화를 볼 수 있어요.",
-                        )
-                        else -> RiskTrendContent(vm.history)
-                    }
+                    CompletionLineChart(keys, counts)
                 }
 
+                // §5.2 미션 달력(월 뷰) — 일자 탭 시 바텀시트
                 AigoCard {
-                    Text(
-                        "그동안의 활동",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
+                    SectionTitle("미션 달력")
+                    Spacer(Modifier.height(Dimens.Space8))
+                    MissionCalendar(
+                        year = vm.calYear,
+                        month1 = vm.calMonth,
+                        resultByDate = vm.stampsByDate,
+                        onPrevMonth = vm::showPreviousMonth,
+                        onNextMonth = vm::showNextMonth,
+                        onDaySelected = { selectedDay = it },
+                    )
+                }
+
+                // §5.3 걷기 막대(시간/걸음 탭 전환)
+                AigoCard {
+                    SectionTitle("최근 7일 걷기")
+                    Spacer(Modifier.height(Dimens.Space8))
+                    AigoSegmentedSelector(
+                        options = listOf(
+                            SegmentOption(WalkingMetric.MINUTES, "시간(분)"),
+                            SegmentOption(WalkingMetric.STEPS, "걸음 수"),
+                        ),
+                        selected = walkMetric,
+                        onSelect = { walkMetric = it },
+                        horizontal = true,
                     )
                     Spacer(Modifier.height(Dimens.Space8))
-                    when {
-                        vm.activityError -> ErrorRow(onRetry = vm::load)
-                        vm.loading && !vm.loaded -> LoadingRow()
-                        else -> Text(
-                            "완료한 미션 ${vm.completedMissions}개 · 모은 포인트 %,d P".format(vm.totalPoints),
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
+                    WalkingBarChart(vm.walkingDays, walkMetric)
+                }
+
+                // §5.4 챌린지 비율 도넛
+                AigoCard {
+                    SectionTitle("챌린지 비율")
+                    Spacer(Modifier.height(Dimens.Space8))
+                    val totals = vm.challengeTotals
+                    if (totals == null) {
+                        EmptyText("아직 기록이 없어요. 챌린지를 완료하면 이곳에 쌓여요.")
+                    } else {
+                        ChallengeDonut(totals)
                     }
                 }
 
@@ -144,6 +163,43 @@ fun RecordScreen(
             )
         }
     }
+
+    // §5.2 일자 팝업: 그날 성공한 미션(미션명 + 완료 시각), 없으면 안내.
+    selectedDay?.let { day ->
+        ModalBottomSheet(onDismissRequest = { selectedDay = null }) {
+            Column(Modifier.padding(Dimens.ScreenPadding)) {
+                Text(
+                    day.replace('-', '.'),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.height(Dimens.Space12))
+                val missions = successMissionsOn(vm.monthLogs, day)
+                if (missions.isEmpty()) {
+                    Text(
+                        "이날은 완료한 미션이 없어요",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    missions.forEach { m ->
+                        Text(
+                            "${m.title} · ${koreanTime(m.completedAt)}",
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                        Spacer(Modifier.height(Dimens.Space8))
+                    }
+                }
+                Spacer(Modifier.height(Dimens.Space16))
+            }
+        }
+    }
+}
+
+/** 나의 기록 각 카드 제목(#기록탭 §5). */
+@Composable
+private fun SectionTitle(text: String) {
+    Text(text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 }
 
 /** 나의 기록 화면 상단 세그먼트 탭(#193). */

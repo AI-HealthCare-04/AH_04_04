@@ -1,11 +1,14 @@
 package com.aihealthcare.ah0404.record
 
+import com.aihealthcare.ah0404.network.ChallengeTotalsResponse
 import com.aihealthcare.ah0404.network.MissionLogItem
 import com.aihealthcare.ah0404.network.MissionLogListResponse
 import com.aihealthcare.ah0404.network.PredictionInputsResponse
 import com.aihealthcare.ah0404.network.RecordApi
 import com.aihealthcare.ah0404.network.RiskHistoryItem
 import com.aihealthcare.ah0404.network.RiskHistoryResponse
+import com.aihealthcare.ah0404.network.StampsResponse
+import com.aihealthcare.ah0404.network.WalkingDailyResponse
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -33,20 +36,20 @@ class RecordViewModelTest {
         override suspend fun getRiskHistory(limit: Int): RiskHistoryResponse {
             historyCalls++; return history()
         }
-        override suspend fun getMissionLogs(date: String?): MissionLogListResponse {
+        override suspend fun getMissionLogs(date: String?, from: String?, to: String?): MissionLogListResponse {
             logsCalls++; return logs()
         }
         override suspend fun getPredictionInputs() = PredictionInputsResponse()
+        override suspend fun getWalkingDaily(days: Int) = WalkingDailyResponse()
+        override suspend fun getChallengeTotals() = ChallengeTotalsResponse()
+        override suspend fun getStamps(month: String) = StampsResponse(month = month)
     }
 
     private fun risk(vararg stages: String) =
         RiskHistoryResponse(stages.map { RiskHistoryItem(createdAt = "2026-07-14T09:00:00+09:00", careStage = it) })
 
     private fun log(success: Boolean, points: Int) =
-        MissionLogItem(mission_logId(), "walking", success, countedForDaily = success, earnedPoints = points)
-
-    // mission_log_id 는 값 의미 없음(합산/카운트만 검증) → 고정.
-    private fun mission_logId() = 1
+        MissionLogItem(missionLogId = 1, missionType = "walking", success = success, countedForDaily = success, earnedPoints = points)
 
     @Test
     fun loads_both_sources_and_aggregates_activity() = runBlocking {
@@ -123,15 +126,19 @@ class RecordViewModelTest {
                 RiskHistoryResponse(listOf(RiskHistoryItem("2026-07-15T09:00:00+09:00", "action_needed")))
             }
         }
-        override suspend fun getMissionLogs(date: String?): MissionLogListResponse {
+        override suspend fun getMissionLogs(date: String?, from: String?, to: String?): MissionLogListResponse {
             logsCalls++
             return if (logsCalls == 1) {
-                gate.await(); MissionLogListResponse(listOf(MissionLogItem(1, "walking", true, true, 7)))
+                gate.await()
+                MissionLogListResponse(listOf(MissionLogItem(missionLogId = 1, missionType = "walking", success = true, countedForDaily = true, earnedPoints = 7)))
             } else {
-                MissionLogListResponse(listOf(MissionLogItem(1, "walking", true, true, 14)))
+                MissionLogListResponse(listOf(MissionLogItem(missionLogId = 1, missionType = "walking", success = true, countedForDaily = true, earnedPoints = 14)))
             }
         }
         override suspend fun getPredictionInputs() = PredictionInputsResponse()
+        override suspend fun getWalkingDaily(days: Int) = WalkingDailyResponse()
+        override suspend fun getChallengeTotals() = ChallengeTotalsResponse()
+        override suspend fun getStamps(month: String) = StampsResponse(month = month)
     }
 
     @Test

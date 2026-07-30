@@ -37,6 +37,9 @@ data class RiskHistoryResponse(
 data class MissionLogItem(
     @SerialName("mission_log_id") val missionLogId: Int,
     @SerialName("mission_type") val missionType: String,
+    // 기록 탭 달력·선그래프(#기록탭 §5.1/§5.2): 미션명 + 완료 시각(KST ISO). 구버전 응답 대비 기본값.
+    val title: String = "",
+    @SerialName("completed_at") val completedAt: String? = null,
     val success: Boolean,
     @SerialName("counted_for_daily") val countedForDaily: Boolean,
     @SerialName("earned_points") val earnedPoints: Int,
@@ -45,4 +48,45 @@ data class MissionLogItem(
 @Serializable
 data class MissionLogListResponse(
     val logs: List<MissionLogItem> = emptyList(),
+)
+
+/** 걷기 일별 막대(#기록탭 §5.3). 걷기 없는 날도 0으로 내려온다. */
+@Serializable
+data class WalkingDayPoint(
+    val date: String, // "YYYY-MM-DD"
+    val steps: Int = 0,
+    val minutes: Double = 0.0,
+)
+
+@Serializable
+data class WalkingDailyResponse(
+    val days: List<WalkingDayPoint> = emptyList(),
+)
+
+/** 챌린지 유형별 누적 완료(#기록탭 §5.4). 0회 유형도 포함(범례 회색). */
+@Serializable
+data class ChallengeTypeTotal(
+    @SerialName("mission_type") val missionType: String, // walking | exercise | meal | game
+    val count: Int = 0,
+)
+
+@Serializable
+data class ChallengeTotalsResponse(
+    val total: Int = 0,
+    @SerialName("by_type") val byType: List<ChallengeTypeTotal> = emptyList(),
+)
+
+/** 월별 스탬프(#기록탭 §5.2). 활동 있는 날만 담기고 나머지는 앱이 none 처리. */
+@Serializable
+data class StampDay(
+    val date: String, // "YYYY-MM-DD"
+    @SerialName("daily_result") val dailyResult: String, // none | success | great_success
+    @SerialName("counted_mission_count") val countedMissionCount: Int = 0,
+    @SerialName("earned_points") val earnedPoints: Int = 0,
+)
+
+@Serializable
+data class StampsResponse(
+    val month: String,
+    val days: List<StampDay> = emptyList(),
 )
