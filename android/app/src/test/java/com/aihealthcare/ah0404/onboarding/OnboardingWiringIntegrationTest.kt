@@ -92,7 +92,7 @@ class OnboardingWiringIntegrationTest {
         val profile = api.createHealthProfile(
             HealthProfileRequest(
                 birthDate = "1958-03-21", sex = "male", heightCm = 168.0, weightKg = 63.5,
-                walkingPractice = true, strengthExercise = false, waistCm = 84.0, sessionId = session.sessionId,
+                walkDays = 5, muscDays = 2, waistCm = 84.0, sessionId = session.sessionId,
             )
         )
         assertTrue("profile_id 발급", profile.profileId > 0)

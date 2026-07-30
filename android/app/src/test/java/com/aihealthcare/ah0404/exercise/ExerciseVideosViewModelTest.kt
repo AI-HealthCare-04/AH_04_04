@@ -146,10 +146,18 @@ class ExerciseVideosViewModelTest {
         assertTrue(vm.loaded)
     }
 
-    private fun vmWith(missionApi: FakeMissionApi) = ExerciseVideosViewModel(
+    /** 인메모리 영속 outbox fake(#271) — 저장된 스냅샷을 그대로 보관해 영속/재시작 flush 계약을 검증한다. */
+    private class FakeOutbox(initial: List<PendingExercise> = emptyList()) : ExerciseOutbox {
+        var stored: List<PendingExercise> = initial; private set
+        override fun load(): List<PendingExercise> = stored
+        override fun save(sessions: List<PendingExercise>) { stored = sessions }
+    }
+
+    private fun vmWith(missionApi: FakeMissionApi, outbox: ExerciseOutbox = NoOpExerciseOutbox()) = ExerciseVideosViewModel(
         api = FakeApi { ExerciseVideosResponse(emptyList()) },
         missionApi = missionApi,
         exerciseFlow = ExerciseFlowUseCase(missionApi),
+        outbox = outbox,
     )
 
     @Test
@@ -262,5 +270,43 @@ class ExerciseVideosViewModelTest {
 
         assertNull("보낼 대상이 없어 시작하지 않는다", fake.createdTemplateId)
         assertEquals(0, fake.completeCalls)
+    }
+
+    @Test
+    fun `미전송 세션을 영속 outbox 에 저장하고 성공하면 지운다`() = runTest {
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        fake.failCreateTimes = 1 // 첫 POST 실패 → pending 보존
+        val outbox = FakeOutbox()
+        val vm = vmWith(fake, outbox)
+
+        vm.beginExerciseSession()
+        vm.submitExercise(4f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+        assertEquals("실패한 세션이 영속 저장돼 재시작에도 남는다", listOf(4f), outbox.stored.map { it.durationMin })
+
+        vm.retryPending()
+        advanceUntilIdle()
+        assertEquals("재시도로 완료 전송", 1, fake.completeCalls)
+        assertTrue("성공하면 영속 저장소에서도 사라진다(성공 키만 제거)", outbox.stored.isEmpty())
+    }
+
+    /**
+     * "앱 재시작 flush"(#271): 이전 실행에서 전송 못 하고 종료된 세션이 outbox 에 남아 있으면, VM 생성(init)에서
+     *  되살려 **같은 자연 키**로 자동 전송한다 — 사용자가 완료했는데 서버 집계에서 누락되던 경로를 복구.
+     */
+    @Test
+    fun `앱 재시작 시 저장된 미전송 세션을 되살려 같은 키로 전송한다`() = runTest {
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        val savedKey = "2026-07-30T10:00:00.000+09:00"
+        val outbox = FakeOutbox(listOf(PendingExercise(6f, savedKey, safetyNoticeConfirmed = true)))
+
+        val vm = vmWith(fake, outbox) // init 에서 되살려 자동 flush
+        advanceUntilIdle()
+
+        assertEquals("되살린 세션을 완료까지 전송", 1, fake.completeCalls)
+        assertEquals("저장돼 있던 그 자연 키 그대로 전송(중복 집계 방지)", savedKey, fake.createdKeys.single())
+        assertEquals("전송 분도 저장값 그대로", 6f, fake.lastDurationMin)
+        assertTrue("성공했으니 영속 대기 해제", outbox.stored.isEmpty())
+        assertTrue("관찰 상태도 비어야 한다", vm.pendingResends.isEmpty())
     }
 }

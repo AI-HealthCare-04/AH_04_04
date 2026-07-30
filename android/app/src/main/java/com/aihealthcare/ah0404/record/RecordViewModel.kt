@@ -141,7 +141,10 @@ class RecordViewModel(
             lineResult
                 .onSuccess { logs ->
                     lineLogs = logs
-                    completedMissions = logs.count { it.success }
+                    // "완료한 미션 수" = 실제 완료 집계된 미션 수(#274). success 가 아니라 counted_for_daily:
+                    //   운동·걷기(누적 목표)는 목표를 넘긴 뒤의 세션도 success=true 지만 counted_for_daily=false
+                    //   (미적립) → success 로 세면 반복 세션이 부풀려진다. counted 는 홈 완료 개수·포인트와 일관.
+                    completedMissions = logs.count { it.countedForDaily }
                     totalPoints = logs.sumOf { it.earnedPoints }
                 }
                 .onFailure { activityError = true; Log.w(TAG, "미션 로그 조회 실패: ${it.message}") }

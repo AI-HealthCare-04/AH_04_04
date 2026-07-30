@@ -32,6 +32,8 @@ class ExerciseVideosViewModel(
     private val api: ExerciseVideoApi = retrofit.create(ExerciseVideoApi::class.java),
     private val missionApi: MissionApi = retrofit.create(MissionApi::class.java),
     private val exerciseFlow: ExerciseFlowUseCase = ExerciseFlowUseCase(),
+    // 미전송 세션의 영속 저장소(#271). 기본은 영속하지 않는 NoOp(인메모리 동작 유지) — 실제 화면은 SharedPrefs 구현을 주입한다.
+    private val outbox: ExerciseOutbox = NoOpExerciseOutbox(),
 ) : ViewModel() {
 
     var loading by mutableStateOf(false); private set
@@ -54,19 +56,24 @@ class ExerciseVideosViewModel(
 
     // 전송에 아직 성공하지 못한 세션들 — **자연 키별**로 보존한다(리뷰 #234 재검토: 단일 슬롯은 A 실패 후 B 성공 시
     //   A 까지 지워 유실). 성공하면 **그 키만** 지우고 나머지는 남긴다. 삽입 순서 유지(LinkedHashMap)로 오래된 것부터 재시도.
-    //   메모리 보존이라 앱 재시작 시 소실 — 영속 outbox 는 후속 이슈. 여기선 세션 생명주기 내 복구만 보장한다.
+    //   [outbox] 로 영속화(#271)하므로 앱 재시작 시에도 남아, init 에서 되살려 재시도한다(과거엔 메모리 소실).
     private val pending = LinkedHashMap<String, PendingExercise>()
     // 지금 전송 중인 키(중복 동시 전송 방지) — ON_RESUME/복귀 재시도가 진행 중 전송과 겹쳐 이중 전송되는 것을 막는다.
     private val inFlight = mutableSetOf<String>()
     // 보존된 세션 스냅샷(관찰/테스트용). [pending] 이 바뀔 때마다 갱신한다.
     var pendingResends by mutableStateOf<List<PendingExercise>>(emptyList()); private set
 
-    /** 전송 실패로 보존된 운동 세션 — 같은 자연 키로 다시 시도할 최소 정보. */
-    data class PendingExercise(
-        val durationMin: Float,
-        val createdOnDeviceAt: String,
-        val safetyNoticeConfirmed: Boolean,
-    )
+    init {
+        // 이전 실행에서 전송 못 하고 종료된 세션들을 되살려(영속 outbox, #271) 재시도한다 — "앱 재시작 시 flush".
+        //   로그인 사용자만 저장돼 있으므로 현재 세션 토큰으로 올바르게 붙는다(오배분은 SharedPrefsExerciseOutbox 가 스코프로 방어).
+        //   미로그인/템플릿 미해석이면 send 가 pending 을 그대로 두어, 이후 복구(로그인·ON_RESUME)에서 다시 시도한다.
+        val restored = outbox.load()
+        if (restored.isNotEmpty()) {
+            restored.forEach { pending[it.createdOnDeviceAt] = it }
+            pendingResends = pending.values.toList()
+            viewModelScope.launch { retryPending() }
+        }
+    }
 
     fun load() {
         viewModelScope.launch { refresh() }
@@ -171,8 +178,11 @@ class ExerciseVideosViewModel(
         }
     }
 
+    /** [pending] 변경을 관찰 상태에 반영하고 **영속 outbox 에도 스냅샷을 남긴다**(#271) — 전송 중 앱이 종료돼도 세션이 남게. */
     private fun publishPending() {
-        pendingResends = pending.values.toList()
+        val snapshot = pending.values.toList()
+        pendingResends = snapshot
+        outbox.save(snapshot)
     }
 
     /** GET /missions 에서 단일 운동 미션(mission_type=="exercise") 템플릿 id 를 찾아 캐시한다. 실패/부재면 null. */
