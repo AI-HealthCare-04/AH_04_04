@@ -99,6 +99,8 @@ class RiskPredictionService:
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Sarcopenia prediction is supported for users aged 65 or older.",
             ) from exc
+        score_p_low = getattr(result, "score_p_low", None)
+        score_p_high = getattr(result, "score_p_high", None)
         prediction = RiskPrediction(
             user_id=user.user_id,
             profile_id=profile.profile_id,
@@ -108,16 +110,8 @@ class RiskPredictionService:
             internal_risk_level=result.risk_level,
             muscle_score=getattr(result, "muscle_score", None),
             score_band=getattr(result, "score_band", None),
-            score_p_low=(
-                Decimal(str(round(result.score_p_low, 5)))
-                if getattr(result, "score_p_low", None) is not None
-                else None
-            ),
-            score_p_high=(
-                Decimal(str(round(result.score_p_high, 5)))
-                if getattr(result, "score_p_high", None) is not None
-                else None
-            ),
+            score_p_low=Decimal(str(round(score_p_low, 5))) if score_p_low is not None else None,
+            score_p_high=Decimal(str(round(score_p_high, 5))) if score_p_high is not None else None,
             score_cohort_age=getattr(result, "score_cohort_age", None),
             input_snapshot=result.input_snapshot,
         )

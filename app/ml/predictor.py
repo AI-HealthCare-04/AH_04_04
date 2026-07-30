@@ -90,11 +90,9 @@ def load_model_bundle(artifact_path: Path) -> dict[str, Any]:
 @lru_cache(maxsize=1)
 def load_score_config() -> dict[str, float]:
     """model_config.yaml의 score 섹션에서 컷오프를 읽는다(없으면 기본값)."""
-    good_min, caution_max, floor = (
-        DEFAULT_SCORE_GOOD_MIN,
-        DEFAULT_SCORE_CAUTION_MAX,
-        DEFAULT_DISPLAY_FLOOR,
-    )
+    good_min: float = float(DEFAULT_SCORE_GOOD_MIN)
+    caution_max: float = float(DEFAULT_SCORE_CAUTION_MAX)
+    floor: float = float(DEFAULT_DISPLAY_FLOOR)
     cfg_path = ARTIFACT_DIR / "model_config.yaml"
     try:
         import yaml  # type: ignore[import-untyped]
