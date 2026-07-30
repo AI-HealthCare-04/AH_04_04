@@ -33,5 +33,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_sts_overlay_events_user_id", table_name="sts_overlay_events")
+    # drop_table 이 인덱스·FK 를 함께 제거한다. user_id 인덱스는 FK 가 필요로 해서 개별 DROP INDEX 는
+    #   MySQL 에서 거부되므로(1553) 테이블만 드롭한다.
     op.drop_table("sts_overlay_events")
