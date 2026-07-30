@@ -23,9 +23,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.aihealthcare.ah0404.network.RiskHistoryItem
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
 import com.aihealthcare.ah0404.ui.components.MEDICAL_DISCLAIMER_DEFAULT
@@ -40,8 +43,47 @@ import kotlin.math.max
 //      교체한다. 확률(%)·관리 필요도 표기는 이 화면에 없다(§3.2).
 // =====================================================================================
 
-internal data class ScorePoint(val label: String, val score: Int)
+internal data class ScorePoint(
+    val label: String,
+    val score: Int,
+    // 비교 불가 경계(리뷰 #275-②): 이 점부터 다른 기준(모델 변경 or 코호트표 버전 변경)의 점수다.
+    //   경계를 넘어 선을 잇거나 증감을 계산하지 않는다.
+    val newBaseline: Boolean = false,
+)
 internal data class ScoreSimPoint(val days: Int, val score: Int)
+
+/**
+ * 점수 추이 재구성(§3.2, 리뷰 #275-②). `comparison_status=model_changed` 또는 항목별
+ * `cohort_version` 변경 지점에 newBaseline 을 찍는다 — 서로 다른 기준의 점수가 한 추세·증감으로
+ * 이어지지 않게(기존 확률 추이의 buildRiskTrendSegments 가 하던 역할의 점수판 복원).
+ * 점수 없는 이력(#273 마이그레이션 이전 행·65세 미만)은 추이에서 제외한다.
+ */
+internal fun buildScoreTrend(items: List<RiskHistoryItem>): List<ScorePoint> {
+    val out = mutableListOf<ScorePoint>()
+    var prevCohort: String? = null
+    for (item in items) {
+        val score = item.muscleScore ?: continue
+        val boundary = item.comparisonStatus == "model_changed" ||
+            (out.isNotEmpty() && item.cohortVersion != prevCohort)
+        out += ScorePoint(trendLabel(item.createdAt), score, newBaseline = boundary && out.isNotEmpty())
+        prevCohort = item.cohortVersion
+    }
+    return out
+}
+
+/** ISO(YYYY-MM-DD…) → "MM.DD". */
+internal fun trendLabel(iso: String): String = if (iso.length >= 10) iso.substring(5, 10).replace('-', '.') else iso
+
+/** newBaseline 지점에서 잘라 '같은 기준' 구간 목록으로. */
+internal fun splitByBaseline(trend: List<ScorePoint>): List<List<ScorePoint>> {
+    if (trend.isEmpty()) return emptyList()
+    val segments = mutableListOf(mutableListOf<ScorePoint>())
+    trend.forEach { p ->
+        if (p.newBaseline && segments.last().isNotEmpty()) segments += mutableListOf<ScorePoint>()
+        segments.last() += p
+    }
+    return segments
+}
 
 internal data class MuscleScoreUi(
     val age: Int?,          // §3.3 분기용(prediction-inputs 파생)
@@ -56,7 +98,7 @@ internal data class MuscleScoreUi(
 
 private const val DISPLAY_FLOOR = 5 // 표시 하한 5점(§3.1) — 계산·저장은 0~100, 화면 표시만 최저 5.
 
-private fun shown(score: Int): Int = max(score, DISPLAY_FLOOR)
+internal fun shown(score: Int): Int = max(score, DISPLAY_FLOOR)
 
 private fun bandLabel(band: String?): String = when (band) {
     "good" -> "좋음"
@@ -83,20 +125,24 @@ internal fun MuscleScoreScreen(
         verticalArrangement = Arrangement.spacedBy(Dimens.ElementGap),
     ) {
         val age = ui.age
+        val score = ui.score
         when {
-            // §3.3 65세 미만: 점수 자리에 카드(추이·시뮬레이션 미표시). 나이 미상도 안전하게 준비 중.
-            age == null -> ScorePendingCard()
-            age < 50 -> UnderAgeInfoCard(onGoToMissions)
-            age < 65 -> PreparingCard(onGoToMissions)
-            ui.score == null -> ScorePendingCard()
-            else -> {
-                ScoreHeadlineCard(ui.score, ui.band)
+            // 점수가 있으면 연령 판별과 무관하게 점수를 보여준다(리뷰 #275-③) — 나이 출처인
+            //   prediction-inputs 조회만 실패해도 유효한 점수가 "준비 중"에 가려지지 않게 score 우선.
+            //   (서버가 65세 미만에겐 점수를 내리지 않으므로(#273 게이트) score 존재 = 표시 자격 충분.)
+            score != null -> {
+                ScoreHeadlineCard(score, ui.band)
                 StsSafetyCard(ui, onGoToMissions) // §3.4 (조건 충족 시에만)
                 ScoreTrendCard(ui.trend)
-                ScoreSimulationCard(ui.muscSim)
+                ScoreSimulationCard(ui.muscSim, ui.walkSim, score)
                 MedicalDisclaimer(text = MEDICAL_DISCLAIMER_DEFAULT)
                 Spacer(Modifier.height(Dimens.Space8))
             }
+            // §3.3 점수가 없을 때만 연령 분기: 65세 미만 카드(추이·시뮬레이션 미표시). 나이 미상은 준비 중.
+            age == null -> ScorePendingCard()
+            age < 50 -> UnderAgeInfoCard(onGoToMissions)
+            age < 65 -> PreparingCard(onGoToMissions)
+            else -> ScorePendingCard()
         }
     }
 }
@@ -153,7 +199,7 @@ private fun ScoreTrendCard(trend: List<ScorePoint>) {
         }
         Text(scoreChangeCopy(trend), style = MaterialTheme.typography.bodyLarge)
         Spacer(Modifier.height(Dimens.Space12))
-        ScoreTrendChart(trend.map { shown(it.score) })
+        ScoreTrendChart(splitByBaseline(trend))
         Spacer(Modifier.height(Dimens.Space4))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(trend.first().label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -162,9 +208,21 @@ private fun ScoreTrendCard(trend: List<ScorePoint>) {
     }
 }
 
-/** 변화 문구 방향 반전(§3.2): 점수는 높을수록 좋음 → 오르면 긍정. */
-private fun scoreChangeCopy(trend: List<ScorePoint>): String {
-    val delta = shown(trend.last().score) - shown(trend[trend.size - 2].score)
+/**
+ * 변화 문구(§3.2, 방향 반전: 오르면 긍정). 증감은 마지막 '같은 기준' 구간 안에서만 계산한다(리뷰 #275-②) —
+ * 기준(모델/코호트표)이 바뀐 직후에는 증감 대신 기준 변경 안내를 보여준다.
+ */
+internal fun scoreChangeCopy(trend: List<ScorePoint>): String {
+    val segments = splitByBaseline(trend)
+    val lastSegment = segments.lastOrNull() ?: return ""
+    if (lastSegment.size < 2) {
+        return if (segments.size > 1) {
+            "새로운 기준으로 다시 살펴보기 시작했어요."
+        } else {
+            "첫 기록이에요. 앞으로의 변화를 함께 살펴봐요."
+        }
+    }
+    val delta = shown(lastSegment.last().score) - shown(lastSegment[lastSegment.size - 2].score)
     return when {
         delta > 0 -> "지난 기록보다 ${delta}점 올랐어요. 지금처럼 이어가 봐요."
         delta < 0 -> "지난 기록보다 ${-delta}점 낮아졌어요. 걷기·근력 챌린지로 다시 올려봐요."
@@ -172,14 +230,24 @@ private fun scoreChangeCopy(trend: List<ScorePoint>): String {
     }
 }
 
+/** 접근성용 추이 설명 — 기준 경계도 음성으로 안내한다(리뷰 #275-②, 기존 확률 추이의 접근성 복원). */
+internal fun trendDescription(segments: List<List<ScorePoint>>): String =
+    segments.mapIndexed { i, seg ->
+        val pts = seg.joinToString(", ") { "${it.label} ${shown(it.score)}점" }
+        if (i == 0) pts else "새로운 기준으로 다시 시작. $pts"
+    }.joinToString(". ")
+
 @Composable
-private fun ScoreTrendChart(scores: List<Int>) {
+private fun ScoreTrendChart(segments: List<List<ScorePoint>>) {
     val primary = MaterialTheme.colorScheme.primary
     val grid = MaterialTheme.colorScheme.outlineVariant
+    val desc = "근육 건강 점수 변화 그래프. ${trendDescription(segments)}"
+    val total = segments.sumOf { it.size }
     Canvas(
         Modifier
             .fillMaxWidth()
-            .height(160.dp),
+            .height(160.dp)
+            .semantics { contentDescription = desc },
     ) {
         val left = 8.dp.toPx(); val right = size.width - 8.dp.toPx()
         val top = 8.dp.toPx(); val bottom = size.height - 8.dp.toPx()
@@ -188,25 +256,46 @@ private fun ScoreTrendChart(scores: List<Int>) {
             val y = bottom - h * r
             drawLine(grid, Offset(left, y), Offset(right, y), strokeWidth = 1.dp.toPx())
         }
-        fun pt(i: Int): Offset {
-            val x = left + w * (i.toFloat() / (scores.size - 1))
-            val y = bottom - h * (scores[i] / 100f) // y=점수(0~100), 위로 갈수록 높은 점수
+        if (total == 0) return@Canvas
+        fun pt(globalIndex: Int, score: Int): Offset {
+            val x = left + w * if (total == 1) 0.5f else (globalIndex.toFloat() / (total - 1))
+            val y = bottom - h * (score / 100f) // y=점수(0~100), 위로 갈수록 높은 점수
             return Offset(x, y)
         }
-        val path = Path().apply {
-            moveTo(pt(0).x, pt(0).y)
-            for (i in 1 until scores.size) lineTo(pt(i).x, pt(i).y)
-        }
-        drawPath(path, primary, style = Stroke(3.dp.toPx()))
-        scores.indices.forEach { i ->
-            drawCircle(primary, radius = if (i == scores.lastIndex) 6.dp.toPx() else 5.dp.toPx(), center = pt(i))
+        // 기준 경계에서 선을 끊는다(리뷰 #275-②): 구간 안에서만 잇고, 구간 사이는 빈 간격으로 남긴다.
+        var index = 0
+        segments.forEach { seg ->
+            val pts = seg.map { p -> pt(index++, shown(p.score)) }
+            if (pts.size > 1) {
+                val path = Path().apply {
+                    moveTo(pts.first().x, pts.first().y)
+                    pts.drop(1).forEach { lineTo(it.x, it.y) }
+                }
+                drawPath(path, primary, style = Stroke(3.dp.toPx()))
+            }
+            pts.forEachIndexed { i, c ->
+                val isLast = index == total && i == pts.lastIndex
+                drawCircle(primary, radius = if (isLast) 6.dp.toPx() else 5.dp.toPx(), center = c)
+            }
         }
     }
 }
 
 // ── §4 시뮬레이션(점수 곡선) ──────────────────────────────────────────────────
+/**
+ * 걷기 요약 1줄(리뷰 #275-①). 근력과 달리 걷기는 계수가 완만해(예측 화면 '해석 주의' 명시) 일수별 전체
+ * 나열은 "주 7일 걸어도 그대로" 같은 김빠지는 목록이 된다 → 최대 일수 지점 1줄로 요약하고,
+ * **점수 이득이 0이면 줄 자체를 생략**한다(걷기가 소용없다는 오해 방지 — 걷기의 가치는 챌린지가 담당).
+ */
+internal fun walkSummaryLine(walkSim: List<ScoreSimPoint>, currentScore: Int): String? {
+    val top = walkSim.maxByOrNull { it.days } ?: return null
+    val gain = shown(top.score) - shown(currentScore)
+    if (gain <= 0) return null
+    return "걷기를 주 ${top.days}일로 늘리면 → ${shown(top.score)}점 (+${gain}점)"
+}
+
 @Composable
-private fun ScoreSimulationCard(muscSim: List<ScoreSimPoint>) {
+private fun ScoreSimulationCard(muscSim: List<ScoreSimPoint>, walkSim: List<ScoreSimPoint>, currentScore: Int) {
     AigoCard {
         Text("이렇게 하면 이만큼", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(Dimens.Space8))
@@ -217,6 +306,11 @@ private fun ScoreSimulationCard(muscSim: List<ScoreSimPoint>) {
                 style = MaterialTheme.typography.bodyLarge,
             )
             Spacer(Modifier.height(Dimens.Space4))
+        }
+        // 걷기 시뮬레이션(리뷰 #275-①): 요약 1줄만. 이득 0이면 생략.
+        walkSummaryLine(walkSim, currentScore)?.let { line ->
+            Spacer(Modifier.height(Dimens.Space4))
+            Text(line, style = MaterialTheme.typography.bodyLarge)
         }
     }
 }

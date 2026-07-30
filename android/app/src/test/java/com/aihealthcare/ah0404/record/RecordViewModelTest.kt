@@ -4,6 +4,7 @@ import com.aihealthcare.ah0404.network.ChallengeTotalsResponse
 import com.aihealthcare.ah0404.network.MissionLogItem
 import com.aihealthcare.ah0404.network.MissionLogListResponse
 import com.aihealthcare.ah0404.network.RiskLatestResponse
+import com.aihealthcare.ah0404.network.ScoreSimPointDto
 import com.aihealthcare.ah0404.network.ScoreSimulationResponse
 import com.aihealthcare.ah0404.network.PredictionInputsResponse
 import com.aihealthcare.ah0404.network.RecordApi
@@ -213,5 +214,48 @@ class RecordViewModelTest {
         assertTrue(vm.activityError)   // 활동 섹션만 오류
         assertFalse(vm.historyError)
         assertEquals(2, vm.history.size) // 이력은 정상 반영
+    }
+
+    /**
+     * 리뷰 #275-①·② 회귀 방지: 걷기/근력 시뮬레이션 응답이 **둘 다** UI 상태(MuscleScoreUi)까지 전달되고,
+     * 이력의 점수·비교 상태가 경계 보존 추이(buildScoreTrend)로 매핑된다.
+     */
+    @Test
+    fun sim_and_score_reach_muscle_ui_state() = runBlocking {
+        val api = object : RecordApi {
+            override suspend fun getRiskHistory(limit: Int) = RiskHistoryResponse(
+                listOf(
+                    RiskHistoryItem(
+                        createdAt = "2026-07-22T09:00:00+09:00", careStage = "maintain",
+                        muscleScore = 70, cohortVersion = "v1", comparisonStatus = "baseline",
+                    ),
+                    RiskHistoryItem(
+                        createdAt = "2026-07-29T09:00:00+09:00", careStage = "maintain",
+                        muscleScore = 74, cohortVersion = "v1", comparisonStatus = "comparable",
+                    ),
+                ),
+            )
+            override suspend fun getMissionLogs(date: String?, from: String?, to: String?) = MissionLogListResponse()
+            override suspend fun getPredictionInputs() = PredictionInputsResponse()
+            override suspend fun getWalkingDaily(days: Int) = WalkingDailyResponse()
+            override suspend fun getChallengeTotals() = ChallengeTotalsResponse()
+            override suspend fun getStamps(month: String) = StampsResponse(month = month)
+            override suspend fun getLatestPrediction() = RiskLatestResponse(muscleScore = 74, scoreBand = "maintain")
+            override suspend fun getScoreSimulation() = ScoreSimulationResponse(
+                walk = listOf(ScoreSimPointDto(0, 74), ScoreSimPointDto(7, 76)),
+                musc = listOf(ScoreSimPointDto(0, 74), ScoreSimPointDto(3, 82)),
+            )
+        }
+        val vm = RecordViewModel(api)
+
+        vm.refresh()
+
+        val ui = vm.muscleScore ?: error("muscleScore UI 상태가 구성되지 않았다")
+        assertEquals(74, ui.score)
+        assertEquals("maintain", ui.band)
+        assertEquals(listOf(0, 7), ui.walkSim.map { it.days }) // 걷기 시뮬도 UI 까지 전달(리뷰 #275-①)
+        assertEquals(listOf(0, 3), ui.muscSim.map { it.days })
+        assertEquals(listOf(70, 74), ui.trend.map { it.score })
+        assertEquals(listOf(false, false), ui.trend.map { it.newBaseline }) // 같은 코호트 → 경계 없음
     }
 }

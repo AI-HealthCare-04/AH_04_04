@@ -172,7 +172,8 @@ class RecordViewModel(
                 age = predictionPrefill?.age,
                 score = latestResult.getOrNull()?.muscleScore,
                 band = latestResult.getOrNull()?.scoreBand,
-                trend = history.mapNotNull { h -> h.muscleScore?.let { ScorePoint(dayLabel(h.createdAt), it) } },
+                // 리뷰 #275-②: 비교 불가 경계(model_changed·cohort_version 변경)를 보존한 추이.
+                trend = buildScoreTrend(history),
                 walkSim = simResult.getOrNull()?.walk?.mapNotNull { p -> p.score?.let { ScoreSimPoint(p.days, it) } } ?: emptyList(),
                 muscSim = simResult.getOrNull()?.musc?.mapNotNull { p -> p.score?.let { ScoreSimPoint(p.days, it) } } ?: emptyList(),
                 stsSeconds = null,
@@ -190,9 +191,6 @@ class RecordViewModel(
 
     private fun todayKey(): String = dateKeyMillis(System.currentTimeMillis())
     private fun daysAgoKey(days: Int): String = dateKeyMillis(System.currentTimeMillis() - days.toLong() * 86_400_000L)
-
-    /** 추이 점 라벨: ISO(YYYY-MM-DD...) → "MM.DD". */
-    private fun dayLabel(iso: String): String = if (iso.length >= 10) iso.substring(5, 10).replace('-', '.') else iso
 
     private fun monthBounds(year: Int, month1: Int): Pair<String, String> {
         val first = GregorianCalendar(kst).apply { clear(); set(year, month1 - 1, 1) }

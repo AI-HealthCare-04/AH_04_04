@@ -26,6 +26,8 @@ data class RiskHistoryItem(
     // 근육 건강 점수(#기록탭 §3, #272/#273). 코호트표 미탑재·65세 미만이면 null.
     @SerialName("muscle_score") val muscleScore: Int? = null,
     @SerialName("score_band") val scoreBand: String? = null,
+    // 이 점수가 어느 코호트표 기준인지(#273). 추이에서 버전이 바뀐 지점은 비교 불가 경계로 취급한다(리뷰 #275-②).
+    @SerialName("cohort_version") val cohortVersion: String? = null,
     @SerialName("change_percentage_points") val changePercentagePoints: Double? = null,
     @SerialName("comparison_status") val comparisonStatus: String = "baseline",
 )

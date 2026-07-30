@@ -2,6 +2,7 @@ package com.aihealthcare.ah0404.record
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -84,10 +85,25 @@ fun RecordScreen(
                 // §5.1 일별 미션 완료 선그래프(최근 14일)
                 AigoCard {
                     SectionTitle("최근 2주 미션 완료")
-                    val keys = remember { recentDateKeys(14, System.currentTimeMillis()) }
+                    // lineLogs 갱신(재조회) 시 날짜 축도 다시 계산 — 자정 넘겨 화면을 유지해도 재조회에서 맞춰진다.
+                    val keys = remember(vm.lineLogs) { recentDateKeys(14, System.currentTimeMillis()) }
                     val counts = remember(vm.lineLogs) { dailyCompletionCounts(vm.lineLogs, keys) }
                     Spacer(Modifier.height(Dimens.Space8))
                     CompletionLineChart(keys, counts)
+                    Spacer(Modifier.height(Dimens.Space4))
+                    // 날짜 라벨(시니어 가독성): 첫날과 오늘만.
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(
+                            trendLabel(keys.first()),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            "오늘",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
 
                 // §5.2 미션 달력(월 뷰) — 일자 탭 시 바텀시트
