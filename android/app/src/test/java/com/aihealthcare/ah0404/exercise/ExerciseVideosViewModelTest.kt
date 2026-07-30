@@ -58,6 +58,9 @@ class ExerciseVideosViewModelTest {
         val createdKeys = mutableListOf<String?>()
         // >0 이면 그만큼 createMissionLog 를 예외로 실패시킨다(전송 실패→재시도 경로 검증용, #234-2).
         var failCreateTimes = 0
+        // 완료 응답의 서버 판정값(#235 누적시간 표시 검증용). 기본=목표 달성(성공·당일 10분).
+        var completeSuccess = true
+        var completeDailyTotal: Float? = 10f
 
         override suspend fun guestLogin(): LoginResponse = error("unused")
 
@@ -88,11 +91,11 @@ class ExerciseVideosViewModelTest {
             return MissionLogUpdateResponse(
                 missionLogId = missionLogId,
                 status = "completed",
-                success = true,
-                countedForDaily = true,
-                dailyResult = "success",
+                success = completeSuccess,
+                countedForDaily = completeSuccess,
+                dailyResult = if (completeSuccess) "success" else "none",
                 syncStatus = "synced",
-                dailyTotalMin = 10f,
+                dailyTotalMin = completeDailyTotal,
             )
         }
 
@@ -308,5 +311,51 @@ class ExerciseVideosViewModelTest {
         assertEquals("전송 분도 저장값 그대로", 6f, fake.lastDurationMin)
         assertTrue("성공했으니 영속 대기 해제", outbox.stored.isEmpty())
         assertTrue("관찰 상태도 비어야 한다", vm.pendingResends.isEmpty())
+    }
+
+    // -----------------------------------------------------------------------------------
+    // #235: 누적 운동시간 노출 + 이어보기 위치 보관
+    // -----------------------------------------------------------------------------------
+
+    @Test
+    fun `운동 완료 후 서버가 합산한 당일 누적분과 목표달성을 노출한다`() = runTest {
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7))) // 기본=당일 10분·성공
+        val vm = vmWith(fake)
+        assertNull("완료 전엔 누적시간을 표시하지 않는다", vm.todayExerciseMin)
+        assertFalse("완료 전엔 목표 미달성", vm.todayGoalReached)
+
+        vm.submitExercise(4f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+
+        assertEquals("서버 당일 누적값(sum_exercise_minutes_today)을 그대로 노출", 10f, vm.todayExerciseMin)
+        assertTrue("서버 success=목표(하루 10분) 달성 → 완료 안내", vm.todayGoalReached)
+    }
+
+    @Test
+    fun `목표 미달이면 누적분은 갱신하되 목표달성은 false 로 둔다`() = runTest {
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        fake.completeDailyTotal = 3f
+        fake.completeSuccess = false // 아직 하루 목표(10분) 미달
+        val vm = vmWith(fake)
+
+        vm.submitExercise(3f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+
+        assertEquals("진행 중이어도 현재 누적분은 보여준다", 3f, vm.todayExerciseMin)
+        assertFalse("목표 미달이면 달성 안내는 아직 아니다", vm.todayGoalReached)
+    }
+
+    @Test
+    fun `이어보기 위치는 저장 전 0, 저장하면 그 값, 0 저장이면 처음부터로 되돌린다`() {
+        val vm = vmWith(FakeMissionApi(emptyList()))
+        val url = "https://v/seated.mp4"
+        assertEquals("저장 전엔 처음부터", 0L, vm.resumePositionFor(url))
+
+        vm.saveResumePosition(url, 12_000L)
+        assertEquals("이탈 위치를 보관해 다시 열면 이어재생", 12_000L, vm.resumePositionFor(url))
+
+        // 완주(끝까지 시청) 시 StreamingVideoPlayer 가 0 을 넘긴다 → 다음 진입은 처음부터.
+        vm.saveResumePosition(url, 0L)
+        assertEquals("완주 후엔 처음부터로 리셋", 0L, vm.resumePositionFor(url))
     }
 }

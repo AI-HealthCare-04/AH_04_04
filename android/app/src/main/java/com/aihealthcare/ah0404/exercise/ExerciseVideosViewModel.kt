@@ -63,6 +63,24 @@ class ExerciseVideosViewModel(
     // 보존된 세션 스냅샷(관찰/테스트용). [pending] 이 바뀔 때마다 갱신한다.
     var pendingResends by mutableStateOf<List<PendingExercise>>(emptyList()); private set
 
+    // 이어보기(#235): url 별 마지막 재생 위치(ms). 전체화면을 닫았다 다시 열어도 처음부터가 아니라 이어서 재생한다.
+    //   세션 내 복귀용이라 메모리 보관(앱 재시작까지 보존할 필요는 #235 범위 밖). 영상 완주 시엔 0 이 저장돼 다음엔 처음부터.
+    private val positionByUrl = mutableMapOf<String, Long>()
+
+    // 오늘 누적 운동 '분'(#235): 서버가 완료 응답으로 준 당일 합산값(sum_exercise_minutes_today). 세션 완료 전엔 null(미표시).
+    //   서버 권위값이라 앱이 직접 더하지 않는다 — 여러 단계·여러 세션을 서버가 합산한 결과를 그대로 보여준다.
+    var todayExerciseMin by mutableStateOf<Float?>(null); private set
+    // 오늘 운동 목표(하루 10분, #168)를 채웠는지 — 서버 판정(success). 완료 판정을 사용자가 확인할 수 있게 한다(#235 핵심).
+    var todayGoalReached by mutableStateOf(false); private set
+
+    /** 이어보기용: 이 url 을 어디부터 재생할지(ms). 없으면 0(처음부터). */
+    fun resumePositionFor(url: String): Long = positionByUrl[url] ?: 0L
+
+    /** 이어보기용: 전체화면 이탈 시 마지막 위치를 보관한다(0 이면 처음부터 = 완주했거나 첫 재생). */
+    fun saveResumePosition(url: String, positionMs: Long) {
+        if (positionMs > 0L) positionByUrl[url] = positionMs else positionByUrl.remove(url)
+    }
+
     init {
         // 이전 실행에서 전송 못 하고 종료된 세션들을 되살려(영속 outbox, #271) 재시도한다 — "앱 재시작 시 flush".
         //   로그인 사용자만 저장돼 있으므로 현재 세션 토큰으로 올바르게 붙는다(오배분은 SharedPrefsExerciseOutbox 가 스코프로 방어).
@@ -163,6 +181,10 @@ class ExerciseVideosViewModel(
                 )
                 pending.remove(key) // 이 키만 서버에 안전히 남음 — 보존 해제(다른 세션은 유지)
                 publishPending()
+                // 누적 운동시간 표시(#235): 서버가 합산한 당일 누적 분·목표달성을 화면에 반영해 완료 판정을 확인시킨다.
+                //   재전송 조기종료 경로는 dailyTotalMin 이 null(create 응답엔 누적 없음)이라 그때만 분은 갱신하지 않는다.
+                r.dailyTotalMin?.let { todayExerciseMin = it }
+                todayGoalReached = r.success
                 Log.i(
                     TAG,
                     "운동 완료 전송 OK: status=${r.finalStatus}, counted=${r.countedForDaily}, dailyTotalMin=${r.dailyTotalMin}",

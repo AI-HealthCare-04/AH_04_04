@@ -51,6 +51,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.media3.common.util.UnstableApi
+import kotlin.math.roundToInt
 import com.aihealthcare.ah0404.R
 import com.aihealthcare.ah0404.media.StreamingVideoPlayer
 import com.aihealthcare.ah0404.settings.AppSettings
@@ -130,6 +131,9 @@ fun ExerciseVideosScreen(
             onExit = { fullscreenUrl = null },
             // 실제 재생 분(#234, P1-A: 일시정지·버퍼·백그라운드 제외). 게이트 통과 후라 safetyConfirmed=true.
             onWatched = { durationMin -> vm.submitExercise(durationMin, safetyConfirmed) },
+            // 이어보기(#235): 직전 위치부터 재생하고, 이탈 시 현재 위치를 VM 에 보관해 다시 열면 이어서 본다.
+            startPositionMs = vm.resumePositionFor(url),
+            onPositionSaved = { positionMs -> vm.saveResumePosition(url, positionMs) },
         )
         return
     }
@@ -160,6 +164,12 @@ fun ExerciseVideosScreen(
         //   자동 재시도(ON_RESUME·목록 복귀)가 계속 실패하는 경우의 탈출구 — 눌러도 in-flight 가드로 이중 전송되지 않는다.
         if (vm.pendingResends.isNotEmpty()) {
             PendingSyncBanner(count = vm.pendingResends.size, onRetry = vm::retryPending)
+        }
+
+        // 오늘 누적 운동시간(#235): 서버가 합산한 당일 '분'을 보여줘 사용자가 완료(하루 목표 달성) 여부를 확인할 수 있게 한다.
+        //   세션을 하나라도 완료해 서버 값이 오면 표시(그 전엔 숨김). 여러 단계·여러 세션이 합산돼 목표를 채우면 달성 안내.
+        vm.todayExerciseMin?.let { minutes ->
+            TodayExerciseSummary(minutes = minutes, goalReached = vm.todayGoalReached)
         }
 
         // 번들 루틴(몸풀기·마무리)은 네트워크와 무관하게 '즉시' 시작 가능해야 한다(오프라인/느린망 포함).
@@ -226,6 +236,37 @@ private fun PendingSyncBanner(count: Int, onRetry: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Button(onClick = onRetry, modifier = Modifier.align(Alignment.End)) { Text("지금 다시 보내기") }
+    }
+}
+
+/**
+ * 오늘 누적 운동시간 안내(#235). 서버가 합산한 당일 운동 '분'과 목표 달성 여부를 보여줘, 여러 단계·여러 세션을
+ * 나눠 해도 사용자가 완료(하루 목표)를 확인할 수 있게 한다. 값은 완료 응답의 서버 권위값이라 앱이 더하지 않는다.
+ * 달성 시 밝은 녹색(secondaryContainer)으로 축하, 진행 중이면 같은 톤으로 계속 안내.
+ */
+@Composable
+private fun TodayExerciseSummary(minutes: Float, goalReached: Boolean) {
+    val shownMinutes = minutes.roundToInt()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Dimens.ScreenPadding, vertical = Dimens.Space8)
+            .clip(MaterialTheme.shapes.large)
+            .background(MaterialTheme.colorScheme.secondaryContainer)
+            .padding(Dimens.CardPadding),
+        verticalArrangement = Arrangement.spacedBy(Dimens.Space8),
+    ) {
+        Text(
+            "오늘 운동 ${shownMinutes}분 하셨어요",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+        )
+        Text(
+            if (goalReached) "🎉 오늘 운동 목표를 채웠어요!" else "조금만 더 하면 오늘 목표를 채울 수 있어요.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+        )
     }
 }
 
@@ -377,7 +418,13 @@ private fun VideoArea(
  */
 @UnstableApi
 @Composable
-private fun FullscreenLandscapeVideo(url: String, onExit: () -> Unit, onWatched: (Float) -> Unit = {}) {
+private fun FullscreenLandscapeVideo(
+    url: String,
+    onExit: () -> Unit,
+    onWatched: (Float) -> Unit = {},
+    startPositionMs: Long = 0L,
+    onPositionSaved: (Long) -> Unit = {},
+) {
     val activity = LocalContext.current as? Activity
     // 실제 재생 시간만 적립(#234, 리뷰 P1-A): ExoPlayer 의 isPlaying 구간만 합산 → 일시정지·버퍼링·백그라운드
     //   정지 시간은 빠진다. (종전 벽시계 방식은 멈춰 둔 시간까지 세어 하루 10분 목표가 과대 계상됐다.)
@@ -403,8 +450,10 @@ private fun FullscreenLandscapeVideo(url: String, onExit: () -> Unit, onWatched:
             modifier = Modifier.fillMaxSize(),
             autoPlay = true, // 포스터 탭 = 재생 의사 → 한 번 탭으로 바로 재생(지영 리뷰 #254 P2)
             speed = AppSettings.exerciseSpeedFor(AppSettings.exerciseDifficulty),
+            startPositionMs = startPositionMs, // 이어보기(#235): 직전 위치부터
             // 실재생 구간만 스톱워치에 반영(P1-A). 재생 시작=true 구간만 누적한다.
             onIsPlayingChanged = { isPlaying -> stopwatch.onIsPlayingChanged(isPlaying, SystemClock.elapsedRealtime()) },
+            onPositionSaved = onPositionSaved, // 이어보기(#235): 이탈 시 현재 위치 보관(완주면 0)
         )
         // 닫기(세로 복귀) — 어르신용으로 크게, 반투명 배경으로 밝은 영상 위에서도 잘 보이게. 좌상단.
         //   가로에서 노치/펀치홀에 안 가리게 displayCutout inset 적용(지영 리뷰 #254 비차단).
