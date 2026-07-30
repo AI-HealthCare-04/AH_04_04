@@ -7,7 +7,7 @@
 #   3) scp 로 서버 /opt/ah0404/media/terms 에 업로드 (docs/terms/README.md 반영 절차 참고)
 #
 # 외부 의존성 없이 표준 라이브러리만 쓴다. 지원 문법은 약관 문서에 실제로 쓰이는 것 전부:
-#   제목(h1/h2) · 인용(>) · 목록(번호/불릿, 한 단계 중첩) · 표(| … |) · **굵게** · `코드` · 문단.
+#   제목(h1/h2) · 인용(>) · 목록(번호/불릿, 한 단계 중첩) · 표(| … |) · 구분선(---) · **굵게** · `코드` · 문단.
 #   이 밖의 문법을 문서에 새로 쓰면 tests/test_publish_terms.py 의 "원시 기호 잔류" 검사가 잡는다.
 # 시니어 사용자 기준 큰 글자·넉넉한 행간.
 # =====================================================================================
@@ -33,12 +33,14 @@ _STYLE = """
   th, td { border: 1px solid #d5d5da; padding: 8px 10px; text-align: left; vertical-align: top; }
   th { background: #f4f4f6; }
   code { background: #f2f2f4; border-radius: 4px; padding: 1px 5px; font-size: 0.95em; }
+  hr { border: 0; border-top: 1px solid #d5d5da; margin: 1.6em 0; }
   @media (prefers-color-scheme: dark) {
     body { color: #ececec; background: #111; }
     blockquote { background: #2a2410; }
     th, td { border-color: #3c3c41; }
     th { background: #222226; }
     code { background: #26262b; }
+    hr { border-top-color: #3c3c41; }
   }
 """
 
@@ -136,19 +138,29 @@ def _render_list(lines: list[str], i: int, body: list[str]) -> int:
     return i
 
 
+def _render_single_line(line: str) -> str | None:
+    """한 줄로 끝나는 블록(제목·구분선)이면 그 HTML 을, 아니면 None 을 반환한다."""
+    if line.startswith("# "):
+        return f"<h1>{_inline(line[2:])}</h1>"
+    if line.startswith("## "):
+        return f"<h2>{_inline(line[3:])}</h2>"
+    if re.fullmatch(r"-{3,}", line.strip()):
+        # 구분선(#268 리뷰 재검토): sensitive-health·marketing 문서의 `---` 가 <p>---</p> 로 새던 문제.
+        return "<hr>"
+    return None
+
+
 def md_to_html(md: str, title: str) -> str:
     lines = [raw.rstrip() for raw in md.splitlines()]
     body: list[str] = []
     i = 0
     while i < len(lines):
         line = lines[i]
+        single = _render_single_line(line)
         if not line.strip():
             i += 1
-        elif line.startswith("# "):
-            body.append(f"<h1>{_inline(line[2:])}</h1>")
-            i += 1
-        elif line.startswith("## "):
-            body.append(f"<h2>{_inline(line[3:])}</h2>")
+        elif single is not None:
+            body.append(single)
             i += 1
         elif line.startswith(">"):
             # 인용 블록. 빈 인용 줄(">")은 문단 구분 — 종전에는 p 로 새어 ">" 원문이 노출됐다.

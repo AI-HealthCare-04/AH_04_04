@@ -63,6 +63,13 @@ def test_inline_code_becomes_code_tag() -> None:
     assert "`" not in out
 
 
+def test_horizontal_rule_becomes_hr() -> None:
+    """구분선(---)은 <hr> 로 변환된다(#268 재검토 — sensitive-health·marketing 실제 패턴)."""
+    out = md_to_html("첫 문단\n\n---\n\n둘째 문단", "구분선")
+    assert "<hr>" in out
+    assert "---" not in out, "구분선 원문이 <p>---</p> 로 새면 안 된다"
+
+
 @pytest.mark.parametrize("src", sorted(TERMS_DIR.glob("*-*.md")), ids=lambda p: p.name)
 def test_real_terms_docs_leave_no_raw_markdown(src) -> None:
     """실제 약관 4개 문서 변환 결과에 원시 Markdown 기호가 남지 않는다."""
@@ -74,6 +81,7 @@ def test_real_terms_docs_leave_no_raw_markdown(src) -> None:
     assert "|" not in body, f"{src.name}: 표가 원문 그대로 새었다"
     assert "**" not in body, f"{src.name}: 굵게 원문이 남았다"
     assert "`" not in body, f"{src.name}: 인라인 코드 원문이 남았다"
+    assert "---" not in body, f"{src.name}: 구분선/표 구분 줄이 원문 그대로 새었다(<p>---</p> 등)"
     for leaked in ("<p># ", "<p>## ", "<p>- ", "<p>&gt;", "<p>></p>"):
         assert leaked not in body, f"{src.name}: '{leaked}' — 블록 문법이 문단으로 새었다"
     # 번호 목록 원문("1. …")이 문단으로 새지 않았는지.
