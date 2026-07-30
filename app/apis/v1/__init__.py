@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.apis.v1.activity_profile_routers import activity_profile_router
+from app.apis.v1.analytics_routers import analytics_router
 from app.apis.v1.auth_routers import auth_router
 from app.apis.v1.daily_tip_routers import daily_tip_router
 from app.apis.v1.dashboard_routers import dashboard_router
@@ -32,3 +33,4 @@ v1_routers.include_router(dashboard_router)
 v1_routers.include_router(support_router)
 v1_routers.include_router(daily_tip_router)
 v1_routers.include_router(exercise_video_router)
+v1_routers.include_router(analytics_router)

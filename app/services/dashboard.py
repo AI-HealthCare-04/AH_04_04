@@ -21,6 +21,7 @@ from app.dtos.dashboard import (
     HomeTodayWalking,
     HomeUser,
     LifestyleRecords,
+    MuscleScoreContextResponse,
     PointBalanceResponse,
     PointEarnLogItem,
     PointsResponse,
@@ -37,6 +38,7 @@ from app.models.users import User
 from app.repositories.activity_profile_repository import ActivityProfileRepository
 from app.repositories.dashboard_repository import DashboardRepository
 from app.repositories.health_profile_repository import HealthProfileRepository
+from app.repositories.physical_assessment_repository import PhysicalAssessmentRepository
 from app.services.activity_metrics import moderate_equivalent_min
 from app.services.mission import MissionService
 from app.services.risk_prediction import RiskPredictionService
@@ -49,6 +51,7 @@ class DashboardService:
         self.repo = DashboardRepository(session)
         self.activity_repo = ActivityProfileRepository(session)
         self.health_repo = HealthProfileRepository(session)
+        self.assessment_repo = PhysicalAssessmentRepository(session)
         self.mission_service = MissionService(session)
         self.risk_service = RiskPredictionService(session)
 
@@ -203,6 +206,21 @@ class DashboardService:
             steps, minutes = per_day.get(day, (0, 0.0))
             points.append(WalkingDayPoint(date=day, steps=steps, minutes=round(minutes, 1)))
         return WalkingDailyResponse(days=points)
+
+    async def get_muscle_score_context(self, user: User) -> MuscleScoreContextResponse:
+        # 근력 기능 안전망 카드(§3.4) 발화 입력: 최신 체력검사 5STS(초) + 최신 프로필 BMI.
+        #   5STS 스킵/미측정이면 chair_stand_sec=null → 앱이 카드를 띄우지 않는다(중복 경고·오탐 방지).
+        assessment = await self.assessment_repo.get_latest_by_user(user.user_id)
+        profile = await self.health_repo.get_latest_profile(user.user_id)
+        chair_stand_sec = (
+            float(assessment.chair_stand_5_time_sec)
+            if assessment is not None
+            and not assessment.chair_stand_skipped
+            and assessment.chair_stand_5_time_sec is not None
+            else None
+        )
+        bmi = float(profile.bmi) if profile is not None and profile.bmi is not None else None
+        return MuscleScoreContextResponse(chair_stand_sec=chair_stand_sec, bmi=bmi)
 
     async def get_score_simulation(self, user: User) -> ScoreSimulationResponse:
         # what-if 점수 곡선(#기록탭 §4). 예측 도메인 서비스에 위임(예측기·코호트 파생의 단일 출처).

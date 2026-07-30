@@ -20,6 +20,7 @@ def test_core_db_metadata_tables() -> None:
         "physical_assessments",
         "risk_predictions",
         "sensor_sessions",
+        "sts_overlay_events",
         "terms_agreements",
         "user_activity_profiles",
         "users",
