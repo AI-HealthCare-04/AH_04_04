@@ -51,7 +51,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.media3.common.util.UnstableApi
-import kotlin.math.roundToInt
+import kotlin.math.floor
 import com.aihealthcare.ah0404.R
 import com.aihealthcare.ah0404.media.StreamingVideoPlayer
 import com.aihealthcare.ah0404.settings.AppSettings
@@ -240,13 +240,26 @@ private fun PendingSyncBanner(count: Int, onRetry: () -> Unit) {
 }
 
 /**
+ * 오늘 누적 운동 '분' 표시 문자열(#235, 리뷰 #280). 소수 1자리까지 보여주되 정수는 소수점 없이("10"),
+ *  목표 미달(goalReached=false)이면 **반올림하지 않고 버림**한다 — 9.9분·미달이 "10분 + 조금만 더"로
+ *  모순 표시되던 것 방지(서버 success=목표 도달이므로 미달값이 목표치처럼 보이면 안 됨). 목표 달성(달성 안내가
+ *  함께 뜸)일 땐 반올림해 자연스럽게 보여준다. 1e-3 보정으로 9.9f 같은 부동소수 오차가 9.8 로 내려가는 것 흡수.
+ */
+internal fun formatExerciseMinutes(minutes: Float, goalReached: Boolean): String {
+    val scaled = minutes * 10.0 + 1e-3
+    val tenths = if (goalReached) Math.round(scaled).toInt() else floor(scaled).toInt()
+    val whole = tenths / 10
+    val frac = tenths % 10
+    return if (frac == 0) whole.toString() else "$whole.$frac"
+}
+
+/**
  * 오늘 누적 운동시간 안내(#235). 서버가 합산한 당일 운동 '분'과 목표 달성 여부를 보여줘, 여러 단계·여러 세션을
  * 나눠 해도 사용자가 완료(하루 목표)를 확인할 수 있게 한다. 값은 완료 응답의 서버 권위값이라 앱이 더하지 않는다.
  * 달성 시 밝은 녹색(secondaryContainer)으로 축하, 진행 중이면 같은 톤으로 계속 안내.
  */
 @Composable
 private fun TodayExerciseSummary(minutes: Float, goalReached: Boolean) {
-    val shownMinutes = minutes.roundToInt()
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -257,7 +270,7 @@ private fun TodayExerciseSummary(minutes: Float, goalReached: Boolean) {
         verticalArrangement = Arrangement.spacedBy(Dimens.Space8),
     ) {
         Text(
-            "오늘 운동 ${shownMinutes}분 하셨어요",
+            "오늘 운동 ${formatExerciseMinutes(minutes, goalReached)}분 하셨어요",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSecondaryContainer,
