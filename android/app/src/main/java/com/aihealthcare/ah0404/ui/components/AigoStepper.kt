@@ -24,33 +24,49 @@ import com.aihealthcare.ah0404.ui.theme.Dimens
  *  - [min]..[max] 범위를 강제한다 — 경계에서 해당 버튼이 비활성이라 잘못된 값이 안 들어간다.
  *  - 화면 상단의 질문 Text 아래에 함께 쓴다(라벨은 이 컴포넌트가 갖지 않는다).
  *  - TalkBack: −/+ 버튼에 "줄이기/늘리기" contentDescription 을 준다.
+ *
+ *  값은 [Int]? 이다(리뷰 #267 지영님 블로커): **null = 미응답**, [min](0) = "안 해요".
+ *  기본 0으로 시작하면 '안 만지고 넘긴 미응답'과 '주 0일'이 합쳐져 예측 입력이 조용히 왜곡되므로,
+ *  처음엔 [placeholder]("선택해 주세요")를 보여 주고 호출부가 미응답을 '다음' 게이트로 막는다.
+ *  '+'가 숫자 0으로 떨어지면 어색해서(리뷰 논의), min 위치는 숫자 대신 [zeroLabel]("안 해요")로 표시한다 —
+ *  "선택해 주세요 → 안 해요 → 1일 → 2일…" 로 빈도가 올라가는 흐름이 된다.
  */
 @Composable
 fun AigoDayStepper(
-    value: Int,
+    value: Int?,
     onValueChange: (Int) -> Unit,
     max: Int,
     modifier: Modifier = Modifier,
     min: Int = 0,
     unitLabel: String = "일",
+    zeroLabel: String = "안 해요",
+    placeholder: String = "선택해 주세요",
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(Dimens.Space16, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        StepButton(symbol = "−", enabled = value > min, description = "$unitLabel 줄이기") {
-            onValueChange((value - 1).coerceAtLeast(min))
+        // 미응답(null)·최솟값에서 '−' 비활성. '+'는 null 이면 min(0)으로 진입한다.
+        StepButton(symbol = "−", enabled = value != null && value > min, description = "$unitLabel 줄이기") {
+            onValueChange((value!! - 1).coerceAtLeast(min))
         }
         Text(
-            text = "$value$unitLabel",
-            style = MaterialTheme.typography.headlineMedium,
+            text = when {
+                value == null -> placeholder
+                value == min -> zeroLabel
+                else -> "$value$unitLabel"
+            },
+            // 미응답 안내는 값이 아니므로 작고 흐리게 — 작은 화면(320dp)에서 긴 안내문이 버튼을 밀지 않게 weight 로 채운다.
+            style = if (value == null) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineMedium,
+            color = if (value == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
-            modifier = Modifier.widthIn(min = 72.dp),
+            maxLines = 1,
+            modifier = Modifier.weight(1f).widthIn(min = 72.dp),
         )
-        StepButton(symbol = "+", enabled = value < max, description = "$unitLabel 늘리기") {
-            onValueChange((value + 1).coerceAtMost(max))
+        StepButton(symbol = "+", enabled = value == null || value < max, description = "$unitLabel 늘리기") {
+            onValueChange(if (value == null) min else (value + 1).coerceAtMost(max))
         }
     }
 }

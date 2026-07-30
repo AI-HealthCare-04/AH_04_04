@@ -124,9 +124,10 @@ class OnboardingViewModel(
         return age
     }
     // 활동 일수(#261): 예/아니오 boolean → 주당 일수. 걷기 0~7(국건영 BE3_31), 근력 0~5(BE5_1 top-coding).
-    //   기본 0(주 0일도 유효한 답)이라 별도 null 검증 없이 항상 유효 — 스테퍼가 범위를 강제한다.
-    var walkDays by mutableStateOf(0)
-    var muscDays by mutableStateOf(0)
+    //   null = 미응답, 0 = "안 해요"(둘 다 유효한 답). 기본 0으로 시작하면 '안 만지고 넘긴 미응답'과 '주 0일'이
+    //   합쳐져 예측 입력이 왜곡되므로(리뷰 #267 블로커) null 로 두고 submitProfile 에서 필수 응답을 강제한다.
+    var walkDays by mutableStateOf<Int?>(null)
+    var muscDays by mutableStateOf<Int?>(null)
     var kidneyStatus by mutableStateOf("unknown")
     var proteinStatus by mutableStateOf("unknown")
     var chairStandSec by mutableStateOf("")
@@ -177,7 +178,7 @@ class OnboardingViewModel(
         sex = null
         heightCm = ""; weightKg = ""; waistCm = ""
         heightEstimated = false; weightEstimated = false
-        walkDays = 0; muscDays = 0
+        walkDays = null; muscDays = null
         kidneyStatus = "unknown"; proteinStatus = "unknown"
         chairStandSec = ""
         lastSubmittedProfile = null
@@ -232,6 +233,10 @@ class OnboardingViewModel(
         if (sex == null || h == null || w == null) {
             error = "키·몸무게·성별을 모두 입력해 주세요."; return@launchStep
         }
+        // 활동 일수는 필수 응답(리뷰 #267): '안 해요(0일)'도 사용자가 명시적으로 골라야 하며, 미응답(null)은 막는다.
+        if (walkDays == null || muscDays == null) {
+            error = "걷기·근력 운동 일수를 선택해 주세요."; return@launchStep
+        }
         // 양수 가드(재란 #75 nit): "0"/음수 수동 입력이 백엔드 gt=0 에서 422 나기 전에 막는다.
         if (h <= 0 || w <= 0) {
             error = "키·몸무게는 0보다 큰 값으로 입력해 주세요."; return@launchStep
@@ -241,8 +246,8 @@ class OnboardingViewModel(
             sex = sex!!,
             heightCm = h,
             weightKg = w,
-            walkDays = walkDays,
-            muscDays = muscDays,
+            walkDays = walkDays!!,
+            muscDays = muscDays!!,
             sessionId = sessionId,
             // 허리둘레는 양수일 때만 전송, 그 외(빈값·0·음수)는 생략(선택 필드).
             waistCm = waistCm.toDoubleOrNull()?.takeIf { it > 0 },
