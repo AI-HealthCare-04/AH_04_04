@@ -158,13 +158,16 @@ class DashboardRepository:
         return {row[0]: (int(row[1]), float(row[2])) for row in rows}
 
     async def get_challenge_totals(self, user_id: int) -> dict[MissionType, int]:
-        """유형별 '누적 성공 챌린지 횟수'(#기록탭 §5.4 도넛). success=True 인 미션 로그를 유형별로 센다.
+        """유형별 '누적 챌린지 완료 횟수'(#기록탭 §5.4 도넛). **counted_for_daily=True** 인 미션 로그를 유형별로 센다.
 
-        (counted_for_daily 가 아니라 success 기준 — 식사만 1일 1회라 counted 는 누적 완료를 과소집계한다.)
+        기준은 앱 전체의 '미션 완료' 정의와 통일한다: 홈 완료 개수(counted_breakdown_today)·포인트 적립
+        (compute_earned_points(counted_for_daily))·#274('완료한 미션 수') 모두 counted_for_daily 기준이다.
+        success 로 세면 목표를 넘긴 뒤의 추가 세션(예: 20분 목표에 21분째 걷기 — success=True·미적립)까지
+        중복 집계돼 홈·포인트와 어긋난다(비일관). 도넛은 '완료(집계·적립된) 횟수' 선호도이므로 counted 가 맞다.
         """
         stmt = (
             select(MissionLog.mission_type, func.count())
-            .where(MissionLog.user_id == user_id, MissionLog.success.is_(True))
+            .where(MissionLog.user_id == user_id, MissionLog.counted_for_daily.is_(True))
             .group_by(MissionLog.mission_type)
         )
         rows = (await self.session.execute(stmt)).all()

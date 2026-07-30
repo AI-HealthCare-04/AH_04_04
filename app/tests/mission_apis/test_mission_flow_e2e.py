@@ -766,15 +766,16 @@ async def test_walking_daily_and_challenge_totals(
     assert today_row["minutes"] == 25 and today_row["steps"] == 2700
     assert all(d["steps"] == 0 and d["minutes"] == 0 for d in days if d["date"] != today)
 
-    # 챌린지 도넛: 유형별 누적 성공 횟수(walking 2, meal 1, game 1, exercise 0). 0회 유형도 포함·순서 고정.
+    # 챌린지 도넛: 유형별 누적 '완료(counted_for_daily)' 횟수. 걷기 2세션이어도 그날 목표를 처음 넘긴 1건만
+    #   counted → walking=1(홈 완료 개수·포인트와 일치). meal 1, game 1, exercise 0. 0회 유형 포함·순서 고정.
     ct = await db_client.get(f"{API}/dashboard/challenge-totals", headers=auth)
     assert ct.status_code == status.HTTP_200_OK
     body = ct.json()
     assert [t["mission_type"] for t in body["by_type"]] == ["walking", "exercise", "meal", "game"]
     assert {t["mission_type"]: t["count"] for t in body["by_type"]} == {
-        "walking": 2,
+        "walking": 1,
         "exercise": 0,
         "meal": 1,
         "game": 1,
     }
-    assert body["total"] == 4
+    assert body["total"] == 3

@@ -155,7 +155,8 @@ class MissionRepository:
             if date_to is not None:
                 _, end = self._day_bounds(date_to)
                 stmt = stmt.where(completed_at < end)
-        stmt = stmt.order_by(completed_at.desc())
+        # 같은 완료시각(식사·게임 즉시완료 등)일 때 순서가 비결정적이지 않게 mission_log_id 로 tie-break(리뷰 #272 nit).
+        stmt = stmt.order_by(completed_at.desc(), MissionLog.mission_log_id.desc())
         result = await self.session.execute(stmt)
         return [(row[0], row[1], row[2]) for row in result.all()]
 

@@ -1,3 +1,4 @@
+import asyncio
 from datetime import timedelta
 from decimal import Decimal
 
@@ -96,20 +97,26 @@ class RiskPredictionService:
         if profile is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Health profile not found.")
         base_features = features_from_health_profile(profile)
-        cohort_version: str | None = None
 
-        async def _score_at(overrides: dict[str, float]) -> int | None:
-            nonlocal cohort_version
+        async def _score_at(overrides: dict[str, float]) -> tuple[int | None, str | None]:
             try:
                 result = await self.predictor.predict({**base_features, **overrides})
             except AgeNotSupportedError:
-                return None
-            if result.muscle_score is not None:
-                cohort_version = result.score_cohort_version
-            return result.muscle_score
+                return None, None
+            if result.muscle_score is None:
+                return None, None
+            return result.muscle_score, result.score_cohort_version
 
-        walk = [ScoreSimPoint(days=d, score=await _score_at({"walk_days": float(d)})) for d in range(0, 8)]
-        musc = [ScoreSimPoint(days=d, score=await _score_at({"musc_days": float(d)})) for d in range(0, 6)]
+        # 각 지점 예측은 서로 독립이라 병렬 실행한다(리뷰 #272 perf) — 표 점화 후 14회 순차 예측 지연 방지.
+        walk_results, musc_results = await asyncio.gather(
+            asyncio.gather(*[_score_at({"walk_days": float(d)}) for d in range(0, 8)]),
+            asyncio.gather(*[_score_at({"musc_days": float(d)}) for d in range(0, 6)]),
+        )
+        walk = [ScoreSimPoint(days=d, score=score) for d, (score, _) in enumerate(walk_results)]
+        musc = [ScoreSimPoint(days=d, score=score) for d, (score, _) in enumerate(musc_results)]
+        cohort_version = next(
+            (cv for score, cv in [*walk_results, *musc_results] if cv is not None), None
+        )
         return ScoreSimulationResponse(walk=walk, musc=musc, cohort_version=cohort_version)
 
     async def _predict_and_save(
