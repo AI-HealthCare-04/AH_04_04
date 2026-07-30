@@ -86,16 +86,22 @@ fun ExerciseVideosScreen(
     var safetyConfirmed by remember { mutableStateOf(false) }
     var pendingStart by remember { mutableStateOf<(() -> Unit)?>(null) }
 
-    // 전송 실패로 남은 세션이 있으면 앱이 다시 앞으로 올 때(ON_RESUME) 같은 키로 재시도한다(리뷰 #234-2).
-    //   같은 자연 키라 서버 중복 없이 안전하고, POST 성공/PATCH 실패로 in_progress 만 남은 경우를 완료로 되살린다(#172).
-    //   남은 게 없으면 no-op. 영속 아님(앱 재시작 소실) — durable outbox 는 후속 이슈.
+    // 전송 실패로 남은 세션들(키별 보존)을 두 시점에 같은 키로 재시도한다(리뷰 #234 재검토). 같은 자연 키라 서버
+    //   중복 없이 안전하고, POST 성공/PATCH 실패로 in_progress 만 남은 경우를 완료로 되살린다(#172). 남은 게 없으면 no-op.
+    //   ① ON_RESUME: 앱을 백그라운드 갔다 돌아올 때. ② 목록 복귀: 운동을 마치고 이 화면으로 돌아온 직후(실패는 보통
+    //   화면이 이미 RESUMED 인 동안 나므로 ON_RESUME 만으론 그 직후 재시도가 안 됨 → 복귀 시점에도 시도). 영속 아님.
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) vm.retryPendingResend()
+            if (event == Lifecycle.Event.ON_RESUME) vm.retryPending()
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    // 루틴/전체화면을 닫고 목록으로 돌아오면(둘 다 null) 남은 전송을 재시도한다. 방금 실패한 건은 in-flight 가드로
+    //   걸러지므로 이중 전송되지 않고, 이후(다음 운동 종료·재진입) 복귀 때 안전히 재시도된다.
+    LaunchedEffect(routineFile, fullscreenUrl) {
+        if (routineFile == null && fullscreenUrl == null) vm.retryPending()
     }
 
     // 번들 루틴(몸풀기·마무리)은 백엔드 목록과 무관하게 오프라인에서도 재생 가능(심사 환경 안정 버전).

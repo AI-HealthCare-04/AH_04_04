@@ -24,6 +24,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -163,7 +164,7 @@ class ExerciseVideosViewModelTest {
         assertEquals("확인 게이트 결과를 그대로 서버에 싣는다", true, fake.createdSafetyConfirmed)
         assertEquals(1, fake.completeCalls)
         assertEquals("세션 분을 그대로 실어 보낸다", 4f, fake.lastDurationMin)
-        assertNull("성공하면 재시도 대기가 남지 않는다", vm.pendingResend)
+        assertTrue("성공하면 재시도 대기가 남지 않는다", vm.pendingResends.isEmpty())
     }
 
     @Test
@@ -178,16 +179,45 @@ class ExerciseVideosViewModelTest {
 
         assertEquals("첫 시도는 POST 에서 실패", 1, fake.createdKeys.size)
         assertEquals("실패했으니 완료 단계까지 못 감", 0, fake.completeCalls)
-        assertEquals("실패한 세션을 분과 함께 보존", 4f, vm.pendingResend?.durationMin)
+        assertEquals("실패한 세션을 분과 함께 보존", 4f, vm.pendingResends.single().durationMin)
 
-        vm.retryPendingResend()
+        vm.retryPending()
         advanceUntilIdle()
 
         assertEquals("재시도로 두 번째 POST", 2, fake.createdKeys.size)
         assertEquals("재시도는 시작 때 잡은 것과 같은 자연 키여야 한다", fake.createdKeys[0], fake.createdKeys[1])
         assertNotNull("자연 키가 실제로 채워져 있어야 dedup 이 성립", fake.createdKeys[0])
         assertEquals("재시도로 완료 전송 성공", 1, fake.completeCalls)
-        assertNull("성공했으니 재시도 대기 해제", vm.pendingResend)
+        assertTrue("성공했으니 재시도 대기 해제", vm.pendingResends.isEmpty())
+    }
+
+    @Test
+    fun `A 실패 후 B 성공해도 A 는 남고 A 만 재시도로 저장된다`() = runTest {
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        fake.failCreateTimes = 1 // 첫 세션(A) POST 만 실패, 이후(B·재시도) 성공
+        val vm = vmWith(fake)
+
+        // 세션 A — 실패
+        vm.beginExerciseSession()
+        vm.submitExercise(4f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+        val keyA = fake.createdKeys[0]
+        assertEquals("A 는 실패해 보존", listOf(4f), vm.pendingResends.map { it.durationMin })
+
+        // 세션 B — 성공. 단일 슬롯이면 이 성공 경로가 A 까지 지웠을 것.
+        vm.beginExerciseSession()
+        vm.submitExercise(5f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+        assertEquals("B 성공 후에도 A 는 그대로 남아 있어야 한다", listOf(4f), vm.pendingResends.map { it.durationMin })
+        assertNotEquals("A·B 는 서로 다른 자연 키", keyA, fake.createdKeys.last())
+        assertEquals("여기까지 완료된 건 B 하나", 1, fake.completeCalls)
+
+        // A 재시도 — 성공
+        vm.retryPending()
+        advanceUntilIdle()
+        assertTrue("A 까지 저장돼 남은 대기 없음", vm.pendingResends.isEmpty())
+        assertEquals("A·B 둘 다 완료", 2, fake.completeCalls)
+        assertEquals("A 재시도는 A 의 원래 키를 그대로 사용", keyA, fake.createdKeys.last())
     }
 
     @Test
@@ -199,7 +229,7 @@ class ExerciseVideosViewModelTest {
         advanceUntilIdle()
 
         assertEquals("보낼 대상이 없어 시작조차 안 함", 0, fake.completeCalls)
-        assertEquals("잃지 않게 보존해 이후(로그인) 재시도에 맡긴다", 4f, vm.pendingResend?.durationMin)
+        assertEquals("잃지 않게 보존해 이후(로그인) 재시도에 맡긴다", 4f, vm.pendingResends.single().durationMin)
     }
 
     @Test

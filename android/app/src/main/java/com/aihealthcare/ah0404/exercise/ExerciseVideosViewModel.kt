@@ -49,10 +49,17 @@ class ExerciseVideosViewModel(
     //   로그를 완료로 되살린다(#172). 재시도마다 새 키를 만들면 중복이 되므로 고정한다(리뷰 #234-1).
     //   새 재생 시작([beginExerciseSession])마다 새 키로 교체한다 — 세션이 다르면 키도 달라야 하니까.
     private var sessionCreatedAt: String? = null
+    // 직전 발급 키의 ms — 같은 밀리초 안에 두 세션이 시작돼도(빠른 연속/테스트) 키가 겹치지 않게 단조 증가시킨다.
+    private var lastKeyMillis = 0L
 
-    // 전송 실패로 아직 서버에 안 남은 세션(수행 분 + 고정 키). 화면 재개 등에서 **같은 키**로 재시도한다(리뷰 #234-2).
+    // 전송에 아직 성공하지 못한 세션들 — **자연 키별**로 보존한다(리뷰 #234 재검토: 단일 슬롯은 A 실패 후 B 성공 시
+    //   A 까지 지워 유실). 성공하면 **그 키만** 지우고 나머지는 남긴다. 삽입 순서 유지(LinkedHashMap)로 오래된 것부터 재시도.
     //   메모리 보존이라 앱 재시작 시 소실 — 영속 outbox 는 후속 이슈. 여기선 세션 생명주기 내 복구만 보장한다.
-    var pendingResend by mutableStateOf<PendingExercise?>(null); private set
+    private val pending = LinkedHashMap<String, PendingExercise>()
+    // 지금 전송 중인 키(중복 동시 전송 방지) — ON_RESUME/복귀 재시도가 진행 중 전송과 겹쳐 이중 전송되는 것을 막는다.
+    private val inFlight = mutableSetOf<String>()
+    // 보존된 세션 스냅샷(관찰/테스트용). [pending] 이 바뀔 때마다 갱신한다.
+    var pendingResends by mutableStateOf<List<PendingExercise>>(emptyList()); private set
 
     /** 전송 실패로 보존된 운동 세션 — 같은 자연 키로 다시 시도할 최소 정보. */
     data class PendingExercise(
@@ -87,11 +94,11 @@ class ExerciseVideosViewModel(
     /**
      * 운동 재생을 **시작**할 때 호출 — 이 세션의 자연 키를 새로 확정한다(리뷰 #234-1).
      *  재생 시작마다 새 키로 교체한다: 세션이 다르면(다른 영상/루틴을 새로 시작) 키도 달라야 서버가
-     *  별개 세션으로 합산한다. 반대로 한 세션의 완료 전송이 실패해 재시도할 땐 [submitExercise]/[retryPendingResend]
-     *  가 이 시점에 잡힌 **같은 키**를 재사용하므로 중복 집계되지 않는다.
+     *  별개 세션으로 합산한다. 반대로 한 세션의 완료 전송이 실패해 재시도할 땐 [submitExercise]/[retryPending]
+     *  이 이 시점에 잡힌 **같은 키**를 재사용하므로 중복 집계되지 않는다.
      */
     fun beginExerciseSession() {
-        sessionCreatedAt = nowIso8601()
+        sessionCreatedAt = nextSessionKey()
     }
 
     /**
@@ -101,8 +108,8 @@ class ExerciseVideosViewModel(
      *    0분 세션은 아예 보내지 않고 조용히 무시한다 → 호출부(영상/루틴)는 이 가드를 믿고 콜백을 자유롭게 불러도 된다.
      *  - **안전 고지 미확인**: 운동은 서버가 확인을 요구하므로(true 아니면 400), 확인 게이트를 통과하지 않았으면
      *    보내지 않는다. [safetyNoticeConfirmed] 는 호출부(화면의 확인 게이트)가 넘긴 **실제 확인 결과**다.
-     *  - 자연 키는 [beginExerciseSession] 에서 잡은 값을 쓴다(없으면 지금 확정). 전송은 백그라운드(fire-and-forget)로,
-     *    실패해도 화면을 막지 않되 [pendingResend] 에 **같은 키로** 보존해 재개/재시도로 복구한다([retryPendingResend]).
+     *  - 자연 키는 [beginExerciseSession] 에서 잡은 값을 쓴다(없으면 지금 확정). 전송은 백그라운드로, 성공 전까지
+     *    [pending] 에 **키별로** 보존해(다른 세션을 덮어쓰지 않음) 재개/복귀 시 [retryPending] 으로 복구한다.
      */
     fun submitExercise(durationMin: Float, safetyNoticeConfirmed: Boolean) {
         if (durationMin <= 0f) return
@@ -111,35 +118,44 @@ class ExerciseVideosViewModel(
             return
         }
         // 세션 시작에서 못 잡았으면(직접 호출/테스트) 지금 확정하고, 재시도까지 이 값을 재사용한다.
-        val key = sessionCreatedAt ?: nowIso8601().also { sessionCreatedAt = it }
-        send(durationMin, key, safetyNoticeConfirmed)
+        val key = sessionCreatedAt ?: nextSessionKey().also { sessionCreatedAt = it }
+        send(PendingExercise(durationMin, key, safetyNoticeConfirmed))
     }
 
     /**
-     * 전송 실패로 보존된([pendingResend]) 세션을 **같은 자연 키**로 다시 시도한다(화면 재개/사용자 재시도, 리뷰 #234-2).
-     *  같은 키라 서버가 이미 저장했으면 중복 없이 끝나고, in_progress 만 남았으면 완료로 되살린다(#172). 없으면 무시.
+     * 아직 서버에 성공하지 못한 세션들을 **각자의 자연 키**로 다시 시도한다(화면 복귀/ON_RESUME, 리뷰 #234 재검토).
+     *  같은 키라 서버가 이미 저장했으면 중복 없이 끝나고, in_progress 만 남았으면 완료로 되살린다(#172).
+     *  전송 중인 키는 [send] 의 in-flight 가드가 걸러 이중 전송하지 않는다. 남은 게 없으면 no-op.
      */
-    fun retryPendingResend() {
-        val p = pendingResend ?: return
-        send(p.durationMin, p.createdOnDeviceAt, p.safetyNoticeConfirmed)
+    fun retryPending() {
+        pending.values.toList().forEach { send(it) }
     }
 
-    private fun send(durationMin: Float, createdOnDeviceAt: String, safetyNoticeConfirmed: Boolean) {
+    /**
+     * 세션 한 건을 서버에 올린다. 성공 전까지 [pending] 에 키별로 보존하고, **성공하면 그 키만** 지운다
+     *  → A 실패 후 B 가 성공해도 A 는 남는다(단일 슬롯 유실 방지). 같은 키의 동시 전송은 [inFlight] 로 막는다.
+     */
+    private fun send(session: PendingExercise) {
+        val key = session.createdOnDeviceAt
+        if (!inFlight.add(key)) return // 이 키가 이미 전송 중 — 이중 전송 방지
+        // 성공 전까지 보존(재시도 대상). 실패해도 이미 들어가 있으니 별도 저장이 필요 없다.
+        pending[key] = session
+        publishPending()
         viewModelScope.launch {
-            val templateId = exerciseTemplateId ?: resolveExerciseTemplateId() ?: run {
-                // 로그인 전/조회 실패로 보낼 대상을 못 얻음 — 잃지 않게 보존해 이후 재시도(로그인·복구)에 맡긴다.
-                Log.w(TAG, "운동 미션 템플릿 id 미해석 — 재시도 대기로 보존(durationMin=$durationMin)")
-                pendingResend = PendingExercise(durationMin, createdOnDeviceAt, safetyNoticeConfirmed)
-                return@launch
-            }
             try {
+                val templateId = exerciseTemplateId ?: resolveExerciseTemplateId() ?: run {
+                    // 로그인 전/조회 실패로 보낼 대상을 못 얻음 — 보존한 채 이후 재시도(로그인·복구)에 맡긴다.
+                    Log.w(TAG, "운동 미션 템플릿 id 미해석 — 재시도 대기로 보존(durationMin=${session.durationMin})")
+                    return@launch
+                }
                 val r = exerciseFlow.submitExerciseSession(
                     missionTemplateId = templateId,
-                    durationMin = durationMin,
-                    safetyNoticeConfirmed = safetyNoticeConfirmed,
-                    createdOnDeviceAt = createdOnDeviceAt,
+                    durationMin = session.durationMin,
+                    safetyNoticeConfirmed = session.safetyNoticeConfirmed,
+                    createdOnDeviceAt = key,
                 )
-                pendingResend = null // 서버에 안전히 남음 — 보존 해제
+                pending.remove(key) // 이 키만 서버에 안전히 남음 — 보존 해제(다른 세션은 유지)
+                publishPending()
                 Log.i(
                     TAG,
                     "운동 완료 전송 OK: status=${r.finalStatus}, counted=${r.countedForDaily}, dailyTotalMin=${r.dailyTotalMin}",
@@ -147,11 +163,16 @@ class ExerciseVideosViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // 재조회는 서버에 없는 시간을 복원하지 못한다 → 같은 키를 보존해 실제로 재시도할 수 있게 한다(문구 정정).
-                pendingResend = PendingExercise(durationMin, createdOnDeviceAt, safetyNoticeConfirmed)
-                Log.w(TAG, "운동 완료 전송 실패 — 같은 키로 재시도 대기(durationMin=$durationMin): ${e.message}")
+                // 재조회는 서버에 없는 시간을 복원하지 못한다 → 같은 키를 보존해 실제로 재시도할 수 있게 둔다(문구 정정).
+                Log.w(TAG, "운동 완료 전송 실패 — 같은 키로 재시도 대기(durationMin=${session.durationMin}): ${e.message}")
+            } finally {
+                inFlight.remove(key) // 전송 종료 — 다음 재시도가 이 키를 다시 시도할 수 있게 해제
             }
         }
+    }
+
+    private fun publishPending() {
+        pendingResends = pending.values.toList()
     }
 
     /** GET /missions 에서 단일 운동 미션(mission_type=="exercise") 템플릿 id 를 찾아 캐시한다. 실패/부재면 null. */
@@ -168,8 +189,17 @@ class ExerciseVideosViewModel(
             null
         }
 
-    private fun nowIso8601(): String =
-        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US).format(Date())
+    /**
+     * 이번 세션의 자연 키(ISO-8601). 직전 키와 같은 밀리초면 +1ms 로 단조 증가시켜 **키 충돌을 막는다**:
+     *  실제로는 세션이 초 단위로 떨어져 그대로지만, 같은 ms 안에 두 세션이 시작돼도(빠른 연속/테스트)
+     *  키가 겹쳐 pending 맵에서 서로를 덮어쓰는 일이 없게 한다(리뷰 재검토의 유실 경로 방어).
+     */
+    private fun nextSessionKey(): String {
+        var millis = System.currentTimeMillis()
+        if (millis <= lastKeyMillis) millis = lastKeyMillis + 1
+        lastKeyMillis = millis
+        return SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US).format(Date(millis))
+    }
 
     companion object {
         const val TAG = "ExerciseVideos"
