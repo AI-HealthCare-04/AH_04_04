@@ -16,6 +16,7 @@ import com.aihealthcare.ah0404.network.SensorSessionCreateRequest
 import com.aihealthcare.ah0404.network.SensorSessionCreateResponse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -58,6 +59,16 @@ class ExerciseVideosViewModelTest {
         val createdKeys = mutableListOf<String?>()
         // >0 이면 그만큼 createMissionLog 를 예외로 실패시킨다(전송 실패→재시도 경로 검증용, #234-2).
         var failCreateTimes = 0
+        // createMissionLog 응답 status/success — "completed" 면 이미 완료된 자연 키의 재전송 조기종료 경로를 재현한다(#280).
+        var createStatus = "in_progress"
+        var createSuccess = true
+        // 완료 응답의 서버 판정값(#235 누적시간 표시 검증용). 기본=목표 달성(성공·당일 10분).
+        var completeSuccess = true
+        var completeDailyTotal: Float? = 10f
+        // 세션 분(exercise_detail.duration_min)별 완료 응답 (당일 누적, 목표달성) — 병렬 전송의 응답을 개별 지정(리뷰 #280).
+        var completeRespByDuration: Map<Float, Pair<Float?, Boolean>> = emptyMap()
+        // 세션 분별 응답 지연(ms) — delay 로 응답 '도착 순서'를 뒤집어 역순 수렴을 검증한다.
+        var completeDelayByDuration: Map<Float, Long> = emptyMap()
 
         override suspend fun guestLogin(): LoginResponse = error("unused")
 
@@ -71,8 +82,8 @@ class ExerciseVideosViewModelTest {
             if (failCreateTimes > 0) { failCreateTimes--; throw RuntimeException("network down") }
             return MissionLogCreateResponse(
                 missionLogId = 100,
-                status = "in_progress",
-                success = true,
+                status = createStatus,
+                success = createSuccess,
                 countedForDaily = false,
                 earnedPoints = 0,
                 dailyResult = "none",
@@ -84,15 +95,18 @@ class ExerciseVideosViewModelTest {
             body: MissionLogUpdateRequest,
         ): MissionLogUpdateResponse {
             completeCalls++
-            lastDurationMin = body.exerciseDetail?.durationMin
+            val dur = body.exerciseDetail?.durationMin
+            lastDurationMin = dur
+            completeDelayByDuration[dur]?.let { delay(it) } // 응답 도착 순서를 인위적으로 뒤집기 위한 지연
+            val (total, ok) = completeRespByDuration[dur] ?: (completeDailyTotal to completeSuccess)
             return MissionLogUpdateResponse(
                 missionLogId = missionLogId,
                 status = "completed",
-                success = true,
-                countedForDaily = true,
-                dailyResult = "success",
+                success = ok,
+                countedForDaily = ok,
+                dailyResult = if (ok) "success" else "none",
                 syncStatus = "synced",
-                dailyTotalMin = 10f,
+                dailyTotalMin = total,
             )
         }
 
@@ -308,5 +322,119 @@ class ExerciseVideosViewModelTest {
         assertEquals("전송 분도 저장값 그대로", 6f, fake.lastDurationMin)
         assertTrue("성공했으니 영속 대기 해제", outbox.stored.isEmpty())
         assertTrue("관찰 상태도 비어야 한다", vm.pendingResends.isEmpty())
+    }
+
+    // -----------------------------------------------------------------------------------
+    // #235: 누적 운동시간 노출 + 이어보기 위치 보관
+    // -----------------------------------------------------------------------------------
+
+    @Test
+    fun `운동 완료 후 서버가 합산한 당일 누적분과 목표달성을 노출한다`() = runTest {
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7))) // 기본=당일 10분·성공
+        val vm = vmWith(fake)
+        assertNull("완료 전엔 누적시간을 표시하지 않는다", vm.todayExerciseMin)
+        assertFalse("완료 전엔 목표 미달성", vm.todayGoalReached)
+
+        vm.submitExercise(4f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+
+        assertEquals("서버 당일 누적값(sum_exercise_minutes_today)을 그대로 노출", 10f, vm.todayExerciseMin)
+        assertTrue("서버 success=목표(하루 10분) 달성 → 완료 안내", vm.todayGoalReached)
+    }
+
+    @Test
+    fun `병렬 완료 전송을 직렬화해 마지막 전송값으로 수렴한다`() = runTest {
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        // A(6분/미달) 를 먼저 전송하지만 응답이 더 오래 걸리게 지연을 준다. 직렬화가 없으면(예전 병렬 대입) B(11분/달성)가
+        //   먼저 적용된 뒤 늦은 A 가 6분/미달로 되돌려 최종이 틀어진다. 직렬화되면 A→B 순서로만 적용돼 최종은 B.
+        fake.completeRespByDuration = mapOf(6f to (6f to false), 11f to (11f to true))
+        fake.completeDelayByDuration = mapOf(6f to 100L, 11f to 10L)
+        val vm = vmWith(fake)
+
+        vm.beginExerciseSession(); vm.submitExercise(6f, safetyNoticeConfirmed = true)  // A: 먼저 전송(응답 늦음)
+        vm.beginExerciseSession(); vm.submitExercise(11f, safetyNoticeConfirmed = true) // B: 나중 전송(응답 빠름)
+        advanceUntilIdle()
+
+        assertEquals("두 세션 모두 완료 전송", 2, fake.completeCalls)
+        assertEquals("직렬 적용의 마지막 = 나중 전송 B(11분), 늦은 A 가 끼어들지 못한다", 11f, vm.todayExerciseMin)
+        assertTrue("마지막 전송이 달성이므로 달성 표시", vm.todayGoalReached)
+    }
+
+    /**
+     * 날짜 경계 회귀 방지(리뷰 #280): 최댓값·스티키 방식이면 자정을 넘겨도 전날 11분·달성이 남지만, 직렬 last-wins 는
+     *  다음 날 첫 세션의 더 작은 누적/미달을 그대로 반영해 정상 초기화한다(서버 daily_total 이 새 날엔 다시 작아지므로).
+     */
+    @Test
+    fun `다음 날 첫 운동의 더 작은 누적·미달로 표시가 초기화된다`() = runTest {
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        val vm = vmWith(fake)
+
+        // 전날: 11분·달성
+        fake.completeRespByDuration = mapOf(11f to (11f to true))
+        vm.beginExerciseSession(); vm.submitExercise(11f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+        assertEquals(11f, vm.todayExerciseMin)
+        assertTrue(vm.todayGoalReached)
+
+        // 자정 넘긴 다음 날 첫 운동: 서버 당일 누적이 2분·미달로 리셋됨.
+        fake.completeRespByDuration = mapOf(2f to (2f to false))
+        vm.beginExerciseSession(); vm.submitExercise(2f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+        assertEquals("전날 값이 남지 않고 새 날 누적으로 초기화", 2f, vm.todayExerciseMin)
+        assertFalse("전날 달성 상태가 스티키하게 남지 않는다", vm.todayGoalReached)
+    }
+
+    /**
+     * 재전송 조기종료 오염 방지(리뷰 #280): 이미 완료된 자연 키를 재전송하면 POST 가 과거 completed 로그를 반환하고
+     *  응답은 dailyTotalMin=null, success=<그 로그 완료 당시 값>이다. 이 success 는 '오늘' 누적의 권위 판정이 아니므로,
+     *  누적값이 없는 응답으로는 분도 달성도 갱신하지 않아야 오늘 상태(예: 2분·미달)가 어제 값으로 오염되지 않는다.
+     */
+    @Test
+    fun `과거 completed 로그의 재전송(누적 null·success=true)은 오늘 미달 상태를 오염시키지 않는다`() = runTest {
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        val vm = vmWith(fake)
+
+        // 오늘 첫 세션: 2분·미달
+        fake.completeRespByDuration = mapOf(2f to (2f to false))
+        vm.beginExerciseSession(); vm.submitExercise(2f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+        assertEquals(2f, vm.todayExerciseMin)
+        assertFalse(vm.todayGoalReached)
+
+        // 어제 서버엔 완료됐지만 outbox 에 남은 로그를 지금 재전송 → POST 가 과거 completed 를 반환(조기종료: 누적 null·success=true).
+        fake.createStatus = "completed"; fake.createSuccess = true
+        vm.beginExerciseSession(); vm.submitExercise(5f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+
+        assertEquals("누적값 없는 응답은 오늘 분을 바꾸지 않는다", 2f, vm.todayExerciseMin)
+        assertFalse("과거 로그의 success=true 가 오늘 달성으로 오염시키지 않는다", vm.todayGoalReached)
+    }
+
+    @Test
+    fun `목표 미달이면 누적분은 갱신하되 목표달성은 false 로 둔다`() = runTest {
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        fake.completeDailyTotal = 3f
+        fake.completeSuccess = false // 아직 하루 목표(10분) 미달
+        val vm = vmWith(fake)
+
+        vm.submitExercise(3f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+
+        assertEquals("진행 중이어도 현재 누적분은 보여준다", 3f, vm.todayExerciseMin)
+        assertFalse("목표 미달이면 달성 안내는 아직 아니다", vm.todayGoalReached)
+    }
+
+    @Test
+    fun `이어보기 위치는 저장 전 0, 저장하면 그 값, 0 저장이면 처음부터로 되돌린다`() {
+        val vm = vmWith(FakeMissionApi(emptyList()))
+        val url = "https://v/seated.mp4"
+        assertEquals("저장 전엔 처음부터", 0L, vm.resumePositionFor(url))
+
+        vm.saveResumePosition(url, 12_000L)
+        assertEquals("이탈 위치를 보관해 다시 열면 이어재생", 12_000L, vm.resumePositionFor(url))
+
+        // 완주(끝까지 시청) 시 StreamingVideoPlayer 가 0 을 넘긴다 → 다음 진입은 처음부터.
+        vm.saveResumePosition(url, 0L)
+        assertEquals("완주 후엔 처음부터로 리셋", 0L, vm.resumePositionFor(url))
     }
 }

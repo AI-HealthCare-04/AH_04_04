@@ -13,6 +13,8 @@ import com.aihealthcare.ah0404.network.MissionApi
 import com.aihealthcare.ah0404.network.retrofit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -60,8 +62,29 @@ class ExerciseVideosViewModel(
     private val pending = LinkedHashMap<String, PendingExercise>()
     // 지금 전송 중인 키(중복 동시 전송 방지) — ON_RESUME/복귀 재시도가 진행 중 전송과 겹쳐 이중 전송되는 것을 막는다.
     private val inFlight = mutableSetOf<String>()
+    // 완료 전송 직렬화 락(#235, 리뷰 #280) — 여러 send()가 병렬 launch 돼도 전송+상태적용을 한 번에 하나씩 순서대로
+    //   처리해, 서버 처리순서=적용순서를 보장한다(누적값이 역순 응답·자정 경계로 되돌아가지 않게). fair mutex(FIFO).
+    private val completionMutex = Mutex()
     // 보존된 세션 스냅샷(관찰/테스트용). [pending] 이 바뀔 때마다 갱신한다.
     var pendingResends by mutableStateOf<List<PendingExercise>>(emptyList()); private set
+
+    // 이어보기(#235): url 별 마지막 재생 위치(ms). 전체화면을 닫았다 다시 열어도 처음부터가 아니라 이어서 재생한다.
+    //   세션 내 복귀용이라 메모리 보관(앱 재시작까지 보존할 필요는 #235 범위 밖). 영상 완주 시엔 0 이 저장돼 다음엔 처음부터.
+    private val positionByUrl = mutableMapOf<String, Long>()
+
+    // 오늘 누적 운동 '분'(#235): 서버가 완료 응답으로 준 당일 합산값(sum_exercise_minutes_today). 세션 완료 전엔 null(미표시).
+    //   서버 권위값이라 앱이 직접 더하지 않는다 — 여러 단계·여러 세션을 서버가 합산한 결과를 그대로 보여준다.
+    var todayExerciseMin by mutableStateOf<Float?>(null); private set
+    // 오늘 운동 목표(하루 10분, #168)를 채웠는지 — 서버 판정(success). 완료 판정을 사용자가 확인할 수 있게 한다(#235 핵심).
+    var todayGoalReached by mutableStateOf(false); private set
+
+    /** 이어보기용: 이 url 을 어디부터 재생할지(ms). 없으면 0(처음부터). */
+    fun resumePositionFor(url: String): Long = positionByUrl[url] ?: 0L
+
+    /** 이어보기용: 전체화면 이탈 시 마지막 위치를 보관한다(0 이면 처음부터 = 완주했거나 첫 재생). */
+    fun saveResumePosition(url: String, positionMs: Long) {
+        if (positionMs > 0L) positionByUrl[url] = positionMs else positionByUrl.remove(url)
+    }
 
     init {
         // 이전 실행에서 전송 못 하고 종료된 세션들을 되살려(영속 outbox, #271) 재시도한다 — "앱 재시작 시 flush".
@@ -150,23 +173,40 @@ class ExerciseVideosViewModel(
         publishPending()
         viewModelScope.launch {
             try {
-                val templateId = exerciseTemplateId ?: resolveExerciseTemplateId() ?: run {
-                    // 로그인 전/조회 실패로 보낼 대상을 못 얻음 — 보존한 채 이후 재시도(로그인·복구)에 맡긴다.
-                    Log.w(TAG, "운동 미션 템플릿 id 미해석 — 재시도 대기로 보존(durationMin=${session.durationMin})")
-                    return@launch
+                // 완료 전송을 **직렬화**한다(리뷰 #280): 여러 키의 send()가 병렬 launch 되므로 그냥 두면 PATCH 처리·응답
+                //   순서가 뒤섞여 화면 누적값이 되돌아간다. 서버 응답에 날짜/버전이 없어 어떤 응답이 최신 권위값인지 로컬에서
+                //   판별할 수 없다(당일 최댓값 방식은 자정 경계에서 전날 값이 남는 회귀가 있었다). Mutex 로 전송+적용을 한 번에
+                //   하나씩 순서대로 처리하면 서버 처리순서=전송순서=적용순서가 되어, 마지막 전송값이 곧 최신 권위값이 된다.
+                completionMutex.withLock {
+                    val templateId = exerciseTemplateId ?: resolveExerciseTemplateId()
+                    if (templateId == null) {
+                        // 로그인 전/조회 실패로 보낼 대상을 못 얻음 — 보존한 채 이후 재시도(로그인·복구)에 맡긴다.
+                        Log.w(TAG, "운동 미션 템플릿 id 미해석 — 재시도 대기로 보존(durationMin=${session.durationMin})")
+                        return@withLock
+                    }
+                    val r = exerciseFlow.submitExerciseSession(
+                        missionTemplateId = templateId,
+                        durationMin = session.durationMin,
+                        safetyNoticeConfirmed = session.safetyNoticeConfirmed,
+                        createdOnDeviceAt = key,
+                    )
+                    pending.remove(key) // 이 키만 서버에 안전히 남음 — 보존 해제(다른 세션은 유지)
+                    publishPending()
+                    // 누적 운동시간 표시(#235): 직렬화 덕에 이 응답이 지금까지의 마지막 전송 결과 = 최신 권위값이다.
+                    //   그대로 대입한다(무조건 last-wins). 당일 내 여러 세션은 마지막이 최댓값이라 자연히 커지고, 자정을 넘긴
+                    //   다음 날 첫 세션의 더 작은 누적/미달도 마지막 값이라 정상적으로 초기화된다.
+                    //   단, dailyTotalMin==null(재전송 조기종료: 자연 키로 찾은 과거 completed 로그 반환)이면 그 success 는
+                    //   '그 로그가 완료됐던 당시' 값이지 오늘 누적의 권위 판정이 아니다(리뷰 #280). 오늘 상태를 오염시키지
+                    //   않도록 **누적값이 있을 때만 분·달성을 한 묶음으로** 갱신하고, null 응답은 둘 다 건드리지 않는다.
+                    r.dailyTotalMin?.let { total ->
+                        todayExerciseMin = total
+                        todayGoalReached = r.success
+                    }
+                    Log.i(
+                        TAG,
+                        "운동 완료 전송 OK: status=${r.finalStatus}, counted=${r.countedForDaily}, dailyTotalMin=${r.dailyTotalMin}",
+                    )
                 }
-                val r = exerciseFlow.submitExerciseSession(
-                    missionTemplateId = templateId,
-                    durationMin = session.durationMin,
-                    safetyNoticeConfirmed = session.safetyNoticeConfirmed,
-                    createdOnDeviceAt = key,
-                )
-                pending.remove(key) // 이 키만 서버에 안전히 남음 — 보존 해제(다른 세션은 유지)
-                publishPending()
-                Log.i(
-                    TAG,
-                    "운동 완료 전송 OK: status=${r.finalStatus}, counted=${r.countedForDaily}, dailyTotalMin=${r.dailyTotalMin}",
-                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
