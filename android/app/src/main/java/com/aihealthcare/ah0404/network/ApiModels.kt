@@ -30,6 +30,8 @@ data class Mission(
     @SerialName("reward_points") val rewardPoints: Int,
     // 단백질(식사) 미션 한정: 오늘 이미 저장된 기록. 없으면 null. 재진입 시 카드 선택 복원에 쓴다.
     @SerialName("today_log") val todayLog: MealTodayLog? = null,
+    // 운동·걷기 미션 한정: 오늘 누적 진행(분·걸음·목표달성). 다른 종류는 null. 재생/측정 전에도 '오늘까지 N분'을 보여준다.
+    @SerialName("today_progress") val todayProgress: MissionTodayProgress? = null,
 )
 
 // 단백질 미션의 '오늘 기록' — 재진입 시 앱이 선택 상태를 복원한다(GET /missions today_log).
@@ -37,6 +39,15 @@ data class Mission(
 data class MealTodayLog(
     val eaten: List<String>,               // 오늘 먹은 단백질 카테고리 id 목록
     @SerialName("logged_at") val loggedAt: String,
+)
+
+// 운동·걷기 미션의 '오늘 누적 진행'(GET /missions today_progress). 서버 당일 합산 권위값.
+//   totalMin=오늘 누적 분, totalSteps=걷기 전용 누적 걸음(운동은 null), goalReached=목표(targetValue) 도달 여부.
+@Serializable
+data class MissionTodayProgress(
+    @SerialName("total_min") val totalMin: Float,
+    @SerialName("total_steps") val totalSteps: Int? = null,
+    @SerialName("goal_reached") val goalReached: Boolean,
 )
 
 @Serializable

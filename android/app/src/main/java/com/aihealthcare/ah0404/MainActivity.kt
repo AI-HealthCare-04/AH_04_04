@@ -251,13 +251,18 @@ private fun MainContent(
     var walkingMission by rememberSaveable(stateSaver = MissionStateSaver) {
         mutableStateOf<Mission?>(null)
     }
+    // Activity 범위 MissionViewModel — MissionScreen 과 같은 인스턴스다. 걷기·운동·식사 화면에서 목록으로
+    //   복귀할 때 재조회해 카드의 오늘 진행(today_progress)·식사 기록(today_log)을 서버 권위값으로 갱신한다.
+    //   갱신이 없으면 방금 한 운동·걷기가 목록에 안 뜨고(VM 이 보존한 stale 목록), 재진입 선택 복원도 깨진다(리뷰 #225 P1).
+    val missionVm: MissionViewModel = viewModel()
     // #188: 걷기 측정 오버레이가 열려 있는 동안 라우팅이 OFFLINE 로 튕기지 않게 상태를 알린다.
     //   (구성 변경으로 walkingMission 이 복원돼도 여기서 다시 동기화된다.)
     LaunchedEffect(walkingMission) { WalkingOverlay.active = walkingMission != null }
     walkingMission?.let { mission ->
         WalkingMeasureScreen(
             mission = mission,
-            onBack = { walkingMission = null },
+            // 걷기 측정을 마치고 목록으로 돌아오면 오늘 걷기 누적(today_progress)을 갱신한다.
+            onBack = { walkingMission = null; missionVm.loadMissions() },
         )
         return
     }
@@ -266,10 +271,6 @@ private fun MainContent(
     var proteinMission by rememberSaveable(stateSaver = MissionStateSaver) {
         mutableStateOf<Mission?>(null)
     }
-    // Activity 범위 MissionViewModel — MissionScreen 과 같은 인스턴스다. 저장 성공 시 목록을 재조회해
-    //   today_log 를 서버 권위값으로 갱신한다(리뷰 #225 P1: 갱신 없이는 VM 이 보존한 stale 목록으로
-    //   재진입 선택 복원이 저장 직후 깨진다).
-    val missionVm: MissionViewModel = viewModel()
     proteinMission?.let { mission ->
         ProteinChallengeScreen(
             mission = mission,
@@ -305,8 +306,9 @@ private fun MainContent(
             return
         }
         "exercise" -> {
-            BackHandler { subScreen = null }
-            ExerciseVideosScreen(onBack = { subScreen = null })
+            // 운동 영상 화면에서 목록으로 돌아오면 오늘 운동 누적(today_progress)을 갱신한다(방금 한 운동 반영).
+            BackHandler { subScreen = null; missionVm.loadMissions() }
+            ExerciseVideosScreen(onBack = { subScreen = null; missionVm.loadMissions() })
             return
         }
         "minigame" -> {
