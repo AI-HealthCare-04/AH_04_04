@@ -79,7 +79,12 @@ def test_prod_rejects_too_short_secrets(field: str, value: str) -> None:
         field: value,
     }
     with pytest.raises(ValidationError, match=field):
-        Config(ENV=Env.PROD, **values)
+        Config(
+            ENV=Env.PROD,
+            SECRET_KEY=values["SECRET_KEY"],
+            DB_PASSWORD=values["DB_PASSWORD"],
+            DB_ROOT_PASSWORD=values["DB_ROOT_PASSWORD"],
+        )
 
 
 def test_prod_rejects_low_variety_secret() -> None:
