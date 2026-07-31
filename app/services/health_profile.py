@@ -79,6 +79,12 @@ class HealthProfileService:
         weight = data.weight_kg if data.weight_kg is not None else latest.weight_kg
         waist = data.waist_cm if "waist_cm" in data.model_fields_set else latest.waist_cm
         kidney = data.kidney_status if data.kidney_status is not None else latest.kidney_status
+        # 단백질 제한 상태(#304): 신장과 함께 미션 게이트를 정한다. 미전송이면 최신값 유지(신장만 바꿀 때 회귀 없음).
+        protein = (
+            data.protein_restriction_status
+            if data.protein_restriction_status is not None
+            else latest.protein_restriction_status
+        )
         # 유효 변경이 하나도 없으면(빈 요청·모든 값이 최신과 동일) append-only 스냅샷을 늘리지 않는다(리뷰 #272-2).
         #   허리 명시적 null 로 기존 값을 지우는 것은 유효 변경으로 본다(waist != latest.waist_cm 로 잡힘).
         if (
@@ -86,6 +92,7 @@ class HealthProfileService:
             and weight == latest.weight_kg
             and waist == latest.waist_cm
             and kidney == latest.kidney_status
+            and protein == latest.protein_restriction_status
         ):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="변경된 내용이 없습니다.")
 
@@ -106,10 +113,8 @@ class HealthProfileService:
             activity_input_source=latest.activity_input_source,
             activity_window_days=latest.activity_window_days,
             kidney_status=kidney,
-            protein_restriction_status=latest.protein_restriction_status,
-            protein_challenge_allowed=self.is_protein_challenge_allowed(
-                kidney, latest.protein_restriction_status
-            ),
+            protein_restriction_status=protein,
+            protein_challenge_allowed=self.is_protein_challenge_allowed(kidney, protein),
             input_method=latest.input_method,
             has_estimated_value=estimated,
         )
