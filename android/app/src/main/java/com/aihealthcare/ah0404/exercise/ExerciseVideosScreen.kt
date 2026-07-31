@@ -71,6 +71,7 @@ import kotlin.math.floor
 import com.aihealthcare.ah0404.R
 import com.aihealthcare.ah0404.media.StreamingVideoPlayer
 import com.aihealthcare.ah0404.media.VideoCache
+import com.aihealthcare.ah0404.media.persistNormalizedSpeed
 import com.aihealthcare.ah0404.settings.AppSettings
 import com.aihealthcare.ah0404.network.ExerciseVideoItem
 import com.aihealthcare.ah0404.routine.RoutinePlayerScreen
@@ -505,10 +506,8 @@ private fun ExercisePlayer(
             override fun onIsPlayingChanged(isPlaying: Boolean) =
                 stopwatch.onIsPlayingChanged(isPlaying, SystemClock.elapsedRealtime())
             override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
-                // 컨트롤러 톱니로 옵션 밖 속도(2.0 등)를 골라도 전역 저장·실제 재생 모두 확정 4옵션으로 정규화(지영 리뷰).
-                val normalized = AppSettings.normalizeSpeed(playbackParameters.speed)
-                AppSettings.setPlaybackSpeed(context, normalized)
-                if (playbackParameters.speed != normalized) player.setPlaybackSpeed(normalized)
+                // 컨트롤러 톱니로 옵션 밖 속도(2.0 등)를 골라도 전역 저장·실제 재생 모두 확정 4옵션으로 정규화(지영 리뷰, #288 공용).
+                player.persistNormalizedSpeed(context, playbackParameters.speed)
             }
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) { player.pause(); currentOnExit() }

@@ -438,7 +438,12 @@ private fun ProfileStep(vm: OnboardingViewModel) {
             AigoDayStepper(value = vm.walkDays, onValueChange = { vm.walkDays = it }, max = 7)
 
             Text("일주일에 며칠 근력 운동을 하세요?", style = MaterialTheme.typography.titleMedium)
-            AigoDayStepper(value = vm.muscDays, onValueChange = { vm.muscDays = it }, max = 5)
+            AigoDayStepper(
+                value = vm.muscDays,
+                onValueChange = { vm.muscDays = it },
+                max = 5,
+                maxLabel = "5일 이상",
+            )
 
             // '신장 상태' → '신장 건강 상태'(QA 피드백): 키(身長)로 오독되지 않게 + 내정보 라벨과 톤 통일.
             Text("신장 건강 상태", style = MaterialTheme.typography.titleMedium)
@@ -446,7 +451,6 @@ private fun ProfileStep(vm: OnboardingViewModel) {
                 options = listOf(
                     SegmentOption("none", "해당 없음"),
                     SegmentOption("kidney_disease", "신장질환 있음"),
-                    SegmentOption("dialysis", "투석 중"),
                     SegmentOption("unknown", "잘 모르겠어요"),
                 ),
                 selected = vm.kidneyStatus,

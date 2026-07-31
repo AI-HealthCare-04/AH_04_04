@@ -126,7 +126,6 @@ private fun HealthInfoSection(healthVm: HealthInfoViewModel) {
 private val KIDNEY_LABELS = mapOf(
     "none" to "해당 없음",
     "kidney_disease" to "신장질환 있음",
-    "dialysis" to "투석 중",
     "unknown" to "잘 모르겠어요",
 )
 
@@ -144,7 +143,9 @@ private fun HealthInfoEditor(healthVm: HealthInfoViewModel, profile: HealthProfi
     var height by remember(profile) { mutableStateOf(numberText(profile.heightCm)) }
     var weight by remember(profile) { mutableStateOf(numberText(profile.weightKg)) }
     var waist by remember(profile) { mutableStateOf(profile.waistCm?.let(::numberText) ?: "") }
-    var kidney by remember(profile) { mutableStateOf(profile.kidneyStatus) }
+    var kidney by remember(profile) {
+        mutableStateOf(if (profile.kidneyStatus == "dialysis") "kidney_disease" else profile.kidneyStatus)
+    }
     var protein by remember(profile) { mutableStateOf(profile.proteinRestrictionStatus) }
 
     AigoCard {

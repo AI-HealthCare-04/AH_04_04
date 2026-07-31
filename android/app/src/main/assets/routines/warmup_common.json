@@ -39,7 +39,7 @@
     { "type": "video", "asset": "torso_twist_loop", "sec": 20, "mode": "count", "count": 6,
       "name": "몸통 회전", "guide": "발은 고정하고 상체만 좌우로 돌려요" },
 
-    { "type": "notice", "sec": 3, "name": "의자에 앉아주세요",
+    { "type": "notice", "sec": 8, "name": "의자에 앉아주세요",
       "guide": "이제 앉아서 하는 운동이에요" },
 
     { "type": "video", "asset": "ankle_rotate_loop", "sec": 9, "mode": "count", "count": 8,
@@ -52,7 +52,7 @@
     { "type": "image", "asset": "ankle_pull_2", "sec": 21, "mode": "count", "count": 8,
       "name": "발가락 당기기 (반대 발)", "guide": "반대쪽 발가락도 당겨요" },
 
-    { "type": "notice", "sec": 3, "name": "천천히 일어나주세요",
+    { "type": "notice", "sec": 8, "name": "천천히 일어나주세요",
       "guide": "의자를 잡고 천천히 일어서세요", "safety": "의자를 꼭 잡으세요" },
 
     { "type": "image", "asset": "calf_1", "sec": 15, "mode": "timer",
