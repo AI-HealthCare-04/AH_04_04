@@ -312,20 +312,20 @@ fun RoutinePlayerScreen(
         // 타이머(원형 게이지) 또는 카운트(횟수)
         val totalMs = step.sec * 1000f
         val progress = (elapsedMs / totalMs).coerceIn(0f, 1f)
+        val remainSec = ceil((step.sec * 1000L - elapsedMs) / 1000.0).toInt().coerceAtLeast(0)
         when (step.mode) {
-            StepMode.TIMER -> {
-                val remainSec = ceil((step.sec * 1000L - elapsedMs) / 1000.0).toInt().coerceAtLeast(0)
-                CircularTimer(progress = progress, centerText = "$remainSec")
-            }
+            StepMode.TIMER -> CircularTimer(progress = progress, centerText = "$remainSec")
             StepMode.COUNT -> {
                 val count = step.count ?: 0
                 val cur = if (count > 0) min(count, (progress * count).toInt() + 1) else 0
                 Text("$cur / $count", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
             }
-            StepMode.NONE -> {
-                if (step.type == StepType.INTRO) {
-                    Text("♪ Music by Suno AI", fontSize = 16.sp, color = Color(0xFFAAAAAA))
-                }
+            StepMode.NONE -> when (step.type) {
+                StepType.INTRO -> Text("♪ Music by Suno AI", fontSize = 16.sp, color = Color(0xFFAAAAAA))
+                // 자세 전환 안내(#317): 예고 없이 넘어가지 않게 다른 단계와 동일한 원형 카운트다운을 표시한다
+                //   ('의자에 앉아주세요' 등은 실제로 몸을 움직이는 순간 — 남은 시간을 보여야 서두르지 않는다).
+                StepType.NOTICE -> CircularTimer(progress = progress, centerText = "$remainSec")
+                else -> {}
             }
         }
 

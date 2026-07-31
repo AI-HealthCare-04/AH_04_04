@@ -3,6 +3,7 @@ package com.aihealthcare.ah0404.mission
 import com.aihealthcare.ah0404.sensor.WalkingStepDetectorLogic
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -371,5 +372,51 @@ class WalkingSessionViewModelTest {
 
         assertEquals(0, fake.pauseCount)
         assertEquals(0, fake.resumeCount)
+    }
+
+    // ── #312: 알림 '중단' 액션의 역방향 신호(stopRequestListener) 배선 ──────────
+
+    @org.junit.After
+    fun clearStopListener() {
+        // 전역 홀더라 테스트 간 오염 방지.
+        WalkingMeasurement.stopRequestListener = null
+    }
+
+    @Test
+    fun notification_stop_request_finishes_session_without_losing_steps() {
+        val fake = FakeController()
+        val vm = WalkingSessionViewModel(fake)
+        vm.startMeasuring()
+        fake.snapshot = WalkingSnapshot(steps = 321, durationSec = 200)
+
+        // 알림 '중단' 탭 == 서비스가 이 리스너를 부른다 → finish() 경로(스냅샷 확정, 유실 없음).
+        WalkingMeasurement.stopRequestListener!!.invoke()
+
+        assertEquals(WalkingSessionViewModel.Phase.DONE, vm.uiState.phase)
+        assertEquals(321, vm.uiState.steps)
+        assertEquals(1, fake.stopCount)
+        assertNull("측정 종료 후엔 신호 연결 해제", WalkingMeasurement.stopRequestListener)
+    }
+
+    @Test
+    fun stop_request_listener_registered_only_while_measuring() {
+        val fake = FakeController()
+        val vm = WalkingSessionViewModel(fake)
+        assertNull("측정 전엔 미등록", WalkingMeasurement.stopRequestListener)
+
+        vm.startMeasuring()
+        assertNotNull("측정 중 등록", WalkingMeasurement.stopRequestListener)
+
+        vm.reset() // 화면 이탈
+        assertNull("이탈 시 해제", WalkingMeasurement.stopRequestListener)
+        assertEquals(1, fake.cancelCount)
+    }
+
+    @Test
+    fun stop_request_listener_not_registered_when_start_fails() {
+        val fake = FakeController().apply { registerSucceeds = false }
+        val vm = WalkingSessionViewModel(fake)
+        vm.startMeasuring()
+        assertNull("시작 실패면 등록하지 않는다", WalkingMeasurement.stopRequestListener)
     }
 }
