@@ -13,15 +13,27 @@ import com.aihealthcare.ah0404.network.PredictionInputsResponse
 import com.aihealthcare.ah0404.network.RecordApi
 import com.aihealthcare.ah0404.network.RiskHistoryItem
 import com.aihealthcare.ah0404.network.RiskHistoryResponse
+import com.aihealthcare.ah0404.network.StampDay
 import com.aihealthcare.ah0404.network.StampsResponse
 import com.aihealthcare.ah0404.network.WalkingDailyResponse
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.yield
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 /**
@@ -31,7 +43,14 @@ import org.junit.Test
  *
  *  refresh() 를 runBlocking 으로 직접 호출해 Main 디스패처(viewModelScope) 의존 없이 검증한다.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class RecordViewModelTest {
+
+    // 월 조회 세대 가드 테스트는 load()→viewModelScope.launch 를 쓰므로 Main 을 테스트 디스패처로 교체한다.
+    //   runBlocking + 직접 refresh() 로 도는 다른 테스트는 Main 을 쓰지 않아 영향받지 않는다.
+    private val dispatcher = StandardTestDispatcher()
+    @Before fun setUp() = Dispatchers.setMain(dispatcher)
+    @After fun tearDown() = Dispatchers.resetMain()
 
     private class FakeRecordApi(
         var history: () -> RiskHistoryResponse,
@@ -272,5 +291,43 @@ class RecordViewModelTest {
         assertEquals(listOf(70, 74), ui.trend.map { it.score })
         assertEquals(listOf(false, false), ui.trend.map { it.newBaseline }) // 같은 코호트 → 경계 없음
         assertEquals(72, ui.cohort?.lowerCount) // 또래 분포도 UI 상태까지 전달(#193 기록탭 이관)
+    }
+
+    @Test
+    fun stale_month_response_is_dropped_after_reload() = runTest(dispatcher) {
+        // 달력 월 조회 계정 격리(리뷰 #302, 13:43): A 사용자의 느린 loadMonth 응답이 도착하기 전에 재진입(load)이
+        //   새 월 조회를 시작하면(계정 전환 후 #328 VM 재생성·재진입 포함), A 의 늦은 stamps 응답은 현재 화면에
+        //   반영되지 않는다. 같은 달을 보고 있어도(달 번호만 비교하던 기존 가드로는 못 막던 케이스) 세대 토큰으로 차단.
+        var stampsCall = 0
+        val api = object : RecordApi {
+            override suspend fun getRiskHistory(limit: Int) = RiskHistoryResponse(emptyList())
+            override suspend fun getMissionLogs(date: String?, from: String?, to: String?) =
+                MissionLogListResponse(emptyList())
+            override suspend fun getPredictionInputs() = PredictionInputsResponse()
+            override suspend fun getWalkingDaily(days: Int) = WalkingDailyResponse()
+            override suspend fun getChallengeTotals() = ChallengeTotalsResponse()
+            override suspend fun getStamps(month: String): StampsResponse {
+                stampsCall++
+                return if (stampsCall == 1) {
+                    delay(10_000) // 사용자 A: 느린 조회(연결 지연)
+                    StampsResponse(month, listOf(StampDay("2026-07-01", "success")))
+                } else {
+                    StampsResponse(month, listOf(StampDay("2026-07-02", "great_success")))
+                }
+            }
+            override suspend fun getLatestPrediction() = RiskLatestResponse()
+            override suspend fun getScoreSimulation() = ScoreSimulationResponse()
+            override suspend fun getCohortDistribution(): CohortDistributionResponse = error("이 테스트는 또래 분포를 부르지 않는다")
+            override suspend fun reassessRiskPrediction(body: RiskReassessRequest): RiskReassessResponse =
+                error("이 테스트는 재평가를 부르지 않는다")
+        }
+        val vm = RecordViewModel(api)
+        vm.load(); runCurrent() // A: loadMonth 진행 중(getStamps delay 대기)
+        vm.load(); advanceUntilIdle() // 재진입(B): 새 loadMonth → 늦게 도착한 A 응답은 세대 불일치로 폐기
+        assertEquals(
+            "가장 최근 조회(B)의 스탬프만 반영, 늦게 온 A 응답은 무시",
+            mapOf("2026-07-02" to "great_success"),
+            vm.stampsByDate,
+        )
     }
 }

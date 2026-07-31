@@ -81,6 +81,10 @@ class RecordViewModel(
     // 겹친 refresh 중 최신 것만 상태를 commit 하도록 식별하는 세대 토큰.
     private var generation = 0
 
+    // 겹친 월 조회(loadMonth) 중 최신 것만 commit 하도록 식별하는 세대 토큰(리뷰 #302 — 계정 전환·재진입 시
+    //   같은 달을 보던 이전 응답이 새 화면을 덮지 않게). refresh 와 독립.
+    private var monthGeneration = 0
+
     // 계정 전환 시 이전 사용자 데이터 격리는 MainActivity 가 MAIN VM 저장소를 SessionStore.authRevision 마다
     //   새로 만들어(#328) 구조적으로 처리한다 — 이 VM 도 계정이 바뀌면 새 인스턴스로 재생성되므로, 여기서
     //   별도 초기화 로직을 두지 않는다.
@@ -103,13 +107,17 @@ class RecordViewModel(
     }
 
     private fun loadMonth(year: Int, month1: Int) {
+        val gen = ++monthGeneration
         viewModelScope.launch {
             val (from, to) = monthBounds(year, month1)
             val month = String.format(Locale.US, "%04d-%02d", year, month1)
             val stampsResult = safeCall { api.getStamps(month).days }
             val logsResult = safeCall { api.getMissionLogs(from = from, to = to).logs }
-            // 이동 중 다른 달을 이미 골랐으면 낡은 응답은 버린다.
-            if (year != calYear || month1 != calMonth) return@launch
+            // 이 조회 이후 다른 loadMonth(달 이동·재진입·계정 전환 후 재load)가 시작됐으면 낡은 응답은 버린다(리뷰 #302).
+            //   달 번호만 비교하던 기존 가드는 '같은 달을 보던 이전 사용자'의 늦은 stamps/logs 응답이 계정 전환 후
+            //   새 사용자 화면에 반영되는 경로를 못 막는다 → refresh() 와 같은 세대(generation) 토큰으로 가장 최근
+            //   loadMonth 만 commit 한다. (계정 전환 시 VM 자체가 파기되는 #328 과 별개로, VM 관측 가능한 방어.)
+            if (gen != monthGeneration) return@launch
             stampsResult.onSuccess { days -> stampsByDate = days.associate { it.date to it.dailyResult } }
                 .onFailure { Log.w(TAG, "스탬프 조회 실패: ${it.message}") }
             logsResult.onSuccess { monthLogs = it }
