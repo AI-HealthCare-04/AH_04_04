@@ -70,33 +70,32 @@ fun RiskDistributionChart(data: CohortDistributionResponse, modifier: Modifier =
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(percent, fontSize = 34.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
-        if (highTail) {
-            // §5.1 위험 높은 쪽 꼬리: 행동 유도 헤드라인으로 교체(면적 라벨은 차트에서 숨김).
-            Text(
+        // 또래 범위 + 순위 문장은 '항상' 표시한다(§1: % 숫자와 백분위 문장을 어느 한쪽만 남기지 않음).
+        //   꼬리 케이스에서도 이 백분위 정보는 유지하고(리뷰 #302), 프레임 문구만 아래에서 덧붙인다.
+        Text(
+            riskAgeSexLine(data.ageLabel, sexLabel),
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            riskRankLine(rank),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Medium,
+            color = CurveColor,
+        )
+        // §5.1 꼬리 프레임: 위험 높은 쪽이면 행동 유도 문구를 '추가'(백분위는 위에서 유지), 낮은 쪽이면 유지 격려.
+        when {
+            highTail -> Text(
                 RISK_HEADLINE_TAIL,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Medium,
                 color = CurveColor,
             )
-        } else {
-            Text(
-                riskAgeSexLine(data.ageLabel, sexLabel),
-                style = MaterialTheme.typography.bodyLarge,
+            lowTail -> Text(
+                RISK_LOW_TAIL_SUFFIX,
+                style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Text(
-                riskRankLine(rank),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Medium,
-                color = CurveColor,
-            )
-            if (lowTail) {
-                Text(
-                    RISK_LOW_TAIL_SUFFIX,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
         }
         Spacer(Modifier.height(12.dp))
         Text(
@@ -180,18 +179,18 @@ private fun DrawScope.drawDistribution(
         strokeWidth = 2.dp.toPx(),
     )
     drawCircle(MarkerColor, radius = 5.dp.toPx(), center = Offset(markerX, markerY))
-    drawChartText(riskMarkerLabel(percent), markerX, markerY - 10.dp.toPx(), CurveColor, 13.dp.toPx(), bold = true)
+    drawChartText(riskMarkerLabel(percent), markerX, markerY - 10.dp.toPx(), CurveColor, 13.sp.toPx(), bold = true)
 
     // 5) 면적 라벨(꼬리 케이스면 숨김) — 좁아 겹치면 생략.
     if (showAreaLabels) {
         val minLabelW = 64.dp.toPx()
         val labelY = baseline - curveH * 0.35f
         if (markerX - padL > minLabelW) {
-            drawChartText(riskAreaLower(lowerCount), (padL + markerX) / 2f, labelY, AreaLowerLabel, 12.dp.toPx())
+            drawChartText(riskAreaLower(lowerCount), (padL + markerX) / 2f, labelY, AreaLowerLabel, 12.sp.toPx())
         }
         val rightEdge = w - padR
         if (rightEdge - markerX > minLabelW) {
-            drawChartText(riskAreaHigher(higherCount(lowerCount)), (markerX + rightEdge) / 2f, labelY, AreaHigherLabel, 12.dp.toPx())
+            drawChartText(riskAreaHigher(higherCount(lowerCount)), (markerX + rightEdge) / 2f, labelY, AreaHigherLabel, 12.sp.toPx())
         }
     }
 
@@ -203,16 +202,16 @@ private fun DrawScope.drawDistribution(
     drawRoundRect(ZoneMidFill, Offset(px(0.15f), bandTop), Size(px(0.30f) - px(0.15f), bandH), corner)
     drawRoundRect(ZoneHighFill, Offset(px(0.30f), bandTop), Size(px(0.50f) - px(0.30f), bandH), corner)
     val zoneLabelY = bandTop + bandH + 13.dp.toPx()
-    drawChartText(RISK_ZONE_LOW, (px(0f) + px(0.15f)) / 2f, zoneLabelY, ZoneLowLabel, 11.dp.toPx())
-    drawChartText(RISK_ZONE_MID, (px(0.15f) + px(0.30f)) / 2f, zoneLabelY, ZoneMidLabel, 11.dp.toPx())
-    drawChartText(RISK_ZONE_HIGH, (px(0.30f) + px(0.50f)) / 2f, zoneLabelY, ZoneHighLabel, 11.dp.toPx())
+    drawChartText(RISK_ZONE_LOW, (px(0f) + px(0.15f)) / 2f, zoneLabelY, ZoneLowLabel, 11.sp.toPx())
+    drawChartText(RISK_ZONE_MID, (px(0.15f) + px(0.30f)) / 2f, zoneLabelY, ZoneMidLabel, 11.sp.toPx())
+    drawChartText(RISK_ZONE_HIGH, (px(0.30f) + px(0.50f)) / 2f, zoneLabelY, ZoneHighLabel, 11.sp.toPx())
 
     // 7) x축 라벨(0% · 15% · 30% · 50%+). y축 눈금/라벨은 그리지 않는다.
     val axisY = h - 6.dp.toPx()
-    drawChartText("0%", px(0f), axisY, AxisLabel, 11.dp.toPx())
-    drawChartText("15%", px(0.15f), axisY, AxisLabel, 11.dp.toPx())
-    drawChartText("30%", px(0.30f), axisY, AxisLabel, 11.dp.toPx())
-    drawChartText("50%+", px(0.50f), axisY, AxisLabel, 11.dp.toPx())
+    drawChartText("0%", px(0f), axisY, AxisLabel, 11.sp.toPx())
+    drawChartText("15%", px(0.15f), axisY, AxisLabel, 11.sp.toPx())
+    drawChartText("30%", px(0.30f), axisY, AxisLabel, 11.sp.toPx())
+    drawChartText("50%+", px(0.50f), axisY, AxisLabel, 11.sp.toPx())
 }
 
 private fun DrawScope.drawChartText(text: String, centerX: Float, baselineY: Float, color: Color, sizePx: Float, bold: Boolean = false) {

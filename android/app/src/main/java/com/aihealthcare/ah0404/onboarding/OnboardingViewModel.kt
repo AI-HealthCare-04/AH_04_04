@@ -290,16 +290,26 @@ class OnboardingViewModel(
     private suspend fun predictAndFinish() {
         val pid = profileId ?: throw IllegalStateException("프로필 정보가 없습니다. 프로필부터 다시 진행해 주세요.")
         result = api.createRiskPrediction(RiskPredictionRequest(pid))
-        // 또래 분포 차트(#193): 결과 카드와 독립. 서버 미지원(구버전)·65세 미만 등으로 실패해도 차트만 안 뜨고
-        //   온보딩 완료 흐름엔 영향 없다(널 안전). 취소는 구조적 동시성 위해 전파한다.
-        cohort = try {
-            api.getCohortDistribution()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            null
-        }
+        // 결과를 먼저 확정하고 즉시 RESULT 로 이동한다 — 선택 기능인 코호트 조회(느린 연결·타임아웃)가 이미 완료된
+        //   온보딩을 로딩 화면에 가두지 않게(리뷰 #302). 코호트는 아래에서 별도 코루틴으로 독립 조회한다.
         step = OnbStep.RESULT
+        loadCohortDistribution()
+    }
+
+    /**
+     * 또래 분포 병합 차트(#193) 데이터를 **결과 확정과 독립적으로**(별도 코루틴) 조회한다. 지연·실패·서버 미지원·
+     * 65세 미만이면 cohort=null 로 두어 차트만 미표시 — 온보딩 완료 흐름을 막지 않는다(리뷰 #302).
+     */
+    internal fun loadCohortDistribution() {
+        viewModelScope.launch {
+            cohort = try {
+                api.getCohortDistribution()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+        }
     }
 
     fun dismissError() { error = null }
