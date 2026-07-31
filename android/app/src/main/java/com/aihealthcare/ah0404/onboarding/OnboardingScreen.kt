@@ -36,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -464,50 +465,52 @@ private fun ProfileStep(vm: OnboardingViewModel) {
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 private fun AssessmentStep(vm: OnboardingViewModel) {
-    // 영상 따라 측정하는 가이드 화면(모델 B: 회당 버튼). 측정 완료 시 소요 초를 입력값에 채운다.
-    //   측정이 어려운 사용자는 아래 직접 입력으로도 진행 가능(폴백).
+    // 측정 전용(#300): 값의 유일한 출처는 가이드 측정(StsAssessmentScreen). 수동 입력칸은 두지 않는다 —
+    //   빈 입력칸이 "직접 재야 하나?" 혼란을 주고, 직접 입력을 열면 대충 값을 넣어 측정 의미가 사라지기 때문.
     var measuring by remember { mutableStateOf(false) }
     if (measuring) {
         StsAssessmentScreen(
+            // 측정 완료 시 소요 초를 값에 채운다. 재측정이면 새 측정이 이전 값을 덮어쓴다(취소하면 이전 값 유지).
             onMeasured = { sec -> vm.chairStandSec = formatStsSeconds(sec); measuring = false },
             onCancel = { measuring = false },
         )
         return
     }
-    val chairStandSeconds = parseChairStandSeconds(vm.chairStandSec)
-    val showInputError = vm.chairStandSec.isNotBlank() && chairStandSeconds == null
+    // 측정 완료 = 유효한 측정값 존재. 값이 있으면 읽기 전용으로 보여주고 '검사 완료'를 노출한다.
+    val measuredSeconds = parseChairStandSeconds(vm.chairStandSec)
+    val measured = measuredSeconds != null
     StepScaffold(
         title = "간단 체력 검사",
         subtitle = "어려우면 건너뛰어도 괜찮아요. 나중에 언제든 할 수 있어요.",
         onBack = { vm.goBack() },
         content = {
             Text("영상을 따라 5번 앉았다 일어서면, 걸린 시간을 재드려요.", style = MaterialTheme.typography.bodyLarge)
-            Spacer(Modifier.height(Dimens.Space8))
-            Text("의자에서 5번 앉았다 일어서기 (초)", style = MaterialTheme.typography.titleMedium)
-            AigoTextField(
-                vm.chairStandSec,
-                { vm.chairStandSec = it },
-                "예: 12.5",
-                isError = showInputError,
-                keyboardType = KeyboardType.Decimal,
-            )
-            if (showInputError) {
+            if (measured) {
+                Spacer(Modifier.height(Dimens.Space12))
+                // 측정 결과 읽기 전용 표시(수동 편집 불가, #300). 값은 측정으로만 바뀐다.
                 Text(
-                    text = "0보다 큰 숫자를 입력해 주세요.",
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodyMedium,
+                    "측정 결과: ${vm.chairStandSec}초",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
                 )
             }
         },
         footer = {
             Column(verticalArrangement = Arrangement.spacedBy(Dimens.Space12)) {
-                AigoPrimaryButton(text = "따라하며 측정하기", onClick = { measuring = true })
-                AigoSecondaryButton(
-                    text = "검사 완료",
-                    onClick = { chairStandSeconds?.let(vm::submitAssessment) },
-                    enabled = chairStandSeconds != null,
-                )
-                AigoSecondaryButton(text = "건너뛰기", onClick = vm::skipAssessment)
+                if (measured) {
+                    // 측정 후: 다시 측정 · 검사 완료 · 건너뛰기.
+                    AigoPrimaryButton(text = "다시 측정하기", onClick = { measuring = true })
+                    AigoSecondaryButton(
+                        text = "검사 완료",
+                        onClick = { measuredSeconds?.let(vm::submitAssessment) },
+                    )
+                    AigoSecondaryButton(text = "건너뛰기", onClick = vm::skipAssessment)
+                } else {
+                    // 측정 전: 측정 · 건너뛰기만(검사 완료 없음).
+                    AigoPrimaryButton(text = "따라하며 측정하기", onClick = { measuring = true })
+                    AigoSecondaryButton(text = "건너뛰기", onClick = vm::skipAssessment)
+                }
             }
         },
     )
