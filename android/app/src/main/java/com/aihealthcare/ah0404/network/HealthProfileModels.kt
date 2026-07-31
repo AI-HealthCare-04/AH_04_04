@@ -12,6 +12,8 @@ data class HealthProfileLatest(
     @SerialName("weight_kg") val weightKg: Double = 0.0,
     @SerialName("waist_cm") val waistCm: Double? = null,
     @SerialName("kidney_status") val kidneyStatus: String = "unknown",
+    // 단백질 제한(#304): 편집 화면에서 되돌릴 수 있게 최신값을 받아 초기 선택에 쓴다.
+    @SerialName("protein_restriction_status") val proteinRestrictionStatus: String = "unknown",
 )
 
 /**
@@ -25,4 +27,6 @@ data class HealthProfilePatchRequest(
     @SerialName("weight_kg") val weightKg: Double,
     @SerialName("waist_cm") val waistCm: Double?,
     @SerialName("kidney_status") val kidneyStatus: String,
+    // 단백질 제한(#304): 신장과 함께 미션 게이트를 정한다. 편집 화면에서 되돌릴 수 있게 함께 보낸다.
+    @SerialName("protein_restriction_status") val proteinRestrictionStatus: String,
 )

@@ -130,6 +130,14 @@ private val KIDNEY_LABELS = mapOf(
     "unknown" to "잘 모르겠어요",
 )
 
+// 단백질 제한(#304): 온보딩과 동일 라벨. 신장과 함께 고단백 미션 게이트를 정하므로 내정보에서도 편집 가능해야
+//   신장을 '없음'으로 되돌렸을 때 미션이 다시 뜬다.
+private val PROTEIN_LABELS = mapOf(
+    "none" to "해당 없음",
+    "restricted" to "제한 중",
+    "unknown" to "잘 모르겠어요",
+)
+
 @Composable
 private fun HealthInfoEditor(healthVm: HealthInfoViewModel, profile: HealthProfileLatest) {
     // 편집 상태는 profile 이 갱신되면 초기화(저장 후 최신값 반영).
@@ -137,6 +145,7 @@ private fun HealthInfoEditor(healthVm: HealthInfoViewModel, profile: HealthProfi
     var weight by remember(profile) { mutableStateOf(numberText(profile.weightKg)) }
     var waist by remember(profile) { mutableStateOf(profile.waistCm?.let(::numberText) ?: "") }
     var kidney by remember(profile) { mutableStateOf(profile.kidneyStatus) }
+    var protein by remember(profile) { mutableStateOf(profile.proteinRestrictionStatus) }
 
     AigoCard {
         Text("신체 정보", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -154,10 +163,19 @@ private fun HealthInfoEditor(healthVm: HealthInfoViewModel, profile: HealthProfi
             selected = kidney,
             onSelect = { kidney = it },
         )
+        Spacer(Modifier.height(Dimens.Space12))
+        // 단백질 제한(#304): 신장과 함께 고단백 미션 게이트라 여기서 되돌릴 수 있어야 미션이 다시 뜬다.
+        Text("단백질 제한", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(Dimens.Space8))
+        AigoSegmentedSelector(
+            options = OnbEnums.PROTEIN_RESTRICTION_STATUS.map { SegmentOption(it, PROTEIN_LABELS[it] ?: it) },
+            selected = protein,
+            onSelect = { protein = it },
+        )
         Spacer(Modifier.height(Dimens.Space16))
         AigoPrimaryButton(
             text = if (healthVm.saving) "저장 중…" else "저장",
-            onClick = { healthVm.save(height, weight, waist, kidney) {} },
+            onClick = { healthVm.save(height, weight, waist, kidney, protein) {} },
             enabled = !healthVm.saving,
         )
         Spacer(Modifier.height(Dimens.Space8))
