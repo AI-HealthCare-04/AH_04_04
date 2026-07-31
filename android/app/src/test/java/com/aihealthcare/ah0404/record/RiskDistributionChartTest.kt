@@ -1,11 +1,14 @@
-package com.aihealthcare.ah0404.onboarding
+package com.aihealthcare.ah0404.record
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 또래 분포 차트(#193) 순수 로직: 백분위→문구 매핑·꼬리 케이스·확률 포맷·x매핑·density 보간. */
+/**
+ * 또래 분포 차트(#193) 순수 로직: 백분위→문구 매핑·꼬리 케이스·x매핑·density 보간.
+ * 기록탭 개편의 확률(%) 제거 원칙에 따라 % 포맷·마커 % 라벨은 이 화면에서 노출하지 않으므로 검증 대상도 아니다.
+ */
 class RiskDistributionChartTest {
 
     @Test
@@ -13,15 +16,6 @@ class RiskDistributionChartTest {
         assertEquals("남성", sexLabelKo("male"))
         assertEquals("여성", sexLabelKo("female"))
         assertEquals("남성", sexLabelKo("unknown")) // 기본 남성(방어)
-    }
-
-    @Test
-    fun `확률 포맷 - 소수 1자리, 0점5퍼센트 미만, 50퍼센트 초과 실제값`() {
-        assertEquals("18.0%", formatProbabilityPercent(0.18f))
-        assertEquals("5.3%", formatProbabilityPercent(0.053f))
-        assertEquals("0.5% 미만", formatProbabilityPercent(0.004f)) // 0.5% 미만
-        assertEquals("0.5%", formatProbabilityPercent(0.005f)) // 경계는 표시
-        assertEquals("62.0%", formatProbabilityPercent(0.62f)) // 50% 초과여도 실제값 표시(§4.3)
     }
 
     @Test
@@ -45,20 +39,20 @@ class RiskDistributionChartTest {
     }
 
     @Test
-    fun `헤드라인 문장 - 스펙 문구 그대로`() {
+    fun `헤드라인 문장 - 스펙 문구 그대로(퍼센트 없음)`() {
         assertEquals("같은 연령대(75–79세) 남성 100명 중", riskAgeSexLine("75–79세", "남성"))
         assertEquals("위험이 낮은 쪽에서 73번째", riskRankLine(73))
         assertEquals("나보다 낮음 72명", riskAreaLower(72))
         assertEquals("나보다 높음 27명", riskAreaHigher(27))
-        assertEquals("나 · 18.0%", riskMarkerLabel("18.0%"))
+        assertEquals("나", RISK_MARKER_LABEL) // 마커 라벨은 % 없이 "나"만
         assertEquals("또래 여성 분포 (국민건강영양조사 기반)", riskCurveCaption("여성"))
     }
 
     @Test
-    fun `차트 접근성 설명 - 순번과 확률`() {
+    fun `차트 접근성 설명 - 순번만, 확률 미노출`() {
         assertEquals(
-            "또래 100명 중 위험이 낮은 쪽에서 73번째. 추정 확률 18.0%",
-            riskChartContentDescription(72, "18.0%"),
+            "또래 100명 중 위험이 낮은 쪽에서 73번째.",
+            riskChartContentDescription(72),
         )
     }
 

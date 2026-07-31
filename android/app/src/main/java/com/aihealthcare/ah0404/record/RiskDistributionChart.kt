@@ -1,4 +1,4 @@
-package com.aihealthcare.ah0404.onboarding
+package com.aihealthcare.ah0404.record
 
 import android.graphics.Paint
 import android.graphics.Typeface
@@ -28,15 +28,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aihealthcare.ah0404.network.CohortDistributionResponse
-import java.util.Locale
 import kotlin.math.min
 
 /**
- * 또래 분포 병합 차트(#193) — "분포 곡선 + 내 위치 마커 + 구간 띠"를 한 축에 병합해 온보딩 결과 카드에 표시한다.
+ * 또래 분포 병합 차트(#193) — "분포 곡선 + 내 위치 마커 + 구간 띠"를 한 축에 병합해 기록탭 근육 건강 정보에 표시한다.
+ *
+ * 기록탭 개편의 '확률(%) 제거' 원칙 적용(결정 2026-07-31): raw 확률=위험 예측률이므로 헤드라인·마커·x축·
+ *  접근성 문구에서 % 숫자를 노출하지 않는다. 또래 중 내 위치는 **lower_count 백분위**("100명 중 낮은 쪽에서
+ *  N번째")로만 표현한다 — quantiles 기반이라 근육 건강 점수 순서와 일관된다(#193 §3.1 백분위↔점수 공존).
+ *  마커 x 위치는 내부적으로 확률로 배치되지만 숫자는 드러내지 않고, 낮음/중간/높음 '띠'로만 질적 위치를 준다.
  *
  * 스펙(#193 issue193): 곡선은 중립 단색(녹→적 그라데이션 금지), 녹/황/적은 축 아래 '띠'에만 + 텍스트 라벨 병기,
- *  내 위치 왼쪽 면적을 진하게, y축 눈금 없음, 확률%와 백분위 문장 항상 동시 표시. lowerCount≥85 는 행동 유도
- *  헤드라인으로 전환(§5.1). 앱은 라이트 고정 테마라 §2 색상표의 라이트값을 쓴다(다크 스킴은 앱 전역 미도입).
+ *  내 위치 왼쪽 면적을 진하게, y축 눈금 없음. lowerCount≥85 는 행동 유도 헤드라인으로 전환(§5.1).
+ *  앱은 라이트 고정 테마라 §2 색상표의 라이트값을 쓴다(다크 스킴은 앱 전역 미도입).
  */
 
 // ── 색상 토큰(#193 §2, 라이트) — 앱이 라이트 고정이라 라이트값만. 다크 도입 시 여기만 분기하면 된다.
@@ -50,28 +54,19 @@ private val ZoneMidFill = Color(0xFFEDA100).copy(alpha = 0.35f)
 private val ZoneMidLabel = Color(0xFF854F0B)
 private val ZoneHighFill = Color(0xFFD85A30).copy(alpha = 0.35f)
 private val ZoneHighLabel = Color(0xFF993C1D)
-private val AxisLabel = Color(0xFF6B6B6B)
 private val AreaLowerLabel = Color(0xFF3A3A3A)
 private val AreaHigherLabel = Color(0xFF8A8A8A)
 
 @Composable
 fun RiskDistributionChart(data: CohortDistributionResponse, modifier: Modifier = Modifier) {
     val sexLabel = sexLabelKo(data.sex)
-    val percent = formatProbabilityPercent(data.probability)
     val rank = rankFromLowerCount(data.lowerCount)
     val highTail = isHighRiskTail(data.lowerCount)
     val lowTail = isLowRiskTail(data.lowerCount)
-    val chartDescription = riskChartContentDescription(data.lowerCount, percent)
+    val chartDescription = riskChartContentDescription(data.lowerCount)
 
     Column(modifier = modifier.fillMaxWidth().semantics { contentDescription = chartDescription }) {
-        Text(
-            RISK_CARD_CAPTION,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(percent, fontSize = 34.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
-        // 또래 범위 + 순위 문장은 '항상' 표시한다(§1: % 숫자와 백분위 문장을 어느 한쪽만 남기지 않음).
-        //   꼬리 케이스에서도 이 백분위 정보는 유지하고(리뷰 #302), 프레임 문구만 아래에서 덧붙인다.
+        // 헤드라인은 % 대신 백분위 순번. 또래 범위 문장과 항상 함께 둔다(꼬리 케이스에서도 유지, 리뷰 #302).
         Text(
             riskAgeSexLine(data.ageLabel, sexLabel),
             style = MaterialTheme.typography.bodyLarge,
@@ -79,11 +74,11 @@ fun RiskDistributionChart(data: CohortDistributionResponse, modifier: Modifier =
         )
         Text(
             riskRankLine(rank),
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Medium,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
             color = CurveColor,
         )
-        // §5.1 꼬리 프레임: 위험 높은 쪽이면 행동 유도 문구를 '추가'(백분위는 위에서 유지), 낮은 쪽이면 유지 격려.
+        // §5.1 꼬리 프레임: 위험 높은 쪽이면 행동 유도 문구를 '추가', 낮은 쪽이면 유지 격려.
         when {
             highTail -> Text(
                 RISK_HEADLINE_TAIL,
@@ -113,7 +108,6 @@ fun RiskDistributionChart(data: CohortDistributionResponse, modifier: Modifier =
                 density = data.density,
                 probability = data.probability,
                 lowerCount = data.lowerCount,
-                percent = percent,
                 showAreaLabels = !highTail,
             )
         }
@@ -126,12 +120,11 @@ fun RiskDistributionChart(data: CohortDistributionResponse, modifier: Modifier =
     }
 }
 
-/** 병합 차트 본체를 그린다(스펙 §2 그리는 순서). y축 눈금 없음. */
+/** 병합 차트 본체를 그린다(스펙 §2 그리는 순서). y축 눈금 없음. x축 % 숫자는 표기하지 않는다(확률 제거). */
 private fun DrawScope.drawDistribution(
     density: List<List<Float>>,
     probability: Float,
     lowerCount: Int,
-    percent: String,
     showAreaLabels: Boolean,
 ) {
     val w = size.width
@@ -143,7 +136,7 @@ private fun DrawScope.drawDistribution(
     val baseline = h * 0.58f
     val curveH = baseline - curveTop
 
-    // x = 확률 → 화면 좌표(스펙 §2 gpos: 0.5 에서 클램프).
+    // x = 확률 → 화면 좌표(스펙 §2 gpos: 0.5 에서 클램프). 숫자는 노출하지 않고 위치만 쓴다.
     fun px(p: Float): Float = padL + plotW * probToPlotFraction(p)
     fun cy(y: Float): Float = baseline - (y / 100f) * curveH
 
@@ -170,7 +163,7 @@ private fun DrawScope.drawDistribution(
         drawPath(curve, CurveColor, style = Stroke(width = 2.dp.toPx()))
     }
 
-    // 4) 내 위치 마커: 곡선 위 지점부터 베이스라인까지 수직선 + 원.
+    // 4) 내 위치 마커: 곡선 위 지점부터 베이스라인까지 수직선 + 원. 라벨은 % 없이 "나"만.
     val markerY = if (density.isNotEmpty()) cy(densityYAt(density, markerP)) else curveTop
     drawLine(
         MarkerColor,
@@ -187,7 +180,7 @@ private fun DrawScope.drawDistribution(
         ascent = markerLabelPaint.fontMetrics.ascent,
         minTop = 2.dp.toPx(),
     )
-    drawContext.canvas.nativeCanvas.drawText(riskMarkerLabel(percent), markerX, markerLabelBaseline, markerLabelPaint)
+    drawContext.canvas.nativeCanvas.drawText(RISK_MARKER_LABEL, markerX, markerLabelBaseline, markerLabelPaint)
 
     // 5) 면적 라벨(꼬리 케이스면 숨김) — 좁아 겹치면 생략.
     if (showAreaLabels) {
@@ -202,7 +195,7 @@ private fun DrawScope.drawDistribution(
         }
     }
 
-    // 6) 구간 띠(낮음 0~15 / 중간 15~30 / 높음 30~50+) — 색만으로 의미 X, 아래에 텍스트 라벨 병기.
+    // 6) 구간 띠(낮음 / 중간 / 높음) — 색만으로 의미 X, 아래에 텍스트 라벨 병기. % 눈금은 없다.
     val bandTop = baseline + h * 0.06f
     val bandH = h * 0.09f
     val corner = CornerRadius(2.dp.toPx())
@@ -213,13 +206,6 @@ private fun DrawScope.drawDistribution(
     drawChartText(RISK_ZONE_LOW, (px(0f) + px(0.15f)) / 2f, zoneLabelY, ZoneLowLabel, 11.sp.toPx())
     drawChartText(RISK_ZONE_MID, (px(0.15f) + px(0.30f)) / 2f, zoneLabelY, ZoneMidLabel, 11.sp.toPx())
     drawChartText(RISK_ZONE_HIGH, (px(0.30f) + px(0.50f)) / 2f, zoneLabelY, ZoneHighLabel, 11.sp.toPx())
-
-    // 7) x축 라벨(0% · 15% · 30% · 50%+). y축 눈금/라벨은 그리지 않는다.
-    val axisY = h - 6.dp.toPx()
-    drawChartText("0%", px(0f), axisY, AxisLabel, 11.sp.toPx())
-    drawChartText("15%", px(0.15f), axisY, AxisLabel, 11.sp.toPx())
-    drawChartText("30%", px(0.30f), axisY, AxisLabel, 11.sp.toPx())
-    drawChartText("50%+", px(0.50f), axisY, AxisLabel, 11.sp.toPx())
 }
 
 private fun DrawScope.drawChartText(text: String, centerX: Float, baselineY: Float, color: Color, sizePx: Float, bold: Boolean = false) {
@@ -236,21 +222,15 @@ private fun chartTextPaint(color: Color, sizePx: Float, bold: Boolean = false): 
 
 // ==================== 순수 헬퍼(테스트 대상) ====================
 
-internal const val RISK_CARD_CAPTION = "현재 입력 기준 근감소증 추정 확률"
 internal const val RISK_HEADLINE_TAIL = "지금 근력운동을 시작하면 가장 크게 낮아지는 구간이에요"
 internal const val RISK_LOW_TAIL_SUFFIX = "잘 유지하고 있어요"
 internal const val RISK_DISCLAIMER = "동일 모델로 예측한 국민건강영양조사 표본 내 위치이며 진단이 아닙니다"
 internal const val RISK_ZONE_LOW = "낮음"
 internal const val RISK_ZONE_MID = "중간"
 internal const val RISK_ZONE_HIGH = "높음"
+internal const val RISK_MARKER_LABEL = "나"
 
 internal fun sexLabelKo(sex: String): String = if (sex == "female") "여성" else "남성"
-
-/** 확률 표시(§4.3): 소수 1자리("18.0%"). 0.5% 미만은 "0.5% 미만". */
-internal fun formatProbabilityPercent(p: Float): String {
-    if (p < 0.005f) return "0.5% 미만"
-    return String.format(Locale.US, "%.1f%%", p * 100f)
-}
 
 /** 순번(§4.1): 헤드라인은 lowerCount+1 번째. */
 internal fun rankFromLowerCount(lowerCount: Int): Int = lowerCount + 1
@@ -273,13 +253,11 @@ internal fun riskAreaLower(lowerCount: Int): String = "나보다 낮음 ${lowerC
 
 internal fun riskAreaHigher(higherCount: Int): String = "나보다 높음 ${higherCount}명"
 
-internal fun riskMarkerLabel(percent: String): String = "나 · $percent"
-
 internal fun riskCurveCaption(sexLabel: String): String = "또래 $sexLabel 분포 (국민건강영양조사 기반)"
 
-/** 차트 전체 contentDescription(§6). N=순번(lowerCount+1). */
-internal fun riskChartContentDescription(lowerCount: Int, percent: String): String =
-    "또래 100명 중 위험이 낮은 쪽에서 ${rankFromLowerCount(lowerCount)}번째. 추정 확률 $percent"
+/** 차트 전체 contentDescription(§6). N=순번(lowerCount+1). 확률 % 는 읽지 않는다(확률 제거). */
+internal fun riskChartContentDescription(lowerCount: Int): String =
+    "또래 100명 중 위험이 낮은 쪽에서 ${rankFromLowerCount(lowerCount)}번째."
 
 /** x 좌표 매핑의 분율(0~1). p 는 0.5 에서 클램프(스펙 §2 gpos). */
 internal fun probToPlotFraction(p: Float): Float = (min(p, 0.5f) / 0.5f).coerceIn(0f, 1f)

@@ -28,6 +28,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.aihealthcare.ah0404.network.CohortDistributionResponse
 import com.aihealthcare.ah0404.network.RiskHistoryItem
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
@@ -94,6 +95,7 @@ internal data class MuscleScoreUi(
     val muscSim: List<ScoreSimPoint>,
     val stsSeconds: Double?, // §3.4 5STS(초). null=미측정/스킵 → 안전망 카드 미표시
     val bmi: Double?,        // §3.4
+    val cohort: CohortDistributionResponse? = null, // #193 또래 분포. null=미탑재/65세미만/실패 → 카드 미표시
 )
 
 private const val DISPLAY_FLOOR = 5 // 표시 하한 5점(§3.1) — 계산·저장은 0~100, 화면 표시만 최저 5.
@@ -134,6 +136,7 @@ internal fun MuscleScoreScreen(
                 ScoreHeadlineCard(score, ui.band)
                 StsSafetyCard(ui, onGoToMissions) // §3.4 (조건 충족 시에만)
                 ScoreTrendCard(ui.trend)
+                CohortDistributionCard(ui.cohort) // #193 또래 중 내 위치(데이터 있을 때만)
                 ScoreSimulationCard(ui.muscSim, ui.walkSim, score)
                 MedicalDisclaimer(text = MEDICAL_DISCLAIMER_DEFAULT)
                 Spacer(Modifier.height(Dimens.Space8))
@@ -278,6 +281,17 @@ private fun ScoreTrendChart(segments: List<List<ScorePoint>>) {
                 drawCircle(primary, radius = if (isLast) 6.dp.toPx() else 5.dp.toPx(), center = c)
             }
         }
+    }
+}
+
+// ── §193 또래 분포 — '또래 중 내 위치'(확률% 미노출, 백분위·곡선·구간 띠) ──────────
+@Composable
+private fun CohortDistributionCard(cohort: CohortDistributionResponse?) {
+    if (cohort == null) return // 미탑재·65세 미만·조회 실패 → 카드 자체를 그리지 않는다(다른 섹션 무영향).
+    AigoCard {
+        Text("또래 중 내 위치", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(Dimens.Space8))
+        RiskDistributionChart(data = cohort)
     }
 }
 

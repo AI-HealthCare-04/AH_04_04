@@ -44,6 +44,13 @@ interface RecordApi {
     suspend fun getScoreSimulation(): ScoreSimulationResponse
 
     /**
+     * 또래 분포 차트(#193) — 근육 건강 정보의 '또래 중 내 위치' 카드. 최신 예측 기준 코호트 분포.
+     *  코호트표 미탑재·65세 미만이면 서버가 실패로 응답 → 차트만 미표시(다른 섹션 무영향).
+     */
+    @GET("risk-predictions/me/cohort-distribution")
+    suspend fun getCohortDistribution(): CohortDistributionResponse
+
+    /**
      * 근육 건강 점수 재평가 — 최신 프로필 + 최근 활동으로 **새 예측을 생성**한다.
      *  '내 정보' 저장 후 이걸 불러야 편집이 점수에 실제 반영된다: GET latest 는 저장된 마지막
      *  예측을 돌려줄 뿐이라, 새 예측 없이는 프로필을 고쳐도 점수가 영원히 안 바뀐다(점수 모델

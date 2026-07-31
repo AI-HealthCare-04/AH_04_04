@@ -1,6 +1,7 @@
 package com.aihealthcare.ah0404.record
 
 import com.aihealthcare.ah0404.network.ChallengeTotalsResponse
+import com.aihealthcare.ah0404.network.CohortDistributionResponse
 import com.aihealthcare.ah0404.network.MissionLogItem
 import com.aihealthcare.ah0404.network.MissionLogListResponse
 import com.aihealthcare.ah0404.network.RiskLatestResponse
@@ -50,6 +51,7 @@ class RecordViewModelTest {
         override suspend fun getStamps(month: String) = StampsResponse(month = month)
         override suspend fun getLatestPrediction() = RiskLatestResponse()
         override suspend fun getScoreSimulation() = ScoreSimulationResponse()
+        override suspend fun getCohortDistribution(): CohortDistributionResponse = error("이 테스트는 또래 분포를 부르지 않는다")
         override suspend fun reassessRiskPrediction(body: RiskReassessRequest): RiskReassessResponse =
             error("이 테스트는 재평가를 부르지 않는다")
     }
@@ -178,6 +180,7 @@ class RecordViewModelTest {
         override suspend fun getStamps(month: String) = StampsResponse(month = month)
         override suspend fun getLatestPrediction() = RiskLatestResponse()
         override suspend fun getScoreSimulation() = ScoreSimulationResponse()
+        override suspend fun getCohortDistribution(): CohortDistributionResponse = error("이 테스트는 또래 분포를 부르지 않는다")
         override suspend fun reassessRiskPrediction(body: RiskReassessRequest): RiskReassessResponse =
             error("이 테스트는 재평가를 부르지 않는다")
     }
@@ -251,6 +254,9 @@ class RecordViewModelTest {
                 walk = listOf(ScoreSimPointDto(0, 74), ScoreSimPointDto(7, 76)),
                 musc = listOf(ScoreSimPointDto(0, 74), ScoreSimPointDto(3, 82)),
             )
+            override suspend fun getCohortDistribution() = CohortDistributionResponse(
+                probability = 0.18f, sex = "male", ageLabel = "73–79세", n = 600, lowerCount = 72,
+            )
             override suspend fun reassessRiskPrediction(body: RiskReassessRequest): RiskReassessResponse =
                 error("이 테스트는 재평가를 부르지 않는다")
         }
@@ -265,5 +271,6 @@ class RecordViewModelTest {
         assertEquals(listOf(0, 3), ui.muscSim.map { it.days })
         assertEquals(listOf(70, 74), ui.trend.map { it.score })
         assertEquals(listOf(false, false), ui.trend.map { it.newBaseline }) // 같은 코호트 → 경계 없음
+        assertEquals(72, ui.cohort?.lowerCount) // 또래 분포도 UI 상태까지 전달(#193 기록탭 이관)
     }
 }
