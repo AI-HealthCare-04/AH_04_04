@@ -36,6 +36,7 @@ fun AigoDayStepper(
     value: Int?,
     onValueChange: (Int) -> Unit,
     max: Int,
+    maxLabel: String? = null,
     modifier: Modifier = Modifier,
     min: Int = 0,
     unitLabel: String = "일",
@@ -55,6 +56,7 @@ fun AigoDayStepper(
             text = when {
                 value == null -> placeholder
                 value == min -> zeroLabel
+                value == max && maxLabel != null -> maxLabel
                 else -> "$value$unitLabel"
             },
             // 미응답 안내는 값이 아니므로 작고 흐리게 — 작은 화면(320dp)에서 긴 안내문이 버튼을 밀지 않게 weight 로 채운다.

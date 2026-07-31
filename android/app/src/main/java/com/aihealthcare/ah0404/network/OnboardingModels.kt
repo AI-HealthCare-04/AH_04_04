@@ -186,7 +186,7 @@ data class RiskPredictionResponse(
 // ── enum 허용값(요청 문자열은 이것만) — BACKEND_ONBOARDING_CONTRACT.md §3 ──────
 object OnbEnums {
     val SEX = listOf("male", "female")
-    val KIDNEY_STATUS = listOf("none", "kidney_disease", "dialysis", "unknown")
+    val KIDNEY_STATUS = listOf("none", "kidney_disease", "unknown")
     val PROTEIN_RESTRICTION_STATUS = listOf("none", "restricted", "unknown")
     val ACTIVITY_INPUT_SOURCE = listOf("self_report", "service_log")
     val INPUT_METHOD = listOf("form", "service_log", "sensor", "manual")
