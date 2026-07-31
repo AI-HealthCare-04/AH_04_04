@@ -4,6 +4,8 @@ import com.aihealthcare.ah0404.network.ChallengeTotalsResponse
 import com.aihealthcare.ah0404.network.MissionLogItem
 import com.aihealthcare.ah0404.network.MissionLogListResponse
 import com.aihealthcare.ah0404.network.RiskLatestResponse
+import com.aihealthcare.ah0404.network.RiskReassessRequest
+import com.aihealthcare.ah0404.network.RiskReassessResponse
 import com.aihealthcare.ah0404.network.ScoreSimPointDto
 import com.aihealthcare.ah0404.network.ScoreSimulationResponse
 import com.aihealthcare.ah0404.network.PredictionInputsResponse
@@ -48,6 +50,8 @@ class RecordViewModelTest {
         override suspend fun getStamps(month: String) = StampsResponse(month = month)
         override suspend fun getLatestPrediction() = RiskLatestResponse()
         override suspend fun getScoreSimulation() = ScoreSimulationResponse()
+        override suspend fun reassessRiskPrediction(body: RiskReassessRequest): RiskReassessResponse =
+            error("이 테스트는 재평가를 부르지 않는다")
     }
 
     private fun risk(vararg stages: String) =
@@ -174,6 +178,8 @@ class RecordViewModelTest {
         override suspend fun getStamps(month: String) = StampsResponse(month = month)
         override suspend fun getLatestPrediction() = RiskLatestResponse()
         override suspend fun getScoreSimulation() = ScoreSimulationResponse()
+        override suspend fun reassessRiskPrediction(body: RiskReassessRequest): RiskReassessResponse =
+            error("이 테스트는 재평가를 부르지 않는다")
     }
 
     @Test
@@ -245,6 +251,8 @@ class RecordViewModelTest {
                 walk = listOf(ScoreSimPointDto(0, 74), ScoreSimPointDto(7, 76)),
                 musc = listOf(ScoreSimPointDto(0, 74), ScoreSimPointDto(3, 82)),
             )
+            override suspend fun reassessRiskPrediction(body: RiskReassessRequest): RiskReassessResponse =
+                error("이 테스트는 재평가를 부르지 않는다")
         }
         val vm = RecordViewModel(api)
 
