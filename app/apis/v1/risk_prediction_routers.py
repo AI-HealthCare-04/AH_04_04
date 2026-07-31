@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db.session import get_db_session
 from app.dependencies.security import get_request_user
 from app.dtos.risk_prediction import (
+    CohortDistributionResponse,
     RiskPredictionCreateRequest,
     RiskPredictionCreateResponse,
     RiskPredictionHistoryResponse,
@@ -25,6 +26,19 @@ async def get_latest_risk_prediction(
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> RiskPredictionResponse:
     return await RiskPredictionService(session).get_latest_prediction(user)
+
+
+@risk_prediction_router.get(
+    "/me/cohort-distribution",
+    response_model=CohortDistributionResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_cohort_distribution(
+    user: Annotated[User, Depends(get_request_user)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> CohortDistributionResponse:
+    # #193 또래 분포 병합 차트: 온보딩 결과 위험도 카드가 quantiles·density·내 위치(lower_count)를 소비한다.
+    return await RiskPredictionService(session).get_cohort_distribution(user)
 
 
 @risk_prediction_router.get(

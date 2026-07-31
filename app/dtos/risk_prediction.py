@@ -44,6 +44,25 @@ class RiskPredictionCreateResponse(RiskPredictionResponse):
     onboarding_status: str
 
 
+class CohortDistributionResponse(BaseModel):
+    """또래 분포 병합 차트(#193) 데이터. 온보딩 결과 위험도 카드가 소비한다.
+
+    probability=사용자 근감소증 추정 확률(0~1), lower_count=100명 환산 '나보다 위험이 낮은 사람 수'
+    (서버가 quantiles 선형보간으로 산출, [1,99] 클램프), density=곡선 좌표 [[x(확률), y(상대밀도 0~100)]].
+    """
+
+    probability: float = Field(ge=0, le=1)
+    sex: Literal["male", "female"]
+    age_label: str
+    n: int = Field(ge=0)
+    lower_count: int = Field(ge=1, le=99)
+    quantiles: list[float]
+    density: list[list[float]]
+    density_method: str
+    cohort_version: str | None = None
+    model_version: str | None = None
+
+
 class RiskPredictionReassessResponse(BaseModel):
     profile_id: int
     prediction_id: int
