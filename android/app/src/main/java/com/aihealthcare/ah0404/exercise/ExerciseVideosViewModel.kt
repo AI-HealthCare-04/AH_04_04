@@ -134,9 +134,26 @@ class ExerciseVideosViewModel(
         val key = authKey()
         if (loadedAuthInitialized && key != loadedAuthKey) {
             clearUserDerivedState()
+            swapPendingForCurrentUser()
         }
         loadedAuthKey = key
         loadedAuthInitialized = true
+    }
+
+    /**
+     * 계정 전환 시 인메모리 미전송 세션([pending])을 이전 사용자 것에서 **현재 사용자 것으로 교체**한다(리뷰 #291 pending 경로).
+     *  이렇게 안 하면 화면 진입/ON_RESUME 의 [retryPending] 이 이전 사용자(A)의 남은 세션을 현재 사용자(B)의 인증·운동
+     *  template 으로 서버에 보내(오배분), [publishPending] 이 B 의 outbox 키에 A 세션을 저장할 수 있다.
+     *  - A 의 인메모리 세션을 버린다(retry 대상에서 제외) + 진행 중 전송 키([inFlight])도 잊는다(그 전송의 뒤늦은 완료는
+     *    [send] 의 epoch 가드가 pending/outbox/화면을 못 건드리게 막는다).
+     *  - 현재 사용자(B)의 영속 outbox 로 다시 채운다: [ExerciseOutbox.load] 는 호출 시점의 [SessionStore.persistentUserId]
+     *    키를 읽으므로(게스트/비로그인은 빈 목록) 자연히 B 것만 들어온다. 재시도는 화면의 기존 트리거가 맡는다.
+     */
+    private fun swapPendingForCurrentUser() {
+        pending.clear()
+        inFlight.clear()
+        outbox.load().forEach { pending[it.createdOnDeviceAt] = it }
+        pendingResends = pending.values.toList()
     }
 
     suspend fun refresh() {
@@ -281,17 +298,13 @@ class ExerciseVideosViewModel(
                         safetyNoticeConfirmed = session.safetyNoticeConfirmed,
                         createdOnDeviceAt = key,
                     )
-                    pending.remove(key) // 이 키만 서버에 안전히 남음 — 보존 해제(다른 세션은 유지)
-                    publishPending()
-                    // 누적 운동시간 표시(#235): 직렬화 덕에 이 응답이 지금까지의 마지막 전송 결과 = 최신 권위값이다.
-                    //   그대로 대입한다(무조건 last-wins). 당일 내 여러 세션은 마지막이 최댓값이라 자연히 커지고, 자정을 넘긴
-                    //   다음 날 첫 세션의 더 작은 누적/미달도 마지막 값이라 정상적으로 초기화된다.
-                    //   단, dailyTotalMin==null(재전송 조기종료: 자연 키로 찾은 과거 completed 로그 반환)이면 그 success 는
-                    //   '그 로그가 완료됐던 당시' 값이지 오늘 누적의 권위 판정이 아니다(리뷰 #280). 오늘 상태를 오염시키지
-                    //   않도록 **누적값이 있을 때만 분·달성을 한 묶음으로** 갱신하고, null 응답은 둘 다 건드리지 않는다.
-                    // 화면 상태 갱신은 **전송 시작과 같은 인증 주체일 때만** 한다(리뷰 #291-3): 응답 대기 중 계정이 바뀌었으면
-                    //   이 누적은 이전 사용자 것이라 현재(B) 화면에 쓰면 안 된다. 서버 전송·pending 해제는 위에서 이미 끝났다.
+                    // 전송 시작 이후 계정이 바뀌었으면(리뷰 #291-3, pending 경로) pending 해제·outbox 저장·화면 갱신을
+                    //   **모두** 건너뛴다: 이 세션은 이전 사용자(A) 것이라, 현재 사용자(B)의 pending 맵/outbox/화면을 건드리면
+                    //   데이터가 섞인다. 서버 전송 자체는 위에서 이미 끝났고(자연 키 dedup·B outbox 는 교체됨), A 의 pending 은
+                    //   계정 전환 시 [swapPendingForCurrentUser] 가 이미 비웠으므로 여기서 remove 하지 않아도 남지 않는다.
                     if (authKey() == epoch) {
+                        pending.remove(key) // 이 키만 서버에 안전히 남음 — 보존 해제(다른 세션은 유지)
+                        publishPending()
                         // 누적 운동시간 표시(#235): 직렬화 덕에 이 응답이 지금까지의 마지막 전송 결과 = 최신 권위값이다.
                         //   그대로 대입한다(무조건 last-wins). 당일 내 여러 세션은 마지막이 최댓값이라 자연히 커지고, 자정을 넘긴
                         //   다음 날 첫 세션의 더 작은 누적/미달도 마지막 값이라 정상적으로 초기화된다.
@@ -306,7 +319,7 @@ class ExerciseVideosViewModel(
                             progressRevision++
                         }
                     } else {
-                        Log.i(TAG, "완료 응답이 계정 전환 이후 도착 — 화면 상태는 갱신하지 않음(#291-3, durationMin=${session.durationMin})")
+                        Log.i(TAG, "완료 응답이 계정 전환 이후 도착 — pending/outbox/화면 미갱신(#291 pending 경로, durationMin=${session.durationMin})")
                     }
                     Log.i(
                         TAG,

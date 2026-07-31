@@ -185,6 +185,8 @@ class ExerciseVideosViewModelTest {
         var stored: List<PendingExercise> = initial; private set
         override fun load(): List<PendingExercise> = stored
         override fun save(sessions: List<PendingExercise>) { stored = sessions }
+        /** 테스트에서 '현재 사용자 outbox' 내용을 직접 지정(계정 전환 시 다른 사용자 저장분 시뮬레이션). */
+        fun seed(sessions: List<PendingExercise>) { stored = sessions }
     }
 
     private fun vmWith(missionApi: FakeMissionApi, outbox: ExerciseOutbox = NoOpExerciseOutbox()) = ExerciseVideosViewModel(
@@ -629,6 +631,64 @@ class ExerciseVideosViewModelTest {
         assertEquals("A 완료 전송 자체는 서버로 나감", 1, fake.completeCalls)
         assertNull("전송 시작 이후 계정이 바뀌었으므로 A 의 10분이 B 화면에 쓰이면 안 된다", vm.todayExerciseMin)
         assertFalse(vm.todayGoalReached)
+    }
+
+    @Test
+    fun `계정 전환 시 이전 사용자 인메모리 pending 을 버리고 현재 사용자 outbox 로 교체한다`() = runTest {
+        // #291 pending 경로: resetIfSubjectChanged 가 UI 뿐 아니라 인메모리 pending 도 교체해야, B 진입 시
+        //   retryPending 이 A 세션을 B 인증/템플릿으로 오배분하지 않는다.
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        fake.failCreateTimes = 1 // A 전송 실패 → 인메모리 pending 보존
+        val outbox = FakeOutbox()
+        var key = 1
+        val vm = ExerciseVideosViewModel(
+            api = FakeApi { ExerciseVideosResponse(emptyList()) },
+            missionApi = fake,
+            exerciseFlow = ExerciseFlowUseCase(fake),
+            outbox = outbox,
+            authKey = { key },
+        )
+        vm.load(); advanceUntilIdle() // 사용자 A 로 진입(authKey=1 확정)
+        vm.beginExerciseSession()
+        vm.submitExercise(4f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+        assertEquals("A 전송 실패로 인메모리 pending 보존", listOf(4f), vm.pendingResends.map { it.durationMin })
+        val postsAfterA = fake.createdKeys.size // A 실패 POST 1건
+
+        // 로그아웃 → 사용자 B 로그인. B 의 outbox 는 비어 있다(신규/게스트).
+        key = 2
+        outbox.seed(emptyList())
+        vm.load() // load 동기 구간에서 pending 교체(네트워크 이전)
+        assertTrue("B 진입 즉시 A 의 인메모리 pending 이 비워진다", vm.pendingResends.isEmpty())
+        advanceUntilIdle()
+
+        // 화면 진입/ON_RESUME 이 부르는 자동 재시도
+        vm.retryPending()
+        advanceUntilIdle()
+        assertEquals("A 세션이 B 인증/템플릿으로 다시 전송되지 않는다", postsAfterA, fake.createdKeys.size)
+    }
+
+    @Test
+    fun `계정 전환 시 현재 사용자 outbox 에 남은 미전송 세션은 되살린다`() = runTest {
+        // 교체가 '비우기'만이 아니라 현재 사용자(B) 저장분으로 채우는지 — B 가 이전에 못 보낸 세션이 있으면 노출/재시도돼야.
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        val outbox = FakeOutbox()
+        var key = 1
+        val vm = ExerciseVideosViewModel(
+            api = FakeApi { ExerciseVideosResponse(emptyList()) },
+            missionApi = fake,
+            exerciseFlow = ExerciseFlowUseCase(fake),
+            outbox = outbox,
+            authKey = { key },
+        )
+        vm.load(); advanceUntilIdle()
+        assertTrue(vm.pendingResends.isEmpty())
+
+        // 사용자 B 로 전환 — B outbox 엔 이전에 못 보낸 세션 1건.
+        key = 2
+        outbox.seed(listOf(PendingExercise(7f, "2026-07-30T09:00:00.000+09:00", safetyNoticeConfirmed = true)))
+        vm.load()
+        assertEquals("B 의 outbox 저장분이 인메모리 pending 으로 되살아난다", listOf(7f), vm.pendingResends.map { it.durationMin })
     }
 
     @Test
