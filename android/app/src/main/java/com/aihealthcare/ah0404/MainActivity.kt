@@ -108,9 +108,6 @@ class MainActivity : ComponentActivity() {
                 val authLoginState by authLoginViewModel.state.collectAsState()
                 var demoMode by remember { mutableStateOf(false) }
                 var sessionRevision by remember { mutableIntStateOf(0) }
-                // 계정 간 데이터 격리(QA): 인증이 해제될 때마다 1 증가 — MAIN 전용 VM 저장소를 새로 만들어
-                //   이전 사용자의 미션·기록·홈·내정보 데이터가 다음 로그인 사용자에게 남지 않게 한다(아래 MAIN 분기).
-                var userSessionEpoch by remember { mutableIntStateOf(0) }
                 val networkAvailable by rememberNetworkAvailable()
                 val authFailure by AuthFailureCoordinator.failure.collectAsState()
                 val tokenStatus = remember(sessionRevision) {
@@ -134,7 +131,6 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(route) {
                     if (route == AppRoute.LOGIN_REQUIRED && TokenHolder.token.isNotBlank()) {
                         SessionStore.clearAuthentication(context)
-                        userSessionEpoch++
                         sessionRevision++
                     }
                 }
@@ -164,7 +160,6 @@ class MainActivity : ComponentActivity() {
                         onExit = activity::finish,
                         onResetSession = {
                             SessionStore.resetSession(context)
-                            userSessionEpoch++
                             sessionRevision++
                         },
                         loading = authLoginState.loading,
@@ -185,14 +180,16 @@ class MainActivity : ComponentActivity() {
                     //   해제가 끝나면 sessionRevision++ 로 라우팅을 재평가(→ LOGIN_REQUIRED)시킨다.
                     //   ⚠️ 위 LaunchedEffect(L103)의 stale-token 자동정리는 같은 사용자 재로그인 편의를 위해
                     //      공급자 credential 을 일부러 유지한다(명시적 로그아웃일 때만 공급자까지 해제).
-                    // 계정 간 데이터 격리(QA): MAIN 안의 화면 VM(미션·기록·홈·내정보·걷기 등)은 기본이 Activity
-                    //   수명이라, 로그아웃 후 다른 계정으로 로그인해도 이전 사용자의 데이터가 VM 에 남는다
-                    //   (MissionViewModel 은 init 1회 조회라 특히 두드러짐). userSessionEpoch 로 MAIN 전용
-                    //   VM 저장소를 세션마다 새로 만들고, 이전 저장소는 dispose 때 clear 로 파기한다 —
-                    //   onCleared 가 불려 걷기 세션·코호트 조회 같은 진행 중 작업도 함께 정리된다.
+                    // 계정 간 데이터 격리(QA, #291 일반화): MAIN 안의 화면 VM(미션·기록·홈·내정보·걷기 등)은
+                    //   기본이 Activity 수명이라, 로그아웃 후 다른 계정으로 로그인해도 이전 사용자의 데이터가 VM 에
+                    //   남는다(MissionViewModel 은 init 1회 조회라 특히 두드러짐. #291 은 운동 상세 VM 한 곳만
+                    //   authRevision 으로 자체 초기화했다). 같은 SessionStore.authRevision 을 키로 MAIN 전용 VM
+                    //   저장소를 인증 주체마다 새로 만들고, 이전 저장소는 dispose 때 clear 로 파기한다 — onCleared 가
+                    //   불려 걷기 세션·진행 중 조회도 함께 정리된다. authRevision 변경(로그인·로그아웃·리셋·복원)은
+                    //   항상 sessionRevision++ 재라우팅과 동행하므로 이 remember 는 놓치지 않고 재평가된다.
                     //   AuthLoginViewModel 은 이 분기 밖(Activity 저장소)이라 로그인 흐름엔 영향이 없다.
                     AppRoute.MAIN -> {
-                        val mainVmOwner = remember(userSessionEpoch) {
+                        val mainVmOwner = remember(SessionStore.authRevision) {
                             object : ViewModelStoreOwner {
                                 override val viewModelStore = ViewModelStore()
                             }
@@ -203,10 +200,7 @@ class MainActivity : ComponentActivity() {
                         CompositionLocalProvider(LocalViewModelStoreOwner provides mainVmOwner) {
                             MainContent(
                                 onLogout = {
-                                    authLoginViewModel.signOut {
-                                        userSessionEpoch++
-                                        sessionRevision++
-                                    }
+                                    authLoginViewModel.signOut { sessionRevision++ }
                                 },
                                 onExit = activity::finish,
                             )
