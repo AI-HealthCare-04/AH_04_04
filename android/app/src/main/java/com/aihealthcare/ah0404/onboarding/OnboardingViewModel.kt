@@ -18,16 +18,14 @@ import com.aihealthcare.ah0404.network.TokenHolder
 import com.aihealthcare.ah0404.network.retrofit
 import kotlinx.coroutines.launch
 
-/** 온보딩 단계. 화면 라우팅의 기준. */
-enum class OnbStep { WELCOME, TERMS, PROFILE, ASSESSMENT, RESULT }
+/** 온보딩 단계. 화면 라우팅의 기준. 체력검사(ASSESSMENT) 제출/스킵 후엔 별도 결과화면 없이 홈으로 간다(#299). */
+enum class OnbStep { WELCOME, TERMS, PROFILE, ASSESSMENT }
 
 internal fun previousOnboardingStep(step: OnbStep): OnbStep? = when (step) {
     OnbStep.TERMS -> OnbStep.WELCOME
     OnbStep.PROFILE -> OnbStep.TERMS
     OnbStep.ASSESSMENT -> OnbStep.PROFILE
-    OnbStep.WELCOME,
-    OnbStep.RESULT,
-    -> null
+    OnbStep.WELCOME -> null
 }
 
 /** "검사 완료"로 제출 가능한 5STS 시간. 공백·숫자 아님·0 이하·비유한 값은 건너뛰기와 구분해 거부한다. */
@@ -139,10 +137,17 @@ class OnboardingViewModel(
     var bmi by mutableStateOf<Double?>(null); private set
     var result by mutableStateOf<RiskPredictionResponse?>(null); private set
 
+    /**
+     * 온보딩 완주 신호(#299). 체력검사 제출/스킵 → 예측 생성까지 끝나면 true. 화면 호스트가 이 값을 관찰해
+     *  별도 결과화면 없이 곧장 홈(onComplete)으로 보낸다. RESULT 스텝을 없앴으므로 완료는 step 이 아니라 이 플래그로 알린다.
+     */
+    var finished by mutableStateOf(false); private set
+
     private val requiredTerms = listOf("service", "privacy", "sensitive_health")
 
     /** S0 → 체험 사용자의 게스트 로그인 후 약관 목록 로드. 기존 소셜 토큰은 덮어쓰지 않는다. */
     fun start() = launchStep("시작") {
+        finished = false // 온보딩 시작점에서 완주 신호를 깐다 — stale finished 로 즉시 홈 라우팅되는 경로 원천 차단(리뷰 #311).
         isGuest = true // 게스트 온보딩 — 완료해도 디스크에 안 남긴다(#153).
         if (TokenHolder.token.isBlank()) {
             TokenHolder.token = api.guestLogin().accessToken
@@ -152,6 +157,7 @@ class OnboardingViewModel(
 
     /** 소셜 로그인(미완료 계정) 성공 후 같은 온보딩 흐름을 이어간다. 완료 시 영속화 대상(#153). */
     fun continueAuthenticated() = launchStep("로그인") {
+        finished = false // 시작점에서 완주 신호 초기화(리뷰 #311) — resetToWelcome 을 안 거친 재진입도 방어.
         isGuest = false
         loadTerms()
     }
@@ -160,7 +166,7 @@ class OnboardingViewModel(
      * 이전 온보딩 잔여 상태를 시작(WELCOME)으로 초기화한다(#153 후속 — 무한루프 방지).
      *
      * WELCOME 이후 단계는 토큰(게스트/소셜)이 있어야 도달한다. 그런데 로그아웃·세션리셋으로 토큰이
-     * 사라진 채 이 VM(Activity 수명)에 이전 step(예: RESULT)이 남으면, '홈으로 시작하기'가 토큰 없는
+     * 사라진 채 이 VM(Activity 수명)에 이전 step(예: ASSESSMENT)이나 완주 신호(finished)가 남으면, 토큰 없는
      * 완료로 처리돼 라우팅이 LOGIN_REQUIRED 로 튕기고, 리셋하면 다시 그 stale 화면이 떠 무한루프가 난다.
      * 화면 진입 시 '토큰 없음 + step≠WELCOME' 이면 호출해 한 폰 다인 시연의 이전 입력(PII 포함)까지 비운다.
      */
@@ -174,6 +180,7 @@ class OnboardingViewModel(
         profileId = null
         bmi = null
         result = null
+        finished = false
         birthYear = ""; birthMonth = ""; birthDay = ""
         sex = null
         heightCm = ""; weightKg = ""; waistCm = ""
@@ -282,19 +289,19 @@ class OnboardingViewModel(
         predictAndFinish()
     }
 
-    /** 위험도 예측 → 결과. profileId 가 없으면(비정상) 예외로 에러 처리. */
+    /** 위험도 예측 → 완주. profileId 가 없으면(비정상) 예외로 에러 처리. 예측은 미리 생성해 두되(대시보드 캐시),
+     *  결과화면 없이 완주 신호만 세운다(#299). */
     private suspend fun predictAndFinish() {
         val pid = profileId ?: throw IllegalStateException("프로필 정보가 없습니다. 프로필부터 다시 진행해 주세요.")
         result = api.createRiskPrediction(RiskPredictionRequest(pid))
-        // 또래 분포 차트(#193)는 기록탭으로 이관돼(#302) 온보딩에서는 조회하지 않는다 — 결과 확정 즉시 이동.
-        step = OnbStep.RESULT
+        finished = true
     }
 
     fun dismissError() { error = null }
 
     /**
      * 입력값과 이미 저장된 서버 상태는 유지하고 화면 단계만 되돌린다.
-     * RESULT는 세션이 완료된 상태이므로 화면 호스트에서 종료 확인을 담당한다.
+     * WELCOME 에선 이전 단계가 없어 false 를 돌려주고 화면 호스트가 종료 확인을 담당한다(#299: 결과화면 제거로 RESULT 없음).
      */
     fun goBack(): Boolean {
         if (loading) return false
