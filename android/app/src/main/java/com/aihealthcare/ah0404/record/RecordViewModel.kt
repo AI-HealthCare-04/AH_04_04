@@ -13,7 +13,6 @@ import com.aihealthcare.ah0404.network.MissionLogItem
 import com.aihealthcare.ah0404.network.PredictionInputsResponse
 import com.aihealthcare.ah0404.network.RecordApi
 import com.aihealthcare.ah0404.network.RiskHistoryItem
-import com.aihealthcare.ah0404.network.SessionStore
 import com.aihealthcare.ah0404.network.WalkingDayPoint
 import com.aihealthcare.ah0404.network.retrofit
 import java.util.Calendar
@@ -42,10 +41,6 @@ import kotlin.math.roundToInt
  */
 class RecordViewModel(
     private val api: RecordApi = retrofit.create(RecordApi::class.java),
-    // 인증 주체(로그인 세션) 식별자(#291 패턴). 이 VM 은 Activity 범위(viewModel(), NavHost 미사용)라
-    //   로그아웃→타계정 로그인 시 재사용될 수 있어, 주체가 바뀌면 이전 사용자 파생 상태(점수·또래 분포·기록
-    //   통계)를 화면 진입 즉시(네트워크 이전) 비워야 시니어 공용 단말에서 데이터가 섞이지 않는다.
-    private val authKey: () -> Int = { SessionStore.authRevision },
 ) : ViewModel() {
 
     var loading by mutableStateOf(false); private set
@@ -86,39 +81,12 @@ class RecordViewModel(
     // 겹친 refresh 중 최신 것만 상태를 commit 하도록 식별하는 세대 토큰.
     private var generation = 0
 
-    // 지금 화면에 반영된 데이터가 '어느 인증 주체' 것인지(#291). [load] 진입 동기 구간에서 [authKey] 와 비교해
-    //   주체가 바뀌었으면 어떤 네트워크 호출보다 먼저 이전 사용자 파생 상태를 비운다. 최초 1회는 비교 대상 없음.
-    private var loadedAuthKey = 0
-    private var loadedAuthInitialized = false
-
+    // 계정 전환 시 이전 사용자 데이터 격리는 MainActivity 가 MAIN VM 저장소를 SessionStore.authRevision 마다
+    //   새로 만들어(#328) 구조적으로 처리한다 — 이 VM 도 계정이 바뀌면 새 인스턴스로 재생성되므로, 여기서
+    //   별도 초기화 로직을 두지 않는다.
     fun load() {
-        // 계정 전환 감지·초기화는 네트워크 이전, load 의 동기 구간에서 한다(#291): 느린 조회가 끝나기 전
-        //   이전 사용자(점수·또래 분포·기록 통계)가 새 사용자 화면에 한 번도 노출되지 않게.
-        resetIfSubjectChanged()
         viewModelScope.launch { refresh() }
         loadMonth(calYear, calMonth)
-    }
-
-    /** 인증 주체가 바뀌었으면 이전 사용자 파생 상태를 즉시 비운다(#291). authRevision 은 로그인/로그아웃마다 증가. */
-    private fun resetIfSubjectChanged() {
-        val key = authKey()
-        if (loadedAuthInitialized && key != loadedAuthKey) clearUserDerivedState()
-        loadedAuthKey = key
-        loadedAuthInitialized = true
-    }
-
-    /** 계정 전환 시 이전 사용자에게 종속된 표시 상태를 모두 비운다 — 다음 refresh 가 새 사용자 기준으로 다시 채운다. */
-    private fun clearUserDerivedState() {
-        history = emptyList(); historyError = false
-        completedMissions = 0; totalPoints = 0; activityError = false
-        predictionPrefill = null
-        muscleScore = null // 점수·또래 분포(cohort) 포함
-        lineLogs = emptyList()
-        walkingDays = emptyList()
-        challengeTotals = null
-        stampsByDate = emptyMap()
-        monthLogs = emptyList()
-        loaded = false
     }
 
     /** 달력 월 이동(#기록탭 §5.2). 그 달의 스탬프 + 완료 미션(팝업용)을 다시 불러온다. */

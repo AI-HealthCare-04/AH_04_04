@@ -16,22 +16,12 @@ import com.aihealthcare.ah0404.network.RiskHistoryResponse
 import com.aihealthcare.ah0404.network.StampsResponse
 import com.aihealthcare.ah0404.network.WalkingDailyResponse
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.advanceUntilIdle
-import kotlinx.coroutines.test.resetMain
-import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.yield
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Test
 
 /**
@@ -41,14 +31,7 @@ import org.junit.Test
  *
  *  refresh() 를 runBlocking 으로 직접 호출해 Main 디스패처(viewModelScope) 의존 없이 검증한다.
  */
-@OptIn(ExperimentalCoroutinesApi::class)
 class RecordViewModelTest {
-
-    // Main 디스패처를 테스트 디스패처로 교체(계정 전환 테스트의 load()→viewModelScope.launch 용). runBlocking +
-    //   직접 refresh() 로 도는 기존 테스트는 Main 을 쓰지 않으므로 영향받지 않는다.
-    private val dispatcher = StandardTestDispatcher()
-    @Before fun setUp() = Dispatchers.setMain(dispatcher)
-    @After fun tearDown() = Dispatchers.resetMain()
 
     private class FakeRecordApi(
         var history: () -> RiskHistoryResponse,
@@ -289,39 +272,5 @@ class RecordViewModelTest {
         assertEquals(listOf(70, 74), ui.trend.map { it.score })
         assertEquals(listOf(false, false), ui.trend.map { it.newBaseline }) // 같은 코호트 → 경계 없음
         assertEquals(72, ui.cohort?.lowerCount) // 또래 분포도 UI 상태까지 전달(#193 기록탭 이관)
-    }
-
-    @Test
-    fun account_switch_clears_previous_user_derived_state_before_network() = runTest(dispatcher) {
-        // 이 VM 은 Activity 범위라 로그아웃→타계정 로그인 시 재사용될 수 있다(#291). 계정 전환 후 재진입 시
-        //   이전 사용자의 점수·또래 분포가 새 사용자 화면에 노출되면 안 된다. load() 동기 구간에서 네트워크
-        //   이전에 즉시 비워지는지(refresh 완료 전) 검증한다. StandardTestDispatcher 라 launch 는 advance 전까지 대기.
-        var authRev = 1
-        val api = object : RecordApi {
-            override suspend fun getRiskHistory(limit: Int) = RiskHistoryResponse(emptyList())
-            override suspend fun getMissionLogs(date: String?, from: String?, to: String?) =
-                MissionLogListResponse(emptyList())
-            override suspend fun getPredictionInputs() = PredictionInputsResponse()
-            override suspend fun getWalkingDaily(days: Int) = WalkingDailyResponse()
-            override suspend fun getChallengeTotals() = ChallengeTotalsResponse()
-            override suspend fun getStamps(month: String) = StampsResponse(month = month)
-            override suspend fun getLatestPrediction() = RiskLatestResponse(muscleScore = 74, scoreBand = "maintain")
-            override suspend fun getScoreSimulation() = ScoreSimulationResponse()
-            override suspend fun getCohortDistribution() = CohortDistributionResponse(
-                probability = 0.18f, sex = "male", ageLabel = "73–79세", n = 600, lowerCount = 72,
-            )
-            override suspend fun reassessRiskPrediction(body: RiskReassessRequest): RiskReassessResponse =
-                error("이 테스트는 재평가를 부르지 않는다")
-        }
-        val vm = RecordViewModel(api, authKey = { authRev })
-        vm.load(); advanceUntilIdle()
-        assertEquals("사용자 A 점수 로드됨", 74, vm.muscleScore?.score)
-        assertEquals("사용자 A 또래 분포 로드됨", 72, vm.muscleScore?.cohort?.lowerCount)
-
-        // 계정 전환(로그아웃→타계정 = authRevision 증가) 후 재진입 — refresh 를 advance 하지 않아도
-        //   load() 동기 구간에서 이전 사용자 상태가 즉시 제거돼야 한다.
-        authRev = 2
-        vm.load()
-        assertNull("계정 전환 즉시 이전 사용자 점수·또래 분포 제거(네트워크 이전, #291)", vm.muscleScore)
     }
 }
