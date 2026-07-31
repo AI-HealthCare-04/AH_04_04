@@ -56,8 +56,6 @@ import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
 import com.aihealthcare.ah0404.ui.components.AigoSegmentedSelector
 import com.aihealthcare.ah0404.ui.components.AigoTextField
 import com.aihealthcare.ah0404.ui.components.AigoTonalButton
-import com.aihealthcare.ah0404.ui.components.MEDICAL_DISCLAIMER_DEFAULT
-import com.aihealthcare.ah0404.ui.components.MedicalDisclaimer
 import com.aihealthcare.ah0404.ui.components.SegmentOption
 import com.aihealthcare.ah0404.ui.theme.Dimens
 
@@ -82,12 +80,17 @@ fun OnboardingScreen(
     val activity = LocalContext.current as Activity
     val authState by authVm.state.collectAsState()
     // 화면 진입 시 stale 상태 복구(#153 후속): 토큰이 없는데(로그아웃·세션리셋) 이 Activity-수명 VM 에
-    //   이전 온보딩 step(예: RESULT)이 남아 있으면 WELCOME 으로 되돌린다. 안 그러면 '홈으로 시작하기'가
-    //   토큰 없는 완료로 처리돼 LOGIN_REQUIRED ↔ 리셋 사이를 도는 무한루프가 생긴다.
+    //   이전 온보딩 step(예: ASSESSMENT)이나 완주 신호가 남아 있으면 WELCOME 으로 되돌린다. 안 그러면 토큰 없는
+    //   완료로 처리돼 LOGIN_REQUIRED ↔ 리셋 사이를 도는 무한루프가 생긴다.
     LaunchedEffect(Unit) {
         if (TokenHolder.token.isBlank() && vm.step != OnbStep.WELCOME) {
             vm.resetToWelcome()
         }
+    }
+    // 온보딩 완주(#299): 체력검사 제출/스킵 → 예측 생성이 끝나면 별도 결과화면 없이 곧장 홈으로. 완료는 step 이
+    //   아니라 finished 플래그로 알린다. false→true 전이에 한 번만 홈 라우팅(onComplete).
+    LaunchedEffect(vm.finished) {
+        if (vm.finished) onComplete(vm.isGuest)
     }
     var showExitConfirmation by remember { mutableStateOf(false) }
     // 소셜 로그인 결과 분기(#153): 완료 계정은 약관을 건너뛰고 홈으로, 미완료 계정은 온보딩(약관)을 이어감.
@@ -117,7 +120,6 @@ fun OnboardingScreen(
             OnbStep.TERMS -> TermsStep(vm)
             OnbStep.PROFILE -> ProfileStep(vm)
             OnbStep.ASSESSMENT -> AssessmentStep(vm)
-            OnbStep.RESULT -> ResultStep(vm, onComplete)
         }
 
         if (vm.loading || authState.loading != null) {
@@ -139,11 +141,7 @@ fun OnboardingScreen(
         if (showExitConfirmation) {
             AigoDialog(
                 title = "앱을 종료할까요?",
-                message = if (vm.step == OnbStep.RESULT) {
-                    "결과 화면을 닫고 앱을 종료할까요?"
-                } else {
-                    "입력 중인 온보딩을 나가면 다시 이어서 진행할 수 없어요."
-                },
+                message = "입력 중인 온보딩을 나가면 다시 이어서 진행할 수 없어요.",
                 confirmText = "종료",
                 onConfirm = onExit,
                 dismissText = "계속하기",
@@ -516,27 +514,3 @@ private fun AssessmentStep(vm: OnboardingViewModel) {
     )
 }
 
-@Composable
-private fun ResultStep(vm: OnboardingViewModel, onComplete: (isGuest: Boolean) -> Unit) {
-    val r = vm.result
-    val (emoji, title) = when (r?.careStage) {
-        "good" -> "👍" to "아주 좋아요!"
-        "action_needed" -> "💪" to "조금만 더 함께 챙겨봐요"
-        else -> "🙂" to "잘 유지하고 있어요"
-    }
-    StepScaffold(
-        title = "$emoji  $title",
-        content = {
-            Text(
-                text = r?.displayMessage ?: "오늘부터 가볍게 시작해 볼까요?",
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            Spacer(Modifier.height(Dimens.Space16))
-            // 결과 화면 필수 고지(§0-3): 서버 disclaimer 있으면 그대로, 없으면 기본 문구.
-            MedicalDisclaimer(text = r?.disclaimer ?: MEDICAL_DISCLAIMER_DEFAULT)
-        },
-        footer = {
-            AigoPrimaryButton(text = "홈으로 시작하기", onClick = { onComplete(vm.isGuest) })
-        },
-    )
-}

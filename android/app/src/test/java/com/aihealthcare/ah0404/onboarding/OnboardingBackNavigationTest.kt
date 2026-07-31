@@ -13,8 +13,8 @@ class OnboardingBackNavigationTest {
     }
 
     @Test
-    fun first_and_completed_steps_do_not_navigate_back() {
+    fun first_step_does_not_navigate_back() {
+        // 결과화면(RESULT) 제거(#299) 후엔 WELCOME 만 이전 단계가 없다. 완주는 step 이 아니라 finished 로 알린다.
         assertNull(previousOnboardingStep(OnbStep.WELCOME))
-        assertNull(previousOnboardingStep(OnbStep.RESULT))
     }
 }
