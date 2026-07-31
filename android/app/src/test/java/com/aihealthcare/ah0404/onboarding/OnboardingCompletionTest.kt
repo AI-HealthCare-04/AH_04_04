@@ -98,4 +98,29 @@ class OnboardingCompletionTest {
         assertTrue("예측은 미리 생성해 둔다(대시보드 캐시)", api.riskPredicted)
         assertEquals("완주해도 step 은 ASSESSMENT 그대로 — RESULT 스텝은 없다(#299)", OnbStep.ASSESSMENT, vm.step)
     }
+
+    @Test
+    fun restart_clears_stale_finished_signal() = runTest {
+        // Activity 수명 VM 특성상 완주 신호(finished)가 남은 채 재진입할 수 있다 —
+        //   start()/continueAuthenticated() 시작점에서 finished=false 를 깔아 stale 완주로 즉시 홈
+        //   라우팅되는 경로를 원천 차단하는지 검증(리뷰 #311 nit).
+        val api = FakeApi()
+        val vm = OnboardingViewModel(api, todayYear = 2026, todayMonth = 7, todayDay = 15)
+
+        // 1) 한 번 완주시켜 finished=true 로 만든다.
+        vm.continueAuthenticated(); advanceUntilIdle()
+        vm.agreeAll(); vm.submitAgreements(); advanceUntilIdle()
+        vm.apply {
+            sex = "male"; birthYear = "1958"; birthMonth = "3"; birthDay = "1"
+            setHeight("168"); setWeight("63"); walkDays = 5; muscDays = 2
+        }
+        vm.submitProfile(); advanceUntilIdle()
+        vm.skipAssessment(); advanceUntilIdle()
+        assertTrue(vm.finished)
+
+        // 2) resetToWelcome 를 거치지 않고 재로그인(같은 Activity 범위 VM) — 시작점에서 완주 신호가 걷힌다.
+        vm.continueAuthenticated(); advanceUntilIdle()
+        assertFalse("재시작은 stale finished 를 초기화한다(리뷰 #311)", vm.finished)
+        assertEquals(OnbStep.TERMS, vm.step)
+    }
 }

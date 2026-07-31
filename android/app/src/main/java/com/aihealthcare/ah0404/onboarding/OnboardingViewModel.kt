@@ -147,6 +147,7 @@ class OnboardingViewModel(
 
     /** S0 → 체험 사용자의 게스트 로그인 후 약관 목록 로드. 기존 소셜 토큰은 덮어쓰지 않는다. */
     fun start() = launchStep("시작") {
+        finished = false // 온보딩 시작점에서 완주 신호를 깐다 — stale finished 로 즉시 홈 라우팅되는 경로 원천 차단(리뷰 #311).
         isGuest = true // 게스트 온보딩 — 완료해도 디스크에 안 남긴다(#153).
         if (TokenHolder.token.isBlank()) {
             TokenHolder.token = api.guestLogin().accessToken
@@ -156,6 +157,7 @@ class OnboardingViewModel(
 
     /** 소셜 로그인(미완료 계정) 성공 후 같은 온보딩 흐름을 이어간다. 완료 시 영속화 대상(#153). */
     fun continueAuthenticated() = launchStep("로그인") {
+        finished = false // 시작점에서 완주 신호 초기화(리뷰 #311) — resetToWelcome 을 안 거친 재진입도 방어.
         isGuest = false
         loadTerms()
     }
