@@ -2,6 +2,7 @@ package com.aihealthcare.ah0404.mission
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -62,5 +63,49 @@ class ProteinChallengeCopyTest {
         assertEquals("안 먹었어요로 저장하기", proteinSaveButtonLabel(0))
         assertEquals("목표 달성! 저장하기", proteinSaveButtonLabel(PROTEIN_DAILY_GOAL))
         assertEquals("목표 달성! 저장하기", proteinSaveButtonLabel(PROTEIN_DAILY_GOAL + 1))
+    }
+
+    // ── #343 문제 1: 오늘 기록 상태 안내(안 먹었어요 vs 미기록 구분) ──────────
+
+    @Test
+    fun `기록 없으면 상태 안내 없음`() {
+        assertNull(proteinTodayStatusLine(null, null))
+    }
+
+    @Test
+    fun `안 먹었어요 기록은 시각과 함께 명시된다`() {
+        val line = proteinTodayStatusLine(0, "2026-07-31T09:20:11+09:00")
+        assertTrue(line!!.contains("안 먹었어요"))
+        assertTrue(line.contains("09:20 기록"))
+        assertTrue(line.contains("수정돼요"))
+    }
+
+    @Test
+    fun `기록 있음은 가짓수를 보여준다`() {
+        val line = proteinTodayStatusLine(3, "2026-07-31T18:05:00+09:00")
+        assertTrue(line!!.contains("3가지"))
+        assertTrue(line.contains("18:05"))
+    }
+
+    @Test
+    fun `시각 형식이 다르면 시각만 생략한다`() {
+        val line = proteinTodayStatusLine(1, "이상한값")
+        assertTrue(line!!.contains("1가지"))
+        assertFalse(line.contains("기록)"))
+        assertNull(proteinLoggedAtTime(null))
+    }
+
+    // ── #343 문제 3: 포인트 회수 확인 판정 ──────────────────────────────
+
+    @Test
+    fun `적립 후 미달 재저장만 확인을 요구한다`() {
+        // 오늘 1가지(목표 달성=적립) 저장 후 0종으로 바꾸면 회수 → 확인 필요.
+        assertTrue(proteinDowngradeNeedsConfirm(previousEatenCount = 1, newCount = 0))
+        // 기록 없던 날의 0종 저장(첫 기록)은 회수될 포인트가 없다.
+        assertFalse(proteinDowngradeNeedsConfirm(previousEatenCount = null, newCount = 0))
+        // 안 먹었어요(0종) 저장을 0종으로 재저장 — 변화 없음, 확인 불필요.
+        assertFalse(proteinDowngradeNeedsConfirm(previousEatenCount = 0, newCount = 0))
+        // 달성 상태에서 가짓수만 바뀌는 재저장(1→3)은 여전히 달성 — 확인 불필요.
+        assertFalse(proteinDowngradeNeedsConfirm(previousEatenCount = 1, newCount = 3))
     }
 }

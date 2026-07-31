@@ -69,6 +69,32 @@ internal fun proteinSaveButtonLabel(count: Int): String = when {
     else -> "저장하기" // 목표(#227: 1종)에서는 도달하지 않음 — 목표를 되올릴 때를 위한 일반형
 }
 
+/**
+ * 오늘 기록 상태 안내(#343 문제 1): '안 먹었어요 저장'과 '아직 기록 안 함'이 화면상 동일(선택 0개)해
+ * 구분이 안 되던 문제 — 오늘 기록(today_log)이 있으면 그 내용·시각을 명시한다. 기록 없으면 null(미표시).
+ */
+internal fun proteinTodayStatusLine(eatenCount: Int?, loggedAt: String?): String? {
+    if (eatenCount == null) return null
+    val time = proteinLoggedAtTime(loggedAt)
+    val base = if (eatenCount == 0) "오늘은 '안 먹었어요'로 기록되어 있어요" else "오늘 ${eatenCount}가지를 기록하셨어요"
+    val stamp = if (time != null) " ($time 기록)" else ""
+    return "$base$stamp · 다시 골라 저장하면 수정돼요"
+}
+
+/** ISO 시각("2026-07-31T09:20:…")에서 표시용 HH:mm 만 뽑는다. 형식이 다르면 null(시각 생략). */
+internal fun proteinLoggedAtTime(loggedAt: String?): String? {
+    val hhmm = loggedAt?.substringAfter('T', missingDelimiterValue = "")?.take(5) ?: return null
+    return if (Regex("\\d{2}:\\d{2}").matches(hhmm)) hhmm else null
+}
+
+/**
+ * 포인트 회수 경고 필요 판정(#343 문제 3): 오늘 이미 목표 달성으로 저장(포인트 적립)했는데
+ * 목표 미달(0종 포함)로 다시 저장하려는 경우 — 서버 upsert 가 counted 를 되돌려 받은 포인트가
+ * 회수되므로, 조용히 저장하지 않고 확인을 받는다. 순수 함수(테스트 대상).
+ */
+internal fun proteinDowngradeNeedsConfirm(previousEatenCount: Int?, newCount: Int): Boolean =
+    (previousEatenCount ?: 0) >= PROTEIN_DAILY_GOAL && newCount < PROTEIN_DAILY_GOAL
+
 class ProteinChallengeViewModel(
     // 실경로는 공용 retrofit. JVM 테스트는 fake 를 주입해 저장 상태 수명(진입 리셋 등)을 검증한다.
     private val api: MissionApi = retrofit.create(MissionApi::class.java),

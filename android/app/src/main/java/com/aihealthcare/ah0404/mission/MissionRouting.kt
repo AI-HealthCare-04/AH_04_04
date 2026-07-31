@@ -1,5 +1,7 @@
 package com.aihealthcare.ah0404.mission
 
+import com.aihealthcare.ah0404.network.Mission
+
 /**
  * 미션 유형 → 이동할 화면(라우팅만, #93 A-3).
  *
@@ -79,4 +81,19 @@ internal fun proteinHiddenReason(kidneyStatus: String, proteinStatus: String): S
     kidneyStatus == "unknown" || proteinStatus == "unknown" ->
         "신장 상태와 단백질 제한 여부를 내 정보에서 알려주시면 고단백 식사 미션을 열어드려요."
     else -> null // 둘 다 none 인데 안 보이면 다른(서버) 사정 — 추측 안내를 하지 않는다.
+}
+
+
+/**
+ * 1회성 미션(식사·게임) 카드의 '오늘 했음' 표시 문구(#346). 시간 목표가 없어 진행바 대신 배지로 표현한다.
+ *  - 식사: today_log 기준 — 1종 이상이면 달성 배지, 0종(안 먹었어요)도 기록임을 보여준다(#343 가시성).
+ *  - 게임: today_done(#346 백엔드) 기준. 구버전 서버(null)면 표시하지 않는다(호환).
+ *  - 걷기·운동은 기존 today_progress 진행바가 담당(null 반환).
+ */
+internal fun missionTodayBadge(mission: Mission): String? = when (missionDestination(mission.missionType)) {
+    MissionDestination.PROTEIN_MEAL -> mission.todayLog?.let { log ->
+        if (log.eaten.isEmpty()) "오늘은 안 드신 것으로 기록했어요" else "오늘 단백질 챙겼어요 🎉 · ${log.eaten.size}가지"
+    }
+    MissionDestination.MINI_GAME -> if (mission.todayDone == true) "오늘 게임 했어요 🎉" else null
+    else -> null
 }

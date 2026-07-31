@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aihealthcare.ah0404.network.Mission
 import com.aihealthcare.ah0404.ui.components.AigoCard
+import com.aihealthcare.ah0404.ui.components.AigoDialog
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
 import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
 import com.aihealthcare.ah0404.ui.theme.Dimens
@@ -76,6 +77,8 @@ fun ProteinChallengeScreen(
     val saveState by vm.saveState.collectAsState()
     val count = selected.size
     val goalMet = count >= PROTEIN_DAILY_GOAL
+    // 포인트 회수 경고(#343 문제 3): 이미 목표 달성 저장(적립)했는데 미달로 재저장하려 할 때 확인.
+    var showDowngradeConfirm by rememberSaveable { mutableStateOf(false) }
 
     // 저장 중에는 시스템 뒤로가기를 막는다(리뷰 #225 3차) — 이탈하면 응답이 와도 목록 재조회(onSaved)가
     // 누락돼 stale today_log 가 재발한다. Saving 이 아닐 때만 onBack. (결과 오버레이 표시 중에는
@@ -118,6 +121,15 @@ fun ProteinChallengeScreen(
                     )
                     Spacer(Modifier.height(Dimens.Space16))
                     ProgressBanner(count = count, goalMet = goalMet)
+                    // 오늘 기록 상태(#343 문제 1): '안 먹었어요 저장'과 '미기록'을 구분해 보여준다(기록 없으면 미표시).
+                    proteinTodayStatusLine(mission.todayLog?.eaten?.size, mission.todayLog?.loggedAt)?.let { line ->
+                        Spacer(Modifier.height(Dimens.Space8))
+                        Text(
+                            text = line,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     Spacer(Modifier.height(Dimens.Space8))
                 }
             }
@@ -143,7 +155,14 @@ fun ProteinChallengeScreen(
                     //   (리뷰 #225 P2). 버튼 문구가 그 의미를 미리 알려 실수 저장을 막는다.
                     AigoPrimaryButton(
                         text = proteinSaveButtonLabel(count),
-                        onClick = { vm.save(mission, selected) },
+                        onClick = {
+                            // 적립 후 미달 재저장(#343 문제 3)은 조용히 저장하지 않고 회수 경고를 먼저 받는다.
+                            if (proteinDowngradeNeedsConfirm(mission.todayLog?.eaten?.size, count)) {
+                                showDowngradeConfirm = true
+                            } else {
+                                vm.save(mission, selected)
+                            }
+                        },
                         enabled = saveState !is ProteinSaveState.Saving,
                     )
                     Spacer(Modifier.height(Dimens.Space8))
@@ -165,6 +184,22 @@ fun ProteinChallengeScreen(
                     }
                 }
             }
+        }
+
+        // 포인트 회수 확인(#343 문제 3): 오늘 적립분이 사라짐을 알리고 명시적 확인 후에만 저장한다.
+        if (showDowngradeConfirm) {
+            AigoDialog(
+                title = "받은 포인트가 회수돼요",
+                message = "오늘은 이미 목표를 달성해 포인트를 받았어요.\n지금처럼 저장하면 오늘 기록이 바뀌면서 받은 포인트가 회수돼요.\n그래도 저장할까요?",
+                confirmText = "저장",
+                onConfirm = {
+                    showDowngradeConfirm = false
+                    vm.save(mission, selected)
+                },
+                dismissText = "취소",
+                onDismiss = { showDowngradeConfirm = false },
+                onDismissRequest = { showDowngradeConfirm = false },
+            )
         }
 
         // 저장 중 오버레이 — 이중 탭 방지 + 진행 표시.
