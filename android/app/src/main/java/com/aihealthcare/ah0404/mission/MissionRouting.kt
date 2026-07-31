@@ -63,3 +63,20 @@ internal fun missionCtaLabel(missionType: String): String =
 /** CTA 를 강조색으로 그릴지 — 실제 수행/기록 화면으로 바로 이어지는 유형만 강조한다. */
 internal fun missionCtaHighlighted(missionType: String): Boolean =
     missionDestination(missionType) != MissionDestination.COMING_SOON
+
+/**
+ * 단백질(고단백 식사) 미션 숨김 사유 문구(#304 요청 4). 목록에 meal 유형이 없을 때 최신 프로필의
+ * 신장·단백질 제한 상태로 '왜 안 보이는지 + 내 정보에서 바꿀 수 있음'을 안내한다(막힌 이유를 모른 채
+ * 미션이 사라진 것처럼 보이는 문제 해소). 게이트 판정 자체는 서버 소관(kidney==none AND protein==none
+ * 일 때만 노출) — 여기서는 안내 문구만 만든다. 사유를 특정할 수 없으면 null(카드 미표시).
+ * 값: kidney = none|kidney_disease|dialysis|unknown, protein = none|restricted|unknown.
+ */
+internal fun proteinHiddenReason(kidneyStatus: String, proteinStatus: String): String? = when {
+    kidneyStatus == "kidney_disease" || kidneyStatus == "dialysis" ->
+        "신장 건강을 위해 고단백 식사 미션을 잠시 쉬고 있어요. 상태가 달라졌다면 내 정보에서 알려주세요."
+    proteinStatus == "restricted" ->
+        "단백질 섭취 제한이 있어 고단백 식사 미션을 잠시 쉬고 있어요. 제한이 풀렸다면 내 정보에서 알려주세요."
+    kidneyStatus == "unknown" || proteinStatus == "unknown" ->
+        "신장 상태와 단백질 제한 여부를 내 정보에서 알려주시면 고단백 식사 미션을 열어드려요."
+    else -> null // 둘 다 none 인데 안 보이면 다른(서버) 사정 — 추측 안내를 하지 않는다.
+}
