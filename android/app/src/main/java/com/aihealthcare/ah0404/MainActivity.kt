@@ -296,8 +296,10 @@ private fun MainContent(
     var subScreen by remember { mutableStateOf<String?>(null) }
     when (subScreen) {
         "profile" -> {
-            BackHandler { subScreen = null }
-            ProfileScreen(onBack = { subScreen = null })
+            // 복귀 시 미션 재조회(리뷰 #322): 내정보에서 신장·단백질 상태를 바꾸면 단백질 미션 노출과
+            //   숨김 사유 카드가 달라진다 — 운동 복귀(아래 "exercise")와 동일하게 목록을 서버 권위값으로 갱신.
+            BackHandler { subScreen = null; missionVm.loadMissions() }
+            ProfileScreen(onBack = { subScreen = null; missionVm.loadMissions() })
             return
         }
         "support" -> {

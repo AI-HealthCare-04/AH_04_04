@@ -104,4 +104,24 @@ class MissionViewModelTest {
         advanceUntilIdle()
         assertNull(successState(vm).proteinHiddenNotice)
     }
+
+    @Test
+    fun `내정보 변경 후 재조회하면 meal 복귀·사유 카드 소멸이 반영된다`() = runTest(dispatcher) {
+        // 전환 시나리오(리뷰 #322): 신장질환으로 meal 미숨김 → 내정보에서 없음으로 저장 → 복귀 시
+        //   loadMissions() 재조회(MainActivity 배선) → 서버가 meal 을 다시 내려주고 카드는 사라져야 한다.
+        var missions = listOf(mission("walking"))
+        val api = object : MissionApi by FakeMissionApi(emptyList()) {
+            override suspend fun getMissions(status: String) = MissionsResponse(missions)
+        }
+        val vm = MissionViewModel(api, FakeProfileApi(kidney = "kidney_disease"))
+        advanceUntilIdle()
+        assertNotNull("변경 전: 숨김 사유 카드", successState(vm).proteinHiddenNotice)
+
+        missions = listOf(mission("walking"), mission("meal")) // 신장 '없음' 저장 후 서버 게이트 해제
+        vm.loadMissions()
+        advanceUntilIdle()
+        val s = successState(vm)
+        assertEquals("meal 미션 복귀", 2, s.missions.size)
+        assertNull("사유 카드 소멸", s.proteinHiddenNotice)
+    }
 }
