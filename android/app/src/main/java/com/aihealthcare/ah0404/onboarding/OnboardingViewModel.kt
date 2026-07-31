@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aihealthcare.ah0404.network.Agreement
 import com.aihealthcare.ah0404.network.AgreementsRequest
+import com.aihealthcare.ah0404.network.CohortDistributionResponse
 import com.aihealthcare.ah0404.network.HealthProfileRequest
 import com.aihealthcare.ah0404.network.OnboardingApi
 import com.aihealthcare.ah0404.network.PhysicalAssessmentRequest
@@ -16,6 +17,7 @@ import com.aihealthcare.ah0404.network.RiskPredictionResponse
 import com.aihealthcare.ah0404.network.Term
 import com.aihealthcare.ah0404.network.TokenHolder
 import com.aihealthcare.ah0404.network.retrofit
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /** 온보딩 단계. 화면 라우팅의 기준. */
@@ -138,6 +140,8 @@ class OnboardingViewModel(
     private var lastSubmittedProfile: HealthProfileRequest? = null
     var bmi by mutableStateOf<Double?>(null); private set
     var result by mutableStateOf<RiskPredictionResponse?>(null); private set
+    // 또래 분포 병합 차트(#193) 데이터. 결과 표시와 독립 — 없으면(서버 미지원·65세 미만·조회 실패) 차트만 미표시.
+    var cohort by mutableStateOf<CohortDistributionResponse?>(null); private set
 
     private val requiredTerms = listOf("service", "privacy", "sensitive_health")
 
@@ -286,6 +290,15 @@ class OnboardingViewModel(
     private suspend fun predictAndFinish() {
         val pid = profileId ?: throw IllegalStateException("프로필 정보가 없습니다. 프로필부터 다시 진행해 주세요.")
         result = api.createRiskPrediction(RiskPredictionRequest(pid))
+        // 또래 분포 차트(#193): 결과 카드와 독립. 서버 미지원(구버전)·65세 미만 등으로 실패해도 차트만 안 뜨고
+        //   온보딩 완료 흐름엔 영향 없다(널 안전). 취소는 구조적 동시성 위해 전파한다.
+        cohort = try {
+            api.getCohortDistribution()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
         step = OnbStep.RESULT
     }
 

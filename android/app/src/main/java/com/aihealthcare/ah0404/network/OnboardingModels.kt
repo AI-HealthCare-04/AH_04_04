@@ -180,6 +180,23 @@ data class RiskPredictionResponse(
     @SerialName("onboarding_status") val onboardingStatus: String,
 )
 
+// 또래 분포 병합 차트(#193) 데이터. GET /risk-predictions/me/cohort-distribution.
+//   probability=내 근감소증 추정 확률(0~1), lowerCount=100명 환산 '나보다 위험이 낮은 사람 수'(서버 계산, [1,99]),
+//   density=곡선 좌표 [[x(확률), y(상대밀도 0~100)]]. 서버가 없거나(구버전) 65세 미만이면 호출이 실패해도 무영향(차트 미표시).
+@Serializable
+data class CohortDistributionResponse(
+    val probability: Float,
+    val sex: String,                                          // male | female
+    @SerialName("age_label") val ageLabel: String,            // "73–79세" | "80세 이상"
+    val n: Int,
+    @SerialName("lower_count") val lowerCount: Int,
+    val quantiles: List<Float> = emptyList(),
+    val density: List<List<Float>> = emptyList(),
+    @SerialName("density_method") val densityMethod: String? = null,
+    @SerialName("cohort_version") val cohortVersion: String? = null,
+    @SerialName("model_version") val modelVersion: String? = null,
+)
+
 // ── 8) 홈 (온보딩 완료 판정: latest_prediction 노출 확인) ─────────────────────
 // 타입 확정 HomeResponse 는 HomeModels.kt 로 이관(홈 UI 롤에서 확정). getHome() 은 그것을 공유한다.
 

@@ -451,6 +451,12 @@ private fun ResultStep(vm: OnboardingViewModel, onComplete: (isGuest: Boolean) -
                 text = r?.displayMessage ?: "오늘부터 가볍게 시작해 볼까요?",
                 style = MaterialTheme.typography.bodyLarge,
             )
+            // 또래 분포 병합 차트(#193): 코호트 데이터가 오면 위험도 카드에 표시. 없으면(서버 미지원·65세 미만·
+            //   조회 실패) 종전대로 문구만 — 널 안전, 온보딩 완료 흐름 무영향.
+            vm.cohort?.let { cohort ->
+                Spacer(Modifier.height(Dimens.Space16))
+                RiskDistributionChart(data = cohort)
+            }
             Spacer(Modifier.height(Dimens.Space16))
             // 결과 화면 필수 고지(§0-3): 서버 disclaimer 있으면 그대로, 없으면 기본 문구.
             MedicalDisclaimer(text = r?.disclaimer ?: MEDICAL_DISCLAIMER_DEFAULT)

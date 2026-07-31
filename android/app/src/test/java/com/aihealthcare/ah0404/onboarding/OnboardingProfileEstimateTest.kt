@@ -46,6 +46,7 @@ class OnboardingProfileEstimateTest {
         override suspend fun createHealthProfile(body: HealthProfileRequest) = TODO()
         override suspend fun createPhysicalAssessment(body: PhysicalAssessmentRequest) = TODO()
         override suspend fun createRiskPrediction(body: RiskPredictionRequest) = TODO()
+        override suspend fun getCohortDistribution() = TODO()
         override suspend fun getHome() = TODO()
     }
 
