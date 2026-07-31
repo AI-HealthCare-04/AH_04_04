@@ -9,6 +9,7 @@ from app.core.utils.clock import today_kst
 from app.dtos.dashboard import ScoreSimPoint, ScoreSimulationResponse
 from app.dtos.risk_prediction import (
     CareStage,
+    CohortDistributionResponse,
     RiskComparisonStatus,
     RiskPredictionCreateRequest,
     RiskPredictionCreateResponse,
@@ -18,7 +19,18 @@ from app.dtos.risk_prediction import (
     RiskPredictionReassessResponse,
     RiskPredictionResponse,
 )
-from app.ml.predictor import AgeNotSupportedError, RiskPredictor, features_from_health_profile
+from app.ml.cohort_density import DENSITY_METHOD
+from app.ml.predictor import (
+    AGE_MIN,
+    AgeNotSupportedError,
+    RiskPredictor,
+    _cohort_age_key,
+    features_from_health_profile,
+    load_cohort_distribution,
+    load_cohort_model_version,
+    load_cohort_version,
+    percentile_low,
+)
 from app.models.enums import ActivityInputSource, InputMethod, OnboardingStatus, RiskLevel
 from app.models.health import HealthProfile
 from app.models.predictions import RiskPrediction
@@ -118,6 +130,52 @@ class RiskPredictionService:
             (cv for score, cv in [*walk_results, *musc_results] if cv is not None), None
         )
         return ScoreSimulationResponse(walk=walk, musc=musc, cohort_version=cohort_version)
+
+    async def get_cohort_distribution(self, user: User) -> CohortDistributionResponse:
+        """또래 분포 병합 차트(#193): 사용자 코호트의 quantiles·density 와 내 위치(lower_count)를 낸다.
+
+        코호트는 기록탭 점수와 **동일한 (feature_set × 성별 × 단일나이) 키**로 선택해 두 화면의 순서가
+        일치한다. 확률은 최신 예측(internal_risk_score)을 쓴다. 65세 미만은 코호트 미지원이라 422.
+        """
+        profile = await self.profile_repo.get_latest_profile(user.user_id)
+        if profile is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Health profile not found.")
+        features = features_from_health_profile(profile)
+        age = features.get("age")
+        sex = features.get("sex")
+        if age is None or float(age) < AGE_MIN:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Cohort distribution is provided for age >= {AGE_MIN} only.",
+            )
+        if sex is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sex not available.")
+        # 기록탭 점수와 동일한 코호트 선택(정합): 허리 입력 있으면 with_waist, 없으면 minimal. with_waist 코호트가
+        #   없으면 minimal 로 폴백(개편 지시서 §3.1).
+        feature_set = "with_waist" if profile.waist_cm is not None else "minimal"
+        age_key = _cohort_age_key(float(age))
+        table = load_cohort_distribution()
+        dist = table.get((feature_set, int(sex), age_key)) or table.get(("minimal", int(sex), age_key))
+        if dist is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cohort distribution not found.")
+        prediction = await self.prediction_repo.get_latest_prediction(user.user_id)
+        if prediction is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Risk prediction not found.")
+        probability = float(prediction.internal_risk_score)
+        # 백분위(선형보간) → 100명 환산 '나보다 위험이 낮은 사람 수'. [1,99] 클램프(0번째/101번째 방지, 스펙 §4.1).
+        lower_count = min(99, max(1, round(percentile_low(probability, dist.quantiles))))
+        return CohortDistributionResponse(
+            probability=probability,
+            sex=profile.sex.value,
+            age_label=_format_cohort_age_label(age_key, dist.window),
+            n=dist.n,
+            lower_count=lower_count,
+            quantiles=list(dist.quantiles),
+            density=[list(point) for point in dist.density],
+            density_method=DENSITY_METHOD,
+            cohort_version=load_cohort_version(),
+            model_version=load_cohort_model_version(),
+        )
 
     async def _predict_and_save(
         self,
@@ -274,3 +332,13 @@ class RiskPredictionService:
         if care_stage == CareStage.MAINTAIN:
             return "조금만 더 챙기면 좋은 단계예요. 걷기와 근력 운동을 꾸준히 이어가 봐요."
         return "지금 컨디션이 좋아요. 지금처럼 생활습관 미션을 이어가면 근력을 잘 지킬 수 있어요."
+
+
+def _format_cohort_age_label(age_key: str, window: str | None) -> str:
+    """헤드라인 연령대 라벨(#193 §5). '80+' -> '80세 이상', window 'lo-hi' -> 'lo–hi세'(en dash)."""
+    if age_key.endswith("+"):
+        return f"{age_key[:-1]}세 이상"
+    if window and "-" in window:
+        lo, hi = window.split("-", 1)
+        return f"{lo}–{hi}세"
+    return f"{age_key}세"
