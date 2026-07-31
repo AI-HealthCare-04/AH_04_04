@@ -27,7 +27,6 @@ from app.ml.predictor import (
     _cohort_age_key,
     features_from_health_profile,
     load_cohort_distribution,
-    load_cohort_model_version,
     load_cohort_version,
     percentile_low,
 )
@@ -134,10 +133,14 @@ class RiskPredictionService:
     async def get_cohort_distribution(self, user: User) -> CohortDistributionResponse:
         """또래 분포 병합 차트(#193): 사용자 코호트의 quantiles·density 와 내 위치(lower_count)를 낸다.
 
-        코호트는 기록탭 점수와 **동일한 (feature_set × 성별 × 단일나이) 키**로 선택해 두 화면의 순서가
-        일치한다. 확률은 최신 예측(internal_risk_score)을 쓴다. 65세 미만은 코호트 미지원이라 422.
+        확률은 최신 예측(internal_risk_score)을 쓰므로 코호트도 **그 예측이 만들어진 시점의 프로필과
+        model_variant 로부터 (feature_set × 성별 × 단일나이) 키**를 만들어 선택한다 — 예측 후 프로필이
+        수정돼도 확률·분포의 기준 모델과 입력이 항상 일치한다. 65세 미만은 코호트 미지원이라 422.
         """
-        profile = await self.profile_repo.get_latest_profile(user.user_id)
+        prediction = await self.prediction_repo.get_latest_prediction(user.user_id)
+        if prediction is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Risk prediction not found.")
+        profile = await self.profile_repo.get_profile(prediction.profile_id, user.user_id)
         if profile is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Health profile not found.")
         features = features_from_health_profile(profile)
@@ -150,17 +153,14 @@ class RiskPredictionService:
             )
         if sex is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sex not available.")
-        # 기록탭 점수와 동일한 코호트 선택(정합): 허리 입력 있으면 with_waist, 없으면 minimal. with_waist 코호트가
-        #   없으면 minimal 로 폴백(개편 지시서 §3.1).
-        feature_set = "with_waist" if profile.waist_cm is not None else "minimal"
+        # 확률을 만든 모델과 같은 feature_set 코호트만 사용한다. 다른 feature_set 으로 폴백하면
+        #   with_waist 확률을 minimal 분포에 대입하는 식의 잘못된 백분위가 나온다(리뷰 #301).
+        feature_set = prediction.model_variant.value
         age_key = _cohort_age_key(float(age))
         table = load_cohort_distribution()
-        dist = table.get((feature_set, int(sex), age_key)) or table.get(("minimal", int(sex), age_key))
+        dist = table.get((feature_set, int(sex), age_key))
         if dist is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cohort distribution not found.")
-        prediction = await self.prediction_repo.get_latest_prediction(user.user_id)
-        if prediction is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Risk prediction not found.")
         probability = float(prediction.internal_risk_score)
         # 백분위(선형보간) → 100명 환산 '나보다 위험이 낮은 사람 수'. [1,99] 클램프(0번째/101번째 방지, 스펙 §4.1).
         lower_count = min(99, max(1, round(percentile_low(probability, dist.quantiles))))
@@ -174,7 +174,9 @@ class RiskPredictionService:
             density=[list(point) for point in dist.density],
             density_method=DENSITY_METHOD,
             cohort_version=load_cohort_version(),
-            model_version=load_cohort_model_version(),
+            # 산출물 meta.model_version 은 minimal 모델 버전이라 with_waist 경로에서 불일치한다(리뷰 #301).
+            #   확률을 실제로 만든 예측의 버전을 그대로 노출한다.
+            model_version=prediction.model_version,
         )
 
     async def _predict_and_save(
