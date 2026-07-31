@@ -443,7 +443,6 @@ private fun ProfileStep(vm: OnboardingViewModel) {
                 options = listOf(
                     SegmentOption("none", "해당 없음"),
                     SegmentOption("kidney_disease", "신장질환 있음"),
-                    SegmentOption("dialysis", "투석 중"),
                     SegmentOption("unknown", "잘 모르겠어요"),
                 ),
                 selected = vm.kidneyStatus,

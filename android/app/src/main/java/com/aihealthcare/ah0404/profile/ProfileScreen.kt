@@ -126,7 +126,6 @@ private fun HealthInfoSection(healthVm: HealthInfoViewModel) {
 private val KIDNEY_LABELS = mapOf(
     "none" to "해당 없음",
     "kidney_disease" to "신장질환 있음",
-    "dialysis" to "투석 중",
     "unknown" to "잘 모르겠어요",
 )
 
