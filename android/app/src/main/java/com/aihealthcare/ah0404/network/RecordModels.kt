@@ -46,6 +46,23 @@ data class RiskLatestResponse(
     @SerialName("cohort_version") val cohortVersion: String? = null,
 )
 
+/**
+ * POST /risk-predictions/reassess 요청. 서버가 최신 프로필 + 최근 [activityWindowDays]일의 실제
+ * 활동 로그(걷기/근력 일수)로 새 스냅샷을 만들어 **새 예측을 생성·저장**한다(서버 계약: 7 또는 14만 허용).
+ */
+@Serializable
+data class RiskReassessRequest(
+    @SerialName("activity_window_days") val activityWindowDays: Int = 7,
+)
+
+/** POST /risk-predictions/reassess 응답 중 필요한 필드만(ignoreUnknownKeys). */
+@Serializable
+data class RiskReassessResponse(
+    @SerialName("prediction_id") val predictionId: Int = 0,
+    @SerialName("muscle_score") val muscleScore: Int? = null,
+    @SerialName("score_band") val scoreBand: String? = null,
+)
+
 /** what-if 점수 시뮬레이션(#기록탭 §4). score=null 인 지점은 점수 미제공. */
 @Serializable
 data class ScoreSimPointDto(val days: Int, val score: Int? = null)

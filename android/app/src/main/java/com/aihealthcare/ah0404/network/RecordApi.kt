@@ -1,6 +1,8 @@
 package com.aihealthcare.ah0404.network
 
+import retrofit2.http.Body
 import retrofit2.http.GET
+import retrofit2.http.POST
 import retrofit2.http.Query
 
 /** `_13 나의 기록` 화면의 예측 추이와 활동 기록 API. */
@@ -40,4 +42,13 @@ interface RecordApi {
     /** what-if 점수 시뮬레이션(#기록탭 §4) — 걷기 0~7·근력 0~5 각 지점 점수. */
     @GET("dashboard/score-simulation")
     suspend fun getScoreSimulation(): ScoreSimulationResponse
+
+    /**
+     * 근육 건강 점수 재평가 — 최신 프로필 + 최근 활동으로 **새 예측을 생성**한다.
+     *  '내 정보' 저장 후 이걸 불러야 편집이 점수에 실제 반영된다: GET latest 는 저장된 마지막
+     *  예측을 돌려줄 뿐이라, 새 예측 없이는 프로필을 고쳐도 점수가 영원히 안 바뀐다(점수 모델
+     *  배포 전 가입 계정은 "준비 중"에 머무는 문제 포함). 65세 미만이면 서버가 422 로 거른다.
+     */
+    @POST("risk-predictions/reassess")
+    suspend fun reassessRiskPrediction(@Body body: RiskReassessRequest = RiskReassessRequest()): RiskReassessResponse
 }

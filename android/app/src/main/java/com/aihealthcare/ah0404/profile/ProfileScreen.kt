@@ -161,13 +161,29 @@ private fun HealthInfoEditor(healthVm: HealthInfoViewModel, profile: HealthProfi
             enabled = !healthVm.saving,
         )
         Spacer(Modifier.height(Dimens.Space8))
-        // 하단 고정 안내(§2) — 저장 반영 시점을 문구와 동작으로 일치시킨다.
+        // 하단 고정 안내(§2) — 재평가 상태별로 문구를 실제 동작과 일치시킨다(리뷰 #294:
+        //   저장 즉시 반영 시도, 422/점수 미제공/네트워크 실패를 구분. 종전 "다음 …부터 반영"은
+        //   재평가 배선 후 사실이 아니게 되어 교체).
         Text(
-            "지금 수정하신 정보는 다음 근육 건강 정보부터 반영됩니다",
+            scoreRefreshFooterText(healthVm.scoreRefresh),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (healthVm.scoreRefresh == HealthInfoViewModel.ScoreRefreshState.FAILED) {
+            Spacer(Modifier.height(Dimens.Space8))
+            // 네트워크·서버 실패만 재시도 의미가 있다(422·점수 미제공은 재시도해도 같아 버튼 없음).
+            AigoSecondaryButton(text = "점수 다시 계산", onClick = healthVm::retryScoreRefresh)
+        }
     }
+}
+
+/** 하단 고정 안내 문구 — 재평가 상태별(리뷰 #294 상태 경계). 문구 회귀는 테스트로 고정한다. */
+internal fun scoreRefreshFooterText(state: HealthInfoViewModel.ScoreRefreshState?): String = when (state) {
+    null -> "저장하면 수정한 정보로 근육 건강 점수를 바로 다시 계산해요."
+    HealthInfoViewModel.ScoreRefreshState.IN_PROGRESS -> "저장한 정보로 근육 건강 점수를 다시 계산하고 있어요…"
+    HealthInfoViewModel.ScoreRefreshState.APPLIED -> "근육 건강 정보에 바로 반영됐어요."
+    HealthInfoViewModel.ScoreRefreshState.NOT_ELIGIBLE -> "정보는 저장됐어요. 지금은 근육 점수 제공 대상이 아니에요."
+    HealthInfoViewModel.ScoreRefreshState.FAILED -> "정보는 저장됐어요. 점수 다시 계산에 실패했어요 — 아래 버튼으로 다시 시도해 주세요."
 }
 
 /** 소수 반올림 없는 표시용 문자열: 170.0 → "170", 63.5 → "63.5". */
