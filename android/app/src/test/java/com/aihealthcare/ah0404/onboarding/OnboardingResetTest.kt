@@ -26,7 +26,7 @@ class OnboardingResetTest {
         vm.waistCm = "80"
         vm.walkDays = 5
         vm.muscDays = 2
-        vm.kidneyStatus = "dialysis"
+        vm.kidneyStatus = "kidney_disease"
         vm.proteinStatus = "restricted"
         vm.chairStandSec = "12.5"
 

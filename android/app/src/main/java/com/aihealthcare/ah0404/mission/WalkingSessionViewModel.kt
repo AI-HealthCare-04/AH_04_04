@@ -110,6 +110,9 @@ class WalkingSessionViewModel(
         createdOnDeviceAt = nowIso8601() // 이 측정 인스턴스의 자연 키를 시작 시점에 고정(#158)
         submitState = SubmitState.Idle
         uiState = UiState(phase = Phase.MEASURING, sensorAvailable = true)
+        // 알림 '중단' 액션(#312) → finish() 와 동일 경로. 스냅샷이 확정돼 걸음이 유실되지 않고,
+        //   화면 복귀 시 DONE 분기(완료 화면 + 자동 제출)로 자연 합류한다.
+        WalkingMeasurement.stopRequestListener = { finish() }
     }
 
     /**
@@ -157,6 +160,7 @@ class WalkingSessionViewModel(
     /** 측정 종료 → 세션 스냅샷을 확정해 DONE 으로. 서버 제출은 submitWalking 이 별도로 한다. MEASURING 에서만 유효. */
     fun finish() {
         if (uiState.phase != Phase.MEASURING) return
+        WalkingMeasurement.stopRequestListener = null // 측정이 끝나면 알림 '중단' 신호 수신도 끝(#312)
         val snapshot = session.stop()
         uiState = uiState.copy(
             phase = Phase.DONE,
@@ -210,6 +214,7 @@ class WalkingSessionViewModel(
      *    해제해 재시작을 보장한다.
      */
     fun reset() {
+        WalkingMeasurement.stopRequestListener = null // 이탈 시 알림 '중단' 신호 연결도 해제(#312)
         session.cancel()
         feedbackTracker.reset() // 이탈 시 신호 이력도 초기화(다음 세션에서 다시 울리도록)
         uiState = UiState(sensorAvailable = session.isSensorAvailable)
@@ -217,6 +222,7 @@ class WalkingSessionViewModel(
 
     override fun onCleared() {
         // Activity 파괴 시 방어적으로 세션 중단(구성 변경에서는 호출되지 않는다).
+        WalkingMeasurement.stopRequestListener = null
         session.cancel()
     }
 }
