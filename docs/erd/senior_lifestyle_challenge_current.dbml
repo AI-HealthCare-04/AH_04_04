@@ -1,0 +1,514 @@
+Project senior_lifestyle_challenge_current {
+  database_type: 'MySQL'
+  Note: 'Current physical schema based on SQLAlchemy models and Alembic head 0017_sts_overlay_events (2026-07-30). Test and QA-only databases are excluded.'
+}
+
+Enum auth_provider_enum {
+  google
+  kakao
+  guest
+}
+
+Enum onboarding_status_enum {
+  pending
+  terms_agreed
+  profile_required
+  completed
+}
+
+Enum font_size_enum {
+  small
+  medium
+  large
+}
+
+Enum sound_size_enum {
+  small
+  medium
+  large
+}
+
+Enum terms_type_enum {
+  service
+  privacy
+  sensitive_health
+  marketing
+}
+
+Enum health_check_status_enum {
+  started
+  completed
+  skipped
+}
+
+Enum input_method_enum {
+  form
+  service_log
+  sensor
+  manual
+}
+
+Enum sex_enum {
+  male
+  female
+}
+
+Enum activity_input_source_enum {
+  self_report
+  service_log
+}
+
+Enum kidney_status_enum {
+  none
+  kidney_disease
+  dialysis
+  unknown
+}
+
+Enum protein_restriction_status_enum {
+  none
+  restricted
+  unknown
+}
+
+Enum assessment_type_enum {
+  initial
+  reassessment
+}
+
+Enum activity_level_enum {
+  easy
+  normal
+  hard
+}
+
+Enum level_reason_enum {
+  initial_test
+  rule
+  llm_recommendation
+  user_selected
+}
+
+Enum reason_type_enum {
+  rule
+  llm_recommendation
+  user_request
+}
+
+Enum model_variant_enum {
+  minimal
+  with_waist
+  rule_based_scaffold
+}
+
+Enum risk_level_enum {
+  low
+  medium
+  high
+}
+
+Enum mission_type_enum {
+  meal
+  exercise
+  walking
+  game
+}
+
+Enum activity_type_enum {
+  walking
+  chair_stand
+  seated_exercise
+  standing_exercise
+  stretching
+}
+
+Enum target_unit_enum {
+  reps
+  minutes
+  steps
+  count
+  km
+  sets
+}
+
+Enum intensity_enum {
+  low
+  moderate
+  high
+}
+
+Enum mission_status_enum {
+  in_progress
+  completed
+  skipped
+}
+
+Enum perceived_difficulty_enum {
+  easy
+  just_right
+  hard
+}
+
+Enum recognition_status_enum {
+  success
+  low_confidence
+  failed
+  manual_override
+}
+
+Enum activity_source_enum {
+  sensor
+  manual
+}
+
+Enum sync_status_enum {
+  synced
+  pending
+  recovered
+}
+
+Enum game_type_enum {
+  card_match
+}
+
+Enum daily_result_enum {
+  none
+  success
+  great_success
+}
+
+Table users {
+  user_id bigint [pk, increment]
+  provider auth_provider_enum [not null]
+  social_id varchar(100) [not null]
+  nickname varchar(50) [not null]
+  onboarding_status onboarding_status_enum [not null]
+  last_login_at datetime
+  deleted_at datetime
+  created_at datetime [not null]
+  updated_at datetime [not null]
+
+  Indexes {
+    (provider, social_id) [unique, name: 'uq_users_provider_social_id']
+  }
+}
+
+Table oauth_login_nonces {
+  nonce_hash varchar(64) [pk, note: 'SHA-256 hash of the one-time OAuth nonce']
+  provider varchar(20) [not null]
+  created_at datetime [not null]
+
+  Indexes {
+    created_at [name: 'ix_oauth_login_nonces_created_at']
+  }
+}
+
+Table terms_agreements {
+  agreement_id bigint [pk, increment]
+  user_id bigint [not null]
+  terms_type terms_type_enum [not null]
+  is_required boolean [not null]
+  agreed boolean [not null]
+  version varchar(30) [not null]
+  agreed_at datetime [not null]
+
+  Indexes {
+    user_id [name: 'ix_terms_agreements_user_id']
+    (user_id, terms_type) [unique, name: 'uq_terms_agreements_user_terms_type']
+  }
+}
+
+Table personalized_settings {
+  setting_id bigint [pk, increment]
+  user_id bigint [not null, unique]
+  font_size font_size_enum [not null]
+  sound_size sound_size_enum [not null]
+  pet_type varchar(50) [not null]
+  music_enabled boolean [not null]
+  created_at datetime [not null]
+  updated_at datetime [not null]
+}
+
+Table health_check_sessions {
+  session_id bigint [pk, increment]
+  user_id bigint [not null]
+  status health_check_status_enum [not null]
+  input_method input_method_enum [not null]
+  has_estimated_value boolean [not null]
+  created_at datetime [not null]
+  completed_at datetime
+
+  Indexes {
+    (user_id, status, session_id) [name: 'ix_health_check_sessions_user_status_id']
+  }
+}
+
+Table health_profiles {
+  profile_id bigint [pk, increment]
+  user_id bigint [not null]
+  session_id bigint
+  birth_date date [not null]
+  sex sex_enum [not null]
+  height_cm decimal(5,2) [not null]
+  weight_kg decimal(5,2) [not null]
+  bmi decimal(4,1) [not null]
+  waist_cm decimal(5,2)
+  walk_days int [not null, note: 'Number of walking days in the activity window']
+  musc_days int [not null, note: 'Number of strength-exercise days in the activity window']
+  activity_input_source activity_input_source_enum [not null]
+  activity_window_days int
+  kidney_status kidney_status_enum [not null]
+  protein_restriction_status protein_restriction_status_enum [not null]
+  protein_challenge_allowed boolean [not null]
+  input_method input_method_enum [not null]
+  has_estimated_value boolean [not null]
+  created_at datetime [not null]
+
+  Indexes {
+    (user_id, created_at, profile_id) [name: 'ix_health_profiles_user_created_id']
+    session_id [name: 'ix_health_profiles_session_id']
+  }
+}
+
+Table physical_assessments {
+  physical_assessment_id bigint [pk, increment]
+  user_id bigint [not null]
+  session_id bigint
+  assessment_type assessment_type_enum [not null]
+  chair_stand_5_time_sec decimal(5,2)
+  chair_stand_skipped boolean [not null]
+  pain_reported boolean [not null]
+  dizziness_reported boolean [not null]
+  used_for_level_setting boolean [not null]
+  created_at datetime [not null]
+
+  Indexes {
+    user_id [name: 'ix_physical_assessments_user_id']
+    session_id [name: 'ix_physical_assessments_session_id']
+    session_id [unique, name: 'uq_physical_assessments_session_id']
+  }
+}
+
+Table user_activity_profiles {
+  activity_profile_id bigint [pk, increment]
+  user_id bigint [not null, unique]
+  current_level activity_level_enum [not null]
+  level_reason level_reason_enum [not null]
+  physical_assessment_id bigint
+  started_at datetime [not null]
+  updated_at datetime [not null]
+
+  Indexes {
+    physical_assessment_id [name: 'ix_user_activity_profiles_physical_assessment_id']
+  }
+}
+
+Table activity_level_change_logs {
+  level_change_id bigint [pk, increment]
+  user_id bigint [not null]
+  from_level activity_level_enum [not null]
+  to_level activity_level_enum [not null]
+  reason_type reason_type_enum [not null]
+  reason_text text
+  accepted_by_user boolean [not null]
+  created_at datetime [not null]
+
+  Indexes {
+    user_id [name: 'ix_activity_level_change_logs_user_id']
+  }
+}
+
+Table risk_predictions {
+  prediction_id bigint [pk, increment]
+  user_id bigint [not null]
+  profile_id bigint [not null]
+  model_version varchar(100) [not null]
+  model_variant model_variant_enum [not null]
+  internal_risk_score decimal(6,3) [not null]
+  internal_risk_level risk_level_enum [not null]
+  muscle_score int
+  score_band varchar(20)
+  score_p_low decimal(8,5)
+  score_p_high decimal(8,5)
+  score_cohort_age varchar(4)
+  score_cohort_version varchar(50)
+  input_snapshot json [not null]
+  created_at datetime [not null]
+
+  Indexes {
+    (user_id, created_at, prediction_id) [name: 'ix_risk_predictions_user_created_id']
+    profile_id [name: 'ix_risk_predictions_profile_id']
+  }
+}
+
+Table sts_overlay_events {
+  event_id bigint [pk, increment]
+  user_id bigint [not null]
+  tier varchar(10) [not null, note: 'Safety-net card tier such as basic or strong']
+  sts_sec decimal(5,2)
+  bmi decimal(4,1)
+  score_band varchar(20)
+  created_at datetime [not null]
+
+  Indexes {
+    user_id [name: 'ix_sts_overlay_events_user_id']
+  }
+}
+
+Table mission_templates {
+  mission_template_id bigint [pk, increment]
+  mission_type mission_type_enum [not null]
+  title varchar(100) [not null]
+  description text
+  level activity_level_enum [not null]
+  display_order int [not null]
+  default_target_value int [not null]
+  target_unit target_unit_enum [not null]
+  requires_safety_notice boolean [not null]
+  daily_count_limit int
+  reward_points int [not null]
+  requires_kidney_check boolean [not null]
+  is_active boolean [not null]
+  created_at datetime [not null]
+  updated_at datetime [not null]
+}
+
+Table mission_logs {
+  mission_log_id bigint [pk, increment]
+  user_id bigint [not null]
+  mission_template_id bigint [not null]
+  mission_type mission_type_enum [not null]
+  status mission_status_enum [not null]
+  performed_at datetime
+  actual_value decimal(8,2)
+  target_value decimal(8,2)
+  target_unit target_unit_enum
+  success boolean [not null]
+  input_method input_method_enum
+  manual_override boolean [not null]
+  safety_notice_confirmed boolean [not null]
+  safety_notice_confirmed_at datetime
+  perceived_difficulty perceived_difficulty_enum
+  pain_reported boolean [not null]
+  dizziness_reported boolean [not null]
+  counted_for_daily boolean [not null]
+  earned_points int [not null]
+  created_on_device_at datetime(6) [note: 'Device event time with microsecond precision; nullable legacy rows are allowed']
+  synced_at datetime
+  created_at datetime [not null]
+
+  Indexes {
+    (user_id, created_at) [name: 'ix_mission_logs_user_created_at']
+    mission_template_id [name: 'ix_mission_logs_mission_template_id']
+    (user_id, mission_template_id, created_on_device_at) [unique, name: 'uq_mission_logs_user_template_device_time']
+  }
+}
+
+Table meal_logs {
+  meal_log_id bigint [pk, increment]
+  mission_log_id bigint [not null, unique]
+  meal_date date [not null]
+  protein_foods json [not null]
+  raw_text text
+  created_at datetime [not null]
+
+  Indexes {
+    meal_date [name: 'ix_meal_logs_meal_date']
+  }
+}
+
+Table physical_activity_logs {
+  physical_activity_log_id bigint [pk, increment]
+  mission_log_id bigint [not null, unique]
+  activity_date date [not null]
+  activity_type activity_type_enum [not null]
+  intensity intensity_enum
+  started_at datetime
+  ended_at datetime
+  duration_min decimal(6,2)
+  steps int
+  distance_km decimal(6,3)
+  reps int
+  sets int
+  met_value decimal(4,2)
+  source activity_source_enum [not null]
+  sync_status sync_status_enum [not null]
+  created_at datetime [not null]
+
+  Indexes {
+    activity_date [name: 'ix_physical_activity_logs_activity_date']
+  }
+}
+
+Table game_logs {
+  game_log_id bigint [pk, increment]
+  mission_log_id bigint [not null, unique]
+  game_type game_type_enum [not null]
+  score int
+  duration_sec int
+  success_count int
+  mistake_count int
+  completed boolean [not null]
+  created_at datetime [not null]
+}
+
+Table sensor_sessions {
+  sensor_session_id bigint [pk, increment]
+  mission_log_id bigint [not null]
+  detected_count int
+  duration_sec int
+  motion_score decimal(5,2)
+  recognition_status recognition_status_enum [not null]
+  raw_summary json
+  created_at datetime [not null]
+
+  Indexes {
+    mission_log_id [name: 'ix_sensor_sessions_mission_log_id']
+  }
+}
+
+Table daily_activity_summaries {
+  summary_id bigint [pk, increment]
+  user_id bigint [not null]
+  summary_date date [not null]
+  counted_mission_count int [not null]
+  meal_counted boolean [not null]
+  exercise_count int [not null]
+  walking_count int [not null]
+  game_count int [not null]
+  daily_result daily_result_enum [not null]
+  earned_points int [not null]
+  created_at datetime [not null]
+  updated_at datetime [not null]
+
+  Indexes {
+    summary_date [name: 'ix_daily_activity_summaries_summary_date']
+    (user_id, summary_date) [unique, name: 'uq_daily_activity_summaries_user_date']
+  }
+}
+
+Ref: terms_agreements.user_id > users.user_id
+Ref: personalized_settings.user_id > users.user_id
+
+Ref: health_check_sessions.user_id > users.user_id
+Ref: health_profiles.user_id > users.user_id
+Ref: health_profiles.session_id > health_check_sessions.session_id
+Ref: physical_assessments.user_id > users.user_id
+Ref: physical_assessments.session_id > health_check_sessions.session_id
+
+Ref: user_activity_profiles.user_id > users.user_id
+Ref: user_activity_profiles.physical_assessment_id > physical_assessments.physical_assessment_id
+Ref: activity_level_change_logs.user_id > users.user_id
+
+Ref: risk_predictions.user_id > users.user_id
+Ref: risk_predictions.profile_id > health_profiles.profile_id
+Ref: sts_overlay_events.user_id > users.user_id
+
+Ref: mission_logs.user_id > users.user_id
+Ref: mission_logs.mission_template_id > mission_templates.mission_template_id
+Ref: meal_logs.mission_log_id > mission_logs.mission_log_id
+Ref: physical_activity_logs.mission_log_id > mission_logs.mission_log_id
+Ref: game_logs.mission_log_id > mission_logs.mission_log_id
+Ref: sensor_sessions.mission_log_id > mission_logs.mission_log_id
+
+Ref: daily_activity_summaries.user_id > users.user_id
