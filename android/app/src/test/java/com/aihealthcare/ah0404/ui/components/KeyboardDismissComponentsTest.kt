@@ -1,11 +1,14 @@
 package com.aihealthcare.ah0404.ui.components
 
+import android.app.Application
 import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -13,11 +16,17 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.platform.testTag
 import com.aihealthcare.ah0404.ui.theme.MyApplicationTheme
 import org.junit.Rule
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
+@RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+@Config(application = Application::class)
 class KeyboardDismissComponentsTest {
     @get:Rule
     val composeRule = createComposeRule()
@@ -25,9 +34,9 @@ class KeyboardDismissComponentsTest {
     @Test
     fun selectionStepperAndButtonClearTextFieldFocus() {
         composeRule.setContent {
-            var text by mutableStateOf("")
-            var selected by mutableStateOf<String?>(null)
-            var days by mutableIntStateOf(1)
+            var text by remember { mutableStateOf("") }
+            var selected by remember { mutableStateOf<String?>(null) }
+            var days by remember { mutableIntStateOf(1) }
 
             MyApplicationTheme {
                 Column {
