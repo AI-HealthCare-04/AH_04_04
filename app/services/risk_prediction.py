@@ -9,6 +9,7 @@ from app.core.utils.clock import today_kst
 from app.dtos.dashboard import ScoreSimPoint, ScoreSimulationResponse
 from app.dtos.risk_prediction import (
     CareStage,
+    CohortDistributionResponse,
     RiskComparisonStatus,
     RiskPredictionCreateRequest,
     RiskPredictionCreateResponse,
@@ -18,7 +19,17 @@ from app.dtos.risk_prediction import (
     RiskPredictionReassessResponse,
     RiskPredictionResponse,
 )
-from app.ml.predictor import AgeNotSupportedError, RiskPredictor, features_from_health_profile
+from app.ml.cohort_density import DENSITY_METHOD
+from app.ml.predictor import (
+    AGE_MIN,
+    AgeNotSupportedError,
+    RiskPredictor,
+    _cohort_age_key,
+    features_from_health_profile,
+    load_cohort_distribution,
+    load_cohort_version,
+    percentile_low,
+)
 from app.models.enums import ActivityInputSource, InputMethod, OnboardingStatus, RiskLevel
 from app.models.health import HealthProfile
 from app.models.predictions import RiskPrediction
@@ -118,6 +129,58 @@ class RiskPredictionService:
             (cv for score, cv in [*walk_results, *musc_results] if cv is not None), None
         )
         return ScoreSimulationResponse(walk=walk, musc=musc, cohort_version=cohort_version)
+
+    async def get_cohort_distribution(self, user: User) -> CohortDistributionResponse:
+        """또래 분포 병합 차트(#193): 사용자 코호트의 quantiles·density 와 내 위치(lower_count)를 낸다.
+
+        확률은 최신 예측(internal_risk_score)을 쓰므로 코호트도 **그 예측에 저장된 입력 스냅샷의
+        나이·성별과 model_variant 로부터 (feature_set × 성별 × 단일나이) 키**를 만들어 선택한다 —
+        예측 후 프로필이 수정되거나 생일이 지나도 확률·분포의 기준 모델과 입력이 항상 일치한다.
+        65세 미만은 코호트 미지원이라 422.
+        """
+        prediction = await self.prediction_repo.get_latest_prediction(user.user_id)
+        if prediction is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Risk prediction not found.")
+        profile = await self.profile_repo.get_profile(prediction.profile_id, user.user_id)
+        if profile is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Health profile not found.")
+        # 나이·성별은 프로필에서 재계산하지 않고 예측 당시 스냅샷으로 고정한다 — 같은 프로필 행이라도
+        #   오늘 기준 나이 재계산은 생일 경계에서 예측과 다른 코호트를 고른다(리뷰 #301).
+        snapshot = prediction.input_snapshot or {}
+        age = snapshot.get("age")
+        sex = snapshot.get("sex")
+        if age is None or float(age) < AGE_MIN:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Cohort distribution is provided for age >= {AGE_MIN} only.",
+            )
+        if sex is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sex not available.")
+        # 확률을 만든 모델과 같은 feature_set 코호트만 사용한다. 다른 feature_set 으로 폴백하면
+        #   with_waist 확률을 minimal 분포에 대입하는 식의 잘못된 백분위가 나온다(리뷰 #301).
+        feature_set = prediction.model_variant.value
+        age_key = _cohort_age_key(float(age))
+        table = load_cohort_distribution()
+        dist = table.get((feature_set, int(sex), age_key))
+        if dist is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cohort distribution not found.")
+        probability = float(prediction.internal_risk_score)
+        # 백분위(선형보간) → 100명 환산 '나보다 위험이 낮은 사람 수'. [1,99] 클램프(0번째/101번째 방지, 스펙 §4.1).
+        lower_count = min(99, max(1, round(percentile_low(probability, dist.quantiles))))
+        return CohortDistributionResponse(
+            probability=probability,
+            sex=profile.sex.value,
+            age_label=_format_cohort_age_label(age_key, dist.window),
+            n=dist.n,
+            lower_count=lower_count,
+            quantiles=list(dist.quantiles),
+            density=[list(point) for point in dist.density],
+            density_method=DENSITY_METHOD,
+            cohort_version=load_cohort_version(),
+            # 산출물 meta.model_version 은 minimal 모델 버전이라 with_waist 경로에서 불일치한다(리뷰 #301).
+            #   확률을 실제로 만든 예측의 버전을 그대로 노출한다.
+            model_version=prediction.model_version,
+        )
 
     async def _predict_and_save(
         self,
@@ -274,3 +337,13 @@ class RiskPredictionService:
         if care_stage == CareStage.MAINTAIN:
             return "조금만 더 챙기면 좋은 단계예요. 걷기와 근력 운동을 꾸준히 이어가 봐요."
         return "지금 컨디션이 좋아요. 지금처럼 생활습관 미션을 이어가면 근력을 잘 지킬 수 있어요."
+
+
+def _format_cohort_age_label(age_key: str, window: str | None) -> str:
+    """헤드라인 연령대 라벨(#193 §5). '80+' -> '80세 이상', window 'lo-hi' -> 'lo–hi세'(en dash)."""
+    if age_key.endswith("+"):
+        return f"{age_key[:-1]}세 이상"
+    if window and "-" in window:
+        lo, hi = window.split("-", 1)
+        return f"{lo}–{hi}세"
+    return f"{age_key}세"

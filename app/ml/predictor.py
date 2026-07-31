@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import bisect
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -15,6 +16,7 @@ import joblib  # type: ignore[import-untyped]
 import pandas as pd  # type: ignore[import-untyped]
 
 from app.core.utils.clock import today_kst
+from app.ml.cohort_density import approximate_density
 from app.models.enums import ModelVariant, RiskLevel
 
 logger = logging.getLogger(__name__)
@@ -132,6 +134,74 @@ def load_cohort_table() -> dict[tuple[str, int, str], tuple[float, float]]:
         key = (str(c["feature_set"]), int(c["sex"]), str(c["age"]))
         lut[key] = (float(c["p_low"]), float(c["p_high"]))
     return lut
+
+
+@lru_cache(maxsize=1)
+def load_cohort_model_version() -> str | None:
+    """코호트 산출물의 모델 버전(meta.model_version). 없으면 None."""
+    if not COHORT_TABLE_PATH.exists():
+        return None
+    data = json.loads(COHORT_TABLE_PATH.read_text(encoding="utf-8"))
+    meta = data.get("meta", {}) or {}
+    version = meta.get("model_version")
+    return str(version) if version is not None else None
+
+
+@dataclass(frozen=True)
+class CohortDistribution:
+    """또래 분포 차트(#193)용 코호트 데이터. quantiles(백분위)와 density(곡선), 표본수·창·P5/P95."""
+
+    quantiles: tuple[float, ...]
+    density: tuple[tuple[float, float], ...]
+    n: int
+    window: str | None
+    p_low: float
+    p_high: float
+
+
+@lru_cache(maxsize=1)
+def load_cohort_distribution() -> dict[tuple[str, int, str], CohortDistribution]:
+    """(feature_set, sex, age_key) -> CohortDistribution. load_cohort_table 과 달리 quantiles·density 를 보존한다.
+
+    density 는 배포된 공용 산출물을 변형하지 않도록 quantiles 로부터 로드 시점에 파생한다(단일 진실원천).
+    """
+    out: dict[tuple[str, int, str], CohortDistribution] = {}
+    if not COHORT_TABLE_PATH.exists():
+        return out
+    data = json.loads(COHORT_TABLE_PATH.read_text(encoding="utf-8"))
+    for c in data.get("cohorts", []):
+        key = (str(c["feature_set"]), int(c["sex"]), str(c["age"]))
+        quantiles = tuple(float(x) for x in c["quantiles"])
+        density = tuple((float(x), float(y)) for x, y in approximate_density(list(quantiles)))
+        out[key] = CohortDistribution(
+            quantiles=quantiles,
+            density=density,
+            n=int(c.get("n", 0)),
+            window=(str(c["window"]) if c.get("window") is not None else None),
+            p_low=float(c["p_low"]),
+            p_high=float(c["p_high"]),
+        )
+    return out
+
+
+def percentile_low(probability: float, quantiles: Sequence[float]) -> float:
+    """예측확률 p 의 코호트 내 백분위(0.0~100.0, 분위수 101개 선형보간, 스펙 §4.1).
+
+    quantiles 는 오름차순 예측확률 q0..q100. 반환값이 클수록 위험이 높은 쪽(나보다 위험이 낮은 사람 비율).
+    """
+    q = quantiles
+    if len(q) < 2:
+        return 0.0
+    if probability <= q[0]:
+        return 0.0
+    if probability >= q[-1]:
+        return 100.0
+    # q[i] <= p < q[i+1] 인 마지막 i 를 찾아 선형보간.
+    i = bisect.bisect_right(q, probability) - 1
+    q_i, q_i1 = q[i], q[i + 1]
+    if q_i1 <= q_i:
+        return float(i)
+    return i + (probability - q_i) / (q_i1 - q_i)
 
 
 def calculate_age(birth_date: date, today: date | None = None) -> int:

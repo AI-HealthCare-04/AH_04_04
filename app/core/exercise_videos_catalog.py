@@ -43,6 +43,8 @@ EXERCISE_VIDEOS_CATALOG: tuple[ExerciseVideoSpec, ...] = (
     # seated 슬롯에 서서 하는 근력 운동 영상을 배치(원래 '앉아서' 자리). 내용에 맞춰 라벨을 '근력 운동'으로.
     #   stage 키(seated)는 안정 식별자라 유지한다(앱 번들 폴백은 warmup/cooldown만 쓰므로 seated 무영향).
     ExerciseVideoSpec(stage="seated", label="근력 운동", order=2, filename="strength_ex.mp4"),
-    ExerciseVideoSpec(stage="standing", label="서서 운동", order=3, filename="standing_ex.mp4"),
+    # 라벨 축 통일(#331): 두 카테고리 모두 '서서' 하는 운동이라 자세 축('서서')이 아닌 운동 종류 축으로.
+    #   늘품체조 영상은 전신이 계속 움직이는 콘텐츠라 '유산소 운동'(담당자 확정). stage 키(standing)는 유지.
+    ExerciseVideoSpec(stage="standing", label="유산소 운동", order=3, filename="standing_ex.mp4"),
     ExerciseVideoSpec(stage="cooldown", label="마무리", order=4),
 )

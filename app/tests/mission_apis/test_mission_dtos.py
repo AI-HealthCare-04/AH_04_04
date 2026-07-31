@@ -10,6 +10,7 @@ from app.dtos.mission import (
     GameDetail,
     MissionLogCreateRequest,
     MissionLogUpdateRequest,
+    WalkingDetail,
 )
 from app.dtos.sensor import SensorSessionCreateRequest
 
@@ -66,6 +67,19 @@ def test_game_detail_rejects_negative_numeric_fields(field: str) -> None:
 def test_exercise_detail_rejects_negative_numeric_fields(field: str) -> None:
     with pytest.raises(ValidationError):
         ExerciseDetail.model_validate({field: -1})
+
+
+# duration_min 상한(le=1440): Numeric(6,2) 저장 오버플로(500) 방어. 경계(1440)는 허용, 초과는 거부.
+def test_exercise_detail_duration_upper_bound() -> None:
+    assert ExerciseDetail.model_validate({"duration_min": 1440}).duration_min == 1440
+    with pytest.raises(ValidationError):
+        ExerciseDetail.model_validate({"duration_min": 1440.01})
+
+
+def test_walking_detail_duration_upper_bound() -> None:
+    assert WalkingDetail.model_validate({"duration_min": 1440}).duration_min == 1440
+    with pytest.raises(ValidationError):
+        WalkingDetail.model_validate({"duration_min": 100000})
 
 
 @pytest.mark.parametrize("field", ["actual_value", "target_value"])
