@@ -67,6 +67,7 @@ import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
+import kotlin.math.floor
 import com.aihealthcare.ah0404.R
 import com.aihealthcare.ah0404.media.StreamingVideoPlayer
 import com.aihealthcare.ah0404.media.VideoCache
@@ -143,11 +144,15 @@ fun ExerciseVideosScreen(
     // 스트리밍 운동(근력·서서): 포스터 탭 → 세로 재생(출처 상시) → '영상 전체보기'로 가로 전체화면(출처 유지) →
     //   영상 끝나면(STATE_ENDED) 자동으로 포스터로 복귀(스펙 §3-1 진입1). 세로↔전체화면 전환에도 재생 위치 유지.
     playingItem?.let { item ->
+        val url = item.videoUrl.orEmpty() // 이어보기 위치 키(항목별). available 단계라 실제로는 비어 있지 않다.
         ExercisePlayer(
             item = item,
             onExit = { playingItem = null },
             // 실제 재생 분(#234, P1-A: 일시정지·버퍼·백그라운드 제외). 게이트 통과 후라 safetyConfirmed=true.
             onWatched = { durationMin -> vm.submitExercise(durationMin, safetyConfirmed) },
+            // 이어보기(#235): 직전 위치부터 재생하고, 이탈 시 현재 위치를 VM 에 보관해 다시 열면 이어서 본다.
+            startPositionMs = vm.resumePositionFor(url),
+            onPositionSaved = { positionMs -> vm.saveResumePosition(url, positionMs) },
         )
         return
     }
@@ -178,6 +183,12 @@ fun ExerciseVideosScreen(
         //   자동 재시도(ON_RESUME·목록 복귀)가 계속 실패하는 경우의 탈출구 — 눌러도 in-flight 가드로 이중 전송되지 않는다.
         if (vm.pendingResends.isNotEmpty()) {
             PendingSyncBanner(count = vm.pendingResends.size, onRetry = vm::retryPending)
+        }
+
+        // 오늘 누적 운동시간(#235): 서버가 합산한 당일 '분'을 보여줘 사용자가 완료(하루 목표 달성) 여부를 확인할 수 있게 한다.
+        //   세션을 하나라도 완료해 서버 값이 오면 표시(그 전엔 숨김). 여러 단계·여러 세션이 합산돼 목표를 채우면 달성 안내.
+        vm.todayExerciseMin?.let { minutes ->
+            TodayExerciseSummary(minutes = minutes, goalReached = vm.todayGoalReached)
         }
 
         // 번들 루틴(몸풀기·마무리)은 네트워크와 무관하게 '즉시' 시작 가능해야 한다(오프라인/느린망 포함).
@@ -244,6 +255,50 @@ private fun PendingSyncBanner(count: Int, onRetry: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Button(onClick = onRetry, modifier = Modifier.align(Alignment.End)) { Text("지금 다시 보내기") }
+    }
+}
+
+/**
+ * 오늘 누적 운동 '분' 표시 문자열(#235, 리뷰 #280). 소수 1자리까지 보여주되 정수는 소수점 없이("10"),
+ *  목표 미달(goalReached=false)이면 **반올림하지 않고 버림**한다 — 9.9분·미달이 "10분 + 조금만 더"로
+ *  모순 표시되던 것 방지(서버 success=목표 도달이므로 미달값이 목표치처럼 보이면 안 됨). 목표 달성(달성 안내가
+ *  함께 뜸)일 땐 반올림해 자연스럽게 보여준다. 1e-3 보정으로 9.9f 같은 부동소수 오차가 9.8 로 내려가는 것 흡수.
+ */
+internal fun formatExerciseMinutes(minutes: Float, goalReached: Boolean): String {
+    val scaled = minutes * 10.0 + 1e-3
+    val tenths = if (goalReached) Math.round(scaled).toInt() else floor(scaled).toInt()
+    val whole = tenths / 10
+    val frac = tenths % 10
+    return if (frac == 0) whole.toString() else "$whole.$frac"
+}
+
+/**
+ * 오늘 누적 운동시간 안내(#235). 서버가 합산한 당일 운동 '분'과 목표 달성 여부를 보여줘, 여러 단계·여러 세션을
+ * 나눠 해도 사용자가 완료(하루 목표)를 확인할 수 있게 한다. 값은 완료 응답의 서버 권위값이라 앱이 더하지 않는다.
+ * 달성 시 밝은 녹색(secondaryContainer)으로 축하, 진행 중이면 같은 톤으로 계속 안내.
+ */
+@Composable
+private fun TodayExerciseSummary(minutes: Float, goalReached: Boolean) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Dimens.ScreenPadding, vertical = Dimens.Space8)
+            .clip(MaterialTheme.shapes.large)
+            .background(MaterialTheme.colorScheme.secondaryContainer)
+            .padding(Dimens.CardPadding),
+        verticalArrangement = Arrangement.spacedBy(Dimens.Space8),
+    ) {
+        Text(
+            "오늘 운동 ${formatExerciseMinutes(minutes, goalReached)}분 하셨어요",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+        )
+        Text(
+            if (goalReached) "🎉 오늘 운동 목표를 채웠어요!" else "조금만 더 하면 오늘 목표를 채울 수 있어요.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+        )
     }
 }
 
@@ -396,13 +451,20 @@ private fun VideoArea(
  */
 @UnstableApi
 @Composable
-private fun ExercisePlayer(item: ExerciseVideoItem, onExit: () -> Unit, onWatched: (Float) -> Unit = {}) {
+private fun ExercisePlayer(
+    item: ExerciseVideoItem,
+    onExit: () -> Unit,
+    onWatched: (Float) -> Unit = {},
+    startPositionMs: Long = 0L,
+    onPositionSaved: (Long) -> Unit = {},
+) {
     val context = LocalContext.current
     val url = item.videoUrl ?: return
     val stopwatch = remember { PlaybackStopwatch() }
     var fullscreen by remember { mutableStateOf(false) }
     val currentOnExit by rememberUpdatedState(onExit)
     val currentOnWatched by rememberUpdatedState(onWatched)
+    val currentOnPositionSaved by rememberUpdatedState(onPositionSaved)
 
     // 세로↔전체화면이 공유하는 단일 플레이어(캐시·전역속도). url 이 바뀌면 새로 만든다.
     val player = remember(url) {
@@ -414,6 +476,8 @@ private fun ExercisePlayer(item: ExerciseVideoItem, onExit: () -> Unit, onWatche
             .setMediaSourceFactory(DefaultMediaSourceFactory(cacheFactory))
             .build().apply {
                 setMediaItem(MediaItem.fromUri(url))
+                // 이어보기(#235): prepare 전에 seek 하면 준비 후 그 위치부터 재생된다. 0 이면 처음부터.
+                if (startPositionMs > 0L) seekTo(startPositionMs)
                 prepare()
                 playWhenReady = true // 포스터 탭 = 재생 의사(지영 리뷰 #254 P2)
                 volume = AppSettings.soundScale
@@ -427,7 +491,10 @@ private fun ExercisePlayer(item: ExerciseVideoItem, onExit: () -> Unit, onWatche
             override fun onIsPlayingChanged(isPlaying: Boolean) =
                 stopwatch.onIsPlayingChanged(isPlaying, SystemClock.elapsedRealtime())
             override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
-                AppSettings.setPlaybackSpeed(context, playbackParameters.speed)
+                // 컨트롤러 톱니로 옵션 밖 속도(2.0 등)를 골라도 전역 저장·실제 재생 모두 확정 4옵션으로 정규화(지영 리뷰).
+                val normalized = AppSettings.normalizeSpeed(playbackParameters.speed)
+                AppSettings.setPlaybackSpeed(context, normalized)
+                if (playbackParameters.speed != normalized) player.setPlaybackSpeed(normalized)
             }
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) { player.pause(); currentOnExit() }
@@ -447,6 +514,9 @@ private fun ExercisePlayer(item: ExerciseVideoItem, onExit: () -> Unit, onWatche
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
             currentOnWatched(stopwatch.elapsedMinutes(SystemClock.elapsedRealtime()))
+            // 이어보기(#235): 완주(STATE_ENDED)면 0(다음 진입 처음부터), 아니면 현재 위치를 보관.
+            val savedMs = if (player.playbackState == Player.STATE_ENDED) 0L else player.currentPosition
+            currentOnPositionSaved(savedMs)
             player.release()
         }
     }

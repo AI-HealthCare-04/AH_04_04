@@ -33,6 +33,10 @@ import com.aihealthcare.ah0404.settings.AppSettings
  *    (난이도 개념 폐기 → 톱니 통일). ExoPlayer 는 기본 시간축 신축이라 빨라져도 pitch(음정)는 유지된다.
  *  - `onIsPlayingChanged`: ExoPlayer 의 '실제 재생 중' 상태 변화를 알린다(재생 시작 true, 일시정지·버퍼링·
  *    끝·백그라운드 정지 false). 운동 완료 배선(#234)이 '실제로 본 시간'만 재는 데 쓴다(리뷰 P1-A). 기본값 무동작.
+ *  - `startPositionMs`: 진입 시 이 위치로 이어재생(#235). 이탈 후 다시 들어와도 처음부터 재생되지 않게, 호출부가
+ *    직전 위치를 보관했다가 넘긴다. 0(기본)이면 처음부터.
+ *  - `onPositionSaved`: 이탈(dispose) 직전 현재 재생 위치(ms)를 알린다(#235). 호출부가 url 별로 보관해 다음
+ *    진입의 [startPositionMs] 로 되돌려준다. 영상이 끝까지 재생됐으면 0 을 넘겨 다음 진입은 처음부터 시작한다.
  */
 @UnstableApi
 @Composable
@@ -40,12 +44,15 @@ fun StreamingVideoPlayer(
     url: String,
     modifier: Modifier = Modifier,
     autoPlay: Boolean = false,
+    startPositionMs: Long = 0L,
     onIsPlayingChanged: (Boolean) -> Unit = {},
+    onPositionSaved: (Long) -> Unit = {},
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     // 콜백 최신값 유지(리스너를 매 재구성마다 재등록하지 않도록) — 리스너는 player 단위로만 붙였다 뗀다.
     val currentOnIsPlayingChanged by rememberUpdatedState(onIsPlayingChanged)
+    val currentOnPositionSaved by rememberUpdatedState(onPositionSaved)
 
     val player = remember(url) {
         val cacheFactory = CacheDataSource.Factory()
@@ -57,6 +64,8 @@ fun StreamingVideoPlayer(
             .build()
             .apply {
                 setMediaItem(MediaItem.fromUri(url))
+                // 이어보기(#235): prepare 전에 seek 해 두면 준비 완료 후 그 위치부터 재생된다. 0 이면 처음부터.
+                if (startPositionMs > 0L) seekTo(startPositionMs)
                 prepare()
                 playWhenReady = autoPlay
                 volume = AppSettings.soundScale // 설정 소리 크기 적용(C-2)
@@ -70,7 +79,10 @@ fun StreamingVideoPlayer(
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) = currentOnIsPlayingChanged(isPlaying)
             override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
-                AppSettings.setPlaybackSpeed(context, playbackParameters.speed)
+                // 컨트롤러 톱니로 옵션 밖 속도를 골라도 전역 저장·실제 재생 모두 확정 4옵션으로 정규화(지영 리뷰).
+                val normalized = AppSettings.normalizeSpeed(playbackParameters.speed)
+                AppSettings.setPlaybackSpeed(context, normalized)
+                if (playbackParameters.speed != normalized) player.setPlaybackSpeed(normalized)
             }
         }
         player.addListener(listener)
@@ -85,6 +97,10 @@ fun StreamingVideoPlayer(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
+            // 이어보기(#235): release 전에 현재 위치를 보고한다. 끝까지 본 경우(STATE_ENDED)는 0 으로 넘겨
+            //   다음 진입이 처음부터 시작하게 한다(완주한 영상을 다시 끝 지점에서 열지 않도록).
+            val savedMs = if (player.playbackState == Player.STATE_ENDED) 0L else player.currentPosition
+            currentOnPositionSaved(savedMs)
             player.release()
         }
     }
