@@ -286,6 +286,15 @@ class ExerciseVideosViewModel(
                 //   판별할 수 없다(당일 최댓값 방식은 자정 경계에서 전날 값이 남는 회귀가 있었다). Mutex 로 전송+적용을 한 번에
                 //   하나씩 순서대로 처리하면 서버 처리순서=전송순서=적용순서가 되어, 마지막 전송값이 곧 최신 권위값이 된다.
                 completionMutex.withLock {
+                    // mutex 대기 중 계정이 바뀌었으면(리뷰 #291-4) **네트워크 호출 전에** 즉시 중단한다.
+                    //   응답 후 epoch 검사는 로컬 상태만 지키지, 이미 나간 서버 기록(B 토큰으로 A 세션 create/complete)은
+                    //   되돌리지 못한다. 대기하던 A 코루틴이 뒤늦게 mutex 를 잡고 현재 B 의 templateId·TokenHolder(B)로
+                    //   A 세션을 보내는 queued-before-network 경로를 여기서 막는다. A 세션은 자연 키로 A outbox 에 남아
+                    //   있으므로(swapPendingForCurrentUser 는 인메모리만 비움) A 재로그인 때 정상 재시도된다.
+                    if (authKey() != epoch) {
+                        Log.i(TAG, "완료 전송이 mutex 획득 전 계정 전환됨 — 서버 전송 자체를 중단(#291-4, 이전 사용자 세션 오배분 방지, durationMin=${session.durationMin})")
+                        return@withLock
+                    }
                     val templateId = exerciseTemplateId ?: resolveExerciseTemplateId()
                     if (templateId == null) {
                         // 로그인 전/조회 실패로 보낼 대상을 못 얻음 — 보존한 채 이후 재시도(로그인·복구)에 맡긴다.

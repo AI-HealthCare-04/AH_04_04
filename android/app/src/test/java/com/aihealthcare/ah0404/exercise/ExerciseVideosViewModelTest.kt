@@ -705,6 +705,31 @@ class ExerciseVideosViewModelTest {
     }
 
     @Test
+    fun `mutex 대기 중 계정이 바뀌면 대기하던 이전 사용자 전송은 서버로 나가지 않는다`() = runTest {
+        // #291-4: send() 는 epoch 를 캡처하고 completionMutex 를 기다리지만, 응답 후에만 epoch 를 검사하면
+        //   대기하다 뒤늦게 mutex 를 잡은 A 코루틴이 현재 B 의 템플릿·토큰으로 A 세션을 이미 서버에 보내버린다.
+        //   mutex 획득 직후·네트워크 호출 전 epoch 재검사로 queued-before-network 오배분을 막는지 검증한다.
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        fake.completeDelayByDuration = mapOf(4f to 200L) // A 전송1 을 mutex 안에서 오래 붙잡아 둔다
+        var key = 1
+        val vm = vmWithAuth(fake) { key }
+
+        // A 전송1(4분): mutex 를 잡고 completeMissionLog 응답을 기다린다. A 전송2(6분): mutex 대기 큐에 들어간다.
+        vm.beginExerciseSession(); vm.submitExercise(4f, safetyNoticeConfirmed = true)
+        vm.beginExerciseSession(); vm.submitExercise(6f, safetyNoticeConfirmed = true)
+        advanceTimeBy(50L); runCurrent() // 전송1 이 mutex 점유·응답 대기, 전송2 는 대기 중
+        assertEquals("이 시점엔 전송1 만 서버로 create 됐다", 1, fake.createdKeys.size)
+
+        // 로그아웃 → 사용자 B 로그인. 인메모리 pending 교체(네트워크 이전).
+        key = 2
+        vm.load()
+        advanceUntilIdle() // 전송1 응답 도착 → mutex 해제 → 전송2 가 mutex 획득
+
+        assertEquals("대기하던 A 전송2 는 계정 전환 후 mutex 를 잡아도 서버로 create/complete 되지 않는다", 1, fake.createdKeys.size)
+        assertEquals("완료 호출도 전송1 한 건뿐(B 토큰으로 A 세션이 나가지 않음)", 1, fake.completeCalls)
+    }
+
+    @Test
     fun `이어보기 위치는 저장 전 0, 저장하면 그 값, 0 저장이면 처음부터로 되돌린다`() {
         val vm = vmWith(FakeMissionApi(emptyList()))
         val url = "https://v/seated.mp4"
