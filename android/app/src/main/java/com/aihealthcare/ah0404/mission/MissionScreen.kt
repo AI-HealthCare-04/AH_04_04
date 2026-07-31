@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -24,7 +25,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlin.math.floor
 import com.aihealthcare.ah0404.network.Mission
+import com.aihealthcare.ah0404.network.MissionTodayProgress
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
 import com.aihealthcare.ah0404.ui.theme.AigoOnWarningContainer
@@ -40,6 +43,32 @@ internal fun targetUnitLabel(unit: String): String = when (unit) {
     "sets" -> "세트"
     else -> unit
 }
+
+/**
+ * 오늘 누적 진행 분 표시 포맷(#235 목록 확장). 목표 미달은 버림, 달성은 반올림 — 미달인데 반올림으로 목표치처럼
+ * 보이는 모순(예: 9.6분→"10분"인데 '조금만 더')을 막는다. 정수 분은 소수점 없이, 소수 분은 1자리로.
+ * (부동소수 오차로 9.9f 가 9.8 로 내려가지 않게 1e-3 보정.)
+ */
+internal fun formatTodayProgressMinutes(minutes: Float, goalReached: Boolean): String {
+    val scaled = minutes * 10.0 + 1e-3
+    val tenths = if (goalReached) Math.round(scaled).toInt() else floor(scaled).toInt()
+    val whole = tenths / 10
+    val frac = tenths % 10
+    return if (frac == 0) whole.toString() else "$whole.$frac"
+}
+
+/** 카드에 보일 '오늘까지 …' 한 줄. 걷기는 걸음 누적도 곁들이고, 목표 달성 시엔 축하 문구로 바꾼다. */
+internal fun todayProgressLine(progress: MissionTodayProgress): String {
+    val mins = formatTodayProgressMinutes(progress.totalMin, progress.goalReached)
+    val steps = progress.totalSteps
+    val walked = if (steps != null && steps > 0) " · ${"%,d".format(steps)}걸음" else ""
+    return if (progress.goalReached) "오늘 목표를 채웠어요 🎉 · ${mins}분$walked"
+    else "오늘까지 ${mins}분$walked 하셨어요"
+}
+
+/** 진행바 채움 비율(0~1). 목표(분) 대비 오늘 누적 분. targetValue 가 0 이하면 0(방어). */
+internal fun todayProgressFraction(progress: MissionTodayProgress, targetValue: Int): Float =
+    if (targetValue <= 0) 0f else (progress.totalMin / targetValue).coerceIn(0f, 1f)
 
 @Composable
 fun MissionScreen(
@@ -147,6 +176,23 @@ private fun MissionCard(mission: Mission, onClick: (() -> Unit)? = null) {
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
+            )
+        }
+
+        // 오늘 누적 진행(운동·걷기) — 재생/측정 전에도, 중간에 끊었어도 '오늘까지 얼마나 했는지'를 목표 아래에 보여준다.
+        mission.todayProgress?.let { progress ->
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = todayProgressLine(progress),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = if (progress.goalReached) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            LinearProgressIndicator(
+                progress = { todayProgressFraction(progress, mission.targetValue) },
+                modifier = Modifier.fillMaxWidth(),
             )
         }
 
