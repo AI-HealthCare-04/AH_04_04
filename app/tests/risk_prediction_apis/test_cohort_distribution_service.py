@@ -145,6 +145,8 @@ def test_uses_prediction_time_profile_and_variant_after_profile_edit() -> None:
     resp = _run(service)
     expected = load_cohort_distribution()[("minimal", 1, _cohort_age_key(72.0))]
     assert resp.quantiles == list(expected.quantiles)
+    assert resp.density == [list(point) for point in expected.density]
+    assert resp.density_method == "boundary_reflected_gaussian_kde_v1"
     assert resp.age_label != "80세 이상"
     assert resp.model_version == "minimal-v3"
 

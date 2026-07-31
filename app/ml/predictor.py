@@ -16,7 +16,6 @@ import joblib  # type: ignore[import-untyped]
 import pandas as pd  # type: ignore[import-untyped]
 
 from app.core.utils.clock import today_kst
-from app.ml.cohort_density import approximate_density
 from app.models.enums import ModelVariant, RiskLevel
 
 logger = logging.getLogger(__name__)
@@ -163,7 +162,7 @@ class CohortDistribution:
 def load_cohort_distribution() -> dict[tuple[str, int, str], CohortDistribution]:
     """(feature_set, sex, age_key) -> CohortDistribution. load_cohort_table 과 달리 quantiles·density 를 보존한다.
 
-    density 는 배포된 공용 산출물을 변형하지 않도록 quantiles 로부터 로드 시점에 파생한다(단일 진실원천).
+    density 는 코호트 구성원의 예측확률 분포에서 산출한 KDE 곡선을 공용 산출물에서 그대로 읽는다.
     """
     out: dict[tuple[str, int, str], CohortDistribution] = {}
     if not COHORT_TABLE_PATH.exists():
@@ -172,7 +171,7 @@ def load_cohort_distribution() -> dict[tuple[str, int, str], CohortDistribution]
     for c in data.get("cohorts", []):
         key = (str(c["feature_set"]), int(c["sex"]), str(c["age"]))
         quantiles = tuple(float(x) for x in c["quantiles"])
-        density = tuple((float(x), float(y)) for x, y in approximate_density(list(quantiles)))
+        density = tuple((float(x), float(y)) for x, y in c["density"])
         out[key] = CohortDistribution(
             quantiles=quantiles,
             density=density,

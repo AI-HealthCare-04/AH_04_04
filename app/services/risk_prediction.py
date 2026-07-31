@@ -19,7 +19,6 @@ from app.dtos.risk_prediction import (
     RiskPredictionReassessResponse,
     RiskPredictionResponse,
 )
-from app.ml.cohort_density import DENSITY_METHOD
 from app.ml.predictor import (
     AGE_MIN,
     AgeNotSupportedError,
@@ -38,6 +37,8 @@ from app.repositories.dashboard_repository import DashboardRepository
 from app.repositories.health_profile_repository import HealthProfileRepository
 from app.repositories.risk_prediction_repository import RiskPredictionRepository
 from app.services.activity_metrics import derive_activity_day_counts
+
+DENSITY_METHOD = "boundary_reflected_gaussian_kde_v1"
 
 
 class RiskPredictionService:
