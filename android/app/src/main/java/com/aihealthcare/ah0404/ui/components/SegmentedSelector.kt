@@ -14,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import com.aihealthcare.ah0404.ui.theme.Dimens
@@ -36,6 +37,12 @@ fun <T> AigoSegmentedSelector(
     modifier: Modifier = Modifier,
     horizontal: Boolean = false,
 ) {
+    val focusManager = LocalFocusManager.current
+    val selectAndDismissKeyboard: (T) -> Unit = { value ->
+        focusManager.clearFocus()
+        onSelect(value)
+    }
+
     if (horizontal) {
         Row(
             modifier = modifier.fillMaxWidth(),
@@ -45,7 +52,7 @@ fun <T> AigoSegmentedSelector(
                 SegmentCell(
                     opt = opt,
                     isSelected = opt.value == selected,
-                    onClick = { onSelect(opt.value) },
+                    onClick = { selectAndDismissKeyboard(opt.value) },
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -59,7 +66,7 @@ fun <T> AigoSegmentedSelector(
                 SegmentCell(
                     opt = opt,
                     isSelected = opt.value == selected,
-                    onClick = { onSelect(opt.value) },
+                    onClick = { selectAndDismissKeyboard(opt.value) },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
