@@ -103,3 +103,30 @@ async def test_sts_overlay_shown_rejects_invalid_tier(db_client: AsyncClient) ->
         f"{API}/events/sts-overlay-shown", json={"tier": "extreme"}, headers=auth
     )
     assert resp.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+# DTO-DB 입력 경계(지영 리뷰): 저장 스키마를 넘는 값은 commit 단계 500 이 아니라 422 로 거부돼야 한다.
+async def test_sts_overlay_shown_rejects_out_of_range_inputs(db_client: AsyncClient) -> None:
+    auth, _ = await _guest(db_client)
+    # sts_sec 상한(Numeric(5,2) → 999.99) 초과
+    over_sts = await db_client.post(
+        f"{API}/events/sts-overlay-shown", json={"tier": "strong", "sts_sec": 1000}, headers=auth
+    )
+    assert over_sts.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    # bmi 상한(Numeric(4,1) → 999.9) 초과
+    over_bmi = await db_client.post(
+        f"{API}/events/sts-overlay-shown", json={"tier": "strong", "bmi": 1000}, headers=auth
+    )
+    assert over_bmi.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    # 음수(ge=0) 거부
+    neg = await db_client.post(
+        f"{API}/events/sts-overlay-shown", json={"tier": "basic", "sts_sec": -1}, headers=auth
+    )
+    assert neg.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    # score_band 확정값(good/maintain/caution) 외 문자열 거부 → DB String(20) 초과 불가
+    bad_band = await db_client.post(
+        f"{API}/events/sts-overlay-shown",
+        json={"tier": "strong", "score_band": "x" * 30},
+        headers=auth,
+    )
+    assert bad_band.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
