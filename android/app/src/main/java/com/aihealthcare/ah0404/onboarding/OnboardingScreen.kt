@@ -1,6 +1,11 @@
 package com.aihealthcare.ah0404.onboarding
 
 import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -247,14 +252,26 @@ private fun TermsStep(vm: OnboardingViewModel) {
         content = {
             AigoTonalButton(text = "전체 동의", onClick = vm::agreeAll)
             Spacer(Modifier.height(Dimens.Space8))
+            val context = LocalContext.current
             vm.terms.forEach { term ->
                 val label = (term.title ?: term.termsType) +
                     if (term.isRequired) "  (필수)" else "  (선택)"
-                AigoCheckboxRow(
-                    checked = vm.agreed.contains(term.termsType),
-                    onCheckedChange = { vm.toggleAgree(term.termsType) },
-                    label = label,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AigoCheckboxRow(
+                        checked = vm.agreed.contains(term.termsType),
+                        onCheckedChange = { vm.toggleAgree(term.termsType) },
+                        label = label,
+                        modifier = Modifier.weight(1f),
+                    )
+                    // 약관 전문 열람(#244 §2): 동의 전에 전문을 볼 수단이 없으면 심사·법적 관점 결격.
+                    //   서버가 준 버전 URL(자체 호스팅 /terms/<버전>, #268)을 기본 브라우저로 연다.
+                    val url = term.url
+                    if (!url.isNullOrBlank()) {
+                        TextButton(onClick = { openTermsUrl(context, url) }) {
+                            Text("보기", style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                }
             }
         },
         footer = {
@@ -265,6 +282,15 @@ private fun TermsStep(vm: OnboardingViewModel) {
             )
         },
     )
+}
+
+/** 약관 전문을 기본 브라우저로 연다. 브라우저가 없으면(극히 드묾) 조용히 로그만 남긴다 — 동의 흐름을 막지 않는다. */
+private fun openTermsUrl(context: Context, url: String) {
+    try {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    } catch (e: ActivityNotFoundException) {
+        Log.w("Onboarding", "약관 전문 열기 실패(브라우저 없음): $url")
+    }
 }
 
 /** 숫자 입력 + 오른쪽 '모름' 버튼. '모름' 누르면 추정치로 채워지고, 채워졌으면 안내 문구를 보여준다. */
