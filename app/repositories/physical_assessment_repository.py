@@ -22,3 +22,13 @@ class PhysicalAssessmentRepository:
             .limit(1)
         )
         return await self.session.scalar(stmt)
+
+    async def get_latest_by_user(self, user_id: int) -> PhysicalAssessment | None:
+        """사용자의 최신 체력검사 1건(#기록탭 §3.4 안전망 카드 — chair_stand_5_time_sec 읽기용)."""
+        stmt = (
+            select(PhysicalAssessment)
+            .where(PhysicalAssessment.user_id == user_id)
+            .order_by(PhysicalAssessment.created_at.desc(), PhysicalAssessment.physical_assessment_id.desc())
+            .limit(1)
+        )
+        return await self.session.scalar(stmt)

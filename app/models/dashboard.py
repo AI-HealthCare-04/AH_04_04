@@ -12,7 +12,7 @@ class DailyActivitySummary(Base):
     __table_args__ = (UniqueConstraint("user_id", "summary_date", name="uq_daily_activity_summaries_user_date"),)
 
     summary_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id"), nullable=False)
     summary_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     counted_mission_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     meal_counted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

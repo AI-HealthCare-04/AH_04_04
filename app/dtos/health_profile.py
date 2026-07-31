@@ -14,8 +14,8 @@ class HealthProfileCreateRequest(BaseModel):
     height_cm: Decimal = Field(gt=0)
     weight_kg: Decimal = Field(gt=0)
     waist_cm: Decimal | None = Field(default=None, gt=0)
-    walking_practice: bool
-    strength_exercise: bool
+    walk_days: int = Field(ge=0, le=7)
+    musc_days: int = Field(ge=0, le=5)
     kidney_status: KidneyStatus = KidneyStatus.UNKNOWN
     protein_restriction_status: ProteinRestrictionStatus = ProteinRestrictionStatus.UNKNOWN
     activity_input_source: ActivityInputSource
@@ -33,6 +33,19 @@ class HealthProfileCreateResponse(BaseModel):
         return float(value)
 
 
+class HealthProfilePatchRequest(BaseModel):
+    """설정 '내 정보' 편집(#기록탭 §2). 보낸 필드만 최신 프로필에 덮어 **새 스냅샷 행**을 만든다.
+
+    성별·생년월일·활동일수는 편집 대상이 아니라(표시만) 여기 없다.
+    허리둘레는 명시적 null 로 '측정 안 함'을 지울 수 있다(model_fields_set 로 미전송과 구분).
+    """
+
+    height_cm: Decimal | None = Field(default=None, gt=0)
+    weight_kg: Decimal | None = Field(default=None, gt=0)
+    waist_cm: Decimal | None = Field(default=None, gt=0)
+    kidney_status: KidneyStatus | None = None
+
+
 class HealthProfileResponse(BaseModel):
     profile_id: int
     birth_date: date
@@ -42,8 +55,8 @@ class HealthProfileResponse(BaseModel):
     weight_kg: Decimal
     bmi: Decimal
     waist_cm: Decimal | None
-    walking_practice: bool
-    strength_exercise: bool
+    walk_days: int
+    musc_days: int
     activity_input_source: ActivityInputSource
     activity_window_days: int | None
     kidney_status: KidneyStatus

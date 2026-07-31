@@ -169,9 +169,13 @@ def _service_with_templates(
         calls["walking"] += 1
         return walking
 
+    async def fake_meal_logs(user_id: object, template_ids: object) -> dict[object, object]:
+        return {}  # 식사 배치 조회 — 운동·걷기 테스트에선 오늘 기록 없음(빈 dict)
+
     service.repo.get_user_current_level = fake_current_level  # type: ignore[assignment]
     service.health_repo.get_latest_profile = fake_latest_profile  # type: ignore[assignment]
     service.repo.get_active_templates = fake_active_templates  # type: ignore[assignment]
+    service.repo.get_today_meal_logs = fake_meal_logs  # type: ignore[assignment]
     service.repo.sum_exercise_minutes_today = fake_exercise_min  # type: ignore[assignment]
     service.repo.sum_walking_totals_today = fake_walking  # type: ignore[assignment]
     return service, calls
@@ -225,11 +229,7 @@ def test_get_missions_skips_progress_queries_when_type_absent() -> None:
     # 운동·걷기가 목록에 없으면(식사만) 누적 집계 SELECT 를 아예 타지 않는다.
     meal = _template(MissionType.MEAL, template_id=3, target_value=1)
 
-    async def fake_meal_log(user_id: object, template_id: object) -> object:
-        return None
-
-    service, calls = _service_with_templates([meal])
-    service.repo.get_today_meal_log = fake_meal_log  # type: ignore[assignment]
+    service, calls = _service_with_templates([meal])  # get_today_meal_logs 는 헬퍼가 빈 dict 로 stub
 
     resp = asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
 

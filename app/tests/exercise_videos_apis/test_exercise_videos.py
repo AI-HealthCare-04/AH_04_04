@@ -49,8 +49,9 @@ def test_available_matches_video_url_presence() -> None:
             assert item.thumbnail_url is None
 
 
-# 현황(2026-07-29): warmup·standing·seated(근력 운동, strength_exercise.mp4) 서빙 → available=true + video_url,
+# 현황(2026-07-30): warmup·standing·seated(근력 운동, strength_ex.mp4) 서빙 → available=true + video_url,
 #   cooldown 은 앱 번들 루틴이라 스트리밍 미사용(available=false, url null).
+#   ※ standing/seated 는 신규 가공본 교체로 파일명이 standing_ex.mp4/strength_ex.mp4 로 변경됨(캐시 무효화).
 def test_uploaded_stages_available_others_pending() -> None:
     by_stage = {item.stage: item for item in ExerciseVideoService().get_videos().videos}
 
@@ -59,10 +60,10 @@ def test_uploaded_stages_available_others_pending() -> None:
     assert warmup.video_url is not None and warmup.video_url.endswith("/videos/warmup.mp4")
     standing = by_stage["standing"]
     assert standing.available is True
-    assert standing.video_url is not None and standing.video_url.endswith("/videos/standing_exercise.mp4")
+    assert standing.video_url is not None and standing.video_url.endswith("/videos/standing_ex.mp4")
     seated = by_stage["seated"]
     assert seated.available is True
-    assert seated.video_url is not None and seated.video_url.endswith("/videos/strength_exercise.mp4")
+    assert seated.video_url is not None and seated.video_url.endswith("/videos/strength_ex.mp4")
 
     assert by_stage["cooldown"].available is False
     assert by_stage["cooldown"].video_url is None

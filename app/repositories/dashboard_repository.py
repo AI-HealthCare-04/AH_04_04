@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.dashboard import DailyActivitySummary
-from app.models.enums import ActivityType
+from app.models.enums import ActivityType, MissionType
 from app.models.missions import MissionLog, PhysicalActivityLog
 
 # 예측 대시보드(#193) walk_days/musc_days 정의 — 모델 학습 변수와 일치시킨다.
@@ -131,3 +131,47 @@ class DashboardRepository:
         )
         result = await self.session.scalars(stmt)
         return list(result.all())
+
+    async def get_walking_daily(self, user_id: int, start: date, end: date) -> dict[date, tuple[int, float]]:
+        """[start, end](양끝 포함) 걷기 일별 (걸음 합, 분 합)을 activity_date별로 집계한다(#기록탭 §5.3).
+
+        원천은 `physical_activity_logs`(WALKING). 하루 여러 세션이면 SUM 으로 당일 누적한다.
+        physical_activity_logs 에는 user_id 가 없어 mission_logs 와 조인해 사용자로 거른다.
+        걷기 없는 날은 결과에 없으며(서비스에서 0으로 채움), 판정이 아닌 표시 전용 집계다.
+        """
+        stmt = (
+            select(
+                PhysicalActivityLog.activity_date,
+                func.coalesce(func.sum(PhysicalActivityLog.steps), 0),
+                func.coalesce(func.sum(PhysicalActivityLog.duration_min), 0),
+            )
+            .join(MissionLog, PhysicalActivityLog.mission_log_id == MissionLog.mission_log_id)
+            .where(
+                MissionLog.user_id == user_id,
+                PhysicalActivityLog.activity_type == ActivityType.WALKING,
+                PhysicalActivityLog.activity_date >= start,
+                PhysicalActivityLog.activity_date <= end,
+            )
+            .group_by(PhysicalActivityLog.activity_date)
+        )
+        rows = (await self.session.execute(stmt)).all()
+        return {row[0]: (int(row[1]), float(row[2])) for row in rows}
+
+    async def get_challenge_totals(self, user_id: int) -> dict[MissionType, int]:
+        """유형별 '완료한 일수'(#기록탭 §5.4 도넛 — 유형별 선호도). counted_for_daily=True 인 로그의 **완료일 distinct 수**.
+
+        기준은 counted_for_daily(앱 전체 '미션 완료' 정의: 홈 완료 개수·포인트·#274 와 동일)이되, **모든 유형을
+        하루 1회로 상한**한다 → 유형별 '며칠 했나' 선호도. 걷기·운동·식사는 이미 1일 1회(counted)라 그대로지만,
+        게임은 일일 제한이 없어 하루 여러 번 counted 될 수 있어(성공마다) 완료일 distinct 로 캡한다(재란님 결정).
+        완료일은 달력·일별 추이와 동일 기준: 걷기·운동은 physical_activity_logs.created_at(완료 시각),
+        식사·게임(즉시완료)은 mission_logs.created_at → COALESCE 후 DATE.
+        """
+        completed_at = func.coalesce(PhysicalActivityLog.created_at, MissionLog.created_at)
+        stmt = (
+            select(MissionLog.mission_type, func.count(func.distinct(func.date(completed_at))))
+            .outerjoin(PhysicalActivityLog, PhysicalActivityLog.mission_log_id == MissionLog.mission_log_id)
+            .where(MissionLog.user_id == user_id, MissionLog.counted_for_daily.is_(True))
+            .group_by(MissionLog.mission_type)
+        )
+        rows = (await self.session.execute(stmt)).all()
+        return {row[0]: int(row[1]) for row in rows}

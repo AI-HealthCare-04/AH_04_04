@@ -3,18 +3,20 @@
 # 사용하는 테이블: mission_templates, mission_logs, meal_logs, game_logs,
 #                  physical_activity_logs, daily_activity_summaries, user_activity_profiles
 # =====================================================================================
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.utils.clock import today_kst
 from app.models.activity import UserActivityProfile
 from app.models.dashboard import DailyActivitySummary
 from app.models.enums import (
     ActivityLevel,
     ActivityType,
     DailyResult,
+    MissionStatus,
     MissionType,
 )
 from app.models.missions import (
@@ -30,6 +32,11 @@ from app.models.users import User
 class MissionRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
+
+    @staticmethod
+    def _day_bounds(day: date) -> tuple[datetime, datetime]:
+        start = datetime.combine(day, time.min)
+        return start, start + timedelta(days=1)
 
     # ---------------- mission_templates ----------------
 
@@ -107,10 +114,51 @@ class MissionRepository:
     async def list_mission_logs(self, user_id: int, on_date: date | None) -> list[MissionLog]:
         stmt = select(MissionLog).where(MissionLog.user_id == user_id)
         if on_date is not None:
-            stmt = stmt.where(func.date(MissionLog.created_at) == on_date)
+            start, end = self._day_bounds(on_date)
+            stmt = stmt.where(MissionLog.created_at >= start, MissionLog.created_at < end)
         stmt = stmt.order_by(MissionLog.created_at.desc())
         result = await self.session.scalars(stmt)
         return list(result.all())
+
+    async def list_mission_logs_detailed(
+        self,
+        user_id: int,
+        date_from: date | None,
+        date_to: date | None,
+        on_date: date | None,
+    ) -> list[tuple[MissionLog, str, datetime]]:
+        """기록 탭 달력·일별 추이용(#기록탭 §5.1/§5.2). (로그, 제목, **완료 시각**)로 반환.
+
+        완료 시각은 `mission_logs.created_at`(= 생성/시작 시각)이 아니다(리뷰 #272 블로커):
+          - 걷기·운동은 IN_PROGRESS 로 먼저 생성 후 PATCH 완료 시 `physical_activity_logs` 를 완료 시점 now()로
+            남기므로 그 `created_at` 이 실제 완료 시각(자정을 걸쳐도 완료일에 귀속).
+          - 식사·게임(즉시완료)은 mission_logs 자체가 완료 시점 생성이라 그 `created_at` 이 완료 시각.
+          → COALESCE(pal.created_at, mission_logs.created_at). 진행 중(IN_PROGRESS) 로그는 status 필터로 제외.
+
+        기간 필터는 on_date(단일일, 하위호환) 또는 date_from~date_to(포함 범위, [from 00:00, to+1일 00:00)).
+        조회·정렬 모두 위 완료 시각 기준으로 통일한다.
+        """
+        completed_at = func.coalesce(PhysicalActivityLog.created_at, MissionLog.created_at)
+        stmt = (
+            select(MissionLog, MissionTemplate.title, completed_at)
+            .join(MissionTemplate, MissionLog.mission_template_id == MissionTemplate.mission_template_id)
+            .outerjoin(PhysicalActivityLog, PhysicalActivityLog.mission_log_id == MissionLog.mission_log_id)
+            .where(MissionLog.user_id == user_id, MissionLog.status == MissionStatus.COMPLETED)
+        )
+        if on_date is not None:
+            start, end = self._day_bounds(on_date)
+            stmt = stmt.where(completed_at >= start, completed_at < end)
+        else:
+            if date_from is not None:
+                start, _ = self._day_bounds(date_from)
+                stmt = stmt.where(completed_at >= start)
+            if date_to is not None:
+                _, end = self._day_bounds(date_to)
+                stmt = stmt.where(completed_at < end)
+        # 같은 완료시각(식사·게임 즉시완료 등)일 때 순서가 비결정적이지 않게 mission_log_id 로 tie-break(리뷰 #272 nit).
+        stmt = stmt.order_by(completed_at.desc(), MissionLog.mission_log_id.desc())
+        result = await self.session.execute(stmt)
+        return [(row[0], row[1], row[2]) for row in result.all()]
 
     # ---------------- 상세 로그 (mission_log 1:1) ----------------
 
@@ -119,8 +167,9 @@ class MissionRepository:
         await self.session.flush()
 
     async def get_today_meal_log(self, user_id: int, mission_template_id: int) -> MealLog | None:
-        """오늘(current_date) 이 사용자·미션의 식사 기록. 재저장 upsert·today_log 복원에 쓴다. 없으면 None.
+        """KST 오늘 이 사용자·미션의 식사 기록. 재저장 upsert·today_log 복원에 쓴다. 없으면 None.
         MealLog 에는 user_id 가 없어 MissionLog 와 조인해 사용자로 거른다."""
+        today = today_kst()
         stmt = (
             select(MealLog)
             .join(MissionLog, MealLog.mission_log_id == MissionLog.mission_log_id)
@@ -128,12 +177,38 @@ class MissionRepository:
                 MissionLog.user_id == user_id,
                 MissionLog.mission_template_id == mission_template_id,
                 MissionLog.mission_type == MissionType.MEAL,
-                MealLog.meal_date == func.current_date(),
+                MealLog.meal_date == today,
             )
             .order_by(MealLog.meal_log_id.desc())
             .limit(1)
         )
         return await self.session.scalar(stmt)
+
+    async def get_today_meal_logs(
+        self,
+        user_id: int,
+        mission_template_ids: list[int],
+    ) -> dict[int, MealLog]:
+        """여러 식사 템플릿의 오늘 최신 기록을 한 쿼리로 조회한다."""
+        if not mission_template_ids:
+            return {}
+        today = today_kst()
+        stmt = (
+            select(MissionLog.mission_template_id, MealLog)
+            .join(MealLog, MealLog.mission_log_id == MissionLog.mission_log_id)
+            .where(
+                MissionLog.user_id == user_id,
+                MissionLog.mission_template_id.in_(mission_template_ids),
+                MissionLog.mission_type == MissionType.MEAL,
+                MealLog.meal_date == today,
+            )
+            .order_by(MealLog.meal_log_id.desc())
+        )
+        rows = (await self.session.execute(stmt)).all()
+        latest_by_template: dict[int, MealLog] = {}
+        for template_id, meal_log in rows:
+            latest_by_template.setdefault(template_id, meal_log)
+        return latest_by_template
 
     async def add_game_log(self, game_log: GameLog) -> None:
         self.session.add(game_log)
@@ -147,6 +222,7 @@ class MissionRepository:
 
     async def count_meal_missions_today(self, user_id: int) -> int:
         """오늘 이미 '카운트된' 식사 미션 수 (식사 1일 1회 판정용)."""
+        start, end = self._day_bounds(today_kst())
         stmt = (
             select(func.count())
             .select_from(MissionLog)
@@ -154,19 +230,22 @@ class MissionRepository:
                 MissionLog.user_id == user_id,
                 MissionLog.mission_type == MissionType.MEAL,
                 MissionLog.counted_for_daily.is_(True),
-                func.date(MissionLog.created_at) == func.current_date(),
+                MissionLog.created_at >= start,
+                MissionLog.created_at < end,
             )
         )
         return int(await self.session.scalar(stmt) or 0)
 
     async def counted_breakdown_today(self, user_id: int) -> dict[MissionType, int]:
         """오늘 '카운트된' 미션을 종류별로 집계 (일일 요약의 종류별 컬럼 채우기용)."""
+        start, end = self._day_bounds(today_kst())
         stmt = (
             select(MissionLog.mission_type, func.count())
             .where(
                 MissionLog.user_id == user_id,
                 MissionLog.counted_for_daily.is_(True),
-                func.date(MissionLog.created_at) == func.current_date(),
+                MissionLog.created_at >= start,
+                MissionLog.created_at < end,
             )
             .group_by(MissionLog.mission_type)
         )
@@ -174,9 +253,11 @@ class MissionRepository:
         return {mission_type: int(count) for mission_type, count in rows.all()}
 
     async def sum_earned_points_today(self, user_id: int) -> int:
+        start, end = self._day_bounds(today_kst())
         stmt = select(func.coalesce(func.sum(MissionLog.earned_points), 0)).where(
             MissionLog.user_id == user_id,
-            func.date(MissionLog.created_at) == func.current_date(),
+            MissionLog.created_at >= start,
+            MissionLog.created_at < end,
         )
         return int(await self.session.scalar(stmt) or 0)
 

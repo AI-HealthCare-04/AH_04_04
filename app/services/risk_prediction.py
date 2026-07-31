@@ -1,3 +1,4 @@
+import asyncio
 from datetime import timedelta
 from decimal import Decimal
 
@@ -5,6 +6,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.clock import today_kst
+from app.dtos.dashboard import ScoreSimPoint, ScoreSimulationResponse
 from app.dtos.risk_prediction import (
     CareStage,
     RiskComparisonStatus,
@@ -16,7 +18,7 @@ from app.dtos.risk_prediction import (
     RiskPredictionReassessResponse,
     RiskPredictionResponse,
 )
-from app.ml.predictor import RiskPredictor, features_from_health_profile
+from app.ml.predictor import AgeNotSupportedError, RiskPredictor, features_from_health_profile
 from app.models.enums import ActivityInputSource, InputMethod, OnboardingStatus, RiskLevel
 from app.models.health import HealthProfile
 from app.models.predictions import RiskPrediction
@@ -24,7 +26,7 @@ from app.models.users import User
 from app.repositories.dashboard_repository import DashboardRepository
 from app.repositories.health_profile_repository import HealthProfileRepository
 from app.repositories.risk_prediction_repository import RiskPredictionRepository
-from app.services.activity_metrics import derive_activity_practice_flags
+from app.services.activity_metrics import derive_activity_day_counts
 
 
 class RiskPredictionService:
@@ -85,6 +87,38 @@ class RiskPredictionService:
             predictions=items,
         )
 
+    async def get_score_simulation(self, user: User) -> ScoreSimulationResponse:
+        """what-if 점수 곡선(#기록탭 §4): 걷기 0~7·근력 0~5 각 지점의 근육 건강 점수.
+
+        신체값은 최신 프로필로 고정하고 일수만 바꿔 예측한다. 점수는 **예측기(#273)가 산출한 result.muscle_score**
+        를 그대로 쓴다(앱·서버 어디서도 재계산하지 않음). 65세 미만(AgeNotSupportedError)·코호트 미조회면 각 지점 null.
+        """
+        profile = await self.profile_repo.get_latest_profile(user.user_id)
+        if profile is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Health profile not found.")
+        base_features = features_from_health_profile(profile)
+
+        async def _score_at(overrides: dict[str, float]) -> tuple[int | None, str | None]:
+            try:
+                result = await self.predictor.predict({**base_features, **overrides})
+            except AgeNotSupportedError:
+                return None, None
+            if result.muscle_score is None:
+                return None, None
+            return result.muscle_score, result.score_cohort_version
+
+        # 각 지점 예측은 서로 독립이라 병렬 실행한다(리뷰 #272 perf) — 표 점화 후 14회 순차 예측 지연 방지.
+        walk_results, musc_results = await asyncio.gather(
+            asyncio.gather(*[_score_at({"walk_days": float(d)}) for d in range(0, 8)]),
+            asyncio.gather(*[_score_at({"musc_days": float(d)}) for d in range(0, 6)]),
+        )
+        walk = [ScoreSimPoint(days=d, score=score) for d, (score, _) in enumerate(walk_results)]
+        musc = [ScoreSimPoint(days=d, score=score) for d, (score, _) in enumerate(musc_results)]
+        cohort_version = next(
+            (cv for score, cv in [*walk_results, *musc_results] if cv is not None), None
+        )
+        return ScoreSimulationResponse(walk=walk, musc=musc, cohort_version=cohort_version)
+
     async def _predict_and_save(
         self,
         user: User,
@@ -92,7 +126,18 @@ class RiskPredictionService:
         *,
         complete_onboarding: bool = False,
     ) -> RiskPrediction:
-        result = await self.predictor.predict(features_from_health_profile(profile))
+        try:
+            result = await self.predictor.predict(features_from_health_profile(profile))
+        except AgeNotSupportedError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail={
+                    "code": "sarcopenia_prediction_preparing",
+                    "message": "근감소증 예측은 만 65세 이상부터 제공됩니다.",
+                },
+            ) from exc
+        score_p_low = getattr(result, "score_p_low", None)
+        score_p_high = getattr(result, "score_p_high", None)
         prediction = RiskPrediction(
             user_id=user.user_id,
             profile_id=profile.profile_id,
@@ -100,6 +145,12 @@ class RiskPredictionService:
             model_variant=result.model_variant,
             internal_risk_score=Decimal(str(round(result.risk_score, 3))),
             internal_risk_level=result.risk_level,
+            muscle_score=getattr(result, "muscle_score", None),
+            score_band=getattr(result, "score_band", None),
+            score_p_low=Decimal(str(round(score_p_low, 5))) if score_p_low is not None else None,
+            score_p_high=Decimal(str(round(score_p_high, 5))) if score_p_high is not None else None,
+            score_cohort_age=getattr(result, "score_cohort_age", None),
+            score_cohort_version=getattr(result, "score_cohort_version", None),
             input_snapshot=result.input_snapshot,
         )
         await self.prediction_repo.create_risk_prediction(prediction)
@@ -116,6 +167,9 @@ class RiskPredictionService:
             profile_id=prediction.profile_id,
             model_variant=prediction.model_variant.value,
             risk_score=self._public_risk_score(prediction),
+            muscle_score=getattr(prediction, "muscle_score", None),
+            score_band=getattr(prediction, "score_band", None),
+            cohort_version=getattr(prediction, "score_cohort_version", None),
             care_stage=care_stage,
             display_message=self._display_message(care_stage),
         )
@@ -126,6 +180,9 @@ class RiskPredictionService:
             profile_id=prediction.profile_id,
             prediction_id=prediction.prediction_id,
             risk_score=self._public_risk_score(prediction),
+            muscle_score=getattr(prediction, "muscle_score", None),
+            score_band=getattr(prediction, "score_band", None),
+            cohort_version=getattr(prediction, "score_cohort_version", None),
             care_stage=care_stage,
             display_message=self._display_message(care_stage),
         )
@@ -144,7 +201,7 @@ class RiskPredictionService:
             start_date,
             end_date,
         )
-        walking_practice, strength_exercise = derive_activity_practice_flags(
+        walk_days, musc_days = derive_activity_day_counts(
             activity_logs,
             activity_window_days=activity_window_days,
         )
@@ -157,8 +214,8 @@ class RiskPredictionService:
             weight_kg=source_profile.weight_kg,
             bmi=source_profile.bmi,
             waist_cm=source_profile.waist_cm,
-            walking_practice=walking_practice,
-            strength_exercise=strength_exercise,
+            walk_days=walk_days,
+            musc_days=musc_days,
             activity_input_source=ActivityInputSource.SERVICE_LOG,
             activity_window_days=activity_window_days,
             kidney_status=source_profile.kidney_status,
@@ -190,6 +247,9 @@ class RiskPredictionService:
             prediction_id=prediction.prediction_id,
             created_at=prediction.created_at,
             risk_score=score,
+            muscle_score=getattr(prediction, "muscle_score", None),
+            score_band=getattr(prediction, "score_band", None),
+            cohort_version=getattr(prediction, "score_cohort_version", None),
             change_percentage_points=change_percentage_points,
             comparison_status=comparison_status,
             care_stage=RiskPredictionService._care_stage_from_risk_level(prediction.internal_risk_level),

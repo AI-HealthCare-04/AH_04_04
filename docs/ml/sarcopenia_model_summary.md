@@ -6,30 +6,19 @@ The service uses a KNHANES-based model to produce a continuous sarcopenia screen
 internal screening signal, not a medical diagnosis. User-facing wording and longitudinal visualization are handled by
 the API and client layers.
 
-## AWGS 2025 deployment
+## AWGS 2025 days deployment
 
-The deployed artifacts were retrained on KNHANES 2022–2024 participants aged 65 or older. The target follows the
-AWGS 2025 BIA definition: low height-adjusted muscle mass **or** low BMI-adjusted muscle mass, together with low grip
-strength. Grip strength and BIA measurements define the target only and are not model inputs.
+The deployed artifacts were trained on KNHANES 2022-2024 participants aged 65 or older. The target follows the AWGS
+2025 BIA definition: low height-adjusted muscle mass or low BMI-adjusted muscle mass, together with low grip strength.
+Grip strength and BIA measurements define the target only and are not model inputs.
 
-### Why this replaces the previous deployment
-
-| decision | previous deployment | AWGS 2025 v2 |
-| --- | --- | --- |
-| target | AWGS 2019 height-adjusted low muscle mass + low grip strength | AWGS 2025 height-adjusted **or** BMI-adjusted low muscle mass + low grip strength |
-| coverage | can miss people whose absolute muscle mass is not low but is low relative to body size | includes both absolute low-muscle and sarcopenic-obesity patterns |
-| data | KNHANES 2022–2023 training with 2024 temporal validation | KNHANES 2022–2024 pooled AWGS 2025 labels |
-| downstream contract | continuous score existed internally, but the product consumed tiers and `care_stage` | continuous score is the primary signal for the planned longitudinal trend; tiers remain temporarily for compatibility |
-
-This is therefore not a change from a classifier that only produced categories to a new probability-producing
-algorithm. The existing logistic predictor already returned `risk_score`. The change is to deploy a newly defined,
-calibrated AWGS 2025 target and make that continuous value the authoritative input for the planned change-over-time
-feature instead of reducing it to three user-facing categories.
+The activity inputs use day counts instead of binary weekly-practice flags so the score can respond to walking and
+strength-challenge success counts in the longitudinal trend feature.
 
 | artifact | model version | feature set | use case |
 | --- | --- | --- | --- |
-| `sarcopenia_model_minimal.joblib` | `sarcopenia_lr_self_report_minimal_awgs2025_v2` | `self_report_minimal` | waist circumference unavailable |
-| `sarcopenia_model_with_waist.joblib` | `sarcopenia_lr_self_report_plus_waist_awgs2025_v2` | `self_report_plus_waist` | waist circumference available |
+| `sarcopenia_model_minimal.joblib` | `sarcopenia_lr_self_report_minimal_days_awgs2025_days_v3` | `self_report_minimal_days` | waist circumference unavailable |
+| `sarcopenia_model_with_waist.joblib` | `sarcopenia_lr_self_report_plus_waist_days_awgs2025_days_v3` | `self_report_plus_waist_days` | waist circumference available |
 
 - Model family: unweighted logistic regression pipeline
 - Probability type: raw `predict_proba` output
@@ -52,25 +41,21 @@ Both variants use app-collectable inputs:
 - `weight_kg`
 - `bmi`
 - `waist_cm`: optional; selects the waist-aware variant when present
-- `pa_walk_30min_5days`
-- `pa_muscle_2days`
+- `walk_days`: 0-7 days per week with at least 30 minutes of walking
+- `musc_days`: 0-5 strength-training days per week, where 5 means 5 or more days
 
 ## Integration flow
 
-1. `HealthProfile` stores anthropometry and activity-practice fields.
+1. `HealthProfile` stores anthropometry and activity day-count fields.
 2. `features_from_health_profile()` normalizes them into the deployed feature contract.
 3. `RiskPredictor.predict()` selects an artifact according to waist availability.
 4. The sklearn pipeline returns a continuous probability through `risk_score` plus bundle metadata.
 5. The service persists the score, model version, model variant, and input snapshot.
 
-No predictor code change is required for this artifact update: `RiskPredictor` already reads `feature_columns`,
-`selected_threshold`, `model_version`, and `feature_set` from each bundle.
-
 ## Longitudinal compatibility
 
-AWGS 2019 v1 and AWGS 2025 v2 scores use different target definitions. A later history/visualization change must not
-present a jump across those model versions as if it were a change in the user's health. Trend calculations should use
-the same model version or explicitly establish a new baseline at the v2 deployment boundary.
+Trend calculations should compare scores only within the same model version. When the model version changes, the first
+new-version score establishes a new baseline instead of being connected to the previous version as a health change.
 
 ## Validation and limitations
 

@@ -1,9 +1,17 @@
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, PlainSerializer
+from pydantic import AfterValidator, BaseModel, ConfigDict, PlainSerializer
 
 from app.core import config
+
+
+def _normalize_kst_naive(value: datetime) -> datetime:
+    """MySQL DATETIME에 저장할 KST wall-clock 값으로 정규화한다."""
+    if value.tzinfo is None:
+        # 기존 API 계약은 offset 없는 값을 KST local time으로 허용한다.
+        return value
+    return value.astimezone(config.TIMEZONE).replace(tzinfo=None)
 
 
 def _serialize_kst(value: datetime) -> str:
@@ -20,6 +28,10 @@ def _serialize_kst(value: datetime) -> str:
 # 응답 타임스탬프 공용 타입 — 항상 오프셋 포함 ISO8601(+09:00)로 직렬화한다(명세 v7.8).
 #   예: "2026-07-13T09:15:00+09:00". 응답의 datetime 필드는 이 타입을 쓴다(date 필드는 대상 아님).
 KstDatetime = Annotated[datetime, PlainSerializer(_serialize_kst, return_type=str)]
+
+# MySQL DATETIME은 timezone offset을 보존하지 않는다. 입력에 offset이 있으면 KST로
+# 변환한 뒤 tzinfo를 제거하고, 기존 클라이언트의 naive 입력은 KST local time으로 본다.
+KstNaiveDatetime = Annotated[datetime, AfterValidator(_normalize_kst_naive)]
 
 
 class BaseSerializerModel(BaseModel):

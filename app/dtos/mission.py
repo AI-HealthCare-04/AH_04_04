@@ -6,11 +6,9 @@
 #   - GET  /mission-logs        : 미션 로그 조회 (일자별)
 # 값 검증은 Pydantic이 자동으로 해줍니다. enum 값은 v7.1 명세와 동일하게 맞춥니다.
 # =====================================================================================
-from datetime import datetime
-
 from pydantic import BaseModel, Field
 
-from app.dtos.base import BaseSerializerModel
+from app.dtos.base import BaseSerializerModel, KstDatetime, KstNaiveDatetime
 from app.models.enums import (
     ActivityType,
     GameType,
@@ -31,7 +29,7 @@ class MealTodayLog(BaseModel):
     """단백질 미션의 '오늘 기록' — 재진입 시 앱이 카드 선택 상태를 복원하는 데 쓴다(지시서 §3-3, §4.1)."""
 
     eaten: list[str]
-    logged_at: datetime
+    logged_at: KstDatetime
 
 
 class MissionTodayProgress(BaseModel):
@@ -96,7 +94,7 @@ class MissionLogCreateRequest(BaseModel):
 
     # status=in_progress (운동/걷기 시작)
     safety_notice_confirmed: bool | None = None
-    safety_notice_confirmed_at: datetime | None = None
+    safety_notice_confirmed_at: KstNaiveDatetime | None = None
 
     # status=completed (식사/게임 즉시완료)
     actual_value: float | None = Field(default=None, ge=0)
@@ -104,7 +102,7 @@ class MissionLogCreateRequest(BaseModel):
     target_unit: TargetUnit | None = None
     success: bool | None = None
     input_method: InputMethod | None = None
-    created_on_device_at: datetime | None = None
+    created_on_device_at: KstNaiveDatetime | None = None
     meal_detail: MealDetail | None = None
     game_detail: GameDetail | None = None
 
@@ -187,6 +185,9 @@ class MissionLogUpdateResponse(BaseModel):
 class MissionLogListItem(BaseModel):
     mission_log_id: int
     mission_type: str
+    # 기록 탭 달력·일별 추이(#기록탭 §5.1/§5.2)용으로 추가: 미션명 + 완료(기록) 시각(KST).
+    title: str
+    completed_at: KstDatetime
     success: bool
     counted_for_daily: bool
     earned_points: int

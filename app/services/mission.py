@@ -10,7 +10,7 @@
 #   - 걷기(walking)는 같은 날 자동 서버 합산 → daily_total_min 반환
 #   - 성공 시에만 포인트 지급 (mission_scoring.compute_earned_points)
 # =====================================================================================
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from fastapi import HTTPException, status
@@ -73,6 +73,10 @@ class MissionService:
             exclude_kidney_check=exclude_kidney_check,
         )
         responses = [MissionResponse.model_validate(t) for t in templates]
+        meal_template_ids = [
+            template.mission_template_id for template in templates if template.mission_type == MissionType.MEAL
+        ]
+        today_meals = await self.repo.get_today_meal_logs(user.user_id, meal_template_ids)
         # 오늘 누적 진행(운동·걷기)은 종류당 한 번만 집계한다 — 목록에 같은 종류가 여러 개여도(레벨 등)
         #   당일 누적은 사용자·종류 단위 권위값이라 동일하므로 중복 SELECT 를 피한다. 목록에 해당 종류가
         #   없으면 아예 조회하지 않는다(0 을 표시할 카드가 없으니).
@@ -83,7 +87,7 @@ class MissionService:
         #   운동·걷기 미션엔 오늘 누적 진행을 붙여, 재생/측정 전에도 '오늘까지 N분'을 목록에서 볼 수 있게 한다.
         for resp, template in zip(responses, templates, strict=True):
             if template.mission_type == MissionType.MEAL:
-                meal = await self.repo.get_today_meal_log(user.user_id, template.mission_template_id)
+                meal = today_meals.get(template.mission_template_id)
                 if meal is not None:
                     resp.today_log = MealTodayLog(eaten=meal.protein_foods, logged_at=meal.created_at)
             elif template.mission_type == MissionType.EXERCISE and exercise_min is not None:
@@ -586,6 +590,18 @@ class MissionService:
 
     async def list_mission_logs(self, user: User, on_date: date | None) -> list[MissionLog]:
         return await self.repo.list_mission_logs(user.user_id, on_date)
+
+    async def list_mission_logs_detailed(
+        self,
+        user: User,
+        on_date: date | None,
+        date_from: date | None,
+        date_to: date | None,
+    ) -> list[tuple[MissionLog, str, datetime]]:
+        """기록 탭 달력·일별 추이용(#기록탭 §5.1/§5.2) — 템플릿명·실제 완료시각 포함, 완료 상태만."""
+        return await self.repo.list_mission_logs_detailed(
+            user.user_id, date_from=date_from, date_to=date_to, on_date=on_date
+        )
 
     async def get_today_walking_totals(self, user: User) -> tuple[float, int]:
         # 홈 '오늘 걷기' 위젯용 당일 누적 실적(분·걸음). 걷기 완료 응답과 같은 원천·같은 단일 SELECT를

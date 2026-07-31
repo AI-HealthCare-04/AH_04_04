@@ -15,14 +15,45 @@ validation:
     shuffle: true
     random_state: 42
 
+training_notes:
+  with_waist: waist-missing rows dropped (n=13), not imputed
+
 feature_sets:
-  default: self_report_plus_waist
-  fallback: self_report_minimal
+  default: self_report_plus_waist_days
+  fallback: self_report_minimal_days
+
+activity_features:
+  walk_days:
+    source: BE3_31-compatible day count
+    min: 0
+    max: 7
+  musc_days:
+    source: BE5_1-compatible day count
+    min: 0
+    max: 5
+    note: 5 means 5 or more days
 
 target_label: sarcopenia_awgs2025
 probability_type: raw
+model_version_suffix: awgs2025_days_v3
 selected_threshold: 0.20
 
 smote:
   enabled: false
   random_state: 42
+
+# --- v1 age gate (enforced by predictor.py) ---
+age_gate:
+  min: 65
+  topcode: 80
+  behavior: raise_AgeNotSupportedError
+
+# --- Record-tab positive muscle score (peer-relative, linear P5/P95) ---
+score:
+  method: linear_p5_p95
+  cohort_table: cohort_unified_65plus.json
+  formula: "round(100*(p_high-p)/(p_high-p_low)), clamp[0,100]"
+  good_min: 75
+  caution_max: 29
+  display_floor: 5
+  note: "Cutoffs are product defaults; predictor reads these values at runtime."

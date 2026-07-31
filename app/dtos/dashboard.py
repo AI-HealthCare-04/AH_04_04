@@ -16,7 +16,7 @@ class DashboardPredictionInputs(BaseModel):
     height_cm: float | None = None
     weight_kg: float | None = None
     waist_cm: float | None = None     # 미측정이면 null → 허리 제외형(minimal) 모델
-    walk_days: int = Field(ge=0, le=5)  # 최근 7일 '걷기' 성공 요일 수(챌린지 기록 파생, 0~5)
+    walk_days: int = Field(ge=0, le=7)  # 최근 7일 '걷기' 성공 요일 수(챌린지 기록 파생, 0~7)
     musc_days: int = Field(ge=0, le=5)  # 최근 7일 '운동' 성공 요일 수(0~5)
 
 
@@ -110,6 +110,48 @@ class StampsResponse(BaseModel):
     days: list[StampDay]
 
 
+# [응답] 걷기 일별 막대(#기록탭 §5.3). 최근 N일 걷기 걸음·분. 걷기 없는 날도 0으로 채워 내려준다.
+class WalkingDayPoint(BaseModel):
+    date: date
+    steps: int = Field(ge=0)
+    minutes: float = Field(ge=0)
+
+
+class WalkingDailyResponse(BaseModel):
+    days: list[WalkingDayPoint]
+
+
+# [응답] 챌린지 유형별 '완료 일수' 도넛(#기록탭 §5.4 선호도). 모든 유형 하루 1회 상한. 0회 유형도 포함(범례 회색).
+class ChallengeTypeTotal(BaseModel):
+    mission_type: str  # walking | exercise | meal | game
+    count: int = Field(ge=0)  # 해당 유형을 완료한 일수
+
+
+class ChallengeTotalsResponse(BaseModel):
+    total: int = Field(ge=0)  # 유형별 완료 일수 합(도넛 중앙 '누적 N회')
+    by_type: list[ChallengeTypeTotal]
+
+
+# [응답] what-if 점수 시뮬레이션(#기록탭 §4). 걷기/근력 일수를 0→N 으로 바꿨을 때의 근육 건강 점수.
+#   코호트 분위수표 미도착·65세 미만이면 각 지점 score=null(앱이 "준비 중").
+class ScoreSimPoint(BaseModel):
+    days: int = Field(ge=0)
+    score: int | None = Field(default=None, ge=0, le=100)
+
+
+class ScoreSimulationResponse(BaseModel):
+    walk: list[ScoreSimPoint]  # 걷기 0~7일
+    musc: list[ScoreSimPoint]  # 근력 0~5일
+    cohort_version: str | None = None
+
+
+# [응답] 근력 기능 안전망 카드(§3.4) 발화 판정 입력. 앱이 score_band(별도)와 함께 5STS·BMI로 카드 노출을 정한다.
+#   chair_stand_sec: 최신 체력검사의 5STS(초). 스킵/미측정이면 null → 카드 미표시. bmi: 최신 프로필 BMI.
+class MuscleScoreContextResponse(BaseModel):
+    chair_stand_sec: float | None = None
+    bmi: float | None = None
+
+
 # [응답] 대시보드 시각화 (GET /dashboard/summary). 최근 days일 구간의 활동 추이·생활기록·위험도 변화.
 class ActivityTrendPoint(BaseModel):
     date: date
@@ -124,6 +166,9 @@ class LifestyleRecords(BaseModel):
 class RiskChangePoint(BaseModel):
     at: KstDatetime
     risk_score: float = Field(ge=0, le=1)
+    muscle_score: int | None = Field(default=None, ge=0, le=100)
+    score_band: str | None = None
+    cohort_version: str | None = None
     change_percentage_points: float | None = Field(ge=-100, le=100)
     comparison_status: RiskComparisonStatus
     # 기존 Android 호환 필드. 연속형 화면 전환 뒤 제거 또는 내부 한정 예정이다.

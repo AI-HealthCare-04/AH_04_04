@@ -39,5 +39,8 @@ class OAuthLoginNonce(Base):
     nonce_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
     provider: Mapped[str] = mapped_column(String(20), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.current_timestamp()
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.current_timestamp(),
+        index=True,
     )

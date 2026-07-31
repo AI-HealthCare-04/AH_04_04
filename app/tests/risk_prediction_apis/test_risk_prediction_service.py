@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.dtos.risk_prediction import (
@@ -12,6 +13,7 @@ from app.dtos.risk_prediction import (
     RiskPredictionCreateResponse,
     RiskPredictionReassessRequest,
 )
+from app.ml.predictor import AgeNotSupportedError
 from app.models.enums import (
     ActivityInputSource,
     ActivityType,
@@ -103,6 +105,9 @@ def test_risk_prediction_response_includes_public_model_context() -> None:
     assert response.profile_id == 22
     assert response.model_variant == "with_waist"
     assert response.risk_score == 0.427
+    assert response.muscle_score is None
+    assert response.score_band is None
+    assert response.cohort_version is None
     assert response.care_stage == CareStage.ACTION_NEEDED
     assert response.disclaimer == "본 결과는 참고용이며 의학적 진단이 아닙니다."
 
@@ -144,6 +149,9 @@ def test_reassess_response_uses_v73_contract_without_model_variant() -> None:
         "profile_id": 72,
         "prediction_id": 90,
         "risk_score": 0.427,
+        "muscle_score": None,
+        "score_band": None,
+        "cohort_version": None,
         "care_stage": "maintain",
         "display_message": RiskPredictionService._display_message(CareStage.MAINTAIN),
         "disclaimer": "본 결과는 참고용이며 의학적 진단이 아닙니다.",
@@ -167,6 +175,9 @@ def test_history_item_exposes_continuous_score_without_internal_model_fields() -
     assert item.prediction_id == 11
     assert item.created_at == datetime(2026, 7, 10, 12, 0, 0)
     assert item.risk_score == 0.427
+    assert item.muscle_score is None
+    assert item.score_band is None
+    assert item.cohort_version is None
     assert item.change_percentage_points is None
     assert item.comparison_status == RiskComparisonStatus.BASELINE
     assert item.care_stage == CareStage.MAINTAIN
@@ -199,7 +210,7 @@ async def test_get_recent_predictions_returns_chronological_continuous_trend() -
             created_at=datetime(2026, 7, 9, 12, 0, 0),
             internal_risk_level=RiskLevel.LOW,
             internal_risk_score=Decimal("0.400"),
-            model_version="awgs2019-v1",
+            model_version="awgs2025-days-v2",
             model_variant=ModelVariant.WITH_WAIST,
         ),
     ]
@@ -219,6 +230,7 @@ async def test_get_recent_predictions_returns_chronological_continuous_trend() -
     assert repo.called_with == (1, 3)
     assert [item.prediction_id for item in response.predictions] == [11, 12, 13]
     assert [item.risk_score for item in response.predictions] == [0.4, 0.324, 0.281]
+    assert [item.muscle_score for item in response.predictions] == [None, None, None]
     assert [item.change_percentage_points for item in response.predictions] == [None, None, -4.3]
     assert [item.comparison_status for item in response.predictions] == [
         RiskComparisonStatus.BASELINE,
@@ -244,6 +256,42 @@ async def test_get_recent_predictions_returns_empty_list_for_non_positive_limit(
     assert repo.called is False
 
 
+async def test_predict_and_save_returns_422_for_under_65_model_gate() -> None:
+    profile = HealthProfile(
+        profile_id=55,
+        user_id=1,
+        session_id=10,
+        birth_date=date(1962, 3, 1),
+        sex=Sex.MALE,
+        height_cm=Decimal("160.00"),
+        weight_kg=Decimal("58.00"),
+        bmi=Decimal("22.7"),
+        waist_cm=None,
+        walk_days=5,
+        musc_days=0,
+        activity_input_source=ActivityInputSource.SELF_REPORT,
+        activity_window_days=None,
+        kidney_status=KidneyStatus.NONE,
+        protein_restriction_status=ProteinRestrictionStatus.NONE,
+        protein_challenge_allowed=True,
+        input_method=InputMethod.FORM,
+        has_estimated_value=False,
+    )
+
+    class _Predictor:
+        async def predict(self, features: object) -> object:
+            raise AgeNotSupportedError(64)
+
+    service = RiskPredictionService(session=None, predictor=_Predictor())  # type: ignore[arg-type]
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service._predict_and_save(cast(User, SimpleNamespace(user_id=1)), profile)
+
+    assert exc_info.value.status_code == 422
+    assert isinstance(exc_info.value.detail, dict)
+    assert exc_info.value.detail["code"] == "sarcopenia_prediction_preparing"
+
+
 async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  # noqa: C901
     source_profile = HealthProfile(
         profile_id=55,
@@ -255,8 +303,8 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
         weight_kg=Decimal("58.00"),
         bmi=Decimal("22.7"),
         waist_cm=Decimal("82.00"),
-        walking_practice=True,
-        strength_exercise=False,
+        walk_days=5,
+        musc_days=0,
         activity_input_source=ActivityInputSource.SELF_REPORT,
         activity_window_days=None,
         kidney_status=KidneyStatus.NONE,
@@ -304,6 +352,12 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
                 model_variant=ModelVariant.WITH_WAIST,
                 risk_score=0.42,
                 risk_level=RiskLevel.MEDIUM,
+                muscle_score=81,
+                score_band="good",
+                score_p_low=0.01,
+                score_p_high=0.50,
+                score_cohort_age="72",
+                score_cohort_version="knhanes2022_2024_v1",
                 input_snapshot={},
             )
 
@@ -338,12 +392,22 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
     assert profile_repo.created_profile.activity_input_source == ActivityInputSource.SERVICE_LOG
     assert profile_repo.created_profile.activity_window_days == 14
     assert profile_repo.created_profile.input_method == InputMethod.SERVICE_LOG
-    assert profile_repo.created_profile.walking_practice is True
-    assert profile_repo.created_profile.strength_exercise is True
+    assert profile_repo.created_profile.walk_days == 5
+    assert profile_repo.created_profile.musc_days == 2
     assert profile_repo.created_profile.has_estimated_value is True
     assert dashboard_repo.called_with is not None
     assert dashboard_repo.called_with[0] == 1
+    assert prediction_repo.created_prediction is not None
+    assert prediction_repo.created_prediction.muscle_score == 81
+    assert prediction_repo.created_prediction.score_band == "good"
+    assert prediction_repo.created_prediction.score_p_low == Decimal("0.01000")
+    assert prediction_repo.created_prediction.score_p_high == Decimal("0.50000")
+    assert prediction_repo.created_prediction.score_cohort_age == "72"
+    assert prediction_repo.created_prediction.score_cohort_version == "knhanes2022_2024_v1"
     assert response.profile_id == 72
     assert response.prediction_id == 90
+    assert response.muscle_score == 81
+    assert response.score_band == "good"
+    assert response.cohort_version == "knhanes2022_2024_v1"
     assert response.activity_input_source == ActivityInputSource.SERVICE_LOG
     assert session.committed is True
