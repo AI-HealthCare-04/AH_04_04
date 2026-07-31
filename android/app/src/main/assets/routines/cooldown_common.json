@@ -32,7 +32,7 @@
     { "type": "image", "asset": "inner_thigh_right", "sec": 15, "mode": "timer",
       "name": "안 허벅지 늘리기", "guide": "반대쪽으로 체중을 실어요" },
 
-    { "type": "notice", "sec": 3, "name": "의자에 앉아주세요", "guide": "이제 앉아서 마무리해요" },
+    { "type": "notice", "sec": 8, "name": "의자에 앉아주세요", "guide": "이제 앉아서 마무리해요" },
 
     { "type": "image_toggle", "assets": ["cat_pose", "camel_pose"], "interval": 3.5,
       "sec": 21, "mode": "count", "count": 3,
