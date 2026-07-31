@@ -1,7 +1,8 @@
 """또래 분포 차트(#193) 서비스: 코호트 선택(단일나이·80+·65 미만 422)·lower_count·density.
 
-코호트·확률 정합(리뷰 #301): 코호트 키는 최신 프로필이 아니라 **예측 당시 프로필(prediction.profile_id)과
-prediction.model_variant** 로 만든다. 프로필이 예측 후 수정돼도 백분위·model_version 이 어긋나지 않는다.
+코호트·확률 정합(리뷰 #301): 코호트 키는 최신 프로필이 아니라 **예측에 저장된 input_snapshot 의
+나이·성별과 prediction.model_variant** 로 만든다. 프로필 수정·생일 경계에도 백분위·model_version 이
+어긋나지 않는다.
 """
 
 from datetime import date
@@ -42,12 +43,16 @@ def _prediction(
     variant: ModelVariant = ModelVariant.MINIMAL,
     model_version: str = "test-model-v1",
     profile_id: int = PREDICTION_PROFILE_ID,
+    age: float = 72.0,
+    sex: int = 1,
 ) -> SimpleNamespace:
+    # input_snapshot 은 normalize_features 산출물 — 나이는 80 top-coding 이후 값이 저장된다.
     return SimpleNamespace(
         internal_risk_score=Decimal(probability),
         model_variant=variant,
         model_version=model_version,
         profile_id=profile_id,
+        input_snapshot={"age": min(age, 80.0), "sex": sex, "bmi": 23.5, "walk_days": 3.0, "musc_days": 1.0},
     )
 
 
@@ -104,12 +109,12 @@ def test_lower_count_clamped_to_1_and_99() -> None:
 
 
 def test_selects_80plus_pool_for_age_over_80() -> None:
-    resp = _run(_service(_profile(85), _prediction("0.05")))
+    resp = _run(_service(_profile(85), _prediction("0.05", age=85.0)))
     assert resp.age_label == "80세 이상"
 
 
 def test_rejects_under_65_with_422() -> None:
-    service = _service(_profile(60), _prediction("0.05"))
+    service = _service(_profile(60), _prediction("0.05", age=60.0))
     with pytest.raises(HTTPException) as exc:
         _run(service)
     assert exc.value.status_code == 422
@@ -149,12 +154,23 @@ def test_with_waist_prediction_uses_with_waist_cohort_and_prediction_model_versi
     아니라 실제 예측의 버전을 그대로 노출한다(리뷰 #301)."""
     service = _service(
         _profile(72, sex=Sex.FEMALE, waist_cm=85.0),
-        _prediction("0.05", variant=ModelVariant.WITH_WAIST, model_version="with-waist-v3"),
+        _prediction("0.05", variant=ModelVariant.WITH_WAIST, model_version="with-waist-v3", sex=2),
     )
     resp = _run(service)
     expected = load_cohort_distribution()[("with_waist", 2, _cohort_age_key(72.0))]
     assert resp.quantiles == list(expected.quantiles)
     assert resp.model_version == "with-waist-v3"
+
+
+def test_pins_snapshot_age_across_birthday_boundary() -> None:
+    """생일 경계(리뷰 #301 2차): 예측 후 생일이 지나 프로필 재계산 나이가 73이어도, 확률은 72세 입력으로
+    만든 값이므로 스냅샷 나이 72의 코호트와 비교해야 한다."""
+    profile_now_73 = _profile(73)  # 1월 1일생 → 오늘 기준 계산 나이 73
+    service = _service(profile_now_73, _prediction("0.05", age=72.0))
+    resp = _run(service)
+    expected = load_cohort_distribution()[("minimal", 1, _cohort_age_key(72.0))]
+    assert resp.quantiles == list(expected.quantiles)
+    assert resp.age_label == _format_cohort_age_label("72", expected.window)
 
 
 def test_no_cross_feature_set_fallback(monkeypatch: pytest.MonkeyPatch) -> None:

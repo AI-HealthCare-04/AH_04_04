@@ -133,9 +133,10 @@ class RiskPredictionService:
     async def get_cohort_distribution(self, user: User) -> CohortDistributionResponse:
         """또래 분포 병합 차트(#193): 사용자 코호트의 quantiles·density 와 내 위치(lower_count)를 낸다.
 
-        확률은 최신 예측(internal_risk_score)을 쓰므로 코호트도 **그 예측이 만들어진 시점의 프로필과
-        model_variant 로부터 (feature_set × 성별 × 단일나이) 키**를 만들어 선택한다 — 예측 후 프로필이
-        수정돼도 확률·분포의 기준 모델과 입력이 항상 일치한다. 65세 미만은 코호트 미지원이라 422.
+        확률은 최신 예측(internal_risk_score)을 쓰므로 코호트도 **그 예측에 저장된 입력 스냅샷의
+        나이·성별과 model_variant 로부터 (feature_set × 성별 × 단일나이) 키**를 만들어 선택한다 —
+        예측 후 프로필이 수정되거나 생일이 지나도 확률·분포의 기준 모델과 입력이 항상 일치한다.
+        65세 미만은 코호트 미지원이라 422.
         """
         prediction = await self.prediction_repo.get_latest_prediction(user.user_id)
         if prediction is None:
@@ -143,9 +144,11 @@ class RiskPredictionService:
         profile = await self.profile_repo.get_profile(prediction.profile_id, user.user_id)
         if profile is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Health profile not found.")
-        features = features_from_health_profile(profile)
-        age = features.get("age")
-        sex = features.get("sex")
+        # 나이·성별은 프로필에서 재계산하지 않고 예측 당시 스냅샷으로 고정한다 — 같은 프로필 행이라도
+        #   오늘 기준 나이 재계산은 생일 경계에서 예측과 다른 코호트를 고른다(리뷰 #301).
+        snapshot = prediction.input_snapshot or {}
+        age = snapshot.get("age")
+        sex = snapshot.get("sex")
         if age is None or float(age) < AGE_MIN:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
