@@ -39,6 +39,7 @@ from app.repositories.risk_prediction_repository import RiskPredictionRepository
 from app.services.activity_metrics import derive_activity_day_counts
 
 DENSITY_METHOD = "boundary_reflected_gaussian_kde_v1"
+DENSITY_PLOT_MAX_PROBABILITY = 0.5
 
 
 class RiskPredictionService:
@@ -175,7 +176,9 @@ class RiskPredictionService:
             n=dist.n,
             lower_count=lower_count,
             quantiles=list(dist.quantiles),
-            density=[list(point) for point in dist.density],
+            # 산출물은 0~1 전체 도메인을 보존하고, 현재 차트가 표시하는 0~0.5 구간만 응답한다.
+            # 0.5 초과 점을 보내면 앱의 x 클램프로 오른쪽 끝에 겹쳐 세로선이 그려진다.
+            density=[list(point) for point in dist.density if point[0] <= DENSITY_PLOT_MAX_PROBABILITY],
             density_method=DENSITY_METHOD,
             cohort_version=load_cohort_version(),
             # 산출물 meta.model_version 은 minimal 모델 버전이라 with_waist 경로에서 불일치한다(리뷰 #301).
