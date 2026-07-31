@@ -19,7 +19,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -50,7 +52,7 @@ class ExerciseVideosViewModelTest {
      * MissionApi fake — getMissions 로 넘겨줄 미션 목록을 지정하고, 완료 전송(createMissionLog→completeMissionLog)
      * 호출을 기록한다. VM 의 missionApi(템플릿 해석)와 exerciseFlow(전송) 둘 다 같은 fake 로 물려 한 눈에 검증한다.
      */
-    private class FakeMissionApi(private val missions: List<Mission>) : MissionApi {
+    private class FakeMissionApi(var missions: List<Mission>) : MissionApi {
         var createdTemplateId: Int? = null
         var createdType: String? = null
         var createdSafetyConfirmed: Boolean? = null
@@ -519,6 +521,75 @@ class ExerciseVideosViewModelTest {
 
         assertEquals("늦게 온 목록 GET(6분)이 최신 완료값(10분)을 되돌리지 못한다", 10f, vm.todayExerciseMin)
         assertTrue("완료가 목표 달성이므로 달성 표시 유지", vm.todayGoalReached)
+    }
+
+    // -----------------------------------------------------------------------------------
+    // 리뷰 #291 새 블로커: 계정 전환 시 이전 사용자 오늘 누적이 새 사용자에게 노출되지 않는다(시니어 공용 단말).
+    //   이 VM 은 Activity 범위라 로그아웃→타계정 로그인 시 재사용될 수 있다.
+    // -----------------------------------------------------------------------------------
+
+    /** currentUserId 를 주입해 계정 전환을 시뮬레이션하는 VM. */
+    private fun vmWithUser(missionApi: FakeMissionApi, user: () -> Int?) = ExerciseVideosViewModel(
+        api = FakeApi { ExerciseVideosResponse(emptyList()) },
+        missionApi = missionApi,
+        exerciseFlow = ExerciseFlowUseCase(missionApi),
+        currentUserId = user,
+    )
+
+    @Test
+    fun `계정 전환 후 새 사용자에 운동 미션이 없으면 이전 사용자 누적이 남지 않는다`() = runTest {
+        val fake = FakeMissionApi(
+            listOf(exerciseMission(templateId = 7, todayProgress = MissionTodayProgress(totalMin = 6f, goalReached = false))),
+        )
+        var uid: Int? = 1
+        val vm = vmWithUser(fake) { uid }
+
+        vm.load(); advanceUntilIdle()
+        assertEquals("사용자 A 오늘 누적", 6f, vm.todayExerciseMin)
+
+        // 로그아웃 → 사용자 B 로그인. B 에겐 운동 미션이 없다(또는 today_progress 부재).
+        uid = 2
+        fake.missions = emptyList()
+        vm.load(); advanceUntilIdle()
+
+        assertNull("사용자 B 화면에 A 의 6분이 남으면 안 된다", vm.todayExerciseMin)
+        assertFalse(vm.todayGoalReached)
+    }
+
+    @Test
+    fun `계정 전환 직후 목록 GET 완료 전에도 이전 사용자 누적이 노출되지 않는다`() = runTest {
+        val fake = FakeMissionApi(
+            listOf(exerciseMission(templateId = 7, todayProgress = MissionTodayProgress(totalMin = 6f, goalReached = false))),
+        )
+        var uid: Int? = 1
+        val vm = vmWithUser(fake) { uid }
+        vm.load(); advanceUntilIdle()
+        assertEquals(6f, vm.todayExerciseMin)
+
+        // 사용자 B 로 전환하고 다시 진입. GET 은 느리게 응답한다.
+        uid = 2
+        fake.missions = listOf(exerciseMission(templateId = 7, todayProgress = MissionTodayProgress(totalMin = 2f, goalReached = false)))
+        fake.getMissionsDelayMs = 100L
+        vm.load()
+        advanceTimeBy(50L); runCurrent() // 아직 B 의 GET 응답 전
+
+        assertNull("B 진입 직후, 목록 GET 완료 전에는 A 값이 보이면 안 된다", vm.todayExerciseMin)
+
+        advanceUntilIdle()
+        assertEquals("B 의 GET 이 도착하면 B 값으로 채운다", 2f, vm.todayExerciseMin)
+    }
+
+    @Test
+    fun `같은 사용자면 파생 상태를 지우지 않는다`() = runTest {
+        val fake = FakeMissionApi(
+            listOf(exerciseMission(templateId = 7, todayProgress = MissionTodayProgress(totalMin = 6f, goalReached = false))),
+        )
+        val vm = vmWithUser(fake) { 1 } // 사용자 고정
+        vm.load(); advanceUntilIdle()
+        assertEquals(6f, vm.todayExerciseMin)
+
+        vm.load(); advanceUntilIdle() // 같은 사용자 재진입
+        assertEquals("같은 사용자면 재조회로 새 값이 오되 사이에 비워지지 않는다", 6f, vm.todayExerciseMin)
     }
 
     @Test

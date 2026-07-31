@@ -10,6 +10,7 @@ import com.aihealthcare.ah0404.mission.ExerciseFlowUseCase
 import com.aihealthcare.ah0404.network.ExerciseVideoApi
 import com.aihealthcare.ah0404.network.ExerciseVideoItem
 import com.aihealthcare.ah0404.network.MissionApi
+import com.aihealthcare.ah0404.network.SessionStore
 import com.aihealthcare.ah0404.network.retrofit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -36,6 +37,10 @@ class ExerciseVideosViewModel(
     private val exerciseFlow: ExerciseFlowUseCase = ExerciseFlowUseCase(),
     // 미전송 세션의 영속 저장소(#271). 기본은 영속하지 않는 NoOp(인메모리 동작 유지) — 실제 화면은 SharedPrefs 구현을 주입한다.
     private val outbox: ExerciseOutbox = NoOpExerciseOutbox(),
+    // 현재 로그인 사용자 식별자(리뷰 #291 새 블로커, 시니어 공용 단말). 이 VM 은 Activity 범위라 로그아웃→타계정
+    //   로그인 시 재사용될 수 있어, 사용자가 바뀌면 이전 사용자 파생 상태(오늘 누적 등)를 비워야 데이터가 섞이지 않는다.
+    //   게스트/로그아웃이면 null. 테스트는 람다로 계정 전환을 주입한다.
+    private val currentUserId: () -> Int? = { SessionStore.persistentUserId },
 ) : ViewModel() {
 
     var loading by mutableStateOf(false); private set
@@ -84,6 +89,12 @@ class ExerciseVideosViewModel(
     //   폐기한다 — 중간 이탈 후 재진입 경로에서 늦은 GET 이 최신 완료값(예: 10분)을 과거값(6분)으로 되돌리는 것 방지.
     //   completionMutex 안에서만 읽고/증가시켜 [send] 의 적용과 순서를 맞춘다(단일 스레드 confinement + 락으로 경합 없음).
     private var progressRevision = 0
+
+    // 지금 화면에 반영된 오늘 누적이 '어느 사용자' 것인지(리뷰 #291 새 블로커). 조회 때 [currentUserId] 와 비교해
+    //   사용자가 바뀌었으면 새 GET 이 도착하기 전에 이전 사용자 파생 상태를 비운다 — 시니어 공용 단말에서 A 값이 B 에게
+    //   한 번도 노출되지 않게. 최초 1회는 비교 대상이 없으므로 [loadedUserInitialized] 로 첫 조회를 구분한다.
+    private var loadedUserId: Int? = null
+    private var loadedUserInitialized = false
 
     /** 이어보기용: 이 url 을 어디부터 재생할지(ms). 없으면 0(처음부터). */
     fun resumePositionFor(url: String): Long = positionByUrl[url] ?: 0L
@@ -138,6 +149,15 @@ class ExerciseVideosViewModel(
      *  겸사겸사 단일 운동 템플릿 id 도 캐시해 [submitExercise] 의 별도 조회([resolveExerciseTemplateId])를 아낀다.
      */
     private suspend fun loadTodayProgress(gen: Int) {
+        // 계정 전환 감지(리뷰 #291 새 블로커): 사용자가 바뀌었으면 GET 응답을 기다리지 않고 **지금 즉시** 이전 사용자
+        //   파생 상태를 비운다 — 새 사용자가 진입한 직후 목록 GET 완료 전까지 이전 사용자의 오늘 누적이 노출되는 것 방지.
+        //   첫 조회는 비교 대상이 없으므로 건너뛰고, 이후 조회부터 이전 반영 사용자와 대조한다.
+        val user = currentUserId()
+        if (loadedUserInitialized && user != loadedUserId) {
+            clearUserDerivedState()
+        }
+        loadedUserId = user
+        loadedUserInitialized = true
         // 이 조회가 '시작된' 시점의 완료-적용 리비전. 응답이 늦게 오는 사이 완료 전송([send])이 최신 누적을 적용했다면
         //   달라지므로, 오래된 GET 값으로 되돌리지 않도록 폐기 판정에 쓴다(리뷰 #291 블로커1: stale GET 되돌림 방어).
         val revAtStart = progressRevision
@@ -164,6 +184,18 @@ class ExerciseVideosViewModel(
                 todayGoalReached = p.goalReached
             }
         }
+    }
+
+    /**
+     * 사용자(인증 주체)가 바뀔 때 이전 사용자 파생 상태를 비운다(리뷰 #291 새 블로커, 시니어 공용 단말).
+     *  오늘 누적·달성·운동 템플릿 id 는 모두 특정 사용자에게 종속되므로, 계정 전환 시 남기면 다른 사용자에게 노출된다.
+     *  진입 조회 시작 시점에 호출해 새 GET 이 오기 전에 즉시 비운다. (미전송 세션 pending 은 사용자 스코프 outbox(#271)가
+     *  별도로 방어한다.) 템플릿 id 는 다음 조회에서 새 사용자 기준으로 다시 해석된다.
+     */
+    private fun clearUserDerivedState() {
+        todayExerciseMin = null
+        todayGoalReached = false
+        exerciseTemplateId = null
     }
 
     /**
