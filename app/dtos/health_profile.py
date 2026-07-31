@@ -44,6 +44,9 @@ class HealthProfilePatchRequest(BaseModel):
     weight_kg: Decimal | None = Field(default=None, gt=0)
     waist_cm: Decimal | None = Field(default=None, gt=0)
     kidney_status: KidneyStatus | None = None
+    # 단백질(고단백 식사) 미션 게이트(#304): 신장상태와 함께 protein_challenge_allowed 를 정한다. 내정보에서
+    #   이 값을 못 바꾸면 온보딩에서 제한으로 저장된 뒤 미션을 영영 되돌릴 수 없다 → 편집 가능하게 추가(미전송이면 유지).
+    protein_restriction_status: ProteinRestrictionStatus | None = None
 
 
 class HealthProfileResponse(BaseModel):

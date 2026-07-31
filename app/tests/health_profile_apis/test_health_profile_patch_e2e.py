@@ -109,3 +109,58 @@ async def test_patch_no_effective_change_rejected(db_client: AsyncClient) -> Non
         headers=auth,
     )
     assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
+
+async def _create_restricted_profile(db_client: AsyncClient, auth: dict[str, str]) -> None:
+    # 신장질환 + 단백질 제한 있음 → protein_challenge_allowed=False 로 시작.
+    resp = await db_client.post(
+        f"{API}/health-profiles",
+        json={
+            "birth_date": "1958-03-21",
+            "sex": "male",
+            "height_cm": 168,
+            "weight_kg": 63.5,
+            "walk_days": 5,
+            "musc_days": 0,
+            "kidney_status": "kidney_disease",
+            "protein_restriction_status": "restricted",
+            "activity_input_source": "self_report",
+            "input_method": "form",
+            "has_estimated_value": False,
+        },
+        headers=auth,
+    )
+    assert resp.status_code == status.HTTP_201_CREATED
+    assert resp.json()["protein_challenge_allowed"] is False
+
+
+async def test_patch_protein_restriction_reopens_challenge(db_client: AsyncClient) -> None:
+    # #304: 내정보에서 신장만 '없음'으로 바꿔선 단백질 미션이 안 열리고(단백질 제한이 남아서),
+    #   단백질 제한 문항까지 편집해야 되돌아온다.
+    auth = await _guest(db_client)
+    await _create_restricted_profile(db_client, auth)
+
+    # 신장만 none 으로 바꿔도(단백질 미전송 → 이전값 restricted 유지) 여전히 차단 — 종전 증상.
+    kidney_only = await db_client.patch(
+        f"{API}/health-profiles/me", json={"kidney_status": "none"}, headers=auth
+    )
+    assert kidney_only.status_code == status.HTTP_200_OK
+    assert kidney_only.json()["protein_challenge_allowed"] is False
+
+    # 내정보에서 단백질 제한을 none 으로 바꾸면 챌린지 복구(#304 수정).
+    protein_off = await db_client.patch(
+        f"{API}/health-profiles/me", json={"protein_restriction_status": "none"}, headers=auth
+    )
+    assert protein_off.status_code == status.HTTP_200_OK
+    assert protein_off.json()["protein_restriction_status"] == "none"
+    assert protein_off.json()["protein_challenge_allowed"] is True
+
+
+async def test_patch_protein_restriction_only_is_valid_change(db_client: AsyncClient) -> None:
+    # 단백질 제한만 바꿔도 유효 변경(400 아님) — no-op 가드가 단백질도 본다.
+    auth = await _guest(db_client)
+    await _create_restricted_profile(db_client, auth)
+    resp = await db_client.patch(
+        f"{API}/health-profiles/me", json={"protein_restriction_status": "none"}, headers=auth
+    )
+    assert resp.status_code == status.HTTP_200_OK
