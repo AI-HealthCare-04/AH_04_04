@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -44,6 +45,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.StrokeCap
@@ -231,6 +233,22 @@ fun RoutinePlayerScreen(
             SpeedGearButton(speed = speed, onClick = { showSpeed = true })
         }
 
+        // 전체 진행 표시(#335): 얇은 진행바 + "N개 동작 중 M번째". 단계 수(23)가 아니라 동작 '종류'(9)로 세어
+        //   부담을 줄인다. 안내 단계(intro/notice/outro)는 카운트에서 빠지고 진행바만 흐른다.
+        val progressLabel = remember(stepIndex) { routineProgressLabel(routine.steps, stepIndex) }
+        val barFraction = routineElapsedFraction(routine.steps, stepIndex, elapsedMs)
+        Box(
+            Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(Color(0xFFD8D8E0)),
+        ) {
+            Box(Modifier.fillMaxWidth(barFraction).fillMaxHeight().background(MaterialTheme.colorScheme.primary))
+        }
+        Text(
+            routineProgressCaption(progressLabel) ?: " ", // 안내 단계는 캡션 없이 진행바만(높이 유지용 공백)
+            fontSize = 16.sp,
+            color = InkColor.copy(alpha = 0.7f),
+            textAlign = TextAlign.Center,
+        )
+
         // image_toggle: 자세 이미지(toggleFrame)를 카운트와 '같은 시계'인 elapsedMs에서 파생한다(지영 리뷰 #250).
         //   별도 delay 타이머로 두면 정지/재개 때 카운트(elapsedMs 기준)와 자세가 서로 어긋나(재개 직후 카운트만
         //   먼저 오르고 자세는 늦게 바뀜) 세트가 어긋나 보이고, 끝에서 한 컷 더 돌아 첫 이미지로 깜빡였다.
@@ -329,32 +347,44 @@ fun RoutinePlayerScreen(
             }
         }
 
-        // 컨트롤 — 3개를 weight로 나눠 좁은 폭에도 들어가게. 어르신용으로 크게(높이 72dp·22sp).
-        //   레이블을 2~3자(정지/다음/나가기)로 줄이고 내부 패딩·글자(20sp)도 축소 →
-        //   320dp + 큰 글꼴 배율에서도 안 잘리게(지영 리뷰: 가용 ~82dp > 3자 필요폭).
+        // 컨트롤(#335): '이전' 추가로 4개가 되면 320dp + 큰 글꼴에서 한 줄에 안 들어간다(기존 3개도 가용 ~82dp
+        //   > 3자 필요폭으로 빠듯) → 2행 배치. 1행에 이동·재생 컨트롤 [이전][정지/재개][다음]을 모으고,
+        //   2행에 2차 액션 [나가기]를 단독 배치한다. 어르신용으로 크게(72dp·20sp).
         val ctrlPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Button(
-                onClick = { paused = !paused },
-                modifier = Modifier.weight(1f).height(72.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                contentPadding = ctrlPadding,
-            ) { Text(if (paused) "재개" else "정지", fontSize = 20.sp, maxLines = 1) }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // 이전 동작: stepIndex 1 감소 → LaunchedEffect(stepIndex)가 타이머·영상·카운트를 처음부터 재시작한다.
+                //   첫 단계(인트로)에선 되돌아갈 곳이 없어 비활성(눈으로도 상태를 알 수 있게).
+                Button(
+                    onClick = { if (stepIndex > 0) stepIndex-- },
+                    enabled = stepIndex > 0,
+                    modifier = Modifier.weight(1f).height(72.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                    contentPadding = ctrlPadding,
+                ) { Text("이전", fontSize = 20.sp, maxLines = 1) }
 
-            Button(
-                onClick = { if (stepIndex + 1 < routine.steps.size) stepIndex++ else finished = true },
-                modifier = Modifier.weight(1f).height(72.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                contentPadding = ctrlPadding,
-            ) { Text("다음", fontSize = 20.sp, maxLines = 1) }
+                Button(
+                    onClick = { paused = !paused },
+                    modifier = Modifier.weight(1f).height(72.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                    contentPadding = ctrlPadding,
+                ) { Text(if (paused) "재개" else "정지", fontSize = 20.sp, maxLines = 1) }
 
-            // 나가기 = 2차 강조(아웃라인 녹색): 브랜드 색 통일 + 실수 이탈 방지로 덜 튀게.
+                Button(
+                    onClick = { if (stepIndex + 1 < routine.steps.size) stepIndex++ else finished = true },
+                    modifier = Modifier.weight(1f).height(72.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                    contentPadding = ctrlPadding,
+                ) { Text("다음", fontSize = 20.sp, maxLines = 1) }
+            }
+
+            // 나가기 = 2차 강조(아웃라인 녹색): 브랜드 색 통일 + 실수 이탈 방지로 덜 튀게. 단독 행이라 폭이 넉넉하다.
             OutlinedButton(
                 onClick = { showExit = true },
-                modifier = Modifier.weight(1f).height(72.dp),
+                modifier = Modifier.fillMaxWidth().height(64.dp),
                 border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
                 contentPadding = ctrlPadding,
