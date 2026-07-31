@@ -16,9 +16,24 @@ from __future__ import annotations
 # 밀도 산출 방법 식별자(응답·문서용). 산출 방법 변경 시 버전을 올린다.
 DENSITY_METHOD = "quantile_central_diff_smoothed_v1"
 
+# 모델팀(지영님) 실제 KDE 산출물(#337)을 쓸 때의 식별자 — quantiles 근사(위)와 구분해 응답에 싣는다.
+#   경계보정(0 반사) 가우시안 KDE, x=확률(0~1)·y=상대밀도(peak=100). cohort json 에 density 필드로 병합됨.
+MODEL_DENSITY_METHOD = "model_kde_boundary_reflected_v1"
+
 _MIN_GAP = 1e-4  # 간격 하한(중복 분위수로 밀도가 무한대로 튀는 것 방지)
 _SMOOTH_WINDOW = 7  # 이동평균 창(홀수) — 저확률 끝 스파이크 완화
 _X_CAP = 0.5  # 차트가 0.5 에서 클램프하므로(스펙 §2 gpos) 곡선도 그 부근까지만 그린다
+
+
+def clip_density_to_domain(density: list[list[float]], x_cap: float = _X_CAP) -> list[list[float]]:
+    """density([[x, y], ...])를 차트 표시 도메인(x <= x_cap)으로 자른다.
+
+    앱 차트는 x 를 0.5 에서 클램프하므로(스펙 §2 gpos), x>0.5 점을 그대로 보내면 오른쪽 끝에 여러 점이 겹쳐
+    세로선 아티팩트가 생긴다. 도메인 안으로 잘라 보낸다(지영님: '차트가 특정 도메인으로 클립해도 무방').
+    산출물(json)에는 전체 0~1 을 그대로 보존하고, **서버가 응답 시점에만** 자른다. 그리드가 0.01 간격·101점이라
+    x=0.5 점이 정확히 포함돼 곡선이 경계에서 깔끔하게 끝난다.
+    """
+    return [[float(x), float(y)] for x, y in density if float(x) <= x_cap + 1e-9]
 
 
 def approximate_density(quantiles: list[float], points: int = 50) -> list[list[float]]:

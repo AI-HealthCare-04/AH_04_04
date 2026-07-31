@@ -2,7 +2,11 @@
 
 import pytest
 
-from app.ml.cohort_density import approximate_density
+from app.ml.cohort_density import (
+    MODEL_DENSITY_METHOD,
+    approximate_density,
+    clip_density_to_domain,
+)
 from app.ml.predictor import load_cohort_distribution, percentile_low
 
 
@@ -82,3 +86,14 @@ def test_load_cohort_distribution_real_artifact() -> None:
     assert all(0.0 <= y <= 100.0 for _, y in dist.density)
     assert dist.n > 0
     assert dist.p_low < dist.p_high
+    # #337: 산출물에 실제 KDE density 가 병합돼 있으므로 근사가 아닌 모델 density 를 쓴다.
+    assert dist.density_method == MODEL_DENSITY_METHOD
+    # 차트 표시 도메인으로 클립(x<=0.5) — 앱이 0.5 에서 클램프하므로 그 밖 점은 서버가 잘라 보낸다.
+    assert all(x <= 0.5 + 1e-9 for x, _ in dist.density)
+    assert max(y for _, y in dist.density) == pytest.approx(100.0)  # 상대밀도 peak=100
+
+
+def test_clip_density_to_domain_keeps_only_display_range() -> None:
+    dens = [[0.0, 100.0], [0.25, 60.0], [0.5, 40.0], [0.6, 30.0], [1.0, 5.0]]
+    clipped = clip_density_to_domain(dens)
+    assert clipped == [[0.0, 100.0], [0.25, 60.0], [0.5, 40.0]]  # x>0.5 제거, 경계 0.5 포함

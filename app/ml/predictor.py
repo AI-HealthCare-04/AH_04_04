@@ -16,7 +16,12 @@ import joblib  # type: ignore[import-untyped]
 import pandas as pd  # type: ignore[import-untyped]
 
 from app.core.utils.clock import today_kst
-from app.ml.cohort_density import approximate_density
+from app.ml.cohort_density import (
+    DENSITY_METHOD,
+    MODEL_DENSITY_METHOD,
+    approximate_density,
+    clip_density_to_domain,
+)
 from app.models.enums import ModelVariant, RiskLevel
 
 logger = logging.getLogger(__name__)
@@ -153,6 +158,7 @@ class CohortDistribution:
 
     quantiles: tuple[float, ...]
     density: tuple[tuple[float, float], ...]
+    density_method: str
     n: int
     window: str | None
     p_low: float
@@ -163,7 +169,8 @@ class CohortDistribution:
 def load_cohort_distribution() -> dict[tuple[str, int, str], CohortDistribution]:
     """(feature_set, sex, age_key) -> CohortDistribution. load_cohort_table 과 달리 quantiles·density 를 보존한다.
 
-    density 는 배포된 공용 산출물을 변형하지 않도록 quantiles 로부터 로드 시점에 파생한다(단일 진실원천).
+    density: 모델팀 실제 KDE 산출물(#337)이 코호트에 `density` 로 있으면 그걸 쓰고(차트 표시 도메인으로 클립),
+    없으면(구버전 산출물) quantiles 에서 결정론적으로 근사한다(하위호환·단일 진실원천 폴백).
     """
     out: dict[tuple[str, int, str], CohortDistribution] = {}
     if not COHORT_TABLE_PATH.exists():
@@ -172,10 +179,17 @@ def load_cohort_distribution() -> dict[tuple[str, int, str], CohortDistribution]
     for c in data.get("cohorts", []):
         key = (str(c["feature_set"]), int(c["sex"]), str(c["age"]))
         quantiles = tuple(float(x) for x in c["quantiles"])
-        density = tuple((float(x), float(y)) for x, y in approximate_density(list(quantiles)))
+        raw_density = c.get("density")
+        if raw_density:
+            density = tuple((float(x), float(y)) for x, y in clip_density_to_domain(raw_density))
+            density_method = MODEL_DENSITY_METHOD
+        else:
+            density = tuple((float(x), float(y)) for x, y in approximate_density(list(quantiles)))
+            density_method = DENSITY_METHOD
         out[key] = CohortDistribution(
             quantiles=quantiles,
             density=density,
+            density_method=density_method,
             n=int(c.get("n", 0)),
             window=(str(c["window"]) if c.get("window") is not None else None),
             p_low=float(c["p_low"]),

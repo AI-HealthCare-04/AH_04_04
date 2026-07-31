@@ -19,7 +19,6 @@ from app.dtos.risk_prediction import (
     RiskPredictionReassessResponse,
     RiskPredictionResponse,
 )
-from app.ml.cohort_density import DENSITY_METHOD
 from app.ml.predictor import (
     AGE_MIN,
     AgeNotSupportedError,
@@ -175,7 +174,7 @@ class RiskPredictionService:
             lower_count=lower_count,
             quantiles=list(dist.quantiles),
             density=[list(point) for point in dist.density],
-            density_method=DENSITY_METHOD,
+            density_method=dist.density_method,
             cohort_version=load_cohort_version(),
             # 산출물 meta.model_version 은 minimal 모델 버전이라 with_waist 경로에서 불일치한다(리뷰 #301).
             #   확률을 실제로 만든 예측의 버전을 그대로 노출한다.
