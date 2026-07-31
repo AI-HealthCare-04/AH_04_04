@@ -598,33 +598,28 @@ private fun FullscreenLandscapeStage(player: ExoPlayer, stage: String, onCollaps
     Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
         PlayerSurface(player, Modifier.fillMaxSize())
 
-        // ★ 출처 오버레이 — 전체화면에서도 상시 유지(반투명 바). 컨트롤러가 사라져도 출처는 안 사라진다.
-        Box(
-            Modifier
-                .align(Alignment.BottomStart)
-                .fillMaxWidth()
-                .background(Color.Black.copy(alpha = 0.45f))
-                .windowInsetsPadding(WindowInsets.displayCutout)
-                .padding(horizontal = Dimens.Space16, vertical = Dimens.Space8),
-        ) {
-            ExerciseCreditText(stage, onDark = true)
-        }
-
-        // 닫기(세로 복귀) — 어르신용으로 크게, 반투명 배경. 좌상단(노치 회피).
-        TextButton(
-            onClick = onCollapse,
+        // ★ 상단 바: 닫기 + 출처를 함께 둔다. Media3 기본 컨트롤러(시크바·재생버튼)는 '하단'에 뜨므로, 출처를
+        //   하단에 두면 컨트롤러가 보이는 동안 가려진다(정인 리뷰 P1, 출처는 법적 의무). 상단 고정으로 컨트롤러
+        //   표시 여부와 무관하게 출처가 항상 보이게 한다.
+        Row(
             modifier = Modifier
                 .align(Alignment.TopStart)
+                .fillMaxWidth()
+                .background(Color.Black.copy(alpha = 0.5f))
                 .windowInsetsPadding(WindowInsets.displayCutout)
-                .padding(Dimens.Space16)
-                .background(Color.Black.copy(alpha = 0.5f), MaterialTheme.shapes.large),
+                .padding(horizontal = Dimens.Space16, vertical = Dimens.Space8),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Dimens.Space8),
         ) {
-            Text(
-                "✕  세로로",
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
-                style = MaterialTheme.typography.titleMedium,
-            )
+            TextButton(onClick = onCollapse) {
+                Text(
+                    "✕  세로로",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            }
+            ExerciseCreditText(stage, onDark = true, modifier = Modifier.weight(1f))
         }
     }
 }

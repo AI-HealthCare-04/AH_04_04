@@ -91,6 +91,9 @@ object AppSettings {
      *  ExoPlayer setPlaybackSpeed 는 기본 시간축 신축(pitch 유지)이라 빨라져도 목소리 음정은 자연스럽다. */
     fun setPlaybackSpeed(context: Context, speed: Float) {
         val normalized = normalizeSpeed(speed)
+        // 이미 같은 값이면 상태·디스크 쓰기 불필요 — 플레이어 생성 시 초기 setPlaybackSpeed 가 곧바로
+        //   onPlaybackParametersChanged 를 유발해 매 진입 재기록하던 것을 막는다(정인 리뷰 nit).
+        if (normalized == playbackSpeed) return
         playbackSpeed = normalized
         prefs(context).edit().putFloat(KEY_SPEED, normalized).apply()
     }
