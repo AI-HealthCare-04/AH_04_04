@@ -34,6 +34,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -253,6 +255,7 @@ private fun TermsStep(vm: OnboardingViewModel) {
             AigoTonalButton(text = "전체 동의", onClick = vm::agreeAll)
             Spacer(Modifier.height(Dimens.Space8))
             val context = LocalContext.current
+            var showTermsOpenError by remember { mutableStateOf(false) }
             vm.terms.forEach { term ->
                 val label = (term.title ?: term.termsType) +
                     if (term.isRequired) "  (필수)" else "  (선택)"
@@ -265,13 +268,28 @@ private fun TermsStep(vm: OnboardingViewModel) {
                     )
                     // 약관 전문 열람(#244 §2): 동의 전에 전문을 볼 수단이 없으면 심사·법적 관점 결격.
                     //   서버가 준 버전 URL(자체 호스팅 /terms/<버전>, #268)을 기본 브라우저로 연다.
+                    //   버튼 이름은 약관 제목 포함(리뷰 #303: 반복되는 '보기'는 TalkBack 에서 구분 불가).
                     val url = term.url
                     if (!url.isNullOrBlank()) {
-                        TextButton(onClick = { openTermsUrl(context, url) }) {
+                        val a11yLabel = termsViewA11yLabel(term.title, term.termsType)
+                        TextButton(
+                            onClick = { if (!openTermsUrl(context, url)) showTermsOpenError = true },
+                            modifier = Modifier.semantics { contentDescription = a11yLabel },
+                        ) {
                             Text("보기", style = MaterialTheme.typography.bodyLarge)
                         }
                     }
                 }
+            }
+            if (showTermsOpenError) {
+                // 조용한 실패 금지(리뷰 #303): 이유 모른 채 전문을 못 본 상태로 동의하지 않도록 안내한다.
+                AigoDialog(
+                    title = "약관 내용을 열 수 없어요",
+                    message = "잠시 후 다시 시도해 주세요. 계속 안 되면 네트워크 상태를 확인해 주세요.",
+                    confirmText = "확인",
+                    onConfirm = { showTermsOpenError = false },
+                    onDismissRequest = { showTermsOpenError = false },
+                )
             }
         },
         footer = {
@@ -284,12 +302,45 @@ private fun TermsStep(vm: OnboardingViewModel) {
     )
 }
 
-/** 약관 전문을 기본 브라우저로 연다. 브라우저가 없으면(극히 드묾) 조용히 로그만 남긴다 — 동의 흐름을 막지 않는다. */
-private fun openTermsUrl(context: Context, url: String) {
+/** TalkBack 용 약관 보기 버튼 이름 — 제목을 포함해 어느 약관의 전문인지 구분되게 한다(리뷰 #303). */
+internal fun termsViewA11yLabel(title: String?, termsType: String): String =
+    "${title ?: termsType} 전문 보기"
+
+/**
+ * 약관 URL 허용 검증(리뷰 #303): 서버 환경변수에서 온 단순 문자열이므로 intent:// 등 임의 스킴·
+ * 호스트가 올 수 있다 — **https + 운영 약관 호스트**만 외부 인텐트로 넘긴다. 파싱 실패는 거부.
+ */
+internal fun isAllowedTermsUrl(url: String, allowedHost: String): Boolean =
     try {
+        val parsed = java.net.URI(url)
+        parsed.scheme?.lowercase() == "https" && parsed.host?.lowercase() == allowedHost.lowercase()
+    } catch (_: Exception) {
+        false
+    }
+
+/** 앱이 신뢰하는 약관 호스트 = API 호스트(BuildConfig 파생 — debug/release 모두 동일 기준). */
+private val termsAllowedHost: String by lazy {
+    runCatching { java.net.URI(BuildConfig.API_BASE_URL).host }.getOrNull().orEmpty()
+}
+
+/**
+ * 약관 전문을 기본 브라우저로 연다. 성공 여부를 반환 — 실패(비허용 URL·브라우저 부재·SecurityException 등)
+ * 시 호출부가 사용자에게 오류를 표시한다(조용한 실패 금지, 리뷰 #303).
+ */
+private fun openTermsUrl(context: Context, url: String): Boolean {
+    if (!isAllowedTermsUrl(url, termsAllowedHost)) {
+        Log.w("Onboarding", "약관 URL 허용 검증 실패(스킴/호스트): $url")
+        return false
+    }
+    return try {
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        true
     } catch (e: ActivityNotFoundException) {
         Log.w("Onboarding", "약관 전문 열기 실패(브라우저 없음): $url")
+        false
+    } catch (e: Exception) {
+        Log.w("Onboarding", "약관 전문 열기 실패(${e.javaClass.simpleName}): $url")
+        false
     }
 }
 
