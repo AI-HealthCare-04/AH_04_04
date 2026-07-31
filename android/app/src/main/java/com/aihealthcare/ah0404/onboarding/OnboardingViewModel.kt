@@ -34,21 +34,6 @@ internal fun parseChairStandSeconds(input: String): Double? =
     input.trim().toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }
 
 /**
- * 키·몸무게 '모름' 시 성별·연령대 추정치 (cm, kg). 상수 표 — 나중에 교체 가능.
- *   남 50–74: 166/65 · 75+: 163/62   /   여 50–74: 153/56 · 75+: 150/53
- * #298 C: 만 50~64 구간은 65–74 추정치를 **임시 재사용**한다. '추정치' 라벨이 붙고 65세 미만은 예측이 실행되지
- *   않아 모델 입력 왜곡은 없으나, KNHANES 기반 50~64 실제 통계 확보 후 교체 예정 — 후속 이슈 #326.
- * 성별 미선택/미상은 남성 기준으로 폴백(성별 선택 후 다시 '모름' 누르면 갱신).
- */
-internal fun estimateBody(sex: String?, age: Int?): Pair<Int, Int> {
-    val is75plus = age != null && age >= 75
-    return when (sex) {
-        "female" -> if (is75plus) 150 to 53 else 153 to 56
-        else -> if (is75plus) 163 to 62 else 166 to 65
-    }
-}
-
-/**
  * 온보딩 흐름 상태머신 + 백엔드 배선.
  *
  *  ⚠️ 리뷰 #63(지영 P1-1) 반영: **API 실패를 목업 완료로 처리하지 않는다.**

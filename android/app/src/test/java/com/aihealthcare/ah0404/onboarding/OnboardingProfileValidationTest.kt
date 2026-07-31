@@ -130,12 +130,12 @@ class OnboardingProfileValidationTest {
         assertNotNull(vm(2026, 7, 15).apply { birthYear = "2012"; birthMonth = "1"; birthDay = "1" }.underAgeNotice) // 14세(생일 지남)
 
     @Test
-    fun estimate_available_at_63_reuses_65_74_table() {
+    fun estimate_available_at_63_uses_knhanes_value() {
         val vm = vm(2026, 7, 15).apply { sex = "female"; birthYear = "1963"; birthMonth = "1"; birthDay = "1" } // 63
         assertTrue("50~64 도 추정 가능(#298 C)", vm.canEstimate)
         vm.markHeightUnknown()
         assertTrue(vm.heightEstimated)
-        assertEquals("50~64 는 65–74 추정치 재사용(여 153cm)", "153", vm.heightInput)
+        assertEquals("50~64 는 KNHANES 실제 통계를 사용(여 63세 156.3cm)", "156.3", vm.heightInput)
     }
 
     @Test
