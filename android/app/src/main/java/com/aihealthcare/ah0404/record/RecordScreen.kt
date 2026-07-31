@@ -2,7 +2,6 @@ package com.aihealthcare.ah0404.record
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -82,45 +81,22 @@ fun RecordScreen(
                     .padding(Dimens.ScreenPadding),
                 verticalArrangement = Arrangement.spacedBy(Dimens.ElementGap),
             ) {
-                // §5.1 일별 미션 완료 선그래프(최근 14일)
-                AigoCard {
-                    SectionTitle("최근 2주 미션 완료")
-                    // lineLogs 갱신(재조회) 시 날짜 축도 다시 계산 — 자정 넘겨 화면을 유지해도 재조회에서 맞춰진다.
-                    val keys = remember(vm.lineLogs) { recentDateKeys(14, System.currentTimeMillis()) }
-                    val counts = remember(vm.lineLogs) { dailyCompletionCounts(vm.lineLogs, keys) }
-                    Spacer(Modifier.height(Dimens.Space8))
-                    CompletionLineChart(keys, counts)
-                    Spacer(Modifier.height(Dimens.Space4))
-                    // 날짜 라벨(시니어 가독성): 첫날과 오늘만.
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                // #334 대시보드 순서: ① 지금 내 점수 → ② 변화 추이 → 또래 위치(점수 섹션) → 활동 근거(걷기·챌린지)
+                //   → 원자료(달력). §5.1 "최근 2주 미션 완료" 선그래프는 아래 달력과 정보가 중복돼 제거했다.
+                val ui = vm.muscleScore
+                if (ui != null) {
+                    MuscleDashboardCards(ui, onGoToMissions)
+                } else {
+                    AigoCard {
                         Text(
-                            trendLabel(keys.first()),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            "오늘",
-                            style = MaterialTheme.typography.bodySmall,
+                            "불러오는 중이에요…",
+                            style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
 
-                // §5.2 미션 달력(월 뷰) — 일자 탭 시 바텀시트
-                AigoCard {
-                    SectionTitle("미션 달력")
-                    Spacer(Modifier.height(Dimens.Space8))
-                    MissionCalendar(
-                        year = vm.calYear,
-                        month1 = vm.calMonth,
-                        resultByDate = vm.stampsByDate,
-                        onPrevMonth = vm::showPreviousMonth,
-                        onNextMonth = vm::showNextMonth,
-                        onDaySelected = { selectedDay = it },
-                    )
-                }
-
-                // §5.3 걷기 막대(시간/걸음 탭 전환)
+                // §5.3 걷기 막대(시간/걸음 탭 전환) — 점수의 근거(활동 기록)
                 AigoCard {
                     SectionTitle("최근 7일 걷기")
                     Spacer(Modifier.height(Dimens.Space8))
@@ -137,7 +113,7 @@ fun RecordScreen(
                     WalkingBarChart(vm.walkingDays, walkMetric)
                 }
 
-                // §5.4 챌린지 비율 도넛
+                // §5.4 챌린지 비율 도넛 — 점수의 근거
                 AigoCard {
                     SectionTitle("챌린지 비율")
                     Spacer(Modifier.height(Dimens.Space8))
@@ -149,27 +125,43 @@ fun RecordScreen(
                     }
                 }
 
+                // §5.2 미션 달력(월 뷰) — 원자료는 맨 아래(파고들 사람만). 일자 탭 시 바텀시트.
+                AigoCard {
+                    SectionTitle("미션 달력")
+                    Spacer(Modifier.height(Dimens.Space8))
+                    MissionCalendar(
+                        year = vm.calYear,
+                        month1 = vm.calMonth,
+                        resultByDate = vm.stampsByDate,
+                        onPrevMonth = vm::showPreviousMonth,
+                        onNextMonth = vm::showNextMonth,
+                        onDaySelected = { selectedDay = it },
+                    )
+                }
+
                 MedicalDisclaimer(text = MEDICAL_DISCLAIMER_DEFAULT)
                 Spacer(Modifier.height(Dimens.Space8))
             }
 
-            // 근육 건강 정보(§3·§4) — WebView 은퇴, 네이티브 점수 화면(실API). 점수 미도착이면 화면이 "준비 중" 처리.
+            // 근육 건강 정보(#334 = 개선 잠재력): 운동하면 얼마나 좋아지는지(시뮬레이션·근력 안내)만. 점수·추이는
+            //   '나의 기록'으로 이관했다. 점수 미도착이면 준비 중 안내.
             RecordTab.DASHBOARD -> Column(
                 Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
+                    .verticalScroll(rememberScrollState())
+                    .padding(Dimens.ScreenPadding),
+                verticalArrangement = Arrangement.spacedBy(Dimens.ElementGap),
             ) {
                 val ui = vm.muscleScore
                 if (ui == null) {
                     Text(
                         "불러오는 중이에요…",
-                        modifier = Modifier.padding(Dimens.ScreenPadding),
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
-                    MuscleScoreScreen(ui = ui, onGoToMissions = onGoToMissions)
+                    MuscleImprovementCards(ui = ui, onGoToMissions = onGoToMissions)
                 }
             }
         }

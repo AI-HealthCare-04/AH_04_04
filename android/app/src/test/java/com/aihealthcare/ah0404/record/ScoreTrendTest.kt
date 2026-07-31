@@ -112,4 +112,17 @@ class ScoreTrendTest {
         val trend = buildScoreTrend(listOf(item("2026-07-01", 0), item("2026-07-08", 4)))
         assertEquals("지난 기록과 비슷하게 유지되고 있어요.", scoreChangeCopy(trend))
     }
+
+    @Test
+    fun empty_trend_copy_guides_instead_of_silence() {
+        // #334 문제3: 예측 1건(추이 두 점 미만)이면 침묵 대신 왜 비었는지·언제·무엇을 하면 되는지 안내.
+        val one = buildScoreTrend(listOf(item("2026-07-01", 72)))
+        assertEquals(1, one.size)
+        assertEquals(
+            "다음 재평가부터 변화를 이어서 보여드려요. 걷기·근력 챌린지를 하면 다음 점수가 쌓여요.",
+            trendEmptyCopy(one.size),
+        )
+        // 점수 있는 이력이 아예 없으면(65세 미만 등으로 전부 제외) 첫 평가 안내.
+        assertEquals("첫 평가를 마치면 여기에서 변화를 보여드려요.", trendEmptyCopy(0))
+    }
 }

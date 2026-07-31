@@ -114,39 +114,48 @@ private fun bandColor(band: String?): Color = when (band) {
     else -> Color(0xFFEF6C00)
 }
 
+// 기록 탭 재구성(#334): '나의 기록'=대시보드(지금 내 상태·변화), '근육 건강 정보'=개선 잠재력(전망).
+//   두 세그먼트가 점수 카드들을 나눠 갖도록 아래 두 함수로 쪼갠다. 각 함수는 호출부 Column(spacedBy) 안에
+//   카드를 '직접' 배치한다(자체 Column·padding 없음) — 호출부 레이아웃/간격을 그대로 따른다.
+
+/**
+ * '나의 기록' 상단 점수 섹션(#334 질문 ①②): 지금 내 점수 → 변화 추이 → 또래 중 내 위치.
+ * 점수가 없으면 연령별 안내 카드(점수 자리의 빈 상태이므로 이 섹션이 데리고 있는다).
+ */
 @Composable
-internal fun MuscleScoreScreen(
-    ui: MuscleScoreUi,
-    onGoToMissions: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier
-            .fillMaxWidth()
-            .padding(Dimens.ScreenPadding),
-        verticalArrangement = Arrangement.spacedBy(Dimens.ElementGap),
-    ) {
-        val age = ui.age
-        val score = ui.score
-        when {
-            // 점수가 있으면 연령 판별과 무관하게 점수를 보여준다(리뷰 #275-③) — 나이 출처인
-            //   prediction-inputs 조회만 실패해도 유효한 점수가 "준비 중"에 가려지지 않게 score 우선.
-            //   (서버가 65세 미만에겐 점수를 내리지 않으므로(#273 게이트) score 존재 = 표시 자격 충분.)
-            score != null -> {
-                ScoreHeadlineCard(score, ui.band)
-                StsSafetyCard(ui, onGoToMissions) // §3.4 (조건 충족 시에만)
-                ScoreTrendCard(ui.trend)
-                CohortDistributionCard(ui.cohort) // #193 또래 중 내 위치(데이터 있을 때만)
-                ScoreSimulationCard(ui.muscSim, ui.walkSim, score)
-                MedicalDisclaimer(text = MEDICAL_DISCLAIMER_DEFAULT)
-                Spacer(Modifier.height(Dimens.Space8))
-            }
-            // §3.3 점수가 없을 때만 연령 분기: 65세 미만 카드(추이·시뮬레이션 미표시). 나이 미상은 준비 중.
-            age == null -> ScorePendingCard()
-            age < 50 -> UnderAgeInfoCard(onGoToMissions)
-            age < 65 -> PreparingCard(onGoToMissions)
-            else -> ScorePendingCard()
+internal fun MuscleDashboardCards(ui: MuscleScoreUi, onGoToMissions: () -> Unit) {
+    val age = ui.age
+    val score = ui.score
+    when {
+        // 점수가 있으면 연령 판별과 무관하게 점수를 보여준다(리뷰 #275-③) — 나이 출처인 prediction-inputs
+        //   조회만 실패해도 유효한 점수가 "준비 중"에 가려지지 않게 score 우선(#273 게이트).
+        score != null -> {
+            ScoreHeadlineCard(score, ui.band)       // ① 지금 내 점수
+            ScoreTrendCard(ui.trend)                // ② 변화 추이(위험도 순화 표현)
+            CohortDistributionCard(ui.cohort)       // 또래 중 내 위치(#193, 데이터 있을 때만)
         }
+        // §3.3 점수가 없을 때만 연령 분기: 65세 미만 카드. 나이 미상은 준비 중.
+        age == null -> ScorePendingCard()
+        age < 50 -> UnderAgeInfoCard(onGoToMissions)
+        age < 65 -> PreparingCard(onGoToMissions)
+        else -> ScorePendingCard()
+    }
+}
+
+/**
+ * '근육 건강 정보' 섹션(#334 질문 ③, 전망): 운동하면 얼마나 좋아지는지 — what-if 시뮬레이션 + 근력 기능 안전망.
+ * 점수가 없으면 준비 중 안내(시뮬레이션은 점수 기반이라 표시 불가).
+ */
+@Composable
+internal fun MuscleImprovementCards(ui: MuscleScoreUi, onGoToMissions: () -> Unit) {
+    val score = ui.score
+    if (score != null) {
+        StsSafetyCard(ui, onGoToMissions) // §3.4 (조건 충족 시에만)
+        ScoreSimulationCard(ui.muscSim, ui.walkSim, score)
+        MedicalDisclaimer(text = MEDICAL_DISCLAIMER_DEFAULT)
+        Spacer(Modifier.height(Dimens.Space8))
+    } else {
+        ImprovementPendingCard(onGoToMissions)
     }
 }
 
@@ -193,11 +202,9 @@ private fun ScoreTrendCard(trend: List<ScorePoint>) {
         Text("근육 건강 변화", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(Dimens.Space8))
         if (trend.size < 2) {
-            Text(
-                "기록이 쌓이면 변화를 보여드릴게요.",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            // 예측 1건이면 변화(두 점 이상)는 아직 없지만 침묵하지 않는다(#334 문제3): 왜 비었는지·언제 채워지는지·
+            //   무엇을 하면 되는지 안내한다(현재 점수 자체는 위 헤드라인 카드에 크게 표시됨).
+            Text(trendEmptyCopy(trend.size), style = MaterialTheme.typography.bodyLarge)
             return@AigoCard
         }
         Text(scoreChangeCopy(trend), style = MaterialTheme.typography.bodyLarge)
@@ -210,6 +217,17 @@ private fun ScoreTrendCard(trend: List<ScorePoint>) {
         }
     }
 }
+
+/**
+ * 추이가 두 점 미만일 때의 안내 문구(#334 문제3). size=1(예측 1건)이면 재평가로 이어짐을·방법을 안내하고,
+ * size=0(점수 없는 이력만)이면 첫 평가 후 채워짐을 안내한다. 빈칸·침묵을 '고장'으로 오인하지 않게 한다.
+ */
+internal fun trendEmptyCopy(size: Int): String =
+    if (size == 1) {
+        "다음 재평가부터 변화를 이어서 보여드려요. 걷기·근력 챌린지를 하면 다음 점수가 쌓여요."
+    } else {
+        "첫 평가를 마치면 여기에서 변화를 보여드려요."
+    }
 
 /**
  * 변화 문구(§3.2, 방향 반전: 오르면 긍정). 증감은 마지막 '같은 기준' 구간 안에서만 계산한다(리뷰 #275-②) —
@@ -402,5 +420,21 @@ private fun ScorePendingCard() {
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+// ── 근육 건강 정보(개선 잠재력) 빈 상태(#334) — 점수 없으면 시뮬레이션 대신 안내 ────────────
+@Composable
+private fun ImprovementPendingCard(onGoToMissions: () -> Unit) {
+    AigoCard {
+        Text("개선 시뮬레이션은 점수가 준비되면 보여드려요", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(Dimens.Space8))
+        Text(
+            "근육 건강 점수가 준비되면 '이렇게 하면 이만큼 좋아져요'를 이 화면에서 확인할 수 있어요. " +
+                "그동안 걷기·근력 챌린지로 근육을 먼저 챙겨 보세요.",
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        Spacer(Modifier.height(Dimens.Space12))
+        AigoPrimaryButton(text = "챌린지 보러 가기", onClick = onGoToMissions)
     }
 }
