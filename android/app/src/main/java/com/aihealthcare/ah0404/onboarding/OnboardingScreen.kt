@@ -549,6 +549,8 @@ private fun ResultStep(vm: OnboardingViewModel, onComplete: (isGuest: Boolean) -
                 text = r?.displayMessage ?: "오늘부터 가볍게 시작해 볼까요?",
                 style = MaterialTheme.typography.bodyLarge,
             )
+            // 또래 분포 병합 차트(#193)는 기록탭 근육 건강 정보로 이관됨(결정 2026-07-31, #302). 온보딩 결과
+            //   화면 자체도 #299/#311에서 제거 예정이라 여기선 문구·고지만 남긴다.
             Spacer(Modifier.height(Dimens.Space16))
             // 결과 화면 필수 고지(§0-3): 서버 disclaimer 있으면 그대로, 없으면 기본 문구.
             MedicalDisclaimer(text = r?.disclaimer ?: MEDICAL_DISCLAIMER_DEFAULT)

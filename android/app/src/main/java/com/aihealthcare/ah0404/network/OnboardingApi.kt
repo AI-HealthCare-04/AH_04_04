@@ -50,6 +50,8 @@ interface OnboardingApi {
     @POST("risk-predictions")
     suspend fun createRiskPrediction(@Body body: RiskPredictionRequest): RiskPredictionResponse
 
+    // 또래 분포 병합 차트(#193)는 기록탭 근육 건강 정보로 이관됨(#302) — RecordApi.getCohortDistribution 사용.
+
     // 8) 홈 — latest_prediction 노출로 온보딩 성공 판정
     @GET("home")
     suspend fun getHome(): HomeResponse

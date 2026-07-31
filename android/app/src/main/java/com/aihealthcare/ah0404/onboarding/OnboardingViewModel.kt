@@ -286,6 +286,7 @@ class OnboardingViewModel(
     private suspend fun predictAndFinish() {
         val pid = profileId ?: throw IllegalStateException("프로필 정보가 없습니다. 프로필부터 다시 진행해 주세요.")
         result = api.createRiskPrediction(RiskPredictionRequest(pid))
+        // 또래 분포 차트(#193)는 기록탭으로 이관돼(#302) 온보딩에서는 조회하지 않는다 — 결과 확정 즉시 이동.
         step = OnbStep.RESULT
     }
 

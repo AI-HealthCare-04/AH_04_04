@@ -1,6 +1,7 @@
 package com.aihealthcare.ah0404.profile
 
 import com.aihealthcare.ah0404.network.ChallengeTotalsResponse
+import com.aihealthcare.ah0404.network.CohortDistributionResponse
 import com.aihealthcare.ah0404.network.HealthProfileApi
 import com.aihealthcare.ah0404.network.HealthProfileLatest
 import com.aihealthcare.ah0404.network.HealthProfilePatchRequest
@@ -97,6 +98,7 @@ class HealthInfoViewModelTest {
         override suspend fun getStamps(month: String): StampsResponse = error("unused")
         override suspend fun getLatestPrediction(): RiskLatestResponse = error("unused")
         override suspend fun getScoreSimulation(): ScoreSimulationResponse = error("unused")
+        override suspend fun getCohortDistribution(): CohortDistributionResponse = error("unused")
     }
 
     private fun http422() = HttpException(Response.error<Any>(422, "{}".toResponseBody()))
