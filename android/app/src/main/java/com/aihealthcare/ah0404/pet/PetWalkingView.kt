@@ -160,7 +160,9 @@ class PetWalkingView @JvmOverloads constructor(
 
         // 강아지 영상 표시 튜닝
         var puppyVideoAspect = 16f / 9f  // 영상 가로:세로 (1280x720 = 16:9)
-        var puppyZoom = 1.4f             // 강아지 확대(1.0=화면 폭에 딱, 키우면 커짐)
+        // 강아지 확대(1.0=화면 폭에 딱, 키우면 커짐). 발 위치(puppyFeetScreenFrac)는 이 값과 무관하게 고정이라
+        //   줄이면 '길 위에 선 채로' 강아지만 작아진다. 1.4는 화면을 꽉 채워 머리가 잘려서 1.0으로 낮춤.
+        var puppyZoom = 1.0f
         // 강아지 '발'이 닿는 화면 세로 위치(0=맨위, 1=맨아래).
         // 배경 흙길이 화면 83~89% 지점이라 그 위에 세운다.
         var puppyFeetScreenFrac = 0.86f
