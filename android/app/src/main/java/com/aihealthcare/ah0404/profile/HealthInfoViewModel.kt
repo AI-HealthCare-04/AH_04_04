@@ -9,6 +9,8 @@ import androidx.lifecycle.viewModelScope
 import com.aihealthcare.ah0404.network.HealthProfileApi
 import com.aihealthcare.ah0404.network.HealthProfileLatest
 import com.aihealthcare.ah0404.network.HealthProfilePatchRequest
+import com.aihealthcare.ah0404.network.RecordApi
+import com.aihealthcare.ah0404.network.RiskReassessRequest
 import com.aihealthcare.ah0404.network.retrofit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -16,11 +18,16 @@ import retrofit2.HttpException
 
 /**
  * 설정 '내 정보' 신체 정보(#기록탭 §2) 상태 + 배선. GET /health-profiles/me/latest · PATCH /health-profiles/me.
- *  저장은 최신 스냅샷에 편집분을 덮어 **새 프로필 행**을 만든다 → 다음 근육 건강 정보(추론)부터 반영.
+ *  저장은 최신 스냅샷에 편집분을 덮어 **새 프로필 행**을 만들고, 이어서 재평가(POST
+ *  /risk-predictions/reassess)를 불러 **새 예측을 즉시 생성**한다 — GET latest 는 저장된 마지막
+ *  예측을 돌려줄 뿐이라, 재평가 없이는 프로필을 고쳐도 점수가 갱신되지 않는다(특히 점수 모델
+ *  배포 전 가입 계정은 muscle_score=null 인 옛 예측만 남아 "준비 중"에 영영 머문다).
+ *  재평가는 부가 동작: 실패해도(65세 미만 422·네트워크) 저장 성공은 그대로다.
  *  ProfileViewModel 과 같은 version 보호 패턴(느린 GET 이 저장값을 덮지 않게).
  */
 class HealthInfoViewModel(
     private val api: HealthProfileApi = retrofit.create(HealthProfileApi::class.java),
+    private val recordApi: RecordApi = retrofit.create(RecordApi::class.java),
 ) : ViewModel() {
 
     var loading by mutableStateOf(false); private set
@@ -86,7 +93,17 @@ class HealthInfoViewModel(
             }
                 .onSuccess {
                     if (myVersion == version) profile = it
-                    savedMessage = "저장했어요. 다음 근육 건강 정보부터 반영돼요."
+                    // 저장 성공 → 재평가로 새 예측을 바로 만든다. 성공하면 "바로 반영" 안내,
+                    //   실패하면(연령 미지원 422·네트워크 등) 저장은 유효하므로 종전 안내로 폴백 —
+                    //   다음 저장이 다시 재평가를 시도하니 "다음 …부터 반영" 문구가 실제와 일치한다.
+                    val reassessed = safeCall { recordApi.reassessRiskPrediction(RiskReassessRequest()) }
+                        .onFailure { e -> Log.w(TAG, "재평가 실패(저장은 유효): ${e.message}") }
+                        .isSuccess
+                    savedMessage = if (reassessed) {
+                        "저장했어요. 근육 건강 정보에 바로 반영됐어요."
+                    } else {
+                        "저장했어요. 다음 근육 건강 정보부터 반영돼요."
+                    }
                 }
                 .onFailure { e ->
                     // 서버는 유효 변경 없는 요청을 400 으로 준다(#272) — 사용자에겐 부드럽게 안내.
