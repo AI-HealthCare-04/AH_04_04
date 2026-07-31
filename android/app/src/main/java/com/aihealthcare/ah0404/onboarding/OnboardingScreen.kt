@@ -1,6 +1,11 @@
 package com.aihealthcare.ah0404.onboarding
 
 import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,6 +34,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -247,13 +255,41 @@ private fun TermsStep(vm: OnboardingViewModel) {
         content = {
             AigoTonalButton(text = "전체 동의", onClick = vm::agreeAll)
             Spacer(Modifier.height(Dimens.Space8))
+            val context = LocalContext.current
+            var showTermsOpenError by remember { mutableStateOf(false) }
             vm.terms.forEach { term ->
                 val label = (term.title ?: term.termsType) +
                     if (term.isRequired) "  (필수)" else "  (선택)"
-                AigoCheckboxRow(
-                    checked = vm.agreed.contains(term.termsType),
-                    onCheckedChange = { vm.toggleAgree(term.termsType) },
-                    label = label,
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AigoCheckboxRow(
+                        checked = vm.agreed.contains(term.termsType),
+                        onCheckedChange = { vm.toggleAgree(term.termsType) },
+                        label = label,
+                        modifier = Modifier.weight(1f),
+                    )
+                    // 약관 전문 열람(#244 §2): 동의 전에 전문을 볼 수단이 없으면 심사·법적 관점 결격.
+                    //   서버가 준 버전 URL(자체 호스팅 /terms/<버전>, #268)을 기본 브라우저로 연다.
+                    //   버튼 이름은 약관 제목 포함(리뷰 #303: 반복되는 '보기'는 TalkBack 에서 구분 불가).
+                    val url = term.url
+                    if (!url.isNullOrBlank()) {
+                        val a11yLabel = termsViewA11yLabel(term.title, term.termsType)
+                        TextButton(
+                            onClick = { if (!openTermsUrl(context, url)) showTermsOpenError = true },
+                            modifier = Modifier.semantics { contentDescription = a11yLabel },
+                        ) {
+                            Text("보기", style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                }
+            }
+            if (showTermsOpenError) {
+                // 조용한 실패 금지(리뷰 #303): 이유 모른 채 전문을 못 본 상태로 동의하지 않도록 안내한다.
+                AigoDialog(
+                    title = "약관 내용을 열 수 없어요",
+                    message = "잠시 후 다시 시도해 주세요. 계속 안 되면 네트워크 상태를 확인해 주세요.",
+                    confirmText = "확인",
+                    onConfirm = { showTermsOpenError = false },
+                    onDismissRequest = { showTermsOpenError = false },
                 )
             }
         },
@@ -265,6 +301,48 @@ private fun TermsStep(vm: OnboardingViewModel) {
             )
         },
     )
+}
+
+/** TalkBack 용 약관 보기 버튼 이름 — 제목을 포함해 어느 약관의 전문인지 구분되게 한다(리뷰 #303). */
+internal fun termsViewA11yLabel(title: String?, termsType: String): String =
+    "${title ?: termsType} 전문 보기"
+
+/**
+ * 약관 URL 허용 검증(리뷰 #303): 서버 환경변수에서 온 단순 문자열이므로 intent:// 등 임의 스킴·
+ * 호스트가 올 수 있다 — **https + 운영 약관 호스트**만 외부 인텐트로 넘긴다. 파싱 실패는 거부.
+ */
+internal fun isAllowedTermsUrl(url: String, allowedHost: String): Boolean =
+    try {
+        val parsed = java.net.URI(url)
+        parsed.scheme?.lowercase() == "https" && parsed.host?.lowercase() == allowedHost.lowercase()
+    } catch (_: Exception) {
+        false
+    }
+
+/** 앱이 신뢰하는 약관 호스트 = API 호스트(BuildConfig 파생 — debug/release 모두 동일 기준). */
+private val termsAllowedHost: String by lazy {
+    runCatching { java.net.URI(BuildConfig.API_BASE_URL).host }.getOrNull().orEmpty()
+}
+
+/**
+ * 약관 전문을 기본 브라우저로 연다. 성공 여부를 반환 — 실패(비허용 URL·브라우저 부재·SecurityException 등)
+ * 시 호출부가 사용자에게 오류를 표시한다(조용한 실패 금지, 리뷰 #303).
+ */
+private fun openTermsUrl(context: Context, url: String): Boolean {
+    if (!isAllowedTermsUrl(url, termsAllowedHost)) {
+        Log.w("Onboarding", "약관 URL 허용 검증 실패(스킴/호스트): $url")
+        return false
+    }
+    return try {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        true
+    } catch (e: ActivityNotFoundException) {
+        Log.w("Onboarding", "약관 전문 열기 실패(브라우저 없음): $url")
+        false
+    } catch (e: Exception) {
+        Log.w("Onboarding", "약관 전문 열기 실패(${e.javaClass.simpleName}): $url")
+        false
+    }
 }
 
 /** 숫자 입력 + 오른쪽 '모름' 버튼. '모름' 누르면 추정치로 채워지고, 채워졌으면 안내 문구를 보여준다. */
@@ -387,50 +465,52 @@ private fun ProfileStep(vm: OnboardingViewModel) {
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 private fun AssessmentStep(vm: OnboardingViewModel) {
-    // 영상 따라 측정하는 가이드 화면(모델 B: 회당 버튼). 측정 완료 시 소요 초를 입력값에 채운다.
-    //   측정이 어려운 사용자는 아래 직접 입력으로도 진행 가능(폴백).
+    // 측정 전용(#300): 값의 유일한 출처는 가이드 측정(StsAssessmentScreen). 수동 입력칸은 두지 않는다 —
+    //   빈 입력칸이 "직접 재야 하나?" 혼란을 주고, 직접 입력을 열면 대충 값을 넣어 측정 의미가 사라지기 때문.
     var measuring by remember { mutableStateOf(false) }
     if (measuring) {
         StsAssessmentScreen(
+            // 측정 완료 시 소요 초를 값에 채운다. 재측정이면 새 측정이 이전 값을 덮어쓴다(취소하면 이전 값 유지).
             onMeasured = { sec -> vm.chairStandSec = formatStsSeconds(sec); measuring = false },
             onCancel = { measuring = false },
         )
         return
     }
-    val chairStandSeconds = parseChairStandSeconds(vm.chairStandSec)
-    val showInputError = vm.chairStandSec.isNotBlank() && chairStandSeconds == null
+    // 측정 완료 = 유효한 측정값 존재. 값이 있으면 읽기 전용으로 보여주고 '검사 완료'를 노출한다.
+    val measuredSeconds = parseChairStandSeconds(vm.chairStandSec)
+    val measured = measuredSeconds != null
     StepScaffold(
         title = "간단 체력 검사",
         subtitle = "어려우면 건너뛰어도 괜찮아요. 나중에 언제든 할 수 있어요.",
         onBack = { vm.goBack() },
         content = {
             Text("영상을 따라 5번 앉았다 일어서면, 걸린 시간을 재드려요.", style = MaterialTheme.typography.bodyLarge)
-            Spacer(Modifier.height(Dimens.Space8))
-            Text("의자에서 5번 앉았다 일어서기 (초)", style = MaterialTheme.typography.titleMedium)
-            AigoTextField(
-                vm.chairStandSec,
-                { vm.chairStandSec = it },
-                "예: 12.5",
-                isError = showInputError,
-                keyboardType = KeyboardType.Decimal,
-            )
-            if (showInputError) {
+            if (measured) {
+                Spacer(Modifier.height(Dimens.Space12))
+                // 측정 결과 읽기 전용 표시(수동 편집 불가, #300). 값은 측정으로만 바뀐다.
                 Text(
-                    text = "0보다 큰 숫자를 입력해 주세요.",
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodyMedium,
+                    "측정 결과: ${vm.chairStandSec}초",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
                 )
             }
         },
         footer = {
             Column(verticalArrangement = Arrangement.spacedBy(Dimens.Space12)) {
-                AigoPrimaryButton(text = "따라하며 측정하기", onClick = { measuring = true })
-                AigoSecondaryButton(
-                    text = "검사 완료",
-                    onClick = { chairStandSeconds?.let(vm::submitAssessment) },
-                    enabled = chairStandSeconds != null,
-                )
-                AigoSecondaryButton(text = "건너뛰기", onClick = vm::skipAssessment)
+                if (measured) {
+                    // 측정 후: 다시 측정 · 검사 완료 · 건너뛰기.
+                    AigoPrimaryButton(text = "다시 측정하기", onClick = { measuring = true })
+                    AigoSecondaryButton(
+                        text = "검사 완료",
+                        onClick = { measuredSeconds?.let(vm::submitAssessment) },
+                    )
+                    AigoSecondaryButton(text = "건너뛰기", onClick = vm::skipAssessment)
+                } else {
+                    // 측정 전: 측정 · 건너뛰기만(검사 완료 없음).
+                    AigoPrimaryButton(text = "따라하며 측정하기", onClick = { measuring = true })
+                    AigoSecondaryButton(text = "건너뛰기", onClick = vm::skipAssessment)
+                }
             }
         },
     )

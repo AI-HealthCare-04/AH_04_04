@@ -130,6 +130,14 @@ private val KIDNEY_LABELS = mapOf(
     "unknown" to "잘 모르겠어요",
 )
 
+// 단백질 제한(#304): 온보딩과 동일 라벨. 신장과 함께 고단백 미션 게이트를 정하므로 내정보에서도 편집 가능해야
+//   신장을 '없음'으로 되돌렸을 때 미션이 다시 뜬다.
+private val PROTEIN_LABELS = mapOf(
+    "none" to "해당 없음",
+    "restricted" to "제한 중",
+    "unknown" to "잘 모르겠어요",
+)
+
 @Composable
 private fun HealthInfoEditor(healthVm: HealthInfoViewModel, profile: HealthProfileLatest) {
     // 편집 상태는 profile 이 갱신되면 초기화(저장 후 최신값 반영).
@@ -137,6 +145,7 @@ private fun HealthInfoEditor(healthVm: HealthInfoViewModel, profile: HealthProfi
     var weight by remember(profile) { mutableStateOf(numberText(profile.weightKg)) }
     var waist by remember(profile) { mutableStateOf(profile.waistCm?.let(::numberText) ?: "") }
     var kidney by remember(profile) { mutableStateOf(profile.kidneyStatus) }
+    var protein by remember(profile) { mutableStateOf(profile.proteinRestrictionStatus) }
 
     AigoCard {
         Text("신체 정보", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -154,20 +163,45 @@ private fun HealthInfoEditor(healthVm: HealthInfoViewModel, profile: HealthProfi
             selected = kidney,
             onSelect = { kidney = it },
         )
+        Spacer(Modifier.height(Dimens.Space12))
+        // 단백질 제한(#304): 신장과 함께 고단백 미션 게이트라 여기서 되돌릴 수 있어야 미션이 다시 뜬다.
+        Text("단백질 제한", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(Dimens.Space8))
+        AigoSegmentedSelector(
+            options = OnbEnums.PROTEIN_RESTRICTION_STATUS.map { SegmentOption(it, PROTEIN_LABELS[it] ?: it) },
+            selected = protein,
+            onSelect = { protein = it },
+        )
         Spacer(Modifier.height(Dimens.Space16))
         AigoPrimaryButton(
             text = if (healthVm.saving) "저장 중…" else "저장",
-            onClick = { healthVm.save(height, weight, waist, kidney) {} },
+            onClick = { healthVm.save(height, weight, waist, kidney, protein) {} },
             enabled = !healthVm.saving,
         )
         Spacer(Modifier.height(Dimens.Space8))
-        // 하단 고정 안내(§2) — 저장 반영 시점을 문구와 동작으로 일치시킨다.
+        // 하단 고정 안내(§2) — 재평가 상태별로 문구를 실제 동작과 일치시킨다(리뷰 #294:
+        //   저장 즉시 반영 시도, 422/점수 미제공/네트워크 실패를 구분. 종전 "다음 …부터 반영"은
+        //   재평가 배선 후 사실이 아니게 되어 교체).
         Text(
-            "지금 수정하신 정보는 다음 근육 건강 정보부터 반영됩니다",
+            scoreRefreshFooterText(healthVm.scoreRefresh),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (healthVm.scoreRefresh == HealthInfoViewModel.ScoreRefreshState.FAILED) {
+            Spacer(Modifier.height(Dimens.Space8))
+            // 네트워크·서버 실패만 재시도 의미가 있다(422·점수 미제공은 재시도해도 같아 버튼 없음).
+            AigoSecondaryButton(text = "점수 다시 계산", onClick = healthVm::retryScoreRefresh)
+        }
     }
+}
+
+/** 하단 고정 안내 문구 — 재평가 상태별(리뷰 #294 상태 경계). 문구 회귀는 테스트로 고정한다. */
+internal fun scoreRefreshFooterText(state: HealthInfoViewModel.ScoreRefreshState?): String = when (state) {
+    null -> "저장하면 수정한 정보로 근육 건강 점수를 바로 다시 계산해요."
+    HealthInfoViewModel.ScoreRefreshState.IN_PROGRESS -> "저장한 정보로 근육 건강 점수를 다시 계산하고 있어요…"
+    HealthInfoViewModel.ScoreRefreshState.APPLIED -> "근육 건강 정보에 바로 반영됐어요."
+    HealthInfoViewModel.ScoreRefreshState.NOT_ELIGIBLE -> "정보는 저장됐어요. 지금은 근육 점수 제공 대상이 아니에요."
+    HealthInfoViewModel.ScoreRefreshState.FAILED -> "정보는 저장됐어요. 점수 다시 계산에 실패했어요 — 아래 버튼으로 다시 시도해 주세요."
 }
 
 /** 소수 반올림 없는 표시용 문자열: 170.0 → "170", 63.5 → "63.5". */
