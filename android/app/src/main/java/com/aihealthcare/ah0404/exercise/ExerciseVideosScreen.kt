@@ -12,6 +12,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -185,12 +186,6 @@ fun ExerciseVideosScreen(
             PendingSyncBanner(count = vm.pendingResends.size, onRetry = vm::retryPending)
         }
 
-        // 오늘 누적 운동시간(#235): 서버가 합산한 당일 '분'을 보여줘 사용자가 완료(하루 목표 달성) 여부를 확인할 수 있게 한다.
-        //   세션을 하나라도 완료해 서버 값이 오면 표시(그 전엔 숨김). 여러 단계·여러 세션이 합산돼 목표를 채우면 달성 안내.
-        vm.todayExerciseMin?.let { minutes ->
-            TodayExerciseSummary(minutes = minutes, goalReached = vm.todayGoalReached)
-        }
-
         // 번들 루틴(몸풀기·마무리)은 네트워크와 무관하게 '즉시' 시작 가능해야 한다(오프라인/느린망 포함).
         //   서버 목록이 오면 탭으로, 아직이면(로딩/빈/에러) 폴백에서 번들 루틴 버튼들을 바로 보여준다.
         //   시작 동작은 guardedStart 로 감싸 안전 고지 확인(#234) 게이트를 먼저 거친다.
@@ -208,6 +203,14 @@ fun ExerciseVideosScreen(
                 loading = vm.loading,
                 retry = if (vm.error) vm::load else null,
             )
+        }
+
+        // 오늘 누적 운동시간(#235, A2): 영상 아래 '빈 공간'에서 확인하도록 화면 하단에 둔다(사용자 요청). 진입 시점부터
+        //   목록 GET 의 today_progress 로 채워지고, 완료 후엔 서버 합산값으로 갱신 — 재생 전·중간에 끊었어도 볼 수 있다.
+        //   서버 값이 없으면(운동 미션·필드 부재) 숨김. Spacer(weight) 로 콘텐츠와 요약 사이를 벌려 요약을 바닥에 안착.
+        vm.todayExerciseMin?.let { minutes ->
+            Spacer(modifier = Modifier.weight(1f))
+            TodayExerciseSummary(minutes = minutes, goalReached = vm.todayGoalReached)
         }
     }
 
