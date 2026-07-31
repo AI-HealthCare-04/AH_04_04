@@ -99,6 +99,29 @@ class ExerciseFlowUseCaseTest {
         assertEquals("completed", result.finalStatus)
     }
 
+    @Test
+    fun `초-분 환산 정밀도를 2자리로 반올림해 보낸다`() = runTest {
+        // 200초 = 3.3333333분. DECIMAL(6,2) 저장 시 MySQL 이 잘라내며 경고를 남기므로, 전송 전에 3.33 으로
+        //   반올림해 보내는 값과 저장값을 일치시킨다(#291 후속).
+        val api = FakeApi(createStatus = "in_progress")
+        val result = ExerciseFlowUseCase(api).submitExerciseSession(
+            missionTemplateId = 7,
+            durationMin = 200f / 60f,
+            safetyNoticeConfirmed = true,
+            createdOnDeviceAt = "2026-07-29T10:00:00.000+09:00",
+        )
+        assertEquals("전송 값이 2자리로 반올림된다", 3.33f, api.lastUpdate?.exerciseDetail?.durationMin)
+        assertEquals("Result 도 반올림된 전송값과 일치", 3.33f, result.durationMin)
+    }
+
+    @Test
+    fun `반올림 헬퍼 - 2자리 반올림과 0 방지 하한`() {
+        assertEquals(3.33f, roundMinutesForServer(200f / 60f))
+        assertEquals(4f, roundMinutesForServer(4f)) // 이미 깔끔한 값은 그대로
+        assertEquals(0.13f, roundMinutesForServer(0.126f)) // 반올림 올림
+        assertEquals("반올림이 0 이 되는 초미세값은 0.01 로 올려 gt=0 유지", 0.01f, roundMinutesForServer(0.001f))
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun `0분 세션은 전송 전에 거부한다`() = runTest {
         // 서버 duration_min gt=0 을 치기 전에 즉시 이탈(0분) 세션을 막는다.

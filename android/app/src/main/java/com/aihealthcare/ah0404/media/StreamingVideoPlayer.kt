@@ -79,10 +79,8 @@ fun StreamingVideoPlayer(
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) = currentOnIsPlayingChanged(isPlaying)
             override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
-                // 컨트롤러 톱니로 옵션 밖 속도를 골라도 전역 저장·실제 재생 모두 확정 4옵션으로 정규화(지영 리뷰).
-                val normalized = AppSettings.normalizeSpeed(playbackParameters.speed)
-                AppSettings.setPlaybackSpeed(context, normalized)
-                if (playbackParameters.speed != normalized) player.setPlaybackSpeed(normalized)
+                // 컨트롤러 톱니로 옵션 밖 속도를 골라도 전역 저장·실제 재생 모두 확정 4옵션으로 정규화(지영 리뷰, #288 공용).
+                player.persistNormalizedSpeed(context, playbackParameters.speed)
             }
         }
         player.addListener(listener)
