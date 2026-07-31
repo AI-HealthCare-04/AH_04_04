@@ -72,8 +72,9 @@ class ExerciseVideosViewModel(
     //   세션 내 복귀용이라 메모리 보관(앱 재시작까지 보존할 필요는 #235 범위 밖). 영상 완주 시엔 0 이 저장돼 다음엔 처음부터.
     private val positionByUrl = mutableMapOf<String, Long>()
 
-    // 오늘 누적 운동 '분'(#235): 서버가 완료 응답으로 준 당일 합산값(sum_exercise_minutes_today). 세션 완료 전엔 null(미표시).
-    //   서버 권위값이라 앱이 직접 더하지 않는다 — 여러 단계·여러 세션을 서버가 합산한 결과를 그대로 보여준다.
+    // 오늘 누적 운동 '분'(#235): 서버 당일 합산값(sum_exercise_minutes_today). 진입 시엔 목록 GET 의 운동
+    //   today_progress 로, 완료 후엔 완료 응답으로 채운다(둘 다 같은 서버 권위값). 앱이 직접 더하지 않는다.
+    //   운동 미션이 없거나 구버전 서버(필드 부재)면 null(종전대로 미표시).
     var todayExerciseMin by mutableStateOf<Float?>(null); private set
     // 오늘 운동 목표(하루 10분, #168)를 채웠는지 — 서버 판정(success). 완료 판정을 사용자가 확인할 수 있게 한다(#235 핵심).
     var todayGoalReached by mutableStateOf(false); private set
@@ -117,8 +118,33 @@ class ExerciseVideosViewModel(
         result
             .onSuccess { videos = it.videos.sortedBy { v -> v.order } }
             .onFailure { error = true; Log.w(TAG, "운동 영상 조회 실패: ${it.message}") }
+        // 진입 시점부터 '오늘까지 N분'을 보여준다(#235 확장): 목록 GET 의 운동 today_progress(서버 당일 합산)를
+        //   재사용해, 재생 전에도·중간에 끊었어도 오늘 누적을 확인할 수 있게 한다. 영상 조회와 독립이라 실패해도 무영향.
+        loadTodayProgress(gen)
         loaded = true
         loading = false
+    }
+
+    /**
+     * 오늘 누적 운동시간을 서버 목록(GET /missions 의 운동 today_progress)에서 읽어 **진입 시점부터** 보여준다(#235 확장).
+     *  완료 응답([submitExercise])이 오면 더 최신값으로 덮어쓴다. today_progress 가 없거나(구버전 서버) 운동 미션이
+     *  없으면 종전대로 미표시(null 유지). 이 조회는 영상 표시와 독립이라 실패해도 화면엔 영향을 주지 않는다.
+     *  겸사겸사 단일 운동 템플릿 id 도 캐시해 [submitExercise] 의 별도 조회([resolveExerciseTemplateId])를 아낀다.
+     */
+    private suspend fun loadTodayProgress(gen: Int) {
+        try {
+            val exercise = missionApi.getMissions().missions.firstOrNull { it.missionType == "exercise" }
+            if (gen != generation) return
+            exercise?.missionTemplateId?.let { exerciseTemplateId = it }
+            exercise?.todayProgress?.let { p ->
+                todayExerciseMin = p.totalMin
+                todayGoalReached = p.goalReached
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "오늘 누적 진행 조회 실패: ${e.message}")
+        }
     }
 
     /**

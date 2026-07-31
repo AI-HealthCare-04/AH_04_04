@@ -288,14 +288,22 @@ private fun TodayExerciseSummary(minutes: Float, goalReached: Boolean) {
             .padding(Dimens.CardPadding),
         verticalArrangement = Arrangement.spacedBy(Dimens.Space8),
     ) {
+        // 진입 시점엔 대개 0분(아직 운동 전) — "0분 하셨어요"는 어색하니 시작을 권하는 문구로 바꾼다.
+        //   이미 했으면(중간에 끊었어도) 누적 분을, 목표를 채웠으면 축하를 보여준다(#235 확장, A2).
+        val startedToday = minutes > 0f
         Text(
-            "오늘 운동 ${formatExerciseMinutes(minutes, goalReached)}분 하셨어요",
+            if (startedToday) "오늘 운동 ${formatExerciseMinutes(minutes, goalReached)}분 하셨어요"
+            else "오늘은 아직 운동 전이에요",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSecondaryContainer,
         )
         Text(
-            if (goalReached) "🎉 오늘 운동 목표를 채웠어요!" else "조금만 더 하면 오늘 목표를 채울 수 있어요.",
+            when {
+                goalReached -> "🎉 오늘 운동 목표를 채웠어요!"
+                startedToday -> "조금만 더 하면 오늘 목표를 채울 수 있어요."
+                else -> "영상을 따라 운동을 시작해볼까요?"
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSecondaryContainer,
         )

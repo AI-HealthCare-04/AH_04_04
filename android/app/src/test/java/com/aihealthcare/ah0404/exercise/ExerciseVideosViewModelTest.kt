@@ -11,6 +11,7 @@ import com.aihealthcare.ah0404.network.MissionLogCreateRequest
 import com.aihealthcare.ah0404.network.MissionLogCreateResponse
 import com.aihealthcare.ah0404.network.MissionLogUpdateRequest
 import com.aihealthcare.ah0404.network.MissionLogUpdateResponse
+import com.aihealthcare.ah0404.network.MissionTodayProgress
 import com.aihealthcare.ah0404.network.MissionsResponse
 import com.aihealthcare.ah0404.network.SensorSessionCreateRequest
 import com.aihealthcare.ah0404.network.SensorSessionCreateResponse
@@ -114,7 +115,7 @@ class ExerciseVideosViewModelTest {
             error("운동 흐름은 센서 세션을 만들지 않는다")
     }
 
-    private fun exerciseMission(templateId: Int) = Mission(
+    private fun exerciseMission(templateId: Int, todayProgress: MissionTodayProgress? = null) = Mission(
         missionTemplateId = templateId,
         missionType = "exercise",
         title = "영상 따라 운동하기",
@@ -123,6 +124,7 @@ class ExerciseVideosViewModelTest {
         targetUnit = "minutes",
         requiresSafetyNotice = true,
         rewardPoints = 10,
+        todayProgress = todayProgress,
     )
 
     private fun item(stage: String, order: Int, available: Boolean = false, url: String? = null) =
@@ -131,7 +133,7 @@ class ExerciseVideosViewModelTest {
     @Test
     fun loads_and_sorts_by_order() = runTest {
         val vm = ExerciseVideosViewModel(
-            FakeApi {
+            api = FakeApi {
                 ExerciseVideosResponse(
                     listOf(
                         item("cooldown", 4),
@@ -141,6 +143,8 @@ class ExerciseVideosViewModelTest {
                     ),
                 )
             },
+            // refresh() 가 오늘 누적을 목록 GET 으로도 읽으므로(A2) real retrofit 대신 fake 주입.
+            missionApi = FakeMissionApi(emptyList()),
         )
         vm.load(); advanceUntilIdle()
 
@@ -153,7 +157,10 @@ class ExerciseVideosViewModelTest {
 
     @Test
     fun load_failure_sets_error() = runTest {
-        val vm = ExerciseVideosViewModel(FakeApi { throw RuntimeException("boom") })
+        val vm = ExerciseVideosViewModel(
+            api = FakeApi { throw RuntimeException("boom") },
+            missionApi = FakeMissionApi(emptyList()),
+        )
         vm.load(); advanceUntilIdle()
         assertTrue(vm.error)
         assertTrue(vm.videos.isEmpty())
@@ -422,6 +429,66 @@ class ExerciseVideosViewModelTest {
 
         assertEquals("진행 중이어도 현재 누적분은 보여준다", 3f, vm.todayExerciseMin)
         assertFalse("목표 미달이면 달성 안내는 아직 아니다", vm.todayGoalReached)
+    }
+
+    // -----------------------------------------------------------------------------------
+    // A2: 진입 시점부터 오늘 누적 운동시간 표시 — 목록 GET 의 운동 today_progress(서버 당일 합산) 재사용
+    // -----------------------------------------------------------------------------------
+
+    @Test
+    fun `진입(load) 시 목록 today_progress 로 완료 전에도 오늘 누적을 표시한다`() = runTest {
+        val fake = FakeMissionApi(
+            listOf(exerciseMission(templateId = 7, todayProgress = MissionTodayProgress(totalMin = 6f, goalReached = false))),
+        )
+        val vm = vmWith(fake)
+        assertNull("load 전엔 아직 없음", vm.todayExerciseMin)
+
+        vm.load(); advanceUntilIdle()
+
+        assertEquals("재생 전에도 서버 당일 누적(today_progress.total_min)을 노출", 6f, vm.todayExerciseMin)
+        assertFalse("미달이면 달성 아님", vm.todayGoalReached)
+    }
+
+    @Test
+    fun `진입 시 목록 today_progress 가 목표 달성이면 달성으로 표시한다`() = runTest {
+        val fake = FakeMissionApi(
+            listOf(exerciseMission(templateId = 7, todayProgress = MissionTodayProgress(totalMin = 10f, goalReached = true))),
+        )
+        val vm = vmWith(fake)
+        vm.load(); advanceUntilIdle()
+
+        assertEquals(10f, vm.todayExerciseMin)
+        assertTrue("today_progress.goal_reached=true → 달성 안내", vm.todayGoalReached)
+    }
+
+    @Test
+    fun `today_progress 가 없거나 운동 미션이 없으면 종전대로 미표시`() = runTest {
+        // 운동 미션은 있지만 today_progress 필드가 null(구버전 서버)
+        val vmOld = vmWith(FakeMissionApi(listOf(exerciseMission(templateId = 7, todayProgress = null))))
+        vmOld.load(); advanceUntilIdle()
+        assertNull("today_progress 부재면 null 유지(미표시)", vmOld.todayExerciseMin)
+
+        // 운동 미션 자체가 없어도 미표시(비로그인/걷기·식사만)
+        val vmNone = vmWith(FakeMissionApi(emptyList()))
+        vmNone.load(); advanceUntilIdle()
+        assertNull("운동 미션이 없으면 null 유지", vmNone.todayExerciseMin)
+    }
+
+    @Test
+    fun `완료 응답이 진입 초기값을 더 최신 누적으로 덮어쓴다`() = runTest {
+        val fake = FakeMissionApi(
+            listOf(exerciseMission(templateId = 7, todayProgress = MissionTodayProgress(totalMin = 6f, goalReached = false))),
+        )
+        fake.completeDailyTotal = 10f; fake.completeSuccess = true
+        val vm = vmWith(fake)
+        vm.load(); advanceUntilIdle()
+        assertEquals("진입 초기값(목록)", 6f, vm.todayExerciseMin)
+
+        vm.submitExercise(4f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+
+        assertEquals("완료 응답의 더 최신 누적으로 갱신", 10f, vm.todayExerciseMin)
+        assertTrue(vm.todayGoalReached)
     }
 
     @Test
