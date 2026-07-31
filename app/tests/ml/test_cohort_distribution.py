@@ -1,8 +1,7 @@
-"""또래 분포 차트(#193) 순수 로직: 백분위 선형보간·밀도 근사·코호트 로더."""
+"""또래 분포 차트(#193) 순수 로직: 백분위 선형보간·코호트 로더."""
 
 import pytest
 
-from app.ml.cohort_density import approximate_density
 from app.ml.predictor import load_cohort_distribution, percentile_low
 
 
@@ -42,43 +41,23 @@ def test_lower_count_clamp_expression() -> None:
     assert clamp(99.6) == 99  # round=100 → 99
 
 
-# ---------------- 밀도 근사(§3, KDE 대체) ----------------
-def test_approximate_density_shape() -> None:
-    q = [0.5 * i / 100.0 for i in range(101)]  # 0 .. 0.5 균일
-    dens = approximate_density(q, points=50)
-    assert len(dens) == 50
-    xs = [x for x, _ in dens]
-    ys = [y for _, y in dens]
-    assert xs == sorted(xs)  # x 오름차순
-    assert xs[0] == 0.0 and xs[-1] == pytest.approx(0.5)
-    assert min(ys) >= 0.0 and max(ys) <= 100.0 + 1e-6
-    assert max(ys) == pytest.approx(100.0)  # 최대 100 정규화
-
-
-def test_approximate_density_peaks_where_quantiles_dense() -> None:
-    # 저확률에 분위수가 촘촘한(우편향) 분포 → 밀도 봉우리가 왼쪽에 온다.
-    q = sorted(0.5 * (i / 100.0) ** 2 for i in range(101))
-    dens = approximate_density(q)
-    peak_x = max(dens, key=lambda p: p[1])[0]
-    assert peak_x < 0.25  # 봉우리가 좌측(저확률)
-
-
-def test_approximate_density_empty_on_degenerate() -> None:
-    assert approximate_density([0.1, 0.1]) == []  # 3개 미만
-
-
 # ---------------- 실제 코호트 로더 ----------------
 def test_load_cohort_distribution_real_artifact() -> None:
     table = load_cohort_distribution()
     assert table, "코호트 산출물이 로드돼야 한다"
     # 단일나이 창(65~79) + 80+ 풀, 성별 1/2, feature_set minimal/with_waist
+    assert len(table) == 64
     assert ("minimal", 1, "72") in table  # 남성 72세 minimal
     assert ("minimal", 2, "80+") in table  # 여성 80+ 풀
     assert ("minimal", 1, "64") not in table  # 65 미만은 없다
     dist = table[("minimal", 1, "72")]
     assert len(dist.quantiles) == 101
     assert list(dist.quantiles) == sorted(dist.quantiles)  # 오름차순
-    assert len(dist.density) > 0
-    assert all(0.0 <= y <= 100.0 for _, y in dist.density)
+    assert len(dist.density) == 101
+    xs = [x for x, _ in dist.density]
+    ys = [y for _, y in dist.density]
+    assert xs == pytest.approx([i / 100.0 for i in range(101)])
+    assert all(0.0 <= y <= 100.0 for y in ys)
+    assert max(ys) == pytest.approx(100.0)
     assert dist.n > 0
     assert dist.p_low < dist.p_high
