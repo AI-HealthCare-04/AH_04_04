@@ -126,7 +126,6 @@ private fun HealthInfoSection(healthVm: HealthInfoViewModel) {
 private val KIDNEY_LABELS = mapOf(
     "none" to "해당 없음",
     "kidney_disease" to "신장질환 있음",
-    "dialysis" to "투석 중",
     "unknown" to "잘 모르겠어요",
 )
 
@@ -144,7 +143,9 @@ private fun HealthInfoEditor(healthVm: HealthInfoViewModel, profile: HealthProfi
     var height by remember(profile) { mutableStateOf(numberText(profile.heightCm)) }
     var weight by remember(profile) { mutableStateOf(numberText(profile.weightKg)) }
     var waist by remember(profile) { mutableStateOf(profile.waistCm?.let(::numberText) ?: "") }
-    var kidney by remember(profile) { mutableStateOf(profile.kidneyStatus) }
+    var kidney by remember(profile) {
+        mutableStateOf(if (profile.kidneyStatus == "dialysis") "kidney_disease" else profile.kidneyStatus)
+    }
     var protein by remember(profile) { mutableStateOf(profile.proteinRestrictionStatus) }
 
     AigoCard {
@@ -187,6 +188,14 @@ private fun HealthInfoEditor(healthVm: HealthInfoViewModel, profile: HealthProfi
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        Spacer(Modifier.height(Dimens.Space4))
+        // 신장 건강 정보의 쓰임 안내(QA 피드백, #304 연계): 이 값이 근육 점수가 아니라
+        //   단백질(고단백 식사) 미션 노출을 정한다는 걸 저장 전에 알 수 있게 상시 표시.
+        Text(
+            KIDNEY_USAGE_FOOTER,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         if (healthVm.scoreRefresh == HealthInfoViewModel.ScoreRefreshState.FAILED) {
             Spacer(Modifier.height(Dimens.Space8))
             // 네트워크·서버 실패만 재시도 의미가 있다(422·점수 미제공은 재시도해도 같아 버튼 없음).
@@ -194,6 +203,9 @@ private fun HealthInfoEditor(healthVm: HealthInfoViewModel, profile: HealthProfi
         }
     }
 }
+
+/** 신장 건강 정보의 쓰임 안내(QA 피드백). 단백질 미션 게이트(#304)와 문구가 어긋나지 않게 상수로 고정. */
+internal const val KIDNEY_USAGE_FOOTER = "신장 건강 정보는 단백질 식사 기록하기 미션에 적용돼요."
 
 /** 하단 고정 안내 문구 — 재평가 상태별(리뷰 #294 상태 경계). 문구 회귀는 테스트로 고정한다. */
 internal fun scoreRefreshFooterText(state: HealthInfoViewModel.ScoreRefreshState?): String = when (state) {
