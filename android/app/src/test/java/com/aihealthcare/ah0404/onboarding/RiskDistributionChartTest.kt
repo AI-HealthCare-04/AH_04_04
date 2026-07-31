@@ -71,6 +71,19 @@ class RiskDistributionChartTest {
     }
 
     @Test
+    fun `마커 라벨 기준선 - 봉우리에서 상단 안쪽으로 clamp`() {
+        // 봉우리(밀도 100) 케이스(리뷰 #302): 320dp 폭이면 높이 100dp, curveTop=16dp → 원하는 기준선 6dp.
+        //   13sp 라벨 ascent≈-12.4dp 라 기준선을 2dp - ascent = 14.4dp 로 내려야 상단이 안 잘린다.
+        assertEquals(14.4f, clampedLabelBaseline(desiredBaseline = 6f, ascent = -12.4f, minTop = 2f), 1e-4f)
+        // fontScale 1.3: ascent 도 1.3배 → clamp 위치가 그만큼 더 내려온다.
+        assertEquals(2f + 12.4f * 1.3f, clampedLabelBaseline(6f, -12.4f * 1.3f, 2f), 1e-3f)
+        // 봉우리가 아니어서 여유가 충분하면 원래 기준선 유지.
+        assertEquals(40f, clampedLabelBaseline(40f, -12.4f, 2f), 1e-4f)
+        // 이미 경계에 정확히 걸치면 그대로.
+        assertEquals(14.4f, clampedLabelBaseline(14.4f, -12.4f, 2f), 1e-4f)
+    }
+
+    @Test
     fun `density 선형보간 - 사이값과 범위 밖`() {
         val density = listOf(listOf(0.0f, 0f), listOf(0.1f, 100f), listOf(0.2f, 40f))
         assertEquals(0f, densityYAt(density, -0.1f), 1e-4f) // 범위 왼쪽 밖 → 첫값

@@ -179,7 +179,15 @@ private fun DrawScope.drawDistribution(
         strokeWidth = 2.dp.toPx(),
     )
     drawCircle(MarkerColor, radius = 5.dp.toPx(), center = Offset(markerX, markerY))
-    drawChartText(riskMarkerLabel(percent), markerX, markerY - 10.dp.toPx(), CurveColor, 13.sp.toPx(), bold = true)
+    // 마커 라벨: 봉우리(밀도 100)에선 markerY≈curveTop 이라 고정 오프셋 기준선이 Canvas 상단 밖으로
+    //   ascent 만큼 벗어나 잘린다. 글꼴 메트릭 기준으로 상단 안쪽에 clamp(리뷰 #302, fontScale 확대 포함).
+    val markerLabelPaint = chartTextPaint(CurveColor, 13.sp.toPx(), bold = true)
+    val markerLabelBaseline = clampedLabelBaseline(
+        desiredBaseline = markerY - 10.dp.toPx(),
+        ascent = markerLabelPaint.fontMetrics.ascent,
+        minTop = 2.dp.toPx(),
+    )
+    drawContext.canvas.nativeCanvas.drawText(riskMarkerLabel(percent), markerX, markerLabelBaseline, markerLabelPaint)
 
     // 5) 면적 라벨(꼬리 케이스면 숨김) — 좁아 겹치면 생략.
     if (showAreaLabels) {
@@ -215,18 +223,15 @@ private fun DrawScope.drawDistribution(
 }
 
 private fun DrawScope.drawChartText(text: String, centerX: Float, baselineY: Float, color: Color, sizePx: Float, bold: Boolean = false) {
-    drawContext.canvas.nativeCanvas.drawText(
-        text,
-        centerX,
-        baselineY,
-        Paint().apply {
-            this.color = color.toArgb()
-            textSize = sizePx
-            textAlign = Paint.Align.CENTER
-            isAntiAlias = true
-            if (bold) typeface = Typeface.DEFAULT_BOLD
-        },
-    )
+    drawContext.canvas.nativeCanvas.drawText(text, centerX, baselineY, chartTextPaint(color, sizePx, bold))
+}
+
+private fun chartTextPaint(color: Color, sizePx: Float, bold: Boolean = false): Paint = Paint().apply {
+    this.color = color.toArgb()
+    textSize = sizePx
+    textAlign = Paint.Align.CENTER
+    isAntiAlias = true
+    if (bold) typeface = Typeface.DEFAULT_BOLD
 }
 
 // ==================== 순수 헬퍼(테스트 대상) ====================
@@ -278,6 +283,13 @@ internal fun riskChartContentDescription(lowerCount: Int, percent: String): Stri
 
 /** x 좌표 매핑의 분율(0~1). p 는 0.5 에서 클램프(스펙 §2 gpos). */
 internal fun probToPlotFraction(p: Float): Float = (min(p, 0.5f) / 0.5f).coerceIn(0f, 1f)
+
+/**
+ * 텍스트 기준선 clamp(리뷰 #302): 기준선+ascent(음수)가 minTop 보다 위면 글자 윗부분이 Canvas 밖으로
+ * 잘리므로 `minTop - ascent` 까지 내린다. ascent 가 fontScale 에 비례해 커져도 항상 상단 안쪽에 놓인다.
+ */
+internal fun clampedLabelBaseline(desiredBaseline: Float, ascent: Float, minTop: Float): Float =
+    maxOf(desiredBaseline, minTop - ascent)
 
 /** density([[x,y]]) 에서 확률 x 의 상대밀도 y 를 선형보간. 범위 밖은 가장자리 값. */
 internal fun densityYAt(density: List<List<Float>>, x: Float): Float {
