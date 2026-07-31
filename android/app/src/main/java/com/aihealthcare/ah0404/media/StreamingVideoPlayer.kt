@@ -2,7 +2,6 @@ package com.aihealthcare.ah0404.media
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -13,6 +12,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
@@ -20,6 +20,7 @@ import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
+import com.aihealthcare.ah0404.settings.AppSettings
 
 /**
  * 재사용 스트리밍 영상 플레이어 — 운동 영상(#72) 등 HTTPS 스트리밍 + 로컬 캐시.
@@ -27,8 +28,9 @@ import androidx.media3.ui.PlayerView
  *  - CacheDataSource 로 스트리밍 캐시([[VideoCache]]). 캐시 오류 시 원본으로 폴백(FLAG_IGNORE_CACHE_ON_ERROR).
  *  - 화면을 벗어나면(onStop) 일시정지, dispose 시 반드시 release(누수 방지).
  *  - url 이 바뀌면 새 플레이어를 만든다(remember(url)).
- *  - `speed`: 운동 난이도별 재생 속도(가볍게 0.8 / 보통 1.0 / 힘차게 1.25). ExoPlayer 기본 시간축 신축이라
- *    빨라져도 pitch(음정)는 유지된다. url 이 안 바뀌어도 속도 변경은 즉시 반영(LaunchedEffect).
+ *  - 재생 속도: 기본 컨트롤러(useController)의 톱니(⚙)로 사용자가 영상 안에서 직접 조절한다. 시작값은 전역
+ *    [AppSettings.playbackSpeed](기본 1.0배속)이고, 톱니로 바꾸면 전역에 영속해 다음 영상에도 이어진다
+ *    (난이도 개념 폐기 → 톱니 통일). ExoPlayer 는 기본 시간축 신축이라 빨라져도 pitch(음정)는 유지된다.
  *  - `onIsPlayingChanged`: ExoPlayer 의 '실제 재생 중' 상태 변화를 알린다(재생 시작 true, 일시정지·버퍼링·
  *    끝·백그라운드 정지 false). 운동 완료 배선(#234)이 '실제로 본 시간'만 재는 데 쓴다(리뷰 P1-A). 기본값 무동작.
  *  - `startPositionMs`: 진입 시 이 위치로 이어재생(#235). 이탈 후 다시 들어와도 처음부터 재생되지 않게, 호출부가
@@ -42,7 +44,6 @@ fun StreamingVideoPlayer(
     url: String,
     modifier: Modifier = Modifier,
     autoPlay: Boolean = false,
-    speed: Float = 1f,
     startPositionMs: Long = 0L,
     onIsPlayingChanged: (Boolean) -> Unit = {},
     onPositionSaved: (Long) -> Unit = {},
@@ -67,18 +68,22 @@ fun StreamingVideoPlayer(
                 if (startPositionMs > 0L) seekTo(startPositionMs)
                 prepare()
                 playWhenReady = autoPlay
-                volume = com.aihealthcare.ah0404.settings.AppSettings.soundScale // 설정 소리 크기 적용(C-2)
-                setPlaybackSpeed(speed) // 운동 난이도별 재생 속도(초기값)
+                volume = AppSettings.soundScale // 설정 소리 크기 적용(C-2)
+                setPlaybackSpeed(AppSettings.playbackSpeed) // 전역 재생 속도로 시작(톱니로 조절, 기본 1.0)
             }
     }
 
-    // 난이도(속도)가 바뀌면 url 이 그대로여도 재생 중 플레이어에 즉시 반영.
-    LaunchedEffect(player, speed) { player.setPlaybackSpeed(speed) }
-
     // 실제 재생 상태(isPlaying) 변화를 호출부에 전달(#234 P1-A). player 가 바뀌면(url 변경) 리스너를 다시 붙인다.
+    //   컨트롤러 톱니로 바꾼 속도(onPlaybackParametersChanged)는 전역에 영속해 다음 영상에도 이어진다.
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) = currentOnIsPlayingChanged(isPlaying)
+            override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
+                // 컨트롤러 톱니로 옵션 밖 속도를 골라도 전역 저장·실제 재생 모두 확정 4옵션으로 정규화(지영 리뷰).
+                val normalized = AppSettings.normalizeSpeed(playbackParameters.speed)
+                AppSettings.setPlaybackSpeed(context, normalized)
+                if (playbackParameters.speed != normalized) player.setPlaybackSpeed(normalized)
+            }
         }
         player.addListener(listener)
         onDispose { player.removeListener(listener) }

@@ -22,12 +22,22 @@ class AppSettingsTest {
         assertEquals(0.8f, AppSettings.soundScaleFor("unknown"))
     }
 
-    // 운동 난이도 → 운동영상 재생 속도. 가볍게 0.8 / 보통 1.0 / 힘차게 1.25. 알 수 없는 값은 보통(1.0).
+    // 재생 속도 기본값·옵션 계약(난이도 폐기 → 톱니 통일). 기본 1.0배속, 옵션 0.75/1.0/1.25/1.5.
     @Test
-    fun exercise_speed_mapping() {
-        assertEquals(0.8f, AppSettings.exerciseSpeedFor(AppSettings.DIFF_EASY))
-        assertEquals(1.0f, AppSettings.exerciseSpeedFor(AppSettings.DIFF_NORMAL))
-        assertEquals(1.25f, AppSettings.exerciseSpeedFor(AppSettings.DIFF_HARD))
-        assertEquals(1.0f, AppSettings.exerciseSpeedFor("unknown"))
+    fun playback_speed_defaults_and_options() {
+        assertEquals(1.0f, AppSettings.DEFAULT_SPEED)
+        assertEquals(listOf(0.75f, 1.0f, 1.25f, 1.5f), AppSettings.SPEED_OPTIONS)
+    }
+
+    // Media3 컨트롤러가 옵션 밖 값(1.75·2.0 등)을 줘도 전역엔 확정 4옵션 중 최근접값만 저장(지영 리뷰).
+    @Test
+    fun playback_speed_normalizes_to_confirmed_options() {
+        assertEquals(1.5f, AppSettings.normalizeSpeed(1.75f)) // 옵션 밖 → 최근접(1.5)
+        assertEquals(1.5f, AppSettings.normalizeSpeed(2.0f))  // 상한 밖 → 최대 옵션
+        assertEquals(0.75f, AppSettings.normalizeSpeed(0.1f)) // 하한 밖 → 최소 옵션
+        assertEquals(1.0f, AppSettings.normalizeSpeed(0.9f))
+        assertEquals(1.25f, AppSettings.normalizeSpeed(1.2f))
+        // 확정 옵션값은 그대로 보존(복원 경계)
+        AppSettings.SPEED_OPTIONS.forEach { assertEquals(it, AppSettings.normalizeSpeed(it)) }
     }
 }

@@ -89,10 +89,12 @@ val releaseApiBaseUrl = providers.gradleProperty("AH_RELEASE_API_BASE_URL")
     .orElse(providers.environmentVariable("AH_RELEASE_API_BASE_URL"))
 
 // 미니게임 영상 URL — 운동영상 4단계 카탈로그(#72) 밖이라 서버 카탈로그가 아니라 앱에 직접 주입한다.
-//   기본값 = 배포 서버의 /videos/mini_game.mp4. gradle 프로퍼티/환경변수로 override 가능.
+//   기본값 = 배포 서버의 /videos/game.mp4. gradle 프로퍼티/환경변수로 override 가능.
+//   2026-07-30 신규 영상으로 교체: 파일명을 mini_game.mp4 -> game.mp4 로 변경(신규 URL)해 앱 영상캐시를
+//   강제 무효화(같은 파일명 덮어쓰기는 캐시된 기기가 옛 영상을 계속 재생). 신규 파일 EC2 업로드 완료.
 val miniGameVideoUrl = providers.gradleProperty("AH_MINI_GAME_VIDEO_URL")
     .orElse(providers.environmentVariable("AH_MINI_GAME_VIDEO_URL"))
-    .orElse("https://aigo-health.duckdns.org/videos/mini_game.mp4")
+    .orElse("https://aigo-health.duckdns.org/videos/game.mp4")
 
 val googleWebClientId = providers.gradleProperty("AH_GOOGLE_WEB_CLIENT_ID")
     .orElse(providers.environmentVariable("AH_GOOGLE_WEB_CLIENT_ID"))

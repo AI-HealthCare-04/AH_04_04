@@ -7,12 +7,16 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.padding
@@ -31,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,8 +45,11 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -50,10 +58,19 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackParameters
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.PlayerView
 import kotlin.math.floor
 import com.aihealthcare.ah0404.R
 import com.aihealthcare.ah0404.media.StreamingVideoPlayer
+import com.aihealthcare.ah0404.media.VideoCache
 import com.aihealthcare.ah0404.settings.AppSettings
 import com.aihealthcare.ah0404.network.ExerciseVideoItem
 import com.aihealthcare.ah0404.routine.RoutinePlayerScreen
@@ -82,7 +99,8 @@ fun ExerciseVideosScreen(
     //   탭이 몸풀기(0)로 리셋되던 문제 — selected를 StageTabs 안에 두면 언마운트 시 사라짐. 지영 리뷰 #254 P1)
     var selectedTab by remember(vm.videos) { mutableIntStateOf(0) }
     var routineFile by remember { mutableStateOf<String?>(null) }
-    var fullscreenUrl by remember { mutableStateOf<String?>(null) }
+    // 재생 중인 스트리밍 운동(서서·근력). 세로 재생→전체보기 전환은 ExercisePlayer 내부 상태라 여기선 항목만 보유.
+    var playingItem by remember { mutableStateOf<ExerciseVideoItem?>(null) }
     // 안전 고지 게이트(#234, 리뷰 P1-C): 운동을 '처음 시작할 때' 1회 확인. 서버는 운동(requires_safety_notice=true)에서
     //   확인 안 되면 시작 POST 를 400 으로 막으므로(services/mission.py), 조작된 true 없이 사용자가 실제로 확인한 값만
     //   완료 전송의 safety_notice_confirmed(=safetyConfirmed, 이 방문 동안 유지)로 넘긴다. pendingStart 는 확인 대기 중 보류된 시작 동작.
@@ -103,8 +121,8 @@ fun ExerciseVideosScreen(
     }
     // 루틴/전체화면을 닫고 목록으로 돌아오면(둘 다 null) 남은 전송을 재시도한다. 방금 실패한 건은 in-flight 가드로
     //   걸러지므로 이중 전송되지 않고, 이후(다음 운동 종료·재진입) 복귀 때 안전히 재시도된다.
-    LaunchedEffect(routineFile, fullscreenUrl) {
-        if (routineFile == null && fullscreenUrl == null) vm.retryPending()
+    LaunchedEffect(routineFile, playingItem) {
+        if (routineFile == null && playingItem == null) vm.retryPending()
     }
 
     // 번들 루틴(몸풀기·마무리)은 백엔드 목록과 무관하게 오프라인에서도 재생 가능(심사 환경 안정 버전).
@@ -123,12 +141,13 @@ fun ExerciseVideosScreen(
         return
     }
 
-    // 스트리밍 운동(근력·서서)은 포스터 탭 시 '가로 전체화면'으로 크게 재생한다(세로 고정 앱에서 이 화면만 가로).
-    //   기기 크기가 달라도 fillMaxSize + 가로라 알아서 꽉 찬다(고정 픽셀 없음). 나가면 세로로 복원.
-    fullscreenUrl?.let { url ->
-        FullscreenLandscapeVideo(
-            url = url,
-            onExit = { fullscreenUrl = null },
+    // 스트리밍 운동(근력·서서): 포스터 탭 → 세로 재생(출처 상시) → '영상 전체보기'로 가로 전체화면(출처 유지) →
+    //   영상 끝나면(STATE_ENDED) 자동으로 포스터로 복귀(스펙 §3-1 진입1). 세로↔전체화면 전환에도 재생 위치 유지.
+    playingItem?.let { item ->
+        val url = item.videoUrl.orEmpty() // 이어보기 위치 키(항목별). available 단계라 실제로는 비어 있지 않다.
+        ExercisePlayer(
+            item = item,
+            onExit = { playingItem = null },
             // 실제 재생 분(#234, P1-A: 일시정지·버퍼·백그라운드 제외). 게이트 통과 후라 safetyConfirmed=true.
             onWatched = { durationMin -> vm.submitExercise(durationMin, safetyConfirmed) },
             // 이어보기(#235): 직전 위치부터 재생하고, 이탈 시 현재 위치를 VM 에 보관해 다시 열면 이어서 본다.
@@ -181,7 +200,7 @@ fun ExerciseVideosScreen(
                 selected = selectedTab,
                 onSelect = { selectedTab = it },
                 onStartRoutine = { file -> guardedStart { routineFile = file } },
-                onPlayFullscreen = { url -> guardedStart { fullscreenUrl = url } },
+                onPlay = { item -> guardedStart { playingItem = item } },
             )
         } else {
             RoutineFallback(
@@ -307,7 +326,7 @@ private fun StageTabs(
     selected: Int,
     onSelect: (Int) -> Unit,
     onStartRoutine: (String) -> Unit,
-    onPlayFullscreen: (String) -> Unit,
+    onPlay: (ExerciseVideoItem) -> Unit,
 ) {
     // selected 는 ExerciseVideosScreen 이 보유(전체화면/루틴 진입 후 복귀 시 탭 유지, 지영 리뷰 #254 P1).
     val safeSelected = selected.coerceIn(0, videos.lastIndex)
@@ -323,7 +342,7 @@ private fun StageTabs(
                 )
             }
         }
-        VideoArea(current, onStartRoutine = onStartRoutine, onPlayFullscreen = onPlayFullscreen)
+        VideoArea(current, onStartRoutine = onStartRoutine, onPlay = onPlay)
     }
 }
 
@@ -358,7 +377,7 @@ private fun exercisePosterRes(stage: String): Int? = when (stage) {
 private fun VideoArea(
     item: ExerciseVideoItem,
     onStartRoutine: (String) -> Unit,
-    onPlayFullscreen: (String) -> Unit,
+    onPlay: (ExerciseVideoItem) -> Unit,
 ) {
     Box(
         Modifier
@@ -388,7 +407,7 @@ private fun VideoArea(
             item.available && url != null -> {
                 val poster = exercisePosterRes(item.stage)
                 if (poster != null) {
-                    // 포스터(세로 선택 카드) → 탭하면 가로 전체화면으로 크게 재생(포스터에 ▶·안내가 그려져 있어 오버레이 생략).
+                    // 포스터(세로 선택 카드) → 탭하면 세로 재생 화면으로(출처 상시), 거기서 '전체보기' 시 가로 전체화면.
                     //   16:9 포스터를 16:9 박스에 Fit — 잘림 없이 카드 전체가 보인다.
                     Image(
                         painter = painterResource(poster),
@@ -397,14 +416,13 @@ private fun VideoArea(
                         // TalkBack에서 버튼 역할로 안내(지영 리뷰 #254 비차단). 포스터에 그려진 문구 외 역할을 명확히.
                         modifier = Modifier
                             .fillMaxSize()
-                            .clickable(onClickLabel = "재생", role = Role.Button) { onPlayFullscreen(url) },
+                            .clickable(onClickLabel = "재생", role = Role.Button) { onPlay(item) },
                     )
                 } else {
-                    // 포스터 없는 스트리밍 단계(방어적) — 종전대로 인라인 재생.
+                    // 포스터 없는 스트리밍 단계(방어적) — 종전대로 인라인 재생(속도는 영상 톱니로 조절).
                     StreamingVideoPlayer(
                         url = url,
                         modifier = Modifier.fillMaxSize(),
-                        speed = AppSettings.exerciseSpeedFor(AppSettings.exerciseDifficulty), // 운동 난이도별 재생 속도
                     )
                 }
             }
@@ -424,27 +442,149 @@ private fun VideoArea(
 }
 
 /**
- * 가로 전체화면 영상 재생 — 세로 고정 앱에서 '이 화면만' 가로로 눕히고 시스템바를 숨겨 영상을 크게 보여준다.
- *   기기 크기가 달라도 fillMaxSize라 알아서 꽉 찬다(고정 픽셀 없음). 나가면(뒤로/닫기) 세로·시스템바를 복원한다.
- *   MainActivity의 configChanges(orientation|screenSize) 덕에 이 가로 전환이 액티비티를 재생성하지 않는다
- *   (screenOrientation=portrait는 유지 → 자동회전은 여전히 막힘, 여기서 강제한 가로만 처리. #122 세로 고정 의도 보존).
+ * 스트리밍 운동(서서·근력) 재생기 — 스펙 §3-1 진입1.
+ *   ① 세로 재생(가로영상 레터박스) + 출처 상시 노출 → ② '영상 전체보기'로 가로 전체화면(출처 유지) →
+ *   ③ 영상 끝(STATE_ENDED) 또는 닫기 시 자동으로 포스터 화면 복귀.
+ *
+ *   단일 ExoPlayer 를 세로/전체화면이 공유하므로 전환 시 재생 위치가 유지된다. 속도는 컨트롤러 톱니(⚙)로
+ *   조절(전역 [AppSettings.playbackSpeed], 기본 1.0). 실제 재생 분(isPlaying 구간)만 [onWatched] 로 발화(#234 P1-A).
  */
 @UnstableApi
 @Composable
-private fun FullscreenLandscapeVideo(
-    url: String,
+private fun ExercisePlayer(
+    item: ExerciseVideoItem,
     onExit: () -> Unit,
     onWatched: (Float) -> Unit = {},
     startPositionMs: Long = 0L,
     onPositionSaved: (Long) -> Unit = {},
 ) {
-    val activity = LocalContext.current as? Activity
-    // 실제 재생 시간만 적립(#234, 리뷰 P1-A): ExoPlayer 의 isPlaying 구간만 합산 → 일시정지·버퍼링·백그라운드
-    //   정지 시간은 빠진다. (종전 벽시계 방식은 멈춰 둔 시간까지 세어 하루 10분 목표가 과대 계상됐다.)
+    val context = LocalContext.current
+    val url = item.videoUrl ?: return
     val stopwatch = remember { PlaybackStopwatch() }
+    var fullscreen by remember { mutableStateOf(false) }
+    val currentOnExit by rememberUpdatedState(onExit)
+    val currentOnWatched by rememberUpdatedState(onWatched)
+    val currentOnPositionSaved by rememberUpdatedState(onPositionSaved)
+
+    // 세로↔전체화면이 공유하는 단일 플레이어(캐시·전역속도). url 이 바뀌면 새로 만든다.
+    val player = remember(url) {
+        val cacheFactory = CacheDataSource.Factory()
+            .setCache(VideoCache.get(context))
+            .setUpstreamDataSourceFactory(DefaultDataSource.Factory(context))
+            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(cacheFactory))
+            .build().apply {
+                setMediaItem(MediaItem.fromUri(url))
+                // 이어보기(#235): prepare 전에 seek 하면 준비 후 그 위치부터 재생된다. 0 이면 처음부터.
+                if (startPositionMs > 0L) seekTo(startPositionMs)
+                prepare()
+                playWhenReady = true // 포스터 탭 = 재생 의사(지영 리뷰 #254 P2)
+                volume = AppSettings.soundScale
+                setPlaybackSpeed(AppSettings.playbackSpeed)
+            }
+    }
+
+    // 리스너: 실재생 구간 누적(#234 P1-A) + 톱니 속도 전역 영속 + 영상 끝나면 자동 복귀(STATE_ENDED, 스펙 §3-3).
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) =
+                stopwatch.onIsPlayingChanged(isPlaying, SystemClock.elapsedRealtime())
+            override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
+                // 컨트롤러 톱니로 옵션 밖 속도(2.0 등)를 골라도 전역 저장·실제 재생 모두 확정 4옵션으로 정규화(지영 리뷰).
+                val normalized = AppSettings.normalizeSpeed(playbackParameters.speed)
+                AppSettings.setPlaybackSpeed(context, normalized)
+                if (playbackParameters.speed != normalized) player.setPlaybackSpeed(normalized)
+            }
+            override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_ENDED) { player.pause(); currentOnExit() }
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
+
+    // 백그라운드 시 일시정지, 화면 이탈 시 release + 실제 재생 분 1회 발화. (전체화면 토글로는 재실행 안 됨 — player 안정)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, player) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) player.pause()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            currentOnWatched(stopwatch.elapsedMinutes(SystemClock.elapsedRealtime()))
+            // 이어보기(#235): 완주(STATE_ENDED)면 0(다음 진입 처음부터), 아니면 현재 위치를 보관.
+            val savedMs = if (player.playbackState == Player.STATE_ENDED) 0L else player.currentPosition
+            currentOnPositionSaved(savedMs)
+            player.release()
+        }
+    }
+
+    // 뒤로가기: 전체화면이면 세로로 접고, 세로면 포스터로 나간다(중간 이탈도 안전 복귀, 스펙 §3-3).
+    BackHandler { if (fullscreen) fullscreen = false else onExit() }
+
+    if (fullscreen) {
+        FullscreenLandscapeStage(player = player, stage = item.stage, onCollapse = { fullscreen = false })
+    } else {
+        PortraitPlay(player = player, item = item, onExpand = { fullscreen = true }, onExit = onExit)
+    }
+}
+
+/** 세로 재생 화면(가로영상 레터박스) + 출처 상시 + '영상 전체보기'. 앱 세로 고정 상태 그대로 재생한다. */
+@UnstableApi
+@Composable
+private fun PortraitPlay(
+    player: ExoPlayer,
+    item: ExerciseVideoItem,
+    onExpand: () -> Unit,
+    onExit: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxSize().systemBarsPadding().padding(Dimens.ScreenPadding),
+        verticalArrangement = Arrangement.spacedBy(Dimens.Space12),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onExit) {
+                Text("✕  닫기", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+            }
+            Text(
+                item.label,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(start = Dimens.Space8),
+            )
+        }
+        // 가로영상을 세로 화면에 레터박스로(검은 배경 16:9). 잘림 없이 전체가 보인다.
+        Box(
+            Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(MaterialTheme.shapes.large).background(Color.Black),
+            contentAlignment = Alignment.Center,
+        ) {
+            PlayerSurface(player, Modifier.fillMaxSize())
+        }
+        // ★ 출처표시(법적 의무) — 재생 내내 노출. 근력(공공누리 5종) 출처가 길어 작은 화면(320dp·큰글꼴)에서
+        //   전체보기 버튼을 밀어낼 수 있으므로, 출처는 스크롤 영역에 두고 버튼은 하단 고정 → 둘 다 항상 도달 가능.
+        Column(
+            Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
+        ) {
+            ExerciseCreditText(item.stage, onDark = false)
+        }
+        Button(onClick = onExpand, modifier = Modifier.fillMaxWidth().height(56.dp)) {
+            Text("영상 전체보기", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+/**
+ * 가로 전체화면 스테이지 — 세로 고정 앱에서 '이 화면만' 가로로 눕히고 시스템바를 숨겨 크게 보여준다.
+ *   ★전체화면에서도 출처를 하단 반투명 오버레이로 유지한다(법적 의무). 나가면(닫기/뒤로) 세로·시스템바 복원.
+ *   MainActivity의 configChanges(orientation|screenSize) 덕에 액티비티 재생성 없이 이 화면만 가로가 된다(#122 보존).
+ */
+@UnstableApi
+@Composable
+private fun FullscreenLandscapeStage(player: ExoPlayer, stage: String, onCollapse: () -> Unit) {
+    val activity = LocalContext.current as? Activity
     DisposableEffect(Unit) {
-        // 진입~이탈 사이 상태를 관리: 가로 강제·시스템바 숨김, 이탈 시 복원 + 실제 재생 분을 onWatched 로 발화.
-        //   0분(순간 열고닫음/한 번도 재생 안 됨) 방어는 호출부(VM)에서. 배속과 무관하게 '실제 따라 한 시간'을 잰다.
         val prevOrientation = activity?.requestedOrientation
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         val insets = activity?.window?.let { w -> WindowCompat.getInsetsController(w, w.decorView) }
@@ -453,37 +593,64 @@ private fun FullscreenLandscapeVideo(
         onDispose {
             activity?.requestedOrientation = prevOrientation ?: ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             insets?.show(WindowInsetsCompat.Type.systemBars())
-            onWatched(stopwatch.elapsedMinutes(SystemClock.elapsedRealtime()))
         }
     }
-    BackHandler { onExit() }
     Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
-        StreamingVideoPlayer(
-            url = url,
-            modifier = Modifier.fillMaxSize(),
-            autoPlay = true, // 포스터 탭 = 재생 의사 → 한 번 탭으로 바로 재생(지영 리뷰 #254 P2)
-            speed = AppSettings.exerciseSpeedFor(AppSettings.exerciseDifficulty),
-            startPositionMs = startPositionMs, // 이어보기(#235): 직전 위치부터
-            // 실재생 구간만 스톱워치에 반영(P1-A). 재생 시작=true 구간만 누적한다.
-            onIsPlayingChanged = { isPlaying -> stopwatch.onIsPlayingChanged(isPlaying, SystemClock.elapsedRealtime()) },
-            onPositionSaved = onPositionSaved, // 이어보기(#235): 이탈 시 현재 위치 보관(완주면 0)
-        )
-        // 닫기(세로 복귀) — 어르신용으로 크게, 반투명 배경으로 밝은 영상 위에서도 잘 보이게. 좌상단.
-        //   가로에서 노치/펀치홀에 안 가리게 displayCutout inset 적용(지영 리뷰 #254 비차단).
-        TextButton(
-            onClick = onExit,
+        PlayerSurface(player, Modifier.fillMaxSize())
+
+        // ★ 상단 바: 닫기 + 출처를 함께 둔다. Media3 기본 컨트롤러(시크바·재생버튼)는 '하단'에 뜨므로, 출처를
+        //   하단에 두면 컨트롤러가 보이는 동안 가려진다(정인 리뷰 P1, 출처는 법적 의무). 상단 고정으로 컨트롤러
+        //   표시 여부와 무관하게 출처가 항상 보이게 한다.
+        Row(
             modifier = Modifier
                 .align(Alignment.TopStart)
+                .fillMaxWidth()
+                .background(Color.Black.copy(alpha = 0.5f))
                 .windowInsetsPadding(WindowInsets.displayCutout)
-                .padding(Dimens.Space16)
-                .background(Color.Black.copy(alpha = 0.5f), MaterialTheme.shapes.large),
+                .padding(horizontal = Dimens.Space16, vertical = Dimens.Space8),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Dimens.Space8),
         ) {
-            Text(
-                "✕  닫기",
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
-                style = MaterialTheme.typography.titleMedium,
-            )
+            TextButton(onClick = onCollapse) {
+                Text(
+                    "✕  세로로",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            }
+            ExerciseCreditText(stage, onDark = true, modifier = Modifier.weight(1f))
+        }
+    }
+}
+
+/** 하나의 ExoPlayer 를 PlayerView(기본 컨트롤러=톱니 포함)에 바인딩. 세로/전체화면 양쪽이 같은 player 를 재사용. */
+@UnstableApi
+@Composable
+private fun PlayerSurface(player: ExoPlayer, modifier: Modifier) {
+    AndroidView(
+        modifier = modifier,
+        factory = { ctx -> PlayerView(ctx).apply { useController = true } },
+        update = { it.player = player },
+        onRelease = { it.player = null },
+    )
+}
+
+/**
+ * ★ 운동 영상 출처표시(법적 의무). 서서=공유마당(늘품체조) 나열형, 근력=공공누리(KOGL) 문장형 5종 + Suno 음악.
+ *   문자열은 리소스로만 관리(임의 제거 금지). [onDark] 이면 어두운 영상 위(전체화면)용 밝은 글자.
+ */
+@Composable
+private fun ExerciseCreditText(stage: String, onDark: Boolean, modifier: Modifier = Modifier) {
+    val creditRes = when (stage) {
+        "standing" -> listOf(R.string.credit_standing_video, R.string.credit_music_suno)
+        "seated" -> listOf(R.string.credit_strength_video, R.string.credit_music_suno)
+        else -> return
+    }
+    val color = if (onDark) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(Dimens.Space4)) {
+        creditRes.forEach { id ->
+            Text(stringResource(id), style = MaterialTheme.typography.bodySmall, color = color)
         }
     }
 }

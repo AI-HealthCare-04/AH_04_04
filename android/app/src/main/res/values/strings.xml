@@ -5,4 +5,10 @@
     <string name="credit_music_title">음악 크레딧</string>
     <string name="credit_music_body">배경음악은 Suno AI로 생성되었습니다.\nMusic generated with Suno AI (suno.com)</string>
     <string name="credit_noncommercial">본 앱은 비상업적 학습·연구 목적으로 제작되었습니다.</string>
+
+    <!-- ★ 운동 영상 출처표시(법적 의무) — 영상이 보이는 내내(전체화면 포함) 노출. 임의 제거 금지.
+         서서 운동 = 공유마당(한국저작권위원회) 나열형 / 근력 운동 = 공공누리(KOGL) 문장형(5종 편집). -->
+    <string name="credit_standing_video">운동 영상: 늘품건강체조, 기증 (주)엔박스에디트, 공유마당</string>
+    <string name="credit_strength_video">본 저작물은 \'한국스포츠과학원\'에서 개방한 공공누리 제1유형 저작물 5종(제자리걷기·옆구리 운동·숄더 프레스·옆으로 다리 들기·숨쉬기 연속동작)을 편집하여 이용하였습니다. (출처: 한국스포츠과학원, www.kogl.or.kr)</string>
+    <string name="credit_music_suno">배경 음악: Suno AI 생성</string>
 </resources>

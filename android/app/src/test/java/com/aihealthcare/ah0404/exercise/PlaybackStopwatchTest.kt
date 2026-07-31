@@ -45,4 +45,18 @@ class PlaybackStopwatchTest {
 
         assertEquals("0s~60s = 60s = 1분(중복 true 무시)", 1f, minutes, 0.0001f)
     }
+
+    @Test
+    fun `elapsedMinutes 재호출해도 누적이 늘지 않는다`() {
+        // ExercisePlayer 는 정지(STATE_ENDED) 리스너와 이탈 dispose 양쪽에서 재생분을 쓸 수 있으므로,
+        //   elapsedMinutes 가 열린 구간을 닫은 뒤 다시 호출돼도 같은 값이어야 완료가 1회만 집계된다(지영 리뷰).
+        val sw = PlaybackStopwatch()
+        sw.onIsPlayingChanged(isPlaying = true, now = 0L)
+        sw.onIsPlayingChanged(isPlaying = false, now = 90_000L)
+        val first = sw.elapsedMinutes(now = 90_000L)
+        val second = sw.elapsedMinutes(now = 300_000L) // 한참 뒤 다시 호출
+
+        assertEquals("이미 확정된 재생분(1.5분)", 1.5f, first, 0.0001f)
+        assertEquals("재호출해도 동일 — 이중 집계 없음", first, second, 0.0001f)
+    }
 }

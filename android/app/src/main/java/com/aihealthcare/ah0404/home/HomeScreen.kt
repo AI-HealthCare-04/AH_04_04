@@ -36,7 +36,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aihealthcare.ah0404.network.SessionStore
-import com.aihealthcare.ah0404.settings.AppSettings
 import com.aihealthcare.ah0404.pet.PetIdle
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
@@ -153,11 +152,7 @@ private fun HomeContent(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current.applicationContext
-    // 운동 난이도 기본값을 STS 평가레벨(activity_profile.current_level)에 맞춘다.
-    //   설정에서 사용자가 직접 고른 적 있으면 그 선택을 유지한다(sync 내부 가드).
-    LaunchedEffect(ui.activityLevel) {
-        AppSettings.syncExerciseDifficultyFromLevel(context, ui.activityLevel)
-    }
+    // (운동 난이도 자동추종 제거: 재생 속도는 영상 안 톱니로 직접 조절 — 설정/평가레벨 연동 폐기)
     val visitStore = remember(context) { PetBubbleVisitStore(context) }
     val persistentUserId = SessionStore.persistentUserId
     val hourOfDay by produceState(initialValue = currentHourOfDay()) {

@@ -30,7 +30,7 @@ import com.aihealthcare.ah0404.network.retrofit
  *   **호출부에서 실제 확인 결과로 넘겨받는다**. 확인 게이트 UI 는 운동 진입 화면(#254)이 책임진다.
  *
  *  호출부(UI 배선, #254 이후):
- *   - 스트리밍(근력·서서): FullscreenLandscapeVideo.onWatched(durationMin)
+ *   - 스트리밍(근력·서서): ExercisePlayer.onWatched(durationMin)
  *   - 루틴(몸풀기·마무리): RoutinePlayerScreen.onComplete
  *
  *  걷기와 같은 이유로 **이미 로그인된 토큰**만 쓰고 guestLogin 을 부르지 않는다(전역 토큰 덮어쓰기 사고 #160).
