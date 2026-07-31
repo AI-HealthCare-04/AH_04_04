@@ -22,6 +22,7 @@ app/ml/artifacts/*
 !app/ml/artifacts/missing_rules.yaml
 !app/ml/artifacts/sarcopenia_model_minimal.joblib
 !app/ml/artifacts/sarcopenia_model_with_waist.joblib
+!app/ml/artifacts/cohort_unified_65plus.json
 
 ai_worker/
 README.md

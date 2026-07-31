@@ -21,7 +21,7 @@ COPY ./app ./app
 #   predictor 가 lru_cache 지연 로딩이라 누락돼도 컨테이너는 뜨고 /health 도 통과한다.
 #   그래서 배포 후 첫 예측 요청에서야 500으로 터진다(#127). 여기서 막아 배포 자체를 실패시킨다.
 RUN set -e; \
-    for f in sarcopenia_model_minimal.joblib sarcopenia_model_with_waist.joblib; do \
+    for f in sarcopenia_model_minimal.joblib sarcopenia_model_with_waist.joblib cohort_unified_65plus.json; do \
         [ -s "app/ml/artifacts/$f" ] || { \
             echo "ERROR: app/ml/artifacts/$f 가 이미지에 없습니다. .dockerignore 예외 규칙을 확인하세요(#127)." >&2; \
             exit 1; \
