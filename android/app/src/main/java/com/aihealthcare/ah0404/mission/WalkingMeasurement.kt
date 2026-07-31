@@ -18,6 +18,14 @@ object WalkingMeasurement {
 
     /** 알림 표시용 현재 걸음 수(공급자 없으면 0). */
     fun currentSteps(): Int = stepsProvider?.invoke() ?: 0
+
+    /**
+     * 알림 '중단' 액션(#312 요청 2)의 역방향 신호. VM(WalkingSessionViewModel)이 측정 시작 시
+     * { finish() } 로 등록하고 종료/이탈 시 null 로 지운다. 서비스는 이 콜백만 부르고 세션 내부를 모른다
+     * — finish() 경로라 걸음 스냅샷이 확정돼 복귀 시 완료 화면·제출로 이어진다(측정값 유실 없음).
+     */
+    @Volatile
+    var stopRequestListener: (() -> Unit)? = null
 }
 
 /**
