@@ -36,11 +36,12 @@ import retrofit2.HttpException
 import retrofit2.Response
 
 /**
- * 신체 정보 편집(#기록탭 §2) 검증 — 입력 가드 + 저장/재평가 **상태 분리**(리뷰 #294 P1).
+ * 신체 정보 편집(#기록탭 §2) 검증 — 입력 가드 + 저장/재평가 **상태 분리**(리뷰 #294 P1) + 단백질 제한 전송(#304).
  *
  *  계약: PATCH 성공 즉시 저장을 확정(saving 해제·onSaved·"저장했어요")하고, 재평가는 scoreRefresh
  *  로 따로 흐른다. 판정 경계 — 점수 존재=APPLIED / 422·점수 미제공=NOT_ELIGIBLE(재시도 무의미) /
  *  네트워크·5xx=FAILED(재시도 제공). 저장 실패 시 재평가는 아예 부르지 않는다.
+ *  #304: 저장 시 신장과 단백질 제한을 함께 전송한다(내정보에서 단백질 미션을 되돌릴 수 있게).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class HealthInfoViewModelTest {
@@ -58,9 +59,11 @@ class HealthInfoViewModelTest {
     }
 
     private class FakeApi(private val failSave: Boolean = false) : HealthProfileApi {
+        var lastBody: HealthProfilePatchRequest? = null
         override suspend fun getLatest() = HealthProfileLatest()
         override suspend fun updateProfile(body: HealthProfilePatchRequest): HealthProfileLatest {
             if (failSave) error("save failed")
+            lastBody = body
             return HealthProfileLatest()
         }
     }
@@ -102,11 +105,24 @@ class HealthInfoViewModelTest {
     fun rejects_nonpositive_height_or_weight_before_network() {
         val vm = HealthInfoViewModel(FakeApi(), FakeRecordApi())
 
-        vm.save("0", "60", "", "none") {}
+        vm.save("0", "60", "", "none", "none") {}
         assertEquals("키·몸무게를 0보다 큰 값으로 입력해 주세요.", vm.saveError)
 
-        vm.save("170", "", "", "none") {}
+        vm.save("170", "", "", "none", "none") {}
         assertEquals("키·몸무게를 0보다 큰 값으로 입력해 주세요.", vm.saveError)
+    }
+
+    @Test
+    fun `저장 시 신장과 단백질 제한을 함께 전송한다`() = runTest {
+        // #304: 단백질 제한을 편집·전송해야 신장 되돌림 후 미션이 다시 열린다.
+        val api = FakeApi()
+        val vm = HealthInfoViewModel(api, FakeRecordApi())
+
+        vm.save("170", "68", "", "none", "restricted") {}
+        advanceUntilIdle()
+
+        assertEquals("none", api.lastBody?.kidneyStatus)
+        assertEquals("restricted", api.lastBody?.proteinRestrictionStatus)
     }
 
     @Test
@@ -116,7 +132,7 @@ class HealthInfoViewModelTest {
         val vm = HealthInfoViewModel(FakeApi(), record)
         var savedCallback = false
 
-        vm.save("170", "65", "", "none") { savedCallback = true }
+        vm.save("170", "65", "", "none", "none") { savedCallback = true }
         advanceUntilIdle() // PATCH 완료·재평가는 gate 에서 대기 중
 
         assertFalse("재평가 대기 중에도 '저장 중…'에 갇히지 않는다", vm.saving)
@@ -137,7 +153,7 @@ class HealthInfoViewModelTest {
         val vm = HealthInfoViewModel(FakeApi(failSave = true), record)
         var savedCallback = false
 
-        vm.save("170", "65", "", "none") { savedCallback = true }
+        vm.save("170", "65", "", "none", "none") { savedCallback = true }
         advanceUntilIdle()
 
         assertEquals("저장 실패면 재평가하지 않는다(옛 프로필로 새 예측 생성 방지)", 0, record.reassessCalls)
@@ -151,7 +167,7 @@ class HealthInfoViewModelTest {
         val record = FakeRecordApi().apply { throwOnReassess = http422() }
         val vm = HealthInfoViewModel(FakeApi(), record)
 
-        vm.save("170", "65", "", "none") {}
+        vm.save("170", "65", "", "none", "none") {}
         advanceUntilIdle()
 
         assertEquals(ScoreRefreshState.NOT_ELIGIBLE, vm.scoreRefresh)
@@ -164,7 +180,7 @@ class HealthInfoViewModelTest {
         val record = FakeRecordApi().apply { response = RiskReassessResponse(predictionId = 2, muscleScore = null) }
         val vm = HealthInfoViewModel(FakeApi(), record)
 
-        vm.save("170", "65", "", "none") {}
+        vm.save("170", "65", "", "none", "none") {}
         advanceUntilIdle()
 
         assertEquals(ScoreRefreshState.NOT_ELIGIBLE, vm.scoreRefresh)
@@ -175,7 +191,7 @@ class HealthInfoViewModelTest {
         val record = FakeRecordApi().apply { throwOnReassess = IOException("timeout") }
         val vm = HealthInfoViewModel(FakeApi(), record)
 
-        vm.save("170", "65", "", "none") {}
+        vm.save("170", "65", "", "none", "none") {}
         advanceUntilIdle()
         assertEquals("네트워크 실패는 재시도 가능한 FAILED", ScoreRefreshState.FAILED, vm.scoreRefresh)
 

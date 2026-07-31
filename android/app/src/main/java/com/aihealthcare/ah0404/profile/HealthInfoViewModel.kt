@@ -75,7 +75,14 @@ class HealthInfoViewModel(
     fun dismissSavedMessage() { savedMessage = null }
 
     /** 편집 저장. 성공 시 profile 갱신 + 안내 메시지, onSaved() 콜백(편집 모드 종료). */
-    fun save(heightText: String, weightText: String, waistText: String, kidney: String, onSaved: () -> Unit) {
+    fun save(
+        heightText: String,
+        weightText: String,
+        waistText: String,
+        kidney: String,
+        protein: String,
+        onSaved: () -> Unit,
+    ) {
         val height = heightText.trim().toDoubleOrNull()
         val weight = weightText.trim().toDoubleOrNull()
         if (height == null || height <= 0 || weight == null || weight <= 0) {
@@ -102,7 +109,13 @@ class HealthInfoViewModel(
             saveError = null
             val ok = safeCall {
                 api.updateProfile(
-                    HealthProfilePatchRequest(heightCm = height, weightKg = weight, waistCm = waist, kidneyStatus = kidney),
+                    HealthProfilePatchRequest(
+                        heightCm = height,
+                        weightKg = weight,
+                        waistCm = waist,
+                        kidneyStatus = kidney,
+                        proteinRestrictionStatus = protein,
+                    ),
                 )
             }
                 .onSuccess {
