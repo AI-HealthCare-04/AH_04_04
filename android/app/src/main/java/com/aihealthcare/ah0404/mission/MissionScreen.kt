@@ -30,6 +30,7 @@ import com.aihealthcare.ah0404.network.Mission
 import com.aihealthcare.ah0404.network.MissionTodayProgress
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
+import com.aihealthcare.ah0404.ui.components.AigoTonalButton
 import com.aihealthcare.ah0404.ui.theme.AigoOnWarningContainer
 import com.aihealthcare.ah0404.ui.theme.AigoWarningContainer
 import com.aihealthcare.ah0404.ui.theme.Dimens
@@ -76,6 +77,8 @@ fun MissionScreen(
     vm: MissionViewModel = viewModel(),
     // 미션 카드를 누르면 유형과 무관하게 호출 — 유형별 목적지 라우팅은 호출부(MainActivity)가 담당(#93).
     onMissionClick: (Mission) -> Unit = {},
+    // 단백질 미션 숨김 사유 카드(#304 요청 4)의 '내 정보' 이동 — 목적지는 호출부(MainActivity)가 담당.
+    onOpenProfileEdit: () -> Unit = {},
 ) {
     val state by vm.uiState.collectAsState()
 
@@ -124,9 +127,34 @@ fun MissionScreen(
                         onClick = { onMissionClick(mission) },
                     )
                 }
+                // 단백질 미션 숨김 사유(#304 요청 4): 미션이 '사라진' 게 아니라 건강 상태 때문에 쉬는 중임을
+                //   알리고, 되돌릴 수 있는 곳(내 정보)으로 바로 보낸다.
+                s.proteinHiddenNotice?.let { notice ->
+                    item { ProteinHiddenNoticeCard(notice = notice, onOpenProfileEdit = onOpenProfileEdit) }
+                }
                 item { Spacer(modifier = Modifier.height(8.dp)) }
             }
         }
+    }
+}
+
+/** 단백질 미션 숨김 사유 카드(#304 요청 4). 사유 한 줄 + '내 정보' 이동 버튼. */
+@Composable
+private fun ProteinHiddenNoticeCard(notice: String, onOpenProfileEdit: () -> Unit) {
+    AigoCard {
+        Text(
+            text = "고단백 식사 미션",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = notice,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        AigoTonalButton(text = "내 정보에서 변경하기", onClick = onOpenProfileEdit)
     }
 }
 

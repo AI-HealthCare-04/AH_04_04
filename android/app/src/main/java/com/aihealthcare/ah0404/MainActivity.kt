@@ -365,6 +365,8 @@ private fun MainContent(
                         MissionDestination.COMING_SOON -> comingSoonMission = mission
                     }
                 },
+                // 단백질 미션 숨김 사유 카드(#304 요청 4) → 설정의 '내 정보' 편집과 같은 화면으로.
+                onOpenProfileEdit = { subScreen = "profile" },
             )
             MainTab.RECORDS -> RecordScreen(
                 onGoToMissions = { selectedTab = MainTab.MISSIONS },
