@@ -7,11 +7,12 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -491,9 +492,13 @@ private fun PortraitPlay(
         ) {
             PlayerSurface(player, Modifier.fillMaxSize())
         }
-        // ★ 출처표시(법적 의무) — 재생 내내 노출.
-        ExerciseCreditText(item.stage, onDark = false)
-        Spacer(Modifier.weight(1f))
+        // ★ 출처표시(법적 의무) — 재생 내내 노출. 근력(공공누리 5종) 출처가 길어 작은 화면(320dp·큰글꼴)에서
+        //   전체보기 버튼을 밀어낼 수 있으므로, 출처는 스크롤 영역에 두고 버튼은 하단 고정 → 둘 다 항상 도달 가능.
+        Column(
+            Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
+        ) {
+            ExerciseCreditText(item.stage, onDark = false)
+        }
         Button(onClick = onExpand, modifier = Modifier.fillMaxWidth().height(56.dp)) {
             Text("영상 전체보기", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         }

@@ -5,6 +5,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import kotlin.math.abs
 
 /**
  * 앱 전역 UI 적용값(글자·소리 크기·배경음악) — 설정(_15)에서 고른 값을 **실제로 화면·미디어에 적용**한다(묶음 C-2/C-3, 방식 B).
@@ -62,7 +63,8 @@ object AppSettings {
         fontScale = fontScaleFor(p.getString(KEY_FONT, SIZE_MEDIUM) ?: SIZE_MEDIUM)
         soundScale = soundScaleFor(p.getString(KEY_SOUND, SIZE_MEDIUM) ?: SIZE_MEDIUM)
         musicEnabled = p.getBoolean(KEY_MUSIC, true)
-        playbackSpeed = p.getFloat(KEY_SPEED, DEFAULT_SPEED)
+        // 저장된 값이 옵션 밖(구버전/손상)이어도 확정 4옵션으로 정규화해 복원.
+        playbackSpeed = normalizeSpeed(p.getFloat(KEY_SPEED, DEFAULT_SPEED))
     }
 
     fun setFontSize(context: Context, size: String) {
@@ -80,11 +82,16 @@ object AppSettings {
         prefs(context).edit().putBoolean(KEY_MUSIC, enabled).apply()
     }
 
-    /** 사용자가 영상 톱니로 고른 재생 속도를 전역 저장(영속). 안전 범위(0.5~2.0)로 클램프한다.
+    /** 재생 속도를 확정 옵션([SPEED_OPTIONS]) 중 가장 가까운 값으로 정규화한다. Media3 기본 컨트롤러가
+     *  1.75·2.0 등 옵션 밖 값을 줘도 전역엔 확정 4옵션만 저장되게 한다(지영 리뷰). */
+    fun normalizeSpeed(speed: Float): Float =
+        SPEED_OPTIONS.minByOrNull { abs(it - speed) } ?: DEFAULT_SPEED
+
+    /** 사용자가 영상 톱니로 고른 재생 속도를 전역 저장(영속). 확정 4옵션으로 정규화해 저장한다.
      *  ExoPlayer setPlaybackSpeed 는 기본 시간축 신축(pitch 유지)이라 빨라져도 목소리 음정은 자연스럽다. */
     fun setPlaybackSpeed(context: Context, speed: Float) {
-        val clamped = speed.coerceIn(0.5f, 2.0f)
-        playbackSpeed = clamped
-        prefs(context).edit().putFloat(KEY_SPEED, clamped).apply()
+        val normalized = normalizeSpeed(speed)
+        playbackSpeed = normalized
+        prefs(context).edit().putFloat(KEY_SPEED, normalized).apply()
     }
 }

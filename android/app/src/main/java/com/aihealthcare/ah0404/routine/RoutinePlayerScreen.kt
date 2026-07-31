@@ -188,7 +188,7 @@ fun RoutinePlayerScreen(
         val totalMs = st.sec * 1000L
         while (elapsedMs < totalMs) {
             delay(50)
-            if (!paused) { elapsedMs += (50 * speed).toLong(); playedMs += 50 }
+            if (!paused) { elapsedMs += scaledContentTickMs(50, speed); playedMs += 50 }
         }
         if (stepIndex + 1 < routine.steps.size) stepIndex++ else finished = true
     }
@@ -219,13 +219,17 @@ fun RoutinePlayerScreen(
     // ---------------- UI ----------------
     //   헤더(고정) + 미디어(weight: 남는 세로 공간) + 타이머(고정) + 컨트롤(고정, 항상 보임).
     //   고정 9:16이 폭을 채우면 너무 높아 하단 버튼이 화면 밖으로 밀리므로 미디어를 weight로 둔다(리뷰 #78).
-    Box(Modifier.fillMaxSize().background(BgColor)) {
     Column(
-        modifier = Modifier.fillMaxSize().systemBarsPadding().padding(16.dp),
+        modifier = Modifier.fillMaxSize().background(BgColor).systemBarsPadding().padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         if (step == null) return@Column
+
+        // 재생 속도 톱니 — 상단 우측에 '자체 행'으로 배치(동작명과 겹치지 않게 공간 확보, 스펙 §4-3, 48dp+).
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            SpeedGearButton(speed = speed, onClick = { showSpeed = true })
+        }
 
         // image_toggle: 자세 이미지(toggleFrame)를 카운트와 '같은 시계'인 elapsedMs에서 파생한다(지영 리뷰 #250).
         //   별도 delay 타이머로 두면 정지/재개 때 카운트(elapsedMs 기준)와 자세가 서로 어긋나(재개 직후 카운트만
@@ -358,14 +362,6 @@ fun RoutinePlayerScreen(
         }
     }
 
-        // 재생 속도 톱니 — 우상단(48dp+). 하단은 컨트롤 버튼이 꽉 차 상단 여백에 배치(스펙 §4-3).
-        SpeedGearButton(
-            speed = speed,
-            onClick = { showSpeed = true },
-            modifier = Modifier.align(Alignment.TopEnd).systemBarsPadding().padding(4.dp),
-        )
-    }
-
     // 재생 속도 선택 — 0.75/1.0/1.25/1.5. 고르면 영상·타이머·BGM 에 동일 적용되고 전역 저장(다음 영상에도 이어짐).
     if (showSpeed) {
         SpeedPickerDialog(
@@ -402,6 +398,15 @@ fun RoutinePlayerScreen(
 
 /** 루틴 중도 종료 시 이보다 짧으면(실수 진입 등) 적립하지 않는다(리뷰 #234-3: 5~10초 미만 무시). */
 private const val MIN_ROUTINE_PLAYED_MS = 5_000L
+
+/**
+ * 배속 재생 시 한 실시간 틱(realTickMs)에 흐르는 '콘텐츠(동작 기준) 시간'(ms). speed 배 빨리 진행한다.
+ *   타이머 elapsedMs 는 콘텐츠 시간이라 sec*1000 과 직접 비교 → 배속이면 단계가 speed 배 빨리 끝난다(영상·BGM 동기).
+ */
+internal fun scaledContentTickMs(realTickMs: Long, speed: Float): Long = (realTickMs * speed).toLong()
+
+/** 배속 speed 에서 sec 초 단계가 끝나는 데 걸리는 실시간(ms). (검증·문서용) */
+internal fun realStepDurationMs(sec: Int, speed: Float): Long = (sec * 1000L / speed).toLong()
 
 /** 배속 표시 라벨(예: 1.0 → "1.0배"). 정수처럼 딱 떨어지는 값도 소수 한 자리로 통일. */
 private fun speedLabel(speed: Float): String {

@@ -28,4 +28,16 @@ class AppSettingsTest {
         assertEquals(1.0f, AppSettings.DEFAULT_SPEED)
         assertEquals(listOf(0.75f, 1.0f, 1.25f, 1.5f), AppSettings.SPEED_OPTIONS)
     }
+
+    // Media3 컨트롤러가 옵션 밖 값(1.75·2.0 등)을 줘도 전역엔 확정 4옵션 중 최근접값만 저장(지영 리뷰).
+    @Test
+    fun playback_speed_normalizes_to_confirmed_options() {
+        assertEquals(1.5f, AppSettings.normalizeSpeed(1.75f)) // 옵션 밖 → 최근접(1.5)
+        assertEquals(1.5f, AppSettings.normalizeSpeed(2.0f))  // 상한 밖 → 최대 옵션
+        assertEquals(0.75f, AppSettings.normalizeSpeed(0.1f)) // 하한 밖 → 최소 옵션
+        assertEquals(1.0f, AppSettings.normalizeSpeed(0.9f))
+        assertEquals(1.25f, AppSettings.normalizeSpeed(1.2f))
+        // 확정 옵션값은 그대로 보존(복원 경계)
+        AppSettings.SPEED_OPTIONS.forEach { assertEquals(it, AppSettings.normalizeSpeed(it)) }
+    }
 }
