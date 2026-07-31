@@ -10,6 +10,7 @@ import com.aihealthcare.ah0404.mission.ExerciseFlowUseCase
 import com.aihealthcare.ah0404.network.ExerciseVideoApi
 import com.aihealthcare.ah0404.network.ExerciseVideoItem
 import com.aihealthcare.ah0404.network.MissionApi
+import com.aihealthcare.ah0404.network.SessionStore
 import com.aihealthcare.ah0404.network.retrofit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -36,6 +37,11 @@ class ExerciseVideosViewModel(
     private val exerciseFlow: ExerciseFlowUseCase = ExerciseFlowUseCase(),
     // 미전송 세션의 영속 저장소(#271). 기본은 영속하지 않는 NoOp(인메모리 동작 유지) — 실제 화면은 SharedPrefs 구현을 주입한다.
     private val outbox: ExerciseOutbox = NoOpExerciseOutbox(),
+    // 현재 인증 주체를 나타내는 revision(리뷰 #291, 시니어 공용 단말). 이 VM 은 Activity 범위라 로그아웃→타계정
+    //   로그인 시 재사용될 수 있어, 주체가 바뀌면 이전 사용자 파생 상태(오늘 누적 등)를 비워야 데이터가 섞이지 않는다.
+    //   `persistentUserId`(완료 소셜만·게스트는 null)와 달리 revision 은 로그인/로그아웃마다 증가해 게스트↔게스트
+    //   전환까지 구분한다(리뷰 #291-1). 테스트는 람다로 계정 전환을 주입한다.
+    private val authKey: () -> Int = { SessionStore.authRevision },
 ) : ViewModel() {
 
     var loading by mutableStateOf(false); private set
@@ -72,11 +78,24 @@ class ExerciseVideosViewModel(
     //   세션 내 복귀용이라 메모리 보관(앱 재시작까지 보존할 필요는 #235 범위 밖). 영상 완주 시엔 0 이 저장돼 다음엔 처음부터.
     private val positionByUrl = mutableMapOf<String, Long>()
 
-    // 오늘 누적 운동 '분'(#235): 서버가 완료 응답으로 준 당일 합산값(sum_exercise_minutes_today). 세션 완료 전엔 null(미표시).
-    //   서버 권위값이라 앱이 직접 더하지 않는다 — 여러 단계·여러 세션을 서버가 합산한 결과를 그대로 보여준다.
+    // 오늘 누적 운동 '분'(#235): 서버 당일 합산값(sum_exercise_minutes_today). 진입 시엔 목록 GET 의 운동
+    //   today_progress 로, 완료 후엔 완료 응답으로 채운다(둘 다 같은 서버 권위값). 앱이 직접 더하지 않는다.
+    //   운동 미션이 없거나 구버전 서버(필드 부재)면 null(종전대로 미표시).
     var todayExerciseMin by mutableStateOf<Float?>(null); private set
     // 오늘 운동 목표(하루 10분, #168)를 채웠는지 — 서버 판정(success). 완료 판정을 사용자가 확인할 수 있게 한다(#235 핵심).
     var todayGoalReached by mutableStateOf(false); private set
+
+    // 완료 전송이 오늘 누적을 적용할 때마다 증가하는 리비전(리뷰 #291 블로커1). 진입 목록 GET([loadTodayProgress])이
+    //   느리게 돌아오는 사이 완료 전송([send])이 최신 누적을 적용했다면, 조회 시작 시점 리비전과 달라져 오래된 GET 값을
+    //   폐기한다 — 중간 이탈 후 재진입 경로에서 늦은 GET 이 최신 완료값(예: 10분)을 과거값(6분)으로 되돌리는 것 방지.
+    //   completionMutex 안에서만 읽고/증가시켜 [send] 의 적용과 순서를 맞춘다(단일 스레드 confinement + 락으로 경합 없음).
+    private var progressRevision = 0
+
+    // 지금 화면에 반영된 오늘 누적이 '어느 인증 주체' 것인지(리뷰 #291). [load] 진입 시 [authKey] 와 비교해 주체가
+    //   바뀌었으면 어떤 네트워크 호출보다 먼저(동기 구간) 이전 사용자 파생 상태를 비운다 — 영상/목록 API 가 느려도
+    //   B 화면에 A 값이 한 번도 노출되지 않게(리뷰 #291-2). 최초 1회는 비교 대상이 없어 [loadedAuthInitialized] 로 구분.
+    private var loadedAuthKey = 0
+    private var loadedAuthInitialized = false
 
     /** 이어보기용: 이 url 을 어디부터 재생할지(ms). 없으면 0(처음부터). */
     fun resumePositionFor(url: String): Long = positionByUrl[url] ?: 0L
@@ -99,7 +118,42 @@ class ExerciseVideosViewModel(
     }
 
     fun load() {
+        // 계정 전환 감지·초기화는 어떤 네트워크 호출보다 **먼저**, load 의 동기 구간에서 한다(리뷰 #291-2): 영상/목록
+        //   API 가 느려도 새 사용자(B)가 진입한 즉시 이전 사용자(A) 파생 상태가 비워져, A 값이 한 번도 노출되지 않는다.
+        resetIfSubjectChanged()
         viewModelScope.launch { refresh() }
+    }
+
+    /**
+     * 인증 주체(로그인 세션)가 바뀌었으면 이전 사용자 파생 상태를 즉시 비운다(리뷰 #291). [authKey](기본
+     *  SessionStore.authRevision)는 로그인/로그아웃마다 증가하므로 게스트↔게스트 전환까지 감지한다(#291-1).
+     *  네트워크 이전 [load] 동기 구간에서 호출해 '한 번도 노출되지 않음'을 보장한다(#291-2). 최초 진입은 비교 대상이
+     *  없으므로 초기화만 하고 넘어간다.
+     */
+    private fun resetIfSubjectChanged() {
+        val key = authKey()
+        if (loadedAuthInitialized && key != loadedAuthKey) {
+            clearUserDerivedState()
+            swapPendingForCurrentUser()
+        }
+        loadedAuthKey = key
+        loadedAuthInitialized = true
+    }
+
+    /**
+     * 계정 전환 시 인메모리 미전송 세션([pending])을 이전 사용자 것에서 **현재 사용자 것으로 교체**한다(리뷰 #291 pending 경로).
+     *  이렇게 안 하면 화면 진입/ON_RESUME 의 [retryPending] 이 이전 사용자(A)의 남은 세션을 현재 사용자(B)의 인증·운동
+     *  template 으로 서버에 보내(오배분), [publishPending] 이 B 의 outbox 키에 A 세션을 저장할 수 있다.
+     *  - A 의 인메모리 세션을 버린다(retry 대상에서 제외) + 진행 중 전송 키([inFlight])도 잊는다(그 전송의 뒤늦은 완료는
+     *    [send] 의 epoch 가드가 pending/outbox/화면을 못 건드리게 막는다).
+     *  - 현재 사용자(B)의 영속 outbox 로 다시 채운다: [ExerciseOutbox.load] 는 호출 시점의 [SessionStore.persistentUserId]
+     *    키를 읽으므로(게스트/비로그인은 빈 목록) 자연히 B 것만 들어온다. 재시도는 화면의 기존 트리거가 맡는다.
+     */
+    private fun swapPendingForCurrentUser() {
+        pending.clear()
+        inFlight.clear()
+        outbox.load().forEach { pending[it.createdOnDeviceAt] = it }
+        pendingResends = pending.values.toList()
     }
 
     suspend fun refresh() {
@@ -117,8 +171,59 @@ class ExerciseVideosViewModel(
         result
             .onSuccess { videos = it.videos.sortedBy { v -> v.order } }
             .onFailure { error = true; Log.w(TAG, "운동 영상 조회 실패: ${it.message}") }
+        // 진입 시점부터 '오늘까지 N분'을 보여준다(#235 확장): 목록 GET 의 운동 today_progress(서버 당일 합산)를
+        //   재사용해, 재생 전에도·중간에 끊었어도 오늘 누적을 확인할 수 있게 한다. 영상 조회와 독립이라 실패해도 무영향.
+        loadTodayProgress(gen)
         loaded = true
         loading = false
+    }
+
+    /**
+     * 오늘 누적 운동시간을 서버 목록(GET /missions 의 운동 today_progress)에서 읽어 **진입 시점부터** 보여준다(#235 확장).
+     *  완료 응답([submitExercise])이 오면 더 최신값으로 덮어쓴다. today_progress 가 없거나(구버전 서버) 운동 미션이
+     *  없으면 종전대로 미표시(null 유지). 이 조회는 영상 표시와 독립이라 실패해도 화면엔 영향을 주지 않는다.
+     *  겸사겸사 단일 운동 템플릿 id 도 캐시해 [submitExercise] 의 별도 조회([resolveExerciseTemplateId])를 아낀다.
+     */
+    private suspend fun loadTodayProgress(gen: Int) {
+        // (계정 전환 감지·초기화는 [load] 동기 구간의 [resetIfSubjectChanged] 에서 네트워크 이전에 끝난다 — 리뷰 #291-2.)
+        // 이 조회가 '시작된' 시점의 완료-적용 리비전. 응답이 늦게 오는 사이 완료 전송([send])이 최신 누적을 적용했다면
+        //   달라지므로, 오래된 GET 값으로 되돌리지 않도록 폐기 판정에 쓴다(리뷰 #291 블로커1: stale GET 되돌림 방어).
+        val revAtStart = progressRevision
+        val exercise = try {
+            missionApi.getMissions().missions.firstOrNull { it.missionType == "exercise" }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "오늘 누적 진행 조회 실패: ${e.message}")
+            return
+        }
+        if (gen != generation) return
+        exercise?.missionTemplateId?.let { exerciseTemplateId = it } // 템플릿 id 캐시는 되돌림과 무관 — 락 밖에서 갱신
+        // 완료 적용과 순서를 맞춘다(리뷰 #291 블로커1): 완료 전송은 completionMutex 안에서 누적을 적용하므로, 같은 락
+        //   안에서 '내 조회 시작 이후 완료가 적용됐는지'를 리비전으로 확인해, 적용됐으면 이 오래된 GET 값을 버린다.
+        //   (완료 전송이 진행 중이면 그 적용이 끝날 때까지 여기서 대기했다가 최신 리비전을 보고 판정하므로 경합이 없다.)
+        completionMutex.withLock {
+            if (progressRevision != revAtStart) {
+                Log.i(TAG, "오늘 누적 GET 이 완료 적용보다 늦게 도착 — stale 로 폐기(최신 완료값 유지)")
+                return@withLock
+            }
+            exercise?.todayProgress?.let { p ->
+                todayExerciseMin = p.totalMin
+                todayGoalReached = p.goalReached
+            }
+        }
+    }
+
+    /**
+     * 사용자(인증 주체)가 바뀔 때 이전 사용자 파생 상태를 비운다(리뷰 #291 새 블로커, 시니어 공용 단말).
+     *  오늘 누적·달성·운동 템플릿 id 는 모두 특정 사용자에게 종속되므로, 계정 전환 시 남기면 다른 사용자에게 노출된다.
+     *  진입 조회 시작 시점에 호출해 새 GET 이 오기 전에 즉시 비운다. (미전송 세션 pending 은 사용자 스코프 outbox(#271)가
+     *  별도로 방어한다.) 템플릿 id 는 다음 조회에서 새 사용자 기준으로 다시 해석된다.
+     */
+    private fun clearUserDerivedState() {
+        todayExerciseMin = null
+        todayGoalReached = false
+        exerciseTemplateId = null
     }
 
     /**
@@ -167,6 +272,9 @@ class ExerciseVideosViewModel(
      */
     private fun send(session: PendingExercise) {
         val key = session.createdOnDeviceAt
+        // 이 전송이 시작된 인증 주체(리뷰 #291-3). 응답이 늦게 도착할 때, 그 사이 로그아웃→타계정으로 바뀌었으면
+        //   서버 전송·보존은 그대로 두되 **화면 상태만은** 갱신하지 않는다 — A 의 완료 응답이 B 화면에 A 누적을 다시 쓰는 것 방지.
+        val epoch = authKey()
         if (!inFlight.add(key)) return // 이 키가 이미 전송 중 — 이중 전송 방지
         // 성공 전까지 보존(재시도 대상). 실패해도 이미 들어가 있으니 별도 저장이 필요 없다.
         pending[key] = session
@@ -178,6 +286,15 @@ class ExerciseVideosViewModel(
                 //   판별할 수 없다(당일 최댓값 방식은 자정 경계에서 전날 값이 남는 회귀가 있었다). Mutex 로 전송+적용을 한 번에
                 //   하나씩 순서대로 처리하면 서버 처리순서=전송순서=적용순서가 되어, 마지막 전송값이 곧 최신 권위값이 된다.
                 completionMutex.withLock {
+                    // mutex 대기 중 계정이 바뀌었으면(리뷰 #291-4) **네트워크 호출 전에** 즉시 중단한다.
+                    //   응답 후 epoch 검사는 로컬 상태만 지키지, 이미 나간 서버 기록(B 토큰으로 A 세션 create/complete)은
+                    //   되돌리지 못한다. 대기하던 A 코루틴이 뒤늦게 mutex 를 잡고 현재 B 의 templateId·TokenHolder(B)로
+                    //   A 세션을 보내는 queued-before-network 경로를 여기서 막는다. A 세션은 자연 키로 A outbox 에 남아
+                    //   있으므로(swapPendingForCurrentUser 는 인메모리만 비움) A 재로그인 때 정상 재시도된다.
+                    if (authKey() != epoch) {
+                        Log.i(TAG, "완료 전송이 mutex 획득 전 계정 전환됨 — 서버 전송 자체를 중단(#291-4, 이전 사용자 세션 오배분 방지, durationMin=${session.durationMin})")
+                        return@withLock
+                    }
                     val templateId = exerciseTemplateId ?: resolveExerciseTemplateId()
                     if (templateId == null) {
                         // 로그인 전/조회 실패로 보낼 대상을 못 얻음 — 보존한 채 이후 재시도(로그인·복구)에 맡긴다.
@@ -190,17 +307,28 @@ class ExerciseVideosViewModel(
                         safetyNoticeConfirmed = session.safetyNoticeConfirmed,
                         createdOnDeviceAt = key,
                     )
-                    pending.remove(key) // 이 키만 서버에 안전히 남음 — 보존 해제(다른 세션은 유지)
-                    publishPending()
-                    // 누적 운동시간 표시(#235): 직렬화 덕에 이 응답이 지금까지의 마지막 전송 결과 = 최신 권위값이다.
-                    //   그대로 대입한다(무조건 last-wins). 당일 내 여러 세션은 마지막이 최댓값이라 자연히 커지고, 자정을 넘긴
-                    //   다음 날 첫 세션의 더 작은 누적/미달도 마지막 값이라 정상적으로 초기화된다.
-                    //   단, dailyTotalMin==null(재전송 조기종료: 자연 키로 찾은 과거 completed 로그 반환)이면 그 success 는
-                    //   '그 로그가 완료됐던 당시' 값이지 오늘 누적의 권위 판정이 아니다(리뷰 #280). 오늘 상태를 오염시키지
-                    //   않도록 **누적값이 있을 때만 분·달성을 한 묶음으로** 갱신하고, null 응답은 둘 다 건드리지 않는다.
-                    r.dailyTotalMin?.let { total ->
-                        todayExerciseMin = total
-                        todayGoalReached = r.success
+                    // 전송 시작 이후 계정이 바뀌었으면(리뷰 #291-3, pending 경로) pending 해제·outbox 저장·화면 갱신을
+                    //   **모두** 건너뛴다: 이 세션은 이전 사용자(A) 것이라, 현재 사용자(B)의 pending 맵/outbox/화면을 건드리면
+                    //   데이터가 섞인다. 서버 전송 자체는 위에서 이미 끝났고(자연 키 dedup·B outbox 는 교체됨), A 의 pending 은
+                    //   계정 전환 시 [swapPendingForCurrentUser] 가 이미 비웠으므로 여기서 remove 하지 않아도 남지 않는다.
+                    if (authKey() == epoch) {
+                        pending.remove(key) // 이 키만 서버에 안전히 남음 — 보존 해제(다른 세션은 유지)
+                        publishPending()
+                        // 누적 운동시간 표시(#235): 직렬화 덕에 이 응답이 지금까지의 마지막 전송 결과 = 최신 권위값이다.
+                        //   그대로 대입한다(무조건 last-wins). 당일 내 여러 세션은 마지막이 최댓값이라 자연히 커지고, 자정을 넘긴
+                        //   다음 날 첫 세션의 더 작은 누적/미달도 마지막 값이라 정상적으로 초기화된다.
+                        //   단, dailyTotalMin==null(재전송 조기종료: 자연 키로 찾은 과거 completed 로그 반환)이면 그 success 는
+                        //   '그 로그가 완료됐던 당시' 값이지 오늘 누적의 권위 판정이 아니다(리뷰 #280). 오늘 상태를 오염시키지
+                        //   않도록 **누적값이 있을 때만 분·달성을 한 묶음으로** 갱신하고, null 응답은 둘 다 건드리지 않는다.
+                        r.dailyTotalMin?.let { total ->
+                            todayExerciseMin = total
+                            todayGoalReached = r.success
+                            // 오늘 누적을 갱신함 — 진행 중인 오래된 목록 GET([loadTodayProgress]) 결과가 이 값을 되돌리지
+                            //   못하게 리비전을 올린다(리뷰 #291 블로커1). 이 대입은 completionMutex 안이라 리비전 증가도 원자적.
+                            progressRevision++
+                        }
+                    } else {
+                        Log.i(TAG, "완료 응답이 계정 전환 이후 도착 — pending/outbox/화면 미갱신(#291 pending 경로, durationMin=${session.durationMin})")
                     }
                     Log.i(
                         TAG,

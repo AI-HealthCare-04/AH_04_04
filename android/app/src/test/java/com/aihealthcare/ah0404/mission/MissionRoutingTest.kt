@@ -73,4 +73,28 @@ class MissionRoutingTest {
         assertEquals(true, missionCtaHighlighted("game"))
         assertEquals(false, missionCtaHighlighted("unknown_future_type"))
     }
+
+    // ── #304 요청 4: 단백질 미션 숨김 사유 문구 ──────────────────────────
+
+    @Test
+    fun `신장질환·투석이면 신장 사유를 안내한다`() {
+        assertEquals(true, proteinHiddenReason("kidney_disease", "none")?.contains("신장"))
+        assertEquals(true, proteinHiddenReason("dialysis", "unknown")?.contains("신장"))
+    }
+
+    @Test
+    fun `신장이 없고 단백질 제한이면 제한 사유를 안내한다`() {
+        assertEquals(true, proteinHiddenReason("none", "restricted")?.contains("단백질"))
+    }
+
+    @Test
+    fun `상태 미상이면 내 정보 입력을 안내한다`() {
+        assertEquals(true, proteinHiddenReason("unknown", "none")?.contains("내 정보"))
+        assertEquals(true, proteinHiddenReason("none", "unknown")?.contains("내 정보"))
+    }
+
+    @Test
+    fun `둘 다 none 이면 추측 안내를 하지 않는다`() {
+        assertEquals(null, proteinHiddenReason("none", "none"))
+    }
 }

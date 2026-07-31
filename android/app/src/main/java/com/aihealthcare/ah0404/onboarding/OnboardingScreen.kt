@@ -34,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -353,6 +354,8 @@ private fun FieldWithUnknown(
     estimated: Boolean,
     unknownEnabled: Boolean,
 ) {
+    val focusManager = LocalFocusManager.current
+
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(Dimens.Space8),
@@ -360,7 +363,10 @@ private fun FieldWithUnknown(
     ) {
         AigoTextField(value, onValueChange, label, Modifier.weight(1f), keyboardType = KeyboardType.Number)
         OutlinedButton(
-            onClick = onUnknown,
+            onClick = {
+                focusManager.clearFocus()
+                onUnknown()
+            },
             enabled = unknownEnabled,
             modifier = Modifier.height(Dimens.ButtonHeight),
         ) {
@@ -400,6 +406,13 @@ private fun ProfileStep(vm: OnboardingViewModel) {
 
             // 키·몸무게: 정확히 모르면 '모름' → 성별·연령대 추정치(제출 시 최종값으로 계산, has_estimated_value=true).
             //   '모름'은 성별·생년월일 입력 후에만 활성(그 값으로 추정하므로).
+            // 사전 안내(QA 피드백): 누르기 전에 '모름'의 동작과 직접 입력 권장을 알린다 — 기존 문구는
+            //   누른 '후'에만 떠서 무엇이 입력될지 미리 알 수 없었다.
+            Text(
+                "'모름'을 누르면 평균치가 자동으로 입력돼요. 정확한 예측을 위해 가급적 키·몸무게를 직접 입력해 주세요.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             FieldWithUnknown(
                 value = vm.heightInput,
                 onValueChange = vm::setHeight,
@@ -429,14 +442,19 @@ private fun ProfileStep(vm: OnboardingViewModel) {
             AigoDayStepper(value = vm.walkDays, onValueChange = { vm.walkDays = it }, max = 7)
 
             Text("일주일에 며칠 근력 운동을 하세요?", style = MaterialTheme.typography.titleMedium)
-            AigoDayStepper(value = vm.muscDays, onValueChange = { vm.muscDays = it }, max = 5)
+            AigoDayStepper(
+                value = vm.muscDays,
+                onValueChange = { vm.muscDays = it },
+                max = 5,
+                maxLabel = "5일 이상",
+            )
 
-            Text("신장 상태", style = MaterialTheme.typography.titleMedium)
+            // '신장 상태' → '신장 건강 상태'(QA 피드백): 키(身長)로 오독되지 않게 + 내정보 라벨과 톤 통일.
+            Text("신장 건강 상태", style = MaterialTheme.typography.titleMedium)
             AigoSegmentedSelector(
                 options = listOf(
                     SegmentOption("none", "해당 없음"),
                     SegmentOption("kidney_disease", "신장질환 있음"),
-                    SegmentOption("dialysis", "투석 중"),
                     SegmentOption("unknown", "잘 모르겠어요"),
                 ),
                 selected = vm.kidneyStatus,

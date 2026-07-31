@@ -6,6 +6,15 @@ import com.aihealthcare.ah0404.network.MissionApi
 import com.aihealthcare.ah0404.network.MissionLogCreateRequest
 import com.aihealthcare.ah0404.network.MissionLogUpdateRequest
 import com.aihealthcare.ah0404.network.retrofit
+import kotlin.math.round
+
+/**
+ * 서버로 보낼 운동 '분'을 소수 2자리로 반올림한다(#291 후속). 서버 duration_min 은 DECIMAL(6,2) 라
+ *  초→분 환산의 부동소수 정밀도(예: 200초 = 3.3333333분)를 그대로 실어 보내면 MySQL 이 저장 시 2자리로
+ *  잘라내며 'Data truncated for duration_min' 경고를 남긴다. 전송 전 반올림해 보내는 값과 저장값을 일치시켜
+ *  경고를 없앤다. 반올림이 0 이 되는 초미세 세션(<0.3초)은 서버 gt=0 을 지키도록 최소 표현값 0.01분으로 올린다.
+ */
+internal fun roundMinutesForServer(min: Float): Float = maxOf(round(min * 100f) / 100f, 0.01f)
 
 /**
  * ============================================================================
@@ -70,6 +79,8 @@ class ExerciseFlowUseCase(
         require(durationMin > 0f) { "durationMin must be > 0 (was $durationMin)" }
         // 안전 고지 미확인이면 서버가 어차피 400 으로 막는다. 조작된 참을 보내지 않도록 호출 전에 거른다(P1-C).
         require(safetyNoticeConfirmed) { "safetyNoticeConfirmed must be true (안전 고지 확인 게이트를 거쳐야 함)" }
+        // 전송 정밀도 정리(#291 후속): DECIMAL(6,2) 저장과 값을 맞춰 MySQL 'Data truncated' 경고를 없앤다.
+        val sendDurationMin = roundMinutesForServer(durationMin)
 
         // ② 운동 시작(in_progress) — 실제 안전 고지 확인 결과 + 자연 키 동봉
         val started = api.createMissionLog(
@@ -91,7 +102,7 @@ class ExerciseFlowUseCase(
             Log.i(TAG, "② 재전송 감지 — 이미 완료된 운동 기록이라 완료 단계를 건너뛴다(mission_log_id=$logId)")
             return Result(
                 missionLogId = logId,
-                durationMin = durationMin,
+                durationMin = sendDurationMin,
                 finalStatus = started.status,
                 success = started.success,
                 countedForDaily = started.countedForDaily,
@@ -105,7 +116,7 @@ class ExerciseFlowUseCase(
             body = MissionLogUpdateRequest(
                 success = true,   // ⚠️ 누락 시 서버가 실패로 처리할 수 있음
                 status = "completed",
-                exerciseDetail = ExerciseDetail(durationMin = durationMin),
+                exerciseDetail = ExerciseDetail(durationMin = sendDurationMin),
             ),
         )
         Log.i(
@@ -117,7 +128,7 @@ class ExerciseFlowUseCase(
 
         return Result(
             missionLogId = logId,
-            durationMin = durationMin,
+            durationMin = sendDurationMin,
             finalStatus = completed.status,
             success = completed.success,
             countedForDaily = completed.countedForDaily,

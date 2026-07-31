@@ -11,6 +11,7 @@ import com.aihealthcare.ah0404.network.MissionLogCreateRequest
 import com.aihealthcare.ah0404.network.MissionLogCreateResponse
 import com.aihealthcare.ah0404.network.MissionLogUpdateRequest
 import com.aihealthcare.ah0404.network.MissionLogUpdateResponse
+import com.aihealthcare.ah0404.network.MissionTodayProgress
 import com.aihealthcare.ah0404.network.MissionsResponse
 import com.aihealthcare.ah0404.network.SensorSessionCreateRequest
 import com.aihealthcare.ah0404.network.SensorSessionCreateResponse
@@ -18,7 +19,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -42,14 +45,19 @@ class ExerciseVideosViewModelTest {
     @After fun tearDown() = Dispatchers.resetMain()
 
     private class FakeApi(val result: () -> ExerciseVideosResponse) : ExerciseVideoApi {
-        override suspend fun getExerciseVideos() = result()
+        // >0 이면 영상 목록 응답을 그만큼 지연한다 — 계정 전환 초기화가 어떤 네트워크보다 앞서는지 검증용(리뷰 #291-2).
+        var delayMs = 0L
+        override suspend fun getExerciseVideos(): ExerciseVideosResponse {
+            if (delayMs > 0) delay(delayMs)
+            return result()
+        }
     }
 
     /**
      * MissionApi fake — getMissions 로 넘겨줄 미션 목록을 지정하고, 완료 전송(createMissionLog→completeMissionLog)
      * 호출을 기록한다. VM 의 missionApi(템플릿 해석)와 exerciseFlow(전송) 둘 다 같은 fake 로 물려 한 눈에 검증한다.
      */
-    private class FakeMissionApi(private val missions: List<Mission>) : MissionApi {
+    private class FakeMissionApi(var missions: List<Mission>) : MissionApi {
         var createdTemplateId: Int? = null
         var createdType: String? = null
         var createdSafetyConfirmed: Boolean? = null
@@ -69,10 +77,16 @@ class ExerciseVideosViewModelTest {
         var completeRespByDuration: Map<Float, Pair<Float?, Boolean>> = emptyMap()
         // 세션 분별 응답 지연(ms) — delay 로 응답 '도착 순서'를 뒤집어 역순 수렴을 검증한다.
         var completeDelayByDuration: Map<Float, Long> = emptyMap()
+        // getMissions 응답 지연(ms) — 진입 목록 GET 을 늦춰, 그 사이 완료 전송이 최신 누적을 적용한 뒤 늦은 GET 이
+        //   도착하는 stale 되돌림 경로를 재현한다(리뷰 #291 블로커1).
+        var getMissionsDelayMs = 0L
 
         override suspend fun guestLogin(): LoginResponse = error("unused")
 
-        override suspend fun getMissions(status: String): MissionsResponse = MissionsResponse(missions)
+        override suspend fun getMissions(status: String): MissionsResponse {
+            if (getMissionsDelayMs > 0) delay(getMissionsDelayMs)
+            return MissionsResponse(missions)
+        }
 
         override suspend fun createMissionLog(body: MissionLogCreateRequest): MissionLogCreateResponse {
             createdKeys.add(body.createdOnDeviceAt)
@@ -114,7 +128,7 @@ class ExerciseVideosViewModelTest {
             error("운동 흐름은 센서 세션을 만들지 않는다")
     }
 
-    private fun exerciseMission(templateId: Int) = Mission(
+    private fun exerciseMission(templateId: Int, todayProgress: MissionTodayProgress? = null) = Mission(
         missionTemplateId = templateId,
         missionType = "exercise",
         title = "영상 따라 운동하기",
@@ -123,6 +137,7 @@ class ExerciseVideosViewModelTest {
         targetUnit = "minutes",
         requiresSafetyNotice = true,
         rewardPoints = 10,
+        todayProgress = todayProgress,
     )
 
     private fun item(stage: String, order: Int, available: Boolean = false, url: String? = null) =
@@ -131,7 +146,7 @@ class ExerciseVideosViewModelTest {
     @Test
     fun loads_and_sorts_by_order() = runTest {
         val vm = ExerciseVideosViewModel(
-            FakeApi {
+            api = FakeApi {
                 ExerciseVideosResponse(
                     listOf(
                         item("cooldown", 4),
@@ -141,6 +156,8 @@ class ExerciseVideosViewModelTest {
                     ),
                 )
             },
+            // refresh() 가 오늘 누적을 목록 GET 으로도 읽으므로(A2) real retrofit 대신 fake 주입.
+            missionApi = FakeMissionApi(emptyList()),
         )
         vm.load(); advanceUntilIdle()
 
@@ -153,7 +170,10 @@ class ExerciseVideosViewModelTest {
 
     @Test
     fun load_failure_sets_error() = runTest {
-        val vm = ExerciseVideosViewModel(FakeApi { throw RuntimeException("boom") })
+        val vm = ExerciseVideosViewModel(
+            api = FakeApi { throw RuntimeException("boom") },
+            missionApi = FakeMissionApi(emptyList()),
+        )
         vm.load(); advanceUntilIdle()
         assertTrue(vm.error)
         assertTrue(vm.videos.isEmpty())
@@ -165,6 +185,8 @@ class ExerciseVideosViewModelTest {
         var stored: List<PendingExercise> = initial; private set
         override fun load(): List<PendingExercise> = stored
         override fun save(sessions: List<PendingExercise>) { stored = sessions }
+        /** 테스트에서 '현재 사용자 outbox' 내용을 직접 지정(계정 전환 시 다른 사용자 저장분 시뮬레이션). */
+        fun seed(sessions: List<PendingExercise>) { stored = sessions }
     }
 
     private fun vmWith(missionApi: FakeMissionApi, outbox: ExerciseOutbox = NoOpExerciseOutbox()) = ExerciseVideosViewModel(
@@ -422,6 +444,289 @@ class ExerciseVideosViewModelTest {
 
         assertEquals("진행 중이어도 현재 누적분은 보여준다", 3f, vm.todayExerciseMin)
         assertFalse("목표 미달이면 달성 안내는 아직 아니다", vm.todayGoalReached)
+    }
+
+    // -----------------------------------------------------------------------------------
+    // A2: 진입 시점부터 오늘 누적 운동시간 표시 — 목록 GET 의 운동 today_progress(서버 당일 합산) 재사용
+    // -----------------------------------------------------------------------------------
+
+    @Test
+    fun `진입(load) 시 목록 today_progress 로 완료 전에도 오늘 누적을 표시한다`() = runTest {
+        val fake = FakeMissionApi(
+            listOf(exerciseMission(templateId = 7, todayProgress = MissionTodayProgress(totalMin = 6f, goalReached = false))),
+        )
+        val vm = vmWith(fake)
+        assertNull("load 전엔 아직 없음", vm.todayExerciseMin)
+
+        vm.load(); advanceUntilIdle()
+
+        assertEquals("재생 전에도 서버 당일 누적(today_progress.total_min)을 노출", 6f, vm.todayExerciseMin)
+        assertFalse("미달이면 달성 아님", vm.todayGoalReached)
+    }
+
+    @Test
+    fun `진입 시 목록 today_progress 가 목표 달성이면 달성으로 표시한다`() = runTest {
+        val fake = FakeMissionApi(
+            listOf(exerciseMission(templateId = 7, todayProgress = MissionTodayProgress(totalMin = 10f, goalReached = true))),
+        )
+        val vm = vmWith(fake)
+        vm.load(); advanceUntilIdle()
+
+        assertEquals(10f, vm.todayExerciseMin)
+        assertTrue("today_progress.goal_reached=true → 달성 안내", vm.todayGoalReached)
+    }
+
+    @Test
+    fun `today_progress 가 없거나 운동 미션이 없으면 종전대로 미표시`() = runTest {
+        // 운동 미션은 있지만 today_progress 필드가 null(구버전 서버)
+        val vmOld = vmWith(FakeMissionApi(listOf(exerciseMission(templateId = 7, todayProgress = null))))
+        vmOld.load(); advanceUntilIdle()
+        assertNull("today_progress 부재면 null 유지(미표시)", vmOld.todayExerciseMin)
+
+        // 운동 미션 자체가 없어도 미표시(비로그인/걷기·식사만)
+        val vmNone = vmWith(FakeMissionApi(emptyList()))
+        vmNone.load(); advanceUntilIdle()
+        assertNull("운동 미션이 없으면 null 유지", vmNone.todayExerciseMin)
+    }
+
+    @Test
+    fun `완료 응답이 진입 초기값을 더 최신 누적으로 덮어쓴다`() = runTest {
+        val fake = FakeMissionApi(
+            listOf(exerciseMission(templateId = 7, todayProgress = MissionTodayProgress(totalMin = 6f, goalReached = false))),
+        )
+        fake.completeDailyTotal = 10f; fake.completeSuccess = true
+        val vm = vmWith(fake)
+        vm.load(); advanceUntilIdle()
+        assertEquals("진입 초기값(목록)", 6f, vm.todayExerciseMin)
+
+        vm.submitExercise(4f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+
+        assertEquals("완료 응답의 더 최신 누적으로 갱신", 10f, vm.todayExerciseMin)
+        assertTrue(vm.todayGoalReached)
+    }
+
+    /**
+     * 경합 되돌림 방지(리뷰 #291 블로커1): 진입 목록 GET 이 6분 상태에서 먼저 시작됐는데, 그 사이 완료 전송(outbox
+     *  재시도 등)이 최신 누적(10분)을 적용한 뒤 늦은 GET 이 6분을 반환하면, 리비전 가드가 stale GET 을 폐기해 최종이
+     *  10분으로 유지돼야 한다 — '중간 이탈 후 재진입' 핵심 경로. 완료 적용은 completionMutex 안에서 일어나므로 늦은
+     *  GET 의 적용도 같은 락 안에서 리비전을 비교해 되돌림을 막는다.
+     */
+    @Test
+    fun `느린 진입 GET 이 완료 적용 이후 도착하면 stale 로 버려 최신 완료값을 유지한다`() = runTest {
+        val fake = FakeMissionApi(
+            listOf(exerciseMission(templateId = 7, todayProgress = MissionTodayProgress(totalMin = 6f, goalReached = false))),
+        )
+        fake.getMissionsDelayMs = 200L        // 진입 목록 GET(6분 반환)을 늦춰, 완료 적용보다 나중에 도착시킨다
+        fake.completeDailyTotal = 10f; fake.completeSuccess = true // 완료 전송은 최신 누적 10분·달성
+        val vm = vmWith(fake)
+
+        vm.load()                              // 느린 getMissions(6분) 시작 — 아직 도착 전
+        vm.beginExerciseSession()
+        vm.submitExercise(4f, safetyNoticeConfirmed = true) // 완료가 먼저 10분 적용
+        advanceUntilIdle()                     // 완료 적용(10) 후 늦은 GET(6) 도착
+
+        assertEquals("늦게 온 목록 GET(6분)이 최신 완료값(10분)을 되돌리지 못한다", 10f, vm.todayExerciseMin)
+        assertTrue("완료가 목표 달성이므로 달성 표시 유지", vm.todayGoalReached)
+    }
+
+    // -----------------------------------------------------------------------------------
+    // 리뷰 #291: 계정 전환 시 이전 사용자 오늘 누적이 새 사용자에게 노출되지 않는다(시니어 공용 단말).
+    //   이 VM 은 Activity 범위라 로그아웃→타계정 로그인 시 재사용될 수 있다. 인증 revision(authKey) 이 로그인/
+    //   로그아웃마다 증가하므로 게스트↔게스트 전환까지 감지된다(#291-1). 초기화는 load 동기 구간(#291-2),
+    //   진행 중 완료 응답은 주체 epoch 로 가드(#291-3).
+    // -----------------------------------------------------------------------------------
+
+    /** authKey(인증 revision)를 주입해 계정 전환을 시뮬레이션하는 VM. api 지연 제어를 위해 FakeApi 도 함께 받는다. */
+    private fun vmWithAuth(
+        missionApi: FakeMissionApi,
+        api: FakeApi = FakeApi { ExerciseVideosResponse(emptyList()) },
+        authKey: () -> Int,
+    ) = ExerciseVideosViewModel(
+        api = api,
+        missionApi = missionApi,
+        exerciseFlow = ExerciseFlowUseCase(missionApi),
+        authKey = authKey,
+    )
+
+    @Test
+    fun `계정 전환 후 새 사용자에 운동 미션이 없으면 이전 사용자 누적이 남지 않는다`() = runTest {
+        val fake = FakeMissionApi(
+            listOf(exerciseMission(templateId = 7, todayProgress = MissionTodayProgress(totalMin = 6f, goalReached = false))),
+        )
+        var key = 1
+        val vm = vmWithAuth(fake) { key }
+
+        vm.load(); advanceUntilIdle()
+        assertEquals("사용자 A 오늘 누적", 6f, vm.todayExerciseMin)
+
+        // 로그아웃 → 사용자 B 로그인(authKey 증가). B 에겐 운동 미션이 없다(또는 today_progress 부재).
+        key = 2
+        fake.missions = emptyList()
+        vm.load(); advanceUntilIdle()
+
+        assertNull("사용자 B 화면에 A 의 6분이 남으면 안 된다", vm.todayExerciseMin)
+        assertFalse(vm.todayGoalReached)
+    }
+
+    @Test
+    fun `게스트끼리 전환해도(양쪽 userId 없음) 인증 revision 변화로 이전 누적을 지운다`() = runTest {
+        // #291-1: persistentUserId 는 게스트=null 이라 못 거르지만, authKey(로그인마다 증가)는 구분한다.
+        val fake = FakeMissionApi(
+            listOf(exerciseMission(templateId = 7, todayProgress = MissionTodayProgress(totalMin = 6f, goalReached = false))),
+        )
+        var key = 10 // 게스트 A 세션
+        val vm = vmWithAuth(fake) { key }
+        vm.load(); advanceUntilIdle()
+        assertEquals(6f, vm.todayExerciseMin)
+
+        // 게스트 A 로그아웃 → 게스트 B 로그인. 둘 다 userId 없음이지만 revision 은 증가한다.
+        key = 11
+        fake.missions = emptyList()
+        vm.load(); advanceUntilIdle()
+        assertNull("게스트 B 화면에 게스트 A 의 누적이 남으면 안 된다", vm.todayExerciseMin)
+    }
+
+    @Test
+    fun `계정 전환 초기화는 영상 API 가 느려도 진입 즉시(동기) 일어난다`() = runTest {
+        // #291-2: 초기화는 어떤 네트워크보다 앞. 영상 API 를 아주 느리게 해도 load() 반환 직후 이미 비워져 있어야 한다.
+        val fake = FakeMissionApi(
+            listOf(exerciseMission(templateId = 7, todayProgress = MissionTodayProgress(totalMin = 6f, goalReached = false))),
+        )
+        val slowApi = FakeApi { ExerciseVideosResponse(emptyList()) }
+        var key = 1
+        val vm = vmWithAuth(fake, slowApi) { key }
+        vm.load(); advanceUntilIdle()
+        assertEquals(6f, vm.todayExerciseMin)
+
+        // 사용자 B 로 전환. 영상 API 는 매우 느리게 응답한다.
+        key = 2
+        slowApi.delayMs = 10_000L
+        fake.missions = emptyList()
+        vm.load() // advance 없이 — load 의 동기 구간에서 이미 초기화돼야 한다
+
+        assertNull("영상 API 응답을 기다리지 않고 진입 즉시 이전 사용자 값이 비워진다", vm.todayExerciseMin)
+        assertFalse(vm.todayGoalReached)
+        advanceUntilIdle() // 느린 영상 응답까지 흘려도 B 값은 없음(운동 미션 없음)
+        assertNull(vm.todayExerciseMin)
+    }
+
+    @Test
+    fun `전송 시작 후 계정이 바뀌면 늦게 온 완료 응답이 새 사용자 화면을 오염시키지 않는다`() = runTest {
+        // #291-3: A 의 완료 전송이 응답 대기 중 로그아웃→B 로 바뀌면, 늦게 온 A 응답은 화면 상태를 갱신하지 않는다.
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        fake.completeDailyTotal = 10f; fake.completeSuccess = true
+        fake.completeDelayByDuration = mapOf(4f to 100L) // A 완료 응답을 늦춘다
+        var key = 1
+        val vm = vmWithAuth(fake) { key }
+        assertNull(vm.todayExerciseMin)
+
+        vm.beginExerciseSession()
+        vm.submitExercise(4f, safetyNoticeConfirmed = true) // A 전송 시작(epoch=1 캡처)
+        advanceTimeBy(50L); runCurrent() // 아직 A 응답 도착 전
+        key = 2 // 로그아웃 → 사용자 B 로 전환
+
+        advanceUntilIdle() // A 완료 응답(10분)이 이제 도착
+
+        assertEquals("A 완료 전송 자체는 서버로 나감", 1, fake.completeCalls)
+        assertNull("전송 시작 이후 계정이 바뀌었으므로 A 의 10분이 B 화면에 쓰이면 안 된다", vm.todayExerciseMin)
+        assertFalse(vm.todayGoalReached)
+    }
+
+    @Test
+    fun `계정 전환 시 이전 사용자 인메모리 pending 을 버리고 현재 사용자 outbox 로 교체한다`() = runTest {
+        // #291 pending 경로: resetIfSubjectChanged 가 UI 뿐 아니라 인메모리 pending 도 교체해야, B 진입 시
+        //   retryPending 이 A 세션을 B 인증/템플릿으로 오배분하지 않는다.
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        fake.failCreateTimes = 1 // A 전송 실패 → 인메모리 pending 보존
+        val outbox = FakeOutbox()
+        var key = 1
+        val vm = ExerciseVideosViewModel(
+            api = FakeApi { ExerciseVideosResponse(emptyList()) },
+            missionApi = fake,
+            exerciseFlow = ExerciseFlowUseCase(fake),
+            outbox = outbox,
+            authKey = { key },
+        )
+        vm.load(); advanceUntilIdle() // 사용자 A 로 진입(authKey=1 확정)
+        vm.beginExerciseSession()
+        vm.submitExercise(4f, safetyNoticeConfirmed = true)
+        advanceUntilIdle()
+        assertEquals("A 전송 실패로 인메모리 pending 보존", listOf(4f), vm.pendingResends.map { it.durationMin })
+        val postsAfterA = fake.createdKeys.size // A 실패 POST 1건
+
+        // 로그아웃 → 사용자 B 로그인. B 의 outbox 는 비어 있다(신규/게스트).
+        key = 2
+        outbox.seed(emptyList())
+        vm.load() // load 동기 구간에서 pending 교체(네트워크 이전)
+        assertTrue("B 진입 즉시 A 의 인메모리 pending 이 비워진다", vm.pendingResends.isEmpty())
+        advanceUntilIdle()
+
+        // 화면 진입/ON_RESUME 이 부르는 자동 재시도
+        vm.retryPending()
+        advanceUntilIdle()
+        assertEquals("A 세션이 B 인증/템플릿으로 다시 전송되지 않는다", postsAfterA, fake.createdKeys.size)
+    }
+
+    @Test
+    fun `계정 전환 시 현재 사용자 outbox 에 남은 미전송 세션은 되살린다`() = runTest {
+        // 교체가 '비우기'만이 아니라 현재 사용자(B) 저장분으로 채우는지 — B 가 이전에 못 보낸 세션이 있으면 노출/재시도돼야.
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        val outbox = FakeOutbox()
+        var key = 1
+        val vm = ExerciseVideosViewModel(
+            api = FakeApi { ExerciseVideosResponse(emptyList()) },
+            missionApi = fake,
+            exerciseFlow = ExerciseFlowUseCase(fake),
+            outbox = outbox,
+            authKey = { key },
+        )
+        vm.load(); advanceUntilIdle()
+        assertTrue(vm.pendingResends.isEmpty())
+
+        // 사용자 B 로 전환 — B outbox 엔 이전에 못 보낸 세션 1건.
+        key = 2
+        outbox.seed(listOf(PendingExercise(7f, "2026-07-30T09:00:00.000+09:00", safetyNoticeConfirmed = true)))
+        vm.load()
+        assertEquals("B 의 outbox 저장분이 인메모리 pending 으로 되살아난다", listOf(7f), vm.pendingResends.map { it.durationMin })
+    }
+
+    @Test
+    fun `같은 사용자면 파생 상태를 지우지 않는다`() = runTest {
+        val fake = FakeMissionApi(
+            listOf(exerciseMission(templateId = 7, todayProgress = MissionTodayProgress(totalMin = 6f, goalReached = false))),
+        )
+        val vm = vmWithAuth(fake) { 1 } // 인증 주체 고정
+        vm.load(); advanceUntilIdle()
+        assertEquals(6f, vm.todayExerciseMin)
+
+        vm.load(); advanceUntilIdle() // 같은 사용자 재진입
+        assertEquals("같은 사용자면 재조회로 새 값이 오되 사이에 비워지지 않는다", 6f, vm.todayExerciseMin)
+    }
+
+    @Test
+    fun `mutex 대기 중 계정이 바뀌면 대기하던 이전 사용자 전송은 서버로 나가지 않는다`() = runTest {
+        // #291-4: send() 는 epoch 를 캡처하고 completionMutex 를 기다리지만, 응답 후에만 epoch 를 검사하면
+        //   대기하다 뒤늦게 mutex 를 잡은 A 코루틴이 현재 B 의 템플릿·토큰으로 A 세션을 이미 서버에 보내버린다.
+        //   mutex 획득 직후·네트워크 호출 전 epoch 재검사로 queued-before-network 오배분을 막는지 검증한다.
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        fake.completeDelayByDuration = mapOf(4f to 200L) // A 전송1 을 mutex 안에서 오래 붙잡아 둔다
+        var key = 1
+        val vm = vmWithAuth(fake) { key }
+
+        // A 전송1(4분): mutex 를 잡고 completeMissionLog 응답을 기다린다. A 전송2(6분): mutex 대기 큐에 들어간다.
+        vm.beginExerciseSession(); vm.submitExercise(4f, safetyNoticeConfirmed = true)
+        vm.beginExerciseSession(); vm.submitExercise(6f, safetyNoticeConfirmed = true)
+        advanceTimeBy(50L); runCurrent() // 전송1 이 mutex 점유·응답 대기, 전송2 는 대기 중
+        assertEquals("이 시점엔 전송1 만 서버로 create 됐다", 1, fake.createdKeys.size)
+
+        // 로그아웃 → 사용자 B 로그인. 인메모리 pending 교체(네트워크 이전).
+        key = 2
+        vm.load()
+        advanceUntilIdle() // 전송1 응답 도착 → mutex 해제 → 전송2 가 mutex 획득
+
+        assertEquals("대기하던 A 전송2 는 계정 전환 후 mutex 를 잡아도 서버로 create/complete 되지 않는다", 1, fake.createdKeys.size)
+        assertEquals("완료 호출도 전송1 한 건뿐(B 토큰으로 A 세션이 나가지 않음)", 1, fake.completeCalls)
     }
 
     @Test

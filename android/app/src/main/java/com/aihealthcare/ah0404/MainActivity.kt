@@ -20,6 +20,8 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -32,6 +34,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aihealthcare.ah0404.auth.AuthLoginViewModel
 import com.aihealthcare.ah0404.auth.SocialProvider
@@ -175,12 +180,32 @@ class MainActivity : ComponentActivity() {
                     //   해제가 끝나면 sessionRevision++ 로 라우팅을 재평가(→ LOGIN_REQUIRED)시킨다.
                     //   ⚠️ 위 LaunchedEffect(L103)의 stale-token 자동정리는 같은 사용자 재로그인 편의를 위해
                     //      공급자 credential 을 일부러 유지한다(명시적 로그아웃일 때만 공급자까지 해제).
-                    AppRoute.MAIN -> MainContent(
-                        onLogout = {
-                            authLoginViewModel.signOut { sessionRevision++ }
-                        },
-                        onExit = activity::finish,
-                    )
+                    // 계정 간 데이터 격리(QA, #291 일반화): MAIN 안의 화면 VM(미션·기록·홈·내정보·걷기 등)은
+                    //   기본이 Activity 수명이라, 로그아웃 후 다른 계정으로 로그인해도 이전 사용자의 데이터가 VM 에
+                    //   남는다(MissionViewModel 은 init 1회 조회라 특히 두드러짐. #291 은 운동 상세 VM 한 곳만
+                    //   authRevision 으로 자체 초기화했다). 같은 SessionStore.authRevision 을 키로 MAIN 전용 VM
+                    //   저장소를 인증 주체마다 새로 만들고, 이전 저장소는 dispose 때 clear 로 파기한다 — onCleared 가
+                    //   불려 걷기 세션·진행 중 조회도 함께 정리된다. authRevision 변경(로그인·로그아웃·리셋·복원)은
+                    //   항상 sessionRevision++ 재라우팅과 동행하므로 이 remember 는 놓치지 않고 재평가된다.
+                    //   AuthLoginViewModel 은 이 분기 밖(Activity 저장소)이라 로그인 흐름엔 영향이 없다.
+                    AppRoute.MAIN -> {
+                        val mainVmOwner = remember(SessionStore.authRevision) {
+                            object : ViewModelStoreOwner {
+                                override val viewModelStore = ViewModelStore()
+                            }
+                        }
+                        DisposableEffect(mainVmOwner) {
+                            onDispose { mainVmOwner.viewModelStore.clear() }
+                        }
+                        CompositionLocalProvider(LocalViewModelStoreOwner provides mainVmOwner) {
+                            MainContent(
+                                onLogout = {
+                                    authLoginViewModel.signOut { sessionRevision++ }
+                                },
+                                onExit = activity::finish,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -296,8 +321,10 @@ private fun MainContent(
     var subScreen by remember { mutableStateOf<String?>(null) }
     when (subScreen) {
         "profile" -> {
-            BackHandler { subScreen = null }
-            ProfileScreen(onBack = { subScreen = null })
+            // 복귀 시 미션 재조회(리뷰 #322): 내정보에서 신장·단백질 상태를 바꾸면 단백질 미션 노출과
+            //   숨김 사유 카드가 달라진다 — 운동 복귀(아래 "exercise")와 동일하게 목록을 서버 권위값으로 갱신.
+            BackHandler { subScreen = null; missionVm.loadMissions() }
+            ProfileScreen(onBack = { subScreen = null; missionVm.loadMissions() })
             return
         }
         "support" -> {
@@ -365,6 +392,8 @@ private fun MainContent(
                         MissionDestination.COMING_SOON -> comingSoonMission = mission
                     }
                 },
+                // 단백질 미션 숨김 사유 카드(#304 요청 4) → 설정의 '내 정보' 편집과 같은 화면으로.
+                onOpenProfileEdit = { subScreen = "profile" },
             )
             MainTab.RECORDS -> RecordScreen(
                 onGoToMissions = { selectedTab = MainTab.MISSIONS },

@@ -16,6 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalFocusManager
 import com.aihealthcare.ah0404.ui.theme.Dimens
 import com.aihealthcare.ah0404.ui.theme.PillShape
 
@@ -42,10 +43,14 @@ fun AigoPrimaryButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
+    val focusManager = LocalFocusManager.current
     val interaction = remember { MutableInteractionSource() }
     val scale = rememberPressScale(interaction)
     Button(
-        onClick = onClick,
+        onClick = {
+            focusManager.clearFocus()
+            onClick()
+        },
         modifier = modifier
             .fillMaxWidth()
             .height(Dimens.ButtonHeight)
@@ -70,10 +75,14 @@ fun AigoSecondaryButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
+    val focusManager = LocalFocusManager.current
     val interaction = remember { MutableInteractionSource() }
     val scale = rememberPressScale(interaction)
     OutlinedButton(
-        onClick = onClick,
+        onClick = {
+            focusManager.clearFocus()
+            onClick()
+        },
         modifier = modifier
             .fillMaxWidth()
             .height(Dimens.ButtonHeight)
@@ -98,10 +107,14 @@ fun AigoTonalButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
+    val focusManager = LocalFocusManager.current
     val interaction = remember { MutableInteractionSource() }
     val scale = rememberPressScale(interaction)
     Button(
-        onClick = onClick,
+        onClick = {
+            focusManager.clearFocus()
+            onClick()
+        },
         modifier = modifier
             .fillMaxWidth()
             .height(Dimens.ButtonHeight)
