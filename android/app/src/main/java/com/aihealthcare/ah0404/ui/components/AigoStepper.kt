@@ -11,6 +11,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -43,6 +44,8 @@ fun AigoDayStepper(
     zeroLabel: String = "안 해요",
     placeholder: String = "선택해 주세요",
 ) {
+    val focusManager = LocalFocusManager.current
+
     Row(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(Dimens.Space16, Alignment.CenterHorizontally),
@@ -50,6 +53,7 @@ fun AigoDayStepper(
     ) {
         // 미응답(null)·최솟값에서 '−' 비활성. '+'는 null 이면 min(0)으로 진입한다.
         StepButton(symbol = "−", enabled = value != null && value > min, description = "$unitLabel 줄이기") {
+            focusManager.clearFocus()
             onValueChange((value!! - 1).coerceAtLeast(min))
         }
         Text(
@@ -68,6 +72,7 @@ fun AigoDayStepper(
             modifier = Modifier.weight(1f).widthIn(min = 72.dp),
         )
         StepButton(symbol = "+", enabled = value == null || value < max, description = "$unitLabel 늘리기") {
+            focusManager.clearFocus()
             onValueChange(if (value == null) min else (value + 1).coerceAtMost(max))
         }
     }

@@ -34,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -355,6 +356,8 @@ private fun FieldWithUnknown(
     estimated: Boolean,
     unknownEnabled: Boolean,
 ) {
+    val focusManager = LocalFocusManager.current
+
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(Dimens.Space8),
@@ -362,7 +365,10 @@ private fun FieldWithUnknown(
     ) {
         AigoTextField(value, onValueChange, label, Modifier.weight(1f), keyboardType = KeyboardType.Number)
         OutlinedButton(
-            onClick = onUnknown,
+            onClick = {
+                focusManager.clearFocus()
+                onUnknown()
+            },
             enabled = unknownEnabled,
             modifier = Modifier.height(Dimens.ButtonHeight),
         ) {
