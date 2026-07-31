@@ -63,11 +63,14 @@ class OnboardingCohortLoadTest {
         override suspend fun getHome() = TODO()
     }
 
+    private fun OnboardingViewModel.fillAdultInputs() {
+        sex = "male"; birthYear = "1955"; birthMonth = "3"; birthDay = "1" // 만 71세(65+)
+        setHeight("170"); setWeight("68"); walkDays = 3; muscDays = 1
+    }
+
     private fun readyVm(cohortDelayMs: Long) =
-        OnboardingViewModel(FakeApi(cohortDelayMs), todayYear = 2026, todayMonth = 7, todayDay = 15).apply {
-            sex = "male"; birthYear = "1955"; birthMonth = "3"; birthDay = "1" // 만 71세(65+)
-            setHeight("170"); setWeight("68"); walkDays = 3; muscDays = 1
-        }
+        OnboardingViewModel(FakeApi(cohortDelayMs), todayYear = 2026, todayMonth = 7, todayDay = 15)
+            .apply { fillAdultInputs() }
 
     @Test
     fun `느린 코호트 조회가 결과 화면 진입을 막지 않는다`() = runTest(dispatcher) {
@@ -100,6 +103,47 @@ class OnboardingCohortLoadTest {
 
         assertEquals(OnbStep.RESULT, vm.step)
         assertNull("실패는 차트만 미표시로 흡수", vm.cohort)
+    }
+
+    @Test
+    fun `리셋하면 채워진 이전 사용자 코호트가 즉시 제거된다`() = runTest(dispatcher) {
+        val vm = readyVm(cohortDelayMs = 0)
+        vm.submitProfile(); advanceUntilIdle()
+        vm.skipAssessment(); advanceUntilIdle()
+        assertNotNull("사용자 A 의 코호트가 채워진 상태", vm.cohort)
+
+        vm.resetToWelcome() // 로그아웃·세션 리셋
+        assertNull("리셋 즉시 이전 사용자 코호트 제거 — 계정 간 격리(리뷰 #302)", vm.cohort)
+    }
+
+    @Test
+    fun `지연된 이전 사용자 응답은 리셋 후 다음 사용자 화면에 적용되지 않는다`() = runTest(dispatcher) {
+        // 1번째 조회(사용자 A)는 지연 후 lowerCount=11, 2번째(사용자 B)는 즉시 22 —
+        //   'A 조회 지연 → resetToWelcome → B 결과 진입 → A 응답 도착' 순서 재현(리뷰 #302).
+        var calls = 0
+        val api = object : OnboardingApi by FakeApi(0) {
+            override suspend fun getCohortDistribution(): CohortDistributionResponse =
+                if (++calls == 1) {
+                    delay(10_000)
+                    SAMPLE_COHORT.copy(lowerCount = 11)
+                } else {
+                    SAMPLE_COHORT.copy(lowerCount = 22)
+                }
+        }
+        val vm = OnboardingViewModel(api, todayYear = 2026, todayMonth = 7, todayDay = 15)
+        vm.fillAdultInputs()
+        vm.submitProfile(); advanceUntilIdle()
+        vm.skipAssessment(); runCurrent() // A: RESULT 진입, 코호트 조회는 지연 중
+        assertEquals(OnbStep.RESULT, vm.step)
+        assertNull(vm.cohort)
+
+        vm.resetToWelcome() // A 로그아웃 — 진행 중 A 조회는 취소된다
+
+        vm.fillAdultInputs() // B 온보딩 재진행(같은 Activity 범위 VM)
+        vm.submitProfile(); advanceUntilIdle()
+        vm.skipAssessment(); advanceUntilIdle() // B 응답 적용 + 남아있다면 A 지연 소진
+        assertEquals(OnbStep.RESULT, vm.step)
+        assertEquals("늦게 도착한 A(11) 응답이 아니라 B(22) 응답만 반영", 22, vm.cohort?.lowerCount)
     }
 
     private companion object {

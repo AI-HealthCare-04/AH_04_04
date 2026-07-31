@@ -18,6 +18,7 @@ import com.aihealthcare.ah0404.network.Term
 import com.aihealthcare.ah0404.network.TokenHolder
 import com.aihealthcare.ah0404.network.retrofit
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /** 온보딩 단계. 화면 라우팅의 기준. */
@@ -142,6 +143,9 @@ class OnboardingViewModel(
     var result by mutableStateOf<RiskPredictionResponse?>(null); private set
     // 또래 분포 병합 차트(#193) 데이터. 결과 표시와 독립 — 없으면(서버 미지원·65세 미만·조회 실패) 차트만 미표시.
     var cohort by mutableStateOf<CohortDistributionResponse?>(null); private set
+    // 진행 중인 코호트 조회. 이 VM은 Activity 수명이라 리셋·재예측 시 취소하지 않으면 늦게 도착한
+    //   이전 사용자의 응답이 다음 사용자 화면을 덮는다(리뷰 #302 — 계정 간 데이터 격리).
+    private var cohortJob: Job? = null
 
     private val requiredTerms = listOf("service", "privacy", "sensitive_health")
 
@@ -178,6 +182,11 @@ class OnboardingViewModel(
         profileId = null
         bmi = null
         result = null
+        // 코호트(확률·또래 순위 포함 건강 데이터)도 즉시 비우고 진행 중 조회를 취소한다 — 다음 사용자
+        //   결과에 이전 사용자 값이 표시되거나 늦은 응답이 덮는 경로 차단(리뷰 #302).
+        cohortJob?.cancel()
+        cohortJob = null
+        cohort = null
         birthYear = ""; birthMonth = ""; birthDay = ""
         sex = null
         heightCm = ""; weightKg = ""; waistCm = ""
@@ -289,6 +298,10 @@ class OnboardingViewModel(
     /** 위험도 예측 → 결과. profileId 가 없으면(비정상) 예외로 에러 처리. */
     private suspend fun predictAndFinish() {
         val pid = profileId ?: throw IllegalStateException("프로필 정보가 없습니다. 프로필부터 다시 진행해 주세요.")
+        // 새 결과를 열기 전에 이전 코호트를 제거한다 — 리셋을 안 거친 재예측에서도 새 응답이 오기 전까지
+        //   이전 값이 잠깐 표시되는 일이 없게(리뷰 #302).
+        cohortJob?.cancel()
+        cohort = null
         result = api.createRiskPrediction(RiskPredictionRequest(pid))
         // 결과를 먼저 확정하고 즉시 RESULT 로 이동한다 — 선택 기능인 코호트 조회(느린 연결·타임아웃)가 이미 완료된
         //   온보딩을 로딩 화면에 가두지 않게(리뷰 #302). 코호트는 아래에서 별도 코루틴으로 독립 조회한다.
@@ -299,9 +312,13 @@ class OnboardingViewModel(
     /**
      * 또래 분포 병합 차트(#193) 데이터를 **결과 확정과 독립적으로**(별도 코루틴) 조회한다. 지연·실패·서버 미지원·
      * 65세 미만이면 cohort=null 로 두어 차트만 미표시 — 온보딩 완료 흐름을 막지 않는다(리뷰 #302).
+     *
+     * Job 을 보관해 새 조회·리셋 시 이전 조회를 취소한다 — 취소된 코루틴은 CancellationException 으로
+     * 종료돼 늦게 도착한 응답이 cohort 에 적용되지 않는다(리뷰 #302 격리).
      */
     internal fun loadCohortDistribution() {
-        viewModelScope.launch {
+        cohortJob?.cancel()
+        cohortJob = viewModelScope.launch {
             cohort = try {
                 api.getCohortDistribution()
             } catch (e: CancellationException) {
