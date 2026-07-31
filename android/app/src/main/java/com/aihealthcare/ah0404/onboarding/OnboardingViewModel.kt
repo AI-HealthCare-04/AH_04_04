@@ -36,7 +36,8 @@ internal fun parseChairStandSeconds(input: String): Double? =
 /**
  * 키·몸무게 '모름' 시 성별·연령대 추정치 (cm, kg). 상수 표 — 나중에 교체 가능.
  *   남 50–74: 166/65 · 75+: 163/62   /   여 50–74: 153/56 · 75+: 150/53
- * #298 C: 만 50~64 구간은 65–74 추정치를 재사용한다(별도 정밀 통계 확보 시 구간 분리). 65세 미만도 '모름' 추정 입력 가능.
+ * #298 C: 만 50~64 구간은 65–74 추정치를 **임시 재사용**한다. '추정치' 라벨이 붙고 65세 미만은 예측이 실행되지
+ *   않아 모델 입력 왜곡은 없으나, KNHANES 기반 50~64 실제 통계 확보 후 교체 예정 — 후속 이슈 #326.
  * 성별 미선택/미상은 남성 기준으로 폴백(성별 선택 후 다시 '모름' 누르면 갱신).
  */
 internal fun estimateBody(sex: String?, age: Int?): Pair<Int, Int> {
@@ -269,6 +270,11 @@ class OnboardingViewModel(
         val birth = composeBirthDate() ?: run {
             error = "생년월일을 정확히 입력해 주세요."; return@launchStep
         }
+        // 최소 가입 연령 하한(리뷰 #313): 만 14세 미만은 개인정보보호법상 법정대리인 동의가 필요 → 제출 차단.
+        //   (인라인 birthDateError 로도 안내하지만 제출 시점에도 최종 방어.) #298 의 50-64 예측 준비중 안내와는 별개.
+        if ((ageYears() ?: 0) < MIN_SIGNUP_AGE) {
+            error = "만 ${MIN_SIGNUP_AGE}세 이상만 가입할 수 있어요."; return@launchStep
+        }
         // #298 C: 만 65세 미만도 가입·온보딩을 완료할 수 있다(예측만 "준비 중"). 나이 자체로 제출을 막지 않는다.
         //   생년월일 자체가 유효하면(composeBirthDate 통과) age 는 항상 산출된다.
         // 추정('모름')이면 제출 시점의 최종 성별·나이로 계산(버튼 누른 시점 아님, 리뷰 #75-2).
@@ -339,15 +345,26 @@ class OnboardingViewModel(
         result = try {
             api.createRiskPrediction(RiskPredictionRequest(pid))
         } catch (e: HttpException) {
-            if (e.code() == 422) {
-                Log.i(TAG, "예측 대상 아님(만 65세 미만 등) — 예측 없이 온보딩 완료(#298 C)")
+            // 422 를 무조건 '예측 준비 중'으로 삼키면 다른 검증성 422(프로필 불일치·비즈니스 검증)까지 '예측 없는
+            //   완주'로 위장된다(리뷰 #313). 서버가 이 케이스에만 내려주는 안정 코드(sarcopenia_prediction_preparing)
+            //   일 때만 예측 없이 완주로 넘기고, 그 외 422 는 재던져 에러 안내 + 재시도로 돌린다.
+            if (e.code() == 422 && isSarcopeniaPreparing(e)) {
+                Log.i(TAG, "예측 대상 아님(만 65세 미만 = sarcopenia_prediction_preparing) — 예측 없이 온보딩 완료(#298 C)")
                 null
             } else {
-                throw e // 그 외 오류는 재던져 launchStep 이 에러 안내 + 재시도로 처리
+                throw e
             }
         }
         finished = true
     }
+
+    /**
+     * 422 응답이 '예측 준비 중'(만 65세 미만 등)인지 — 서버가 이 케이스에만 detail.code 로 내려주는 안정 코드로 판별한다.
+     *  본문 파싱 실패나 코드 부재면 false → 그 422 는 준비 중이 아니라 실제 오류로 취급(재던짐). 본문은 한 번만 읽는다.
+     */
+    private fun isSarcopeniaPreparing(e: HttpException): Boolean =
+        runCatching { e.response()?.errorBody()?.string() }.getOrNull()
+            ?.contains("sarcopenia_prediction_preparing") == true
 
     fun dismissError() { error = null }
 
@@ -385,6 +402,9 @@ class OnboardingViewModel(
         // 상한은 올해(하드코딩 2025 제거, #298): 해가 바뀌어도 미래 연도만 막고 올해 출생은 허용.
         // 일자는 '해당 월의 실제 일수'로(2월/윤년·30/31일) — 1월 33일·2월 30일 등을 거른다.
         if (y !in 1900..todayYear || m !in 1..12 || d !in 1..daysInMonth(y, m)) return null
+        // 미래 생일 거부(리뷰 #313): 연도 상한이 todayYear 라 올해 안이면 통과하므로, 올해라도 오늘 이후(월/일)면
+        //   막는다 — 안 그러면 2026-12-31 같은 미래 날짜가 유효 처리돼 ageYears 가 음수가 된다.
+        if (y == todayYear && (m > todayMonth || (m == todayMonth && d > todayDay))) return null
         return "%04d-%02d-%02d".format(y, m, d)
     }
 
@@ -403,7 +423,11 @@ class OnboardingViewModel(
     val birthDateError: String?
         get() {
             if (birthYear.isBlank() || birthMonth.isBlank() || birthDay.isBlank()) return null
-            return if (composeBirthDate() == null) "생년월일을 정확히 입력해 주세요" else null
+            if (composeBirthDate() == null) return "생년월일을 정확히 입력해 주세요"
+            // 최소 가입 연령 하한(리뷰 #313): 만 14세 미만은 개인정보보호법상 법정대리인 동의가 필요하므로 가입을
+            //   막는다. #298 의 50-64 허용(예측만 준비 중)은 그대로 두고 하한만 추가한다.
+            val age = ageYears() ?: return null
+            return if (age < MIN_SIGNUP_AGE) "만 ${MIN_SIGNUP_AGE}세 이상만 가입할 수 있어요" else null
         }
 
     /**
@@ -430,6 +454,12 @@ class OnboardingViewModel(
          * 완료할 수 있고, 예측만 "준비 중"으로 안내한다. 위험도 모델이 65세 이상 기준이라 이 값으로 예측 안내를 가른다(리뷰 #75-4).
          */
         const val MIN_SUPPORTED_AGE = 65
+
+        /**
+         * 최소 **가입** 연령(만, 리뷰 #313). 만 14세 미만은 개인정보보호법상 법정대리인 동의가 필요하므로 가입 자체를
+         * 막는다(예측 대상 연령 [MIN_SUPPORTED_AGE] 와는 별개 — 14~64세는 가입 가능, 예측만 "준비 중"). 값은 제품 결정.
+         */
+        const val MIN_SIGNUP_AGE = 14
 
         /** '모름' 추정치를 제공하는 최소 연령(만). 50~64 추정표 확장(#298 C)에 맞춰 65 → 50 으로 낮춘다. */
         const val MIN_ESTIMATE_AGE = 50

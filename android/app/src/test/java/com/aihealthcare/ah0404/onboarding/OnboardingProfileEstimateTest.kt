@@ -2,6 +2,7 @@ package com.aihealthcare.ah0404.onboarding
 
 import com.aihealthcare.ah0404.network.AgreementsRequest
 import com.aihealthcare.ah0404.network.HealthProfileRequest
+import com.aihealthcare.ah0404.network.HealthProfileResponse
 import com.aihealthcare.ah0404.network.OnboardingApi
 import com.aihealthcare.ah0404.network.PhysicalAssessmentRequest
 import com.aihealthcare.ah0404.network.RiskPredictionRequest
@@ -17,6 +18,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -139,15 +141,20 @@ class OnboardingProfileEstimateTest {
 
     @Test
     fun submit_allows_under_65_without_age_block() = runTest {
-        // #298 C: 만 65세 미만이라고 프로필 제출을 막지 않는다. (FakeApi 는 네트워크에서 TODO 라 저장 자체는
-        //   실패하지만, '만 65세 이상' 차단 문구가 뜨면 안 된다 — 나이 게이트가 사라졌음을 검증.)
-        val vm = vm(2026, 7, 15).apply {
+        // #298 C: 만 65세 미만(단 14세 이상)이라고 프로필 제출을 막지 않는다. createHealthProfile 이 정상 응답하는
+        //   fake 로 성공 경로를 직접 검증한다(리뷰 #313 nit: TODO() 예외에 기대던 취약 구조 제거).
+        val api = object : OnboardingApi by FakeApi() {
+            override suspend fun createHealthProfile(body: HealthProfileRequest) =
+                HealthProfileResponse(profileId = 1, bmi = 22.5, proteinChallengeAllowed = true)
+        }
+        val vm = OnboardingViewModel(api, todayYear = 2026, todayMonth = 7, todayDay = 15).apply {
             birthYear = "1990"; birthMonth = "1"; birthDay = "1" // 36세
             sex = "male"; walkDays = 5; muscDays = 2
             setHeight("170"); setWeight("65")
         }
         vm.submitProfile(); advanceUntilIdle()
-        assertFalse("65세 미만 차단 문구가 뜨면 안 됨(#298 C)", vm.error?.contains("65세") == true)
+        assertNull("정상 저장 → 에러 없음(나이 게이트 없음)", vm.error)
+        assertEquals("체력검사 단계로 진행(#298 C)", OnbStep.ASSESSMENT, vm.step)
     }
 
     // ── #267 지영님 블로커: 활동 일수 미응답(null)은 제출 차단 — '미응답'과 '주 0일'을 구분해야 예측 입력이 왜곡되지 않는다 ──

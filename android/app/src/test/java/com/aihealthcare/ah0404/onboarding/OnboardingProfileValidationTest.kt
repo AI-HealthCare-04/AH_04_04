@@ -51,9 +51,36 @@ class OnboardingProfileValidationTest {
     @Test fun birthdate_error_on_future_year() =
         assertNotNull(vm(2026, 7, 15).apply { birthYear = "2027"; birthMonth = "1"; birthDay = "1" }.birthDateError)
 
-    @Test fun birthdate_valid_current_year_ok() =
-        // 하드코딩 2025 제거(#298 A): 올해(2026)도 상한으로 허용.
-        assertNull(vm(2026, 7, 15).apply { birthYear = "2026"; birthMonth = "1"; birthDay = "1" }.birthDateError)
+    @Test fun birthdate_error_on_future_date_within_current_year() =
+        // 미래 생일 거부(리뷰 #313): 오늘이 2026-07-15 여도 2026-12-31 같은 올해 안 미래 날짜는 무효.
+        assertNotNull(vm(2026, 7, 15).apply { birthYear = "2026"; birthMonth = "12"; birthDay = "31" }.birthDateError)
+
+    @Test fun birthdate_ok_current_year_past_date_boundary() =
+        // 올해 상한 자체는 유지(#298 A): 오늘과 같은 날짜(2026-07-15)는 미래가 아니므로 미래 사유로는 막지 않는다.
+        //   (0세라 아래 최소 가입 연령 사유로는 걸리지만, 여기선 '미래 아님'만 확인 — 그 메시지가 아님을 검증.)
+        assertNotNull(
+            "미래는 아니지만 만 14세 미만이라 가입 연령 안내가 나온다",
+            vm(2026, 7, 15).apply { birthYear = "2026"; birthMonth = "7"; birthDay = "15" }.birthDateError,
+        )
+
+    // ── A-3. 최소 가입 연령 하한(리뷰 #313, 만 14세) ──────────────────────
+    @Test fun birthdate_error_under_min_signup_age() =
+        // 만 6세(2020 출생) → 개인정보보호법상 하한 미만이라 가입 차단 안내.
+        assertTrue(
+            vm(2026, 7, 15).apply { birthYear = "2020"; birthMonth = "1"; birthDay = "1" }
+                .birthDateError?.contains("14세") == true,
+        )
+
+    @Test fun birthdate_error_just_under_14() =
+        // 2012-08-01 출생은 2026-07-15 기준 아직 만 13세(생일 전) → 차단.
+        assertTrue(
+            vm(2026, 7, 15).apply { birthYear = "2012"; birthMonth = "8"; birthDay = "1" }
+                .birthDateError?.contains("14세") == true,
+        )
+
+    @Test fun birthdate_ok_at_min_signup_age_14() =
+        // 2012-07-01 출생은 2026-07-15 기준 만 14세(생일 지남) → 가입 가능, 안내 없음.
+        assertNull(vm(2026, 7, 15).apply { birthYear = "2012"; birthMonth = "7"; birthDay = "1" }.birthDateError)
 
     @Test fun birthdate_leap_day_valid() =
         assertNull("2000 은 윤년 → 2/29 유효", vm().apply { birthYear = "2000"; birthMonth = "2"; birthDay = "29" }.birthDateError)

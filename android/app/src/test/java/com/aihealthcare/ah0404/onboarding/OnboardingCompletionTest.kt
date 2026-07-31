@@ -21,12 +21,17 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import retrofit2.HttpException
+import retrofit2.Response
 
 /**
  * 온보딩 완주(#299) — 결과화면(RESULT) 제거 후, 체력검사 제출/스킵 → 예측 생성이 끝나면 별도 결과화면 없이
@@ -122,5 +127,50 @@ class OnboardingCompletionTest {
         vm.continueAuthenticated(); advanceUntilIdle()
         assertFalse("재시작은 stale finished 를 초기화한다(리뷰 #311)", vm.finished)
         assertEquals(OnbStep.TERMS, vm.step)
+    }
+
+    // ── 예측 422 처리 범위(리뷰 #313): 준비 중 코드만 완주로, 그 외 422 는 실제 오류로 ──
+    private fun http422(body: String) =
+        HttpException(Response.error<Any>(422, body.toResponseBody("application/json".toMediaType())))
+
+    @Test
+    fun preparing_422_completes_onboarding_without_prediction() = runTest {
+        // 서버가 code=sarcopenia_prediction_preparing 로 준 422 는 '예측 없는 정상 완주'로 넘긴다(#298 C).
+        val api = object : OnboardingApi by FakeApi() {
+            override suspend fun createRiskPrediction(body: RiskPredictionRequest): RiskPredictionResponse =
+                throw http422("""{"detail":{"code":"sarcopenia_prediction_preparing","message":"준비 중"}}""")
+        }
+        val vm = OnboardingViewModel(api, todayYear = 2026, todayMonth = 7, todayDay = 15)
+        vm.continueAuthenticated(); advanceUntilIdle()
+        vm.agreeAll(); vm.submitAgreements(); advanceUntilIdle()
+        vm.apply {
+            sex = "male"; birthYear = "1970"; birthMonth = "1"; birthDay = "1" // 56세(≥14, <65)
+            setHeight("168"); setWeight("63"); walkDays = 5; muscDays = 2
+        }
+        vm.submitProfile(); advanceUntilIdle()
+        vm.skipAssessment(); advanceUntilIdle()
+        assertTrue("준비 중 422 는 예측 없이 완주", vm.finished)
+        assertNull("예측 결과는 없다(준비 중)", vm.result)
+        assertNull("에러가 아니다", vm.error)
+    }
+
+    @Test
+    fun non_preparing_422_surfaces_error_and_does_not_complete() = runTest {
+        // 준비 중 코드가 아닌 422(검증성 오류 등)는 '예측 없는 완주'로 위장하지 않고 에러+재시도로 돌린다(리뷰 #313).
+        val api = object : OnboardingApi by FakeApi() {
+            override suspend fun createRiskPrediction(body: RiskPredictionRequest): RiskPredictionResponse =
+                throw http422("""{"detail":"프로필 값이 올바르지 않습니다"}""")
+        }
+        val vm = OnboardingViewModel(api, todayYear = 2026, todayMonth = 7, todayDay = 15)
+        vm.continueAuthenticated(); advanceUntilIdle()
+        vm.agreeAll(); vm.submitAgreements(); advanceUntilIdle()
+        vm.apply {
+            sex = "male"; birthYear = "1970"; birthMonth = "1"; birthDay = "1"
+            setHeight("168"); setWeight("63"); walkDays = 5; muscDays = 2
+        }
+        vm.submitProfile(); advanceUntilIdle()
+        vm.skipAssessment(); advanceUntilIdle()
+        assertFalse("다른 422 는 완주로 위장되지 않는다", vm.finished)
+        assertTrue("에러로 재시도를 유도한다", vm.error != null)
     }
 }
