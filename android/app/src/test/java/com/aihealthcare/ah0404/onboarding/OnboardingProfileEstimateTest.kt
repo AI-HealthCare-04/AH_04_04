@@ -89,6 +89,14 @@ class OnboardingProfileEstimateTest {
     }
 
     @Test
+    fun integer_estimate_omits_trailing_decimal() {
+        val vm = vm().apply { sex = "female"; birthYear = "1971"; birthMonth = "1"; birthDay = "1" } // 55세
+        vm.markWeightUnknown()
+        assertTrue(vm.weightEstimated)
+        assertEquals("58", vm.weightInput)
+    }
+
+    @Test
     fun manual_input_clears_estimate() {
         val vm = vm().apply { sex = "male"; birthYear = "1958"; birthMonth = "3"; birthDay = "1" }
         vm.markHeightUnknown()
