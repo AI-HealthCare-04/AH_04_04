@@ -37,10 +37,11 @@ class ExerciseVideosViewModel(
     private val exerciseFlow: ExerciseFlowUseCase = ExerciseFlowUseCase(),
     // 미전송 세션의 영속 저장소(#271). 기본은 영속하지 않는 NoOp(인메모리 동작 유지) — 실제 화면은 SharedPrefs 구현을 주입한다.
     private val outbox: ExerciseOutbox = NoOpExerciseOutbox(),
-    // 현재 로그인 사용자 식별자(리뷰 #291 새 블로커, 시니어 공용 단말). 이 VM 은 Activity 범위라 로그아웃→타계정
-    //   로그인 시 재사용될 수 있어, 사용자가 바뀌면 이전 사용자 파생 상태(오늘 누적 등)를 비워야 데이터가 섞이지 않는다.
-    //   게스트/로그아웃이면 null. 테스트는 람다로 계정 전환을 주입한다.
-    private val currentUserId: () -> Int? = { SessionStore.persistentUserId },
+    // 현재 인증 주체를 나타내는 revision(리뷰 #291, 시니어 공용 단말). 이 VM 은 Activity 범위라 로그아웃→타계정
+    //   로그인 시 재사용될 수 있어, 주체가 바뀌면 이전 사용자 파생 상태(오늘 누적 등)를 비워야 데이터가 섞이지 않는다.
+    //   `persistentUserId`(완료 소셜만·게스트는 null)와 달리 revision 은 로그인/로그아웃마다 증가해 게스트↔게스트
+    //   전환까지 구분한다(리뷰 #291-1). 테스트는 람다로 계정 전환을 주입한다.
+    private val authKey: () -> Int = { SessionStore.authRevision },
 ) : ViewModel() {
 
     var loading by mutableStateOf(false); private set
@@ -90,11 +91,11 @@ class ExerciseVideosViewModel(
     //   completionMutex 안에서만 읽고/증가시켜 [send] 의 적용과 순서를 맞춘다(단일 스레드 confinement + 락으로 경합 없음).
     private var progressRevision = 0
 
-    // 지금 화면에 반영된 오늘 누적이 '어느 사용자' 것인지(리뷰 #291 새 블로커). 조회 때 [currentUserId] 와 비교해
-    //   사용자가 바뀌었으면 새 GET 이 도착하기 전에 이전 사용자 파생 상태를 비운다 — 시니어 공용 단말에서 A 값이 B 에게
-    //   한 번도 노출되지 않게. 최초 1회는 비교 대상이 없으므로 [loadedUserInitialized] 로 첫 조회를 구분한다.
-    private var loadedUserId: Int? = null
-    private var loadedUserInitialized = false
+    // 지금 화면에 반영된 오늘 누적이 '어느 인증 주체' 것인지(리뷰 #291). [load] 진입 시 [authKey] 와 비교해 주체가
+    //   바뀌었으면 어떤 네트워크 호출보다 먼저(동기 구간) 이전 사용자 파생 상태를 비운다 — 영상/목록 API 가 느려도
+    //   B 화면에 A 값이 한 번도 노출되지 않게(리뷰 #291-2). 최초 1회는 비교 대상이 없어 [loadedAuthInitialized] 로 구분.
+    private var loadedAuthKey = 0
+    private var loadedAuthInitialized = false
 
     /** 이어보기용: 이 url 을 어디부터 재생할지(ms). 없으면 0(처음부터). */
     fun resumePositionFor(url: String): Long = positionByUrl[url] ?: 0L
@@ -117,7 +118,25 @@ class ExerciseVideosViewModel(
     }
 
     fun load() {
+        // 계정 전환 감지·초기화는 어떤 네트워크 호출보다 **먼저**, load 의 동기 구간에서 한다(리뷰 #291-2): 영상/목록
+        //   API 가 느려도 새 사용자(B)가 진입한 즉시 이전 사용자(A) 파생 상태가 비워져, A 값이 한 번도 노출되지 않는다.
+        resetIfSubjectChanged()
         viewModelScope.launch { refresh() }
+    }
+
+    /**
+     * 인증 주체(로그인 세션)가 바뀌었으면 이전 사용자 파생 상태를 즉시 비운다(리뷰 #291). [authKey](기본
+     *  SessionStore.authRevision)는 로그인/로그아웃마다 증가하므로 게스트↔게스트 전환까지 감지한다(#291-1).
+     *  네트워크 이전 [load] 동기 구간에서 호출해 '한 번도 노출되지 않음'을 보장한다(#291-2). 최초 진입은 비교 대상이
+     *  없으므로 초기화만 하고 넘어간다.
+     */
+    private fun resetIfSubjectChanged() {
+        val key = authKey()
+        if (loadedAuthInitialized && key != loadedAuthKey) {
+            clearUserDerivedState()
+        }
+        loadedAuthKey = key
+        loadedAuthInitialized = true
     }
 
     suspend fun refresh() {
@@ -149,15 +168,7 @@ class ExerciseVideosViewModel(
      *  겸사겸사 단일 운동 템플릿 id 도 캐시해 [submitExercise] 의 별도 조회([resolveExerciseTemplateId])를 아낀다.
      */
     private suspend fun loadTodayProgress(gen: Int) {
-        // 계정 전환 감지(리뷰 #291 새 블로커): 사용자가 바뀌었으면 GET 응답을 기다리지 않고 **지금 즉시** 이전 사용자
-        //   파생 상태를 비운다 — 새 사용자가 진입한 직후 목록 GET 완료 전까지 이전 사용자의 오늘 누적이 노출되는 것 방지.
-        //   첫 조회는 비교 대상이 없으므로 건너뛰고, 이후 조회부터 이전 반영 사용자와 대조한다.
-        val user = currentUserId()
-        if (loadedUserInitialized && user != loadedUserId) {
-            clearUserDerivedState()
-        }
-        loadedUserId = user
-        loadedUserInitialized = true
+        // (계정 전환 감지·초기화는 [load] 동기 구간의 [resetIfSubjectChanged] 에서 네트워크 이전에 끝난다 — 리뷰 #291-2.)
         // 이 조회가 '시작된' 시점의 완료-적용 리비전. 응답이 늦게 오는 사이 완료 전송([send])이 최신 누적을 적용했다면
         //   달라지므로, 오래된 GET 값으로 되돌리지 않도록 폐기 판정에 쓴다(리뷰 #291 블로커1: stale GET 되돌림 방어).
         val revAtStart = progressRevision
@@ -244,6 +255,9 @@ class ExerciseVideosViewModel(
      */
     private fun send(session: PendingExercise) {
         val key = session.createdOnDeviceAt
+        // 이 전송이 시작된 인증 주체(리뷰 #291-3). 응답이 늦게 도착할 때, 그 사이 로그아웃→타계정으로 바뀌었으면
+        //   서버 전송·보존은 그대로 두되 **화면 상태만은** 갱신하지 않는다 — A 의 완료 응답이 B 화면에 A 누적을 다시 쓰는 것 방지.
+        val epoch = authKey()
         if (!inFlight.add(key)) return // 이 키가 이미 전송 중 — 이중 전송 방지
         // 성공 전까지 보존(재시도 대상). 실패해도 이미 들어가 있으니 별도 저장이 필요 없다.
         pending[key] = session
@@ -275,12 +289,24 @@ class ExerciseVideosViewModel(
                     //   단, dailyTotalMin==null(재전송 조기종료: 자연 키로 찾은 과거 completed 로그 반환)이면 그 success 는
                     //   '그 로그가 완료됐던 당시' 값이지 오늘 누적의 권위 판정이 아니다(리뷰 #280). 오늘 상태를 오염시키지
                     //   않도록 **누적값이 있을 때만 분·달성을 한 묶음으로** 갱신하고, null 응답은 둘 다 건드리지 않는다.
-                    r.dailyTotalMin?.let { total ->
-                        todayExerciseMin = total
-                        todayGoalReached = r.success
-                        // 오늘 누적을 갱신함 — 진행 중인 오래된 목록 GET([loadTodayProgress]) 결과가 이 값을 되돌리지
-                        //   못하게 리비전을 올린다(리뷰 #291 블로커1). 이 대입은 completionMutex 안이라 리비전 증가도 원자적.
-                        progressRevision++
+                    // 화면 상태 갱신은 **전송 시작과 같은 인증 주체일 때만** 한다(리뷰 #291-3): 응답 대기 중 계정이 바뀌었으면
+                    //   이 누적은 이전 사용자 것이라 현재(B) 화면에 쓰면 안 된다. 서버 전송·pending 해제는 위에서 이미 끝났다.
+                    if (authKey() == epoch) {
+                        // 누적 운동시간 표시(#235): 직렬화 덕에 이 응답이 지금까지의 마지막 전송 결과 = 최신 권위값이다.
+                        //   그대로 대입한다(무조건 last-wins). 당일 내 여러 세션은 마지막이 최댓값이라 자연히 커지고, 자정을 넘긴
+                        //   다음 날 첫 세션의 더 작은 누적/미달도 마지막 값이라 정상적으로 초기화된다.
+                        //   단, dailyTotalMin==null(재전송 조기종료: 자연 키로 찾은 과거 completed 로그 반환)이면 그 success 는
+                        //   '그 로그가 완료됐던 당시' 값이지 오늘 누적의 권위 판정이 아니다(리뷰 #280). 오늘 상태를 오염시키지
+                        //   않도록 **누적값이 있을 때만 분·달성을 한 묶음으로** 갱신하고, null 응답은 둘 다 건드리지 않는다.
+                        r.dailyTotalMin?.let { total ->
+                            todayExerciseMin = total
+                            todayGoalReached = r.success
+                            // 오늘 누적을 갱신함 — 진행 중인 오래된 목록 GET([loadTodayProgress]) 결과가 이 값을 되돌리지
+                            //   못하게 리비전을 올린다(리뷰 #291 블로커1). 이 대입은 completionMutex 안이라 리비전 증가도 원자적.
+                            progressRevision++
+                        }
+                    } else {
+                        Log.i(TAG, "완료 응답이 계정 전환 이후 도착 — 화면 상태는 갱신하지 않음(#291-3, durationMin=${session.durationMin})")
                     }
                     Log.i(
                         TAG,

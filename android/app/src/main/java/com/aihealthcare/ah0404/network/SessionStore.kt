@@ -49,6 +49,16 @@ object SessionStore {
     var persistentUserId: Int? = null
         private set
 
+    /**
+     * 인증 주체(로그인 세션)가 바뀔 때마다 단조 증가하는 revision(리뷰 #291). 로그인/로그아웃/세션 복원 등
+     *  '인증 경계'가 바뀌는 모든 지점에서 올린다. `persistentUserId`(완료 소셜만 노출·게스트는 null)와 달리
+     *  게스트↔게스트·게스트↔소셜 전환도 값이 달라져 구분되므로, 사용자 파생 상태(예: 운동 오늘 누적)를 계정 전환
+     *  시 초기화해야 하는 화면이 이 값의 변화만으로 안전하게 '주체가 바뀌었다'를 판별할 수 있다(userId 안정성 무관).
+     */
+    @Volatile
+    var authRevision: Int = 0
+        private set
+
     private var currentUserId: Int? = null
 
     private fun prefs(context: Context) =
@@ -76,6 +86,7 @@ object SessionStore {
         sessionOnboarded = onboarded
         currentUserId = restoredUserId
         persistentUserId = restoredUserId
+        authRevision++ // 앱 시작 시 인증 주체 확정 — 이후 로그인/로그아웃과 함께 계정 전환 판별에 쓰인다(#291)
         if (restoredUserId != null && storedUserId == null) {
             p.edit().putInt(KEY_USER_ID, restoredUserId).apply()
         }
@@ -104,6 +115,7 @@ object SessionStore {
             editor.remove(KEY_TOKEN).remove(KEY_USER_ID).putBoolean(KEY_ONBOARDED, false)
         }
         editor.apply()
+        authRevision++ // 로그인 = 인증 주체 변경(게스트·소셜 공통) → 계정 전환 감지 트리거(#291)
         AuthFailureCoordinator.onAuthenticated()
     }
 
@@ -136,6 +148,7 @@ object SessionStore {
         TokenHolder.token = ""
         currentUserId = null
         persistentUserId = null
+        authRevision++ // 로그아웃 = 인증 주체 해제 → 다음 로그인과 함께 이전 사용자 파생 상태를 확실히 분리(#291)
     }
 
     /**
@@ -148,6 +161,7 @@ object SessionStore {
         sessionOnboarded = false
         currentUserId = null
         persistentUserId = null
+        authRevision++ // 세션 전체 초기화도 주체 변경으로 취급(#291)
         AuthFailureCoordinator.onAuthenticated()
     }
 }

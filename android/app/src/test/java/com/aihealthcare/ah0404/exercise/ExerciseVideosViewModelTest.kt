@@ -45,7 +45,12 @@ class ExerciseVideosViewModelTest {
     @After fun tearDown() = Dispatchers.resetMain()
 
     private class FakeApi(val result: () -> ExerciseVideosResponse) : ExerciseVideoApi {
-        override suspend fun getExerciseVideos() = result()
+        // >0 이면 영상 목록 응답을 그만큼 지연한다 — 계정 전환 초기화가 어떤 네트워크보다 앞서는지 검증용(리뷰 #291-2).
+        var delayMs = 0L
+        override suspend fun getExerciseVideos(): ExerciseVideosResponse {
+            if (delayMs > 0) delay(delayMs)
+            return result()
+        }
     }
 
     /**
@@ -524,16 +529,22 @@ class ExerciseVideosViewModelTest {
     }
 
     // -----------------------------------------------------------------------------------
-    // 리뷰 #291 새 블로커: 계정 전환 시 이전 사용자 오늘 누적이 새 사용자에게 노출되지 않는다(시니어 공용 단말).
-    //   이 VM 은 Activity 범위라 로그아웃→타계정 로그인 시 재사용될 수 있다.
+    // 리뷰 #291: 계정 전환 시 이전 사용자 오늘 누적이 새 사용자에게 노출되지 않는다(시니어 공용 단말).
+    //   이 VM 은 Activity 범위라 로그아웃→타계정 로그인 시 재사용될 수 있다. 인증 revision(authKey) 이 로그인/
+    //   로그아웃마다 증가하므로 게스트↔게스트 전환까지 감지된다(#291-1). 초기화는 load 동기 구간(#291-2),
+    //   진행 중 완료 응답은 주체 epoch 로 가드(#291-3).
     // -----------------------------------------------------------------------------------
 
-    /** currentUserId 를 주입해 계정 전환을 시뮬레이션하는 VM. */
-    private fun vmWithUser(missionApi: FakeMissionApi, user: () -> Int?) = ExerciseVideosViewModel(
-        api = FakeApi { ExerciseVideosResponse(emptyList()) },
+    /** authKey(인증 revision)를 주입해 계정 전환을 시뮬레이션하는 VM. api 지연 제어를 위해 FakeApi 도 함께 받는다. */
+    private fun vmWithAuth(
+        missionApi: FakeMissionApi,
+        api: FakeApi = FakeApi { ExerciseVideosResponse(emptyList()) },
+        authKey: () -> Int,
+    ) = ExerciseVideosViewModel(
+        api = api,
         missionApi = missionApi,
         exerciseFlow = ExerciseFlowUseCase(missionApi),
-        currentUserId = user,
+        authKey = authKey,
     )
 
     @Test
@@ -541,14 +552,14 @@ class ExerciseVideosViewModelTest {
         val fake = FakeMissionApi(
             listOf(exerciseMission(templateId = 7, todayProgress = MissionTodayProgress(totalMin = 6f, goalReached = false))),
         )
-        var uid: Int? = 1
-        val vm = vmWithUser(fake) { uid }
+        var key = 1
+        val vm = vmWithAuth(fake) { key }
 
         vm.load(); advanceUntilIdle()
         assertEquals("사용자 A 오늘 누적", 6f, vm.todayExerciseMin)
 
-        // 로그아웃 → 사용자 B 로그인. B 에겐 운동 미션이 없다(또는 today_progress 부재).
-        uid = 2
+        // 로그아웃 → 사용자 B 로그인(authKey 증가). B 에겐 운동 미션이 없다(또는 today_progress 부재).
+        key = 2
         fake.missions = emptyList()
         vm.load(); advanceUntilIdle()
 
@@ -557,26 +568,67 @@ class ExerciseVideosViewModelTest {
     }
 
     @Test
-    fun `계정 전환 직후 목록 GET 완료 전에도 이전 사용자 누적이 노출되지 않는다`() = runTest {
+    fun `게스트끼리 전환해도(양쪽 userId 없음) 인증 revision 변화로 이전 누적을 지운다`() = runTest {
+        // #291-1: persistentUserId 는 게스트=null 이라 못 거르지만, authKey(로그인마다 증가)는 구분한다.
         val fake = FakeMissionApi(
             listOf(exerciseMission(templateId = 7, todayProgress = MissionTodayProgress(totalMin = 6f, goalReached = false))),
         )
-        var uid: Int? = 1
-        val vm = vmWithUser(fake) { uid }
+        var key = 10 // 게스트 A 세션
+        val vm = vmWithAuth(fake) { key }
         vm.load(); advanceUntilIdle()
         assertEquals(6f, vm.todayExerciseMin)
 
-        // 사용자 B 로 전환하고 다시 진입. GET 은 느리게 응답한다.
-        uid = 2
-        fake.missions = listOf(exerciseMission(templateId = 7, todayProgress = MissionTodayProgress(totalMin = 2f, goalReached = false)))
-        fake.getMissionsDelayMs = 100L
-        vm.load()
-        advanceTimeBy(50L); runCurrent() // 아직 B 의 GET 응답 전
+        // 게스트 A 로그아웃 → 게스트 B 로그인. 둘 다 userId 없음이지만 revision 은 증가한다.
+        key = 11
+        fake.missions = emptyList()
+        vm.load(); advanceUntilIdle()
+        assertNull("게스트 B 화면에 게스트 A 의 누적이 남으면 안 된다", vm.todayExerciseMin)
+    }
 
-        assertNull("B 진입 직후, 목록 GET 완료 전에는 A 값이 보이면 안 된다", vm.todayExerciseMin)
+    @Test
+    fun `계정 전환 초기화는 영상 API 가 느려도 진입 즉시(동기) 일어난다`() = runTest {
+        // #291-2: 초기화는 어떤 네트워크보다 앞. 영상 API 를 아주 느리게 해도 load() 반환 직후 이미 비워져 있어야 한다.
+        val fake = FakeMissionApi(
+            listOf(exerciseMission(templateId = 7, todayProgress = MissionTodayProgress(totalMin = 6f, goalReached = false))),
+        )
+        val slowApi = FakeApi { ExerciseVideosResponse(emptyList()) }
+        var key = 1
+        val vm = vmWithAuth(fake, slowApi) { key }
+        vm.load(); advanceUntilIdle()
+        assertEquals(6f, vm.todayExerciseMin)
 
-        advanceUntilIdle()
-        assertEquals("B 의 GET 이 도착하면 B 값으로 채운다", 2f, vm.todayExerciseMin)
+        // 사용자 B 로 전환. 영상 API 는 매우 느리게 응답한다.
+        key = 2
+        slowApi.delayMs = 10_000L
+        fake.missions = emptyList()
+        vm.load() // advance 없이 — load 의 동기 구간에서 이미 초기화돼야 한다
+
+        assertNull("영상 API 응답을 기다리지 않고 진입 즉시 이전 사용자 값이 비워진다", vm.todayExerciseMin)
+        assertFalse(vm.todayGoalReached)
+        advanceUntilIdle() // 느린 영상 응답까지 흘려도 B 값은 없음(운동 미션 없음)
+        assertNull(vm.todayExerciseMin)
+    }
+
+    @Test
+    fun `전송 시작 후 계정이 바뀌면 늦게 온 완료 응답이 새 사용자 화면을 오염시키지 않는다`() = runTest {
+        // #291-3: A 의 완료 전송이 응답 대기 중 로그아웃→B 로 바뀌면, 늦게 온 A 응답은 화면 상태를 갱신하지 않는다.
+        val fake = FakeMissionApi(listOf(exerciseMission(templateId = 7)))
+        fake.completeDailyTotal = 10f; fake.completeSuccess = true
+        fake.completeDelayByDuration = mapOf(4f to 100L) // A 완료 응답을 늦춘다
+        var key = 1
+        val vm = vmWithAuth(fake) { key }
+        assertNull(vm.todayExerciseMin)
+
+        vm.beginExerciseSession()
+        vm.submitExercise(4f, safetyNoticeConfirmed = true) // A 전송 시작(epoch=1 캡처)
+        advanceTimeBy(50L); runCurrent() // 아직 A 응답 도착 전
+        key = 2 // 로그아웃 → 사용자 B 로 전환
+
+        advanceUntilIdle() // A 완료 응답(10분)이 이제 도착
+
+        assertEquals("A 완료 전송 자체는 서버로 나감", 1, fake.completeCalls)
+        assertNull("전송 시작 이후 계정이 바뀌었으므로 A 의 10분이 B 화면에 쓰이면 안 된다", vm.todayExerciseMin)
+        assertFalse(vm.todayGoalReached)
     }
 
     @Test
@@ -584,7 +636,7 @@ class ExerciseVideosViewModelTest {
         val fake = FakeMissionApi(
             listOf(exerciseMission(templateId = 7, todayProgress = MissionTodayProgress(totalMin = 6f, goalReached = false))),
         )
-        val vm = vmWithUser(fake) { 1 } // 사용자 고정
+        val vm = vmWithAuth(fake) { 1 } // 인증 주체 고정
         vm.load(); advanceUntilIdle()
         assertEquals(6f, vm.todayExerciseMin)
 
