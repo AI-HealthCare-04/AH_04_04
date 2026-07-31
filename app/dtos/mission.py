@@ -134,14 +134,17 @@ class ExerciseDetail(BaseModel):
     # 걷기(WalkingDetail)와 같은 경계 방어. 운동 성공도 '당일 누적 시간'으로 판정하게 되면서,
     #   음수 시간을 보내 누적을 되돌려 '하루 1회' 적립을 우회하는 길이 여기에도 열린다.
     #   미측정(None)은 허용하되 0 이하는 거부한다.
-    duration_min: float | None = Field(default=None, gt=0)
+    # 상한(le=1440=24h): duration_min 은 DB physical_activity_logs.Numeric(6,2)(≤9999.99)에 저장되므로
+    #   상한이 없으면 과대값이 파싱 통과 후 저장 시 DataError(500) 로 터진다. 근본 방어를 DTO 경계에 둔다.
+    duration_min: float | None = Field(default=None, gt=0, le=1440)
     met_value: float | None = Field(default=None, ge=0)
 
 
 class WalkingDetail(BaseModel):
     # 경계 입력 방어(지영 #65 재리뷰): 음수 시간으로 당일 누적을 되돌려 '하루 1회' 적립을
     #   우회하는 것을 차단한다. 걷기 구간은 양수 시간이어야 하고, 걸음·거리는 음수 불가.
-    duration_min: float = Field(gt=0)
+    # 상한(le=1440=24h): ExerciseDetail 과 동일 — Numeric(6,2) 저장 오버플로(500) 를 DTO 경계에서 막는다.
+    duration_min: float = Field(gt=0, le=1440)
     distance_km: float | None = Field(default=None, ge=0)
     steps: int | None = Field(default=None, ge=0)
 
