@@ -112,7 +112,7 @@ class OnboardingViewModel(
             return if (sex == null || !ageValid) {
                 "성별·생년월일을 먼저 입력하면 사용할 수 있어요"
             } else {
-                "정확한 값을 직접 입력해 주세요"
+                "키·몸무게 추정은 만 50세 이상부터 제공해요. 정확한 값을 직접 입력해 주세요."
             }
         }
 

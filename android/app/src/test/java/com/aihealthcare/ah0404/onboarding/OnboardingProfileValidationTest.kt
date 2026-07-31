@@ -100,10 +100,11 @@ class OnboardingProfileValidationTest {
     @Test fun estimate_reason_when_missing_sex_or_birth() =
         assertTrue(vm().estimateUnavailableReason?.contains("성별") == true)
 
-    @Test fun estimate_reason_direct_input_below_50() =
-        assertTrue(
+    @Test fun estimate_reason_explains_age_limit_and_direct_input_below_50() =
+        assertEquals(
+            "키·몸무게 추정은 만 50세 이상부터 제공해요. 정확한 값을 직접 입력해 주세요.",
             vm(2026, 7, 15).apply { sex = "male"; birthYear = "1990"; birthMonth = "1"; birthDay = "1" } // 36
-                .estimateUnavailableReason?.contains("직접") == true,
+                .estimateUnavailableReason,
         )
 
     @Test fun estimate_reason_null_when_can_estimate() =
