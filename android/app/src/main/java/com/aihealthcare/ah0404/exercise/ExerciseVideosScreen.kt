@@ -185,29 +185,35 @@ fun ExerciseVideosScreen(
             PendingSyncBanner(count = vm.pendingResends.size, onRetry = vm::retryPending)
         }
 
-        // 오늘 누적 운동시간(#235): 서버가 합산한 당일 '분'을 보여줘 사용자가 완료(하루 목표 달성) 여부를 확인할 수 있게 한다.
-        //   세션을 하나라도 완료해 서버 값이 오면 표시(그 전엔 숨김). 여러 단계·여러 세션이 합산돼 목표를 채우면 달성 안내.
-        vm.todayExerciseMin?.let { minutes ->
-            TodayExerciseSummary(minutes = minutes, goalReached = vm.todayGoalReached)
-        }
-
         // 번들 루틴(몸풀기·마무리)은 네트워크와 무관하게 '즉시' 시작 가능해야 한다(오프라인/느린망 포함).
         //   서버 목록이 오면 탭으로, 아직이면(로딩/빈/에러) 폴백에서 번들 루틴 버튼들을 바로 보여준다.
         //   시작 동작은 guardedStart 로 감싸 안전 고지 확인(#234) 게이트를 먼저 거친다.
-        if (vm.videos.isNotEmpty()) {
-            StageTabs(
-                vm.videos,
-                selected = selectedTab,
-                onSelect = { selectedTab = it },
-                onStartRoutine = { file -> guardedStart { routineFile = file } },
-                onPlay = { item -> guardedStart { playingItem = item } },
-            )
-        } else {
-            RoutineFallback(
-                onStart = { file -> guardedStart { routineFile = file } },
-                loading = vm.loading,
-                retry = if (vm.error) vm::load else null,
-            )
+        //   ★ 이 콘텐츠 영역을 weight(1f) 로 감싸 '남은 높이'를 여기서 소비하게 한다(리뷰 #291 블로커2): 폴백의
+        //     fillMaxSize 가 Column 남은 높이를 전부 먹어 아래 오늘 누적 요약이 화면 밖으로 밀리던 문제를 막아, 영상
+        //     조회 실패(폴백) + missions 성공(요약) 상태에서도 루틴 버튼과 요약이 모두 도달 가능하게 한다.
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            if (vm.videos.isNotEmpty()) {
+                StageTabs(
+                    vm.videos,
+                    selected = selectedTab,
+                    onSelect = { selectedTab = it },
+                    onStartRoutine = { file -> guardedStart { routineFile = file } },
+                    onPlay = { item -> guardedStart { playingItem = item } },
+                )
+            } else {
+                RoutineFallback(
+                    onStart = { file -> guardedStart { routineFile = file } },
+                    loading = vm.loading,
+                    retry = if (vm.error) vm::load else null,
+                )
+            }
+        }
+
+        // 오늘 누적 운동시간(#235, A2): 영상 아래 '빈 공간'에서 확인하도록 화면 하단에 둔다(사용자 요청). 진입 시점부터
+        //   목록 GET 의 today_progress 로 채워지고, 완료 후엔 서버 합산값으로 갱신 — 재생 전·중간에 끊었어도 볼 수 있다.
+        //   서버 값이 없으면(운동 미션·필드 부재) 숨김. 위 콘텐츠 영역이 남은 높이를 가지므로 이 요약은 비가중으로 바닥에 안착.
+        vm.todayExerciseMin?.let { minutes ->
+            TodayExerciseSummary(minutes = minutes, goalReached = vm.todayGoalReached)
         }
     }
 
@@ -288,14 +294,22 @@ private fun TodayExerciseSummary(minutes: Float, goalReached: Boolean) {
             .padding(Dimens.CardPadding),
         verticalArrangement = Arrangement.spacedBy(Dimens.Space8),
     ) {
+        // 진입 시점엔 대개 0분(아직 운동 전) — "0분 하셨어요"는 어색하니 시작을 권하는 문구로 바꾼다.
+        //   이미 했으면(중간에 끊었어도) 누적 분을, 목표를 채웠으면 축하를 보여준다(#235 확장, A2).
+        val startedToday = minutes > 0f
         Text(
-            "오늘 운동 ${formatExerciseMinutes(minutes, goalReached)}분 하셨어요",
+            if (startedToday) "오늘 운동 ${formatExerciseMinutes(minutes, goalReached)}분 하셨어요"
+            else "오늘은 아직 운동 전이에요",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSecondaryContainer,
         )
         Text(
-            if (goalReached) "🎉 오늘 운동 목표를 채웠어요!" else "조금만 더 하면 오늘 목표를 채울 수 있어요.",
+            when {
+                goalReached -> "🎉 오늘 운동 목표를 채웠어요!"
+                startedToday -> "조금만 더 하면 오늘 목표를 채울 수 있어요."
+                else -> "영상을 따라 운동을 시작해볼까요?"
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSecondaryContainer,
         )
