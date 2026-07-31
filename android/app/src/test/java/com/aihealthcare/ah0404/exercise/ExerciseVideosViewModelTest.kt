@@ -70,10 +70,16 @@ class ExerciseVideosViewModelTest {
         var completeRespByDuration: Map<Float, Pair<Float?, Boolean>> = emptyMap()
         // 세션 분별 응답 지연(ms) — delay 로 응답 '도착 순서'를 뒤집어 역순 수렴을 검증한다.
         var completeDelayByDuration: Map<Float, Long> = emptyMap()
+        // getMissions 응답 지연(ms) — 진입 목록 GET 을 늦춰, 그 사이 완료 전송이 최신 누적을 적용한 뒤 늦은 GET 이
+        //   도착하는 stale 되돌림 경로를 재현한다(리뷰 #291 블로커1).
+        var getMissionsDelayMs = 0L
 
         override suspend fun guestLogin(): LoginResponse = error("unused")
 
-        override suspend fun getMissions(status: String): MissionsResponse = MissionsResponse(missions)
+        override suspend fun getMissions(status: String): MissionsResponse {
+            if (getMissionsDelayMs > 0) delay(getMissionsDelayMs)
+            return MissionsResponse(missions)
+        }
 
         override suspend fun createMissionLog(body: MissionLogCreateRequest): MissionLogCreateResponse {
             createdKeys.add(body.createdOnDeviceAt)
@@ -489,6 +495,30 @@ class ExerciseVideosViewModelTest {
 
         assertEquals("완료 응답의 더 최신 누적으로 갱신", 10f, vm.todayExerciseMin)
         assertTrue(vm.todayGoalReached)
+    }
+
+    /**
+     * 경합 되돌림 방지(리뷰 #291 블로커1): 진입 목록 GET 이 6분 상태에서 먼저 시작됐는데, 그 사이 완료 전송(outbox
+     *  재시도 등)이 최신 누적(10분)을 적용한 뒤 늦은 GET 이 6분을 반환하면, 리비전 가드가 stale GET 을 폐기해 최종이
+     *  10분으로 유지돼야 한다 — '중간 이탈 후 재진입' 핵심 경로. 완료 적용은 completionMutex 안에서 일어나므로 늦은
+     *  GET 의 적용도 같은 락 안에서 리비전을 비교해 되돌림을 막는다.
+     */
+    @Test
+    fun `느린 진입 GET 이 완료 적용 이후 도착하면 stale 로 버려 최신 완료값을 유지한다`() = runTest {
+        val fake = FakeMissionApi(
+            listOf(exerciseMission(templateId = 7, todayProgress = MissionTodayProgress(totalMin = 6f, goalReached = false))),
+        )
+        fake.getMissionsDelayMs = 200L        // 진입 목록 GET(6분 반환)을 늦춰, 완료 적용보다 나중에 도착시킨다
+        fake.completeDailyTotal = 10f; fake.completeSuccess = true // 완료 전송은 최신 누적 10분·달성
+        val vm = vmWith(fake)
+
+        vm.load()                              // 느린 getMissions(6분) 시작 — 아직 도착 전
+        vm.beginExerciseSession()
+        vm.submitExercise(4f, safetyNoticeConfirmed = true) // 완료가 먼저 10분 적용
+        advanceUntilIdle()                     // 완료 적용(10) 후 늦은 GET(6) 도착
+
+        assertEquals("늦게 온 목록 GET(6분)이 최신 완료값(10분)을 되돌리지 못한다", 10f, vm.todayExerciseMin)
+        assertTrue("완료가 목표 달성이므로 달성 표시 유지", vm.todayGoalReached)
     }
 
     @Test

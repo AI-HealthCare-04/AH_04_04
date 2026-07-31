@@ -79,6 +79,12 @@ class ExerciseVideosViewModel(
     // 오늘 운동 목표(하루 10분, #168)를 채웠는지 — 서버 판정(success). 완료 판정을 사용자가 확인할 수 있게 한다(#235 핵심).
     var todayGoalReached by mutableStateOf(false); private set
 
+    // 완료 전송이 오늘 누적을 적용할 때마다 증가하는 리비전(리뷰 #291 블로커1). 진입 목록 GET([loadTodayProgress])이
+    //   느리게 돌아오는 사이 완료 전송([send])이 최신 누적을 적용했다면, 조회 시작 시점 리비전과 달라져 오래된 GET 값을
+    //   폐기한다 — 중간 이탈 후 재진입 경로에서 늦은 GET 이 최신 완료값(예: 10분)을 과거값(6분)으로 되돌리는 것 방지.
+    //   completionMutex 안에서만 읽고/증가시켜 [send] 의 적용과 순서를 맞춘다(단일 스레드 confinement + 락으로 경합 없음).
+    private var progressRevision = 0
+
     /** 이어보기용: 이 url 을 어디부터 재생할지(ms). 없으면 0(처음부터). */
     fun resumePositionFor(url: String): Long = positionByUrl[url] ?: 0L
 
@@ -132,18 +138,31 @@ class ExerciseVideosViewModel(
      *  겸사겸사 단일 운동 템플릿 id 도 캐시해 [submitExercise] 의 별도 조회([resolveExerciseTemplateId])를 아낀다.
      */
     private suspend fun loadTodayProgress(gen: Int) {
-        try {
-            val exercise = missionApi.getMissions().missions.firstOrNull { it.missionType == "exercise" }
-            if (gen != generation) return
-            exercise?.missionTemplateId?.let { exerciseTemplateId = it }
-            exercise?.todayProgress?.let { p ->
-                todayExerciseMin = p.totalMin
-                todayGoalReached = p.goalReached
-            }
+        // 이 조회가 '시작된' 시점의 완료-적용 리비전. 응답이 늦게 오는 사이 완료 전송([send])이 최신 누적을 적용했다면
+        //   달라지므로, 오래된 GET 값으로 되돌리지 않도록 폐기 판정에 쓴다(리뷰 #291 블로커1: stale GET 되돌림 방어).
+        val revAtStart = progressRevision
+        val exercise = try {
+            missionApi.getMissions().missions.firstOrNull { it.missionType == "exercise" }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.w(TAG, "오늘 누적 진행 조회 실패: ${e.message}")
+            return
+        }
+        if (gen != generation) return
+        exercise?.missionTemplateId?.let { exerciseTemplateId = it } // 템플릿 id 캐시는 되돌림과 무관 — 락 밖에서 갱신
+        // 완료 적용과 순서를 맞춘다(리뷰 #291 블로커1): 완료 전송은 completionMutex 안에서 누적을 적용하므로, 같은 락
+        //   안에서 '내 조회 시작 이후 완료가 적용됐는지'를 리비전으로 확인해, 적용됐으면 이 오래된 GET 값을 버린다.
+        //   (완료 전송이 진행 중이면 그 적용이 끝날 때까지 여기서 대기했다가 최신 리비전을 보고 판정하므로 경합이 없다.)
+        completionMutex.withLock {
+            if (progressRevision != revAtStart) {
+                Log.i(TAG, "오늘 누적 GET 이 완료 적용보다 늦게 도착 — stale 로 폐기(최신 완료값 유지)")
+                return@withLock
+            }
+            exercise?.todayProgress?.let { p ->
+                todayExerciseMin = p.totalMin
+                todayGoalReached = p.goalReached
+            }
         }
     }
 
@@ -227,6 +246,9 @@ class ExerciseVideosViewModel(
                     r.dailyTotalMin?.let { total ->
                         todayExerciseMin = total
                         todayGoalReached = r.success
+                        // 오늘 누적을 갱신함 — 진행 중인 오래된 목록 GET([loadTodayProgress]) 결과가 이 값을 되돌리지
+                        //   못하게 리비전을 올린다(리뷰 #291 블로커1). 이 대입은 completionMutex 안이라 리비전 증가도 원자적.
+                        progressRevision++
                     }
                     Log.i(
                         TAG,
