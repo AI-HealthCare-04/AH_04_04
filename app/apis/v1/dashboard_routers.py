@@ -10,6 +10,7 @@ from app.dtos.dashboard import (
     DashboardPredictionInputs,
     DashboardSummaryResponse,
     HomeResponse,
+    MuscleScoreContextResponse,
     PointsResponse,
     ScoreSimulationResponse,
     StampsResponse,
@@ -84,6 +85,17 @@ async def get_score_simulation(
 ) -> ScoreSimulationResponse:
     # 기록 탭 근육 건강 정보(#기록탭 §4): 걷기/근력 일수 what-if 점수 곡선.
     return await DashboardService(session).get_score_simulation(user)
+
+
+@dashboard_router.get(
+    "/dashboard/muscle-score-context", response_model=MuscleScoreContextResponse, status_code=status.HTTP_200_OK
+)
+async def get_muscle_score_context(
+    user: Annotated[User, Depends(get_request_user)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> MuscleScoreContextResponse:
+    # 근력 기능 안전망 카드(#기록탭 §3.4) 발화 입력: 최신 5STS(초) + BMI.
+    return await DashboardService(session).get_muscle_score_context(user)
 
 
 @dashboard_router.get(

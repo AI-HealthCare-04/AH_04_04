@@ -145,6 +145,13 @@ class ScoreSimulationResponse(BaseModel):
     cohort_version: str | None = None
 
 
+# [응답] 근력 기능 안전망 카드(§3.4) 발화 판정 입력. 앱이 score_band(별도)와 함께 5STS·BMI로 카드 노출을 정한다.
+#   chair_stand_sec: 최신 체력검사의 5STS(초). 스킵/미측정이면 null → 카드 미표시. bmi: 최신 프로필 BMI.
+class MuscleScoreContextResponse(BaseModel):
+    chair_stand_sec: float | None = None
+    bmi: float | None = None
+
+
 # [응답] 대시보드 시각화 (GET /dashboard/summary). 최근 days일 구간의 활동 추이·생활기록·위험도 변화.
 class ActivityTrendPoint(BaseModel):
     date: date

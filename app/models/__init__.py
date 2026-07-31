@@ -1,4 +1,5 @@
 from app.models.activity import ActivityLevelChangeLog, UserActivityProfile
+from app.models.analytics import StsOverlayEvent
 from app.models.dashboard import DailyActivitySummary
 from app.models.health import HealthCheckSession, HealthProfile, PhysicalAssessment
 from app.models.missions import GameLog, MealLog, MissionLog, MissionTemplate, PhysicalActivityLog, SensorSession
@@ -22,6 +23,7 @@ __all__ = [
     "PersonalizedSetting",
     "RiskPrediction",
     "SensorSession",
+    "StsOverlayEvent",
     "TermsAgreement",
     "User",
     "UserActivityProfile",
