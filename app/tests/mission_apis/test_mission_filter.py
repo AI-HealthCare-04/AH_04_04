@@ -120,6 +120,137 @@ def test_get_missions_explicit_level_overrides_user_level() -> None:
     assert captured["level"] is ActivityLevel.NORMAL
 
 
+# ---------------- get_missions 오늘 진행(today_progress) 부착 ----------------
+#   운동·걷기 카드가 재생/측정 전에도 '오늘까지 N분'을 보이도록, 목록에 서버 당일 누적을 붙인다.
+#   누적은 사용자·종류 단위 권위값이므로 종류당 한 번만 집계하고, 그 종류가 목록에 없으면 조회하지 않는다.
+
+
+def _template(mission_type: MissionType, *, template_id: int, target_value: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        mission_template_id=template_id,
+        mission_type=mission_type,
+        title="미션",
+        description=None,
+        level="easy",
+        default_target_value=target_value,
+        target_unit="min",
+        requires_safety_notice=False,
+        daily_count_limit=None,
+        reward_points=10,
+        requires_kidney_check=False,
+    )
+
+
+def _service_with_templates(
+    templates: list[object],
+    *,
+    exercise_min: float = 0.0,
+    walking: tuple[float, int] = (0.0, 0),
+) -> tuple[MissionService, dict[str, int]]:
+    service = MissionService(session=None)  # type: ignore[arg-type]
+    calls = {"exercise": 0, "walking": 0}
+
+    async def fake_current_level(user_id: object) -> object:
+        return None
+
+    async def fake_latest_profile(user_id: object) -> object:
+        return None  # 프로필 없음 → 신장 필터 미적용
+
+    async def fake_active_templates(
+        level: object = None, mission_type: object = None, exclude_kidney_check: bool = False
+    ) -> list[object]:
+        return templates
+
+    async def fake_exercise_min(user_id: object) -> float:
+        calls["exercise"] += 1
+        return exercise_min
+
+    async def fake_walking(user_id: object) -> tuple[float, int]:
+        calls["walking"] += 1
+        return walking
+
+    service.repo.get_user_current_level = fake_current_level  # type: ignore[assignment]
+    service.health_repo.get_latest_profile = fake_latest_profile  # type: ignore[assignment]
+    service.repo.get_active_templates = fake_active_templates  # type: ignore[assignment]
+    service.repo.sum_exercise_minutes_today = fake_exercise_min  # type: ignore[assignment]
+    service.repo.sum_walking_totals_today = fake_walking  # type: ignore[assignment]
+    return service, calls
+
+
+def test_get_missions_attaches_exercise_today_progress_below_goal() -> None:
+    service, calls = _service_with_templates(
+        [_template(MissionType.EXERCISE, template_id=1, target_value=10)],
+        exercise_min=4.0,
+    )
+
+    resp = asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
+
+    assert calls == {"exercise": 1, "walking": 0}  # 운동만 있으니 걷기 집계는 안 탄다
+    progress = resp[0].today_progress
+    assert progress is not None
+    assert progress.total_min == 4.0
+    assert progress.total_steps is None  # 운동은 걸음 없음
+    assert progress.goal_reached is False
+
+
+def test_get_missions_exercise_goal_reached_at_target() -> None:
+    service, _ = _service_with_templates(
+        [_template(MissionType.EXERCISE, template_id=1, target_value=10)],
+        exercise_min=10.0,
+    )
+
+    resp = asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
+
+    assert resp[0].today_progress is not None
+    assert resp[0].today_progress.goal_reached is True  # 목표(10)에 도달하면 달성
+
+
+def test_get_missions_attaches_walking_today_progress_with_steps() -> None:
+    service, calls = _service_with_templates(
+        [_template(MissionType.WALKING, template_id=2, target_value=20)],
+        walking=(12.0, 1500),
+    )
+
+    resp = asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
+
+    assert calls == {"exercise": 0, "walking": 1}
+    progress = resp[0].today_progress
+    assert progress is not None
+    assert progress.total_min == 12.0
+    assert progress.total_steps == 1500  # 걷기는 걸음 누적도 표시
+    assert progress.goal_reached is False
+
+
+def test_get_missions_skips_progress_queries_when_type_absent() -> None:
+    # 운동·걷기가 목록에 없으면(식사만) 누적 집계 SELECT 를 아예 타지 않는다.
+    meal = _template(MissionType.MEAL, template_id=3, target_value=1)
+
+    async def fake_meal_log(user_id: object, template_id: object) -> object:
+        return None
+
+    service, calls = _service_with_templates([meal])
+    service.repo.get_today_meal_log = fake_meal_log  # type: ignore[assignment]
+
+    resp = asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
+
+    assert calls == {"exercise": 0, "walking": 0}
+    assert resp[0].today_progress is None  # 식사 미션엔 today_progress 안 붙는다
+
+
+def test_get_missions_progress_zero_when_nothing_done_today() -> None:
+    # 오늘 아직 안 했어도 today_progress 는 null 이 아니라 0 으로 내려간다(앱이 '오늘까지 0분'을 판단할 수 있게).
+    service, _ = _service_with_templates(
+        [_template(MissionType.EXERCISE, template_id=1, target_value=10)],
+        exercise_min=0.0,
+    )
+
+    resp = asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
+
+    assert resp[0].today_progress is not None
+    assert resp[0].today_progress.total_min == 0.0
+    assert resp[0].today_progress.goal_reached is False
+
+
 # ---------------- create_mission_log 안전 차단 (목록 필터 우회 방지) ----------------
 
 
