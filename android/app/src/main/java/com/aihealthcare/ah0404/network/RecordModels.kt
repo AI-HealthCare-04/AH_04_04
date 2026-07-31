@@ -23,6 +23,11 @@ data class RiskHistoryItem(
     @SerialName("care_stage") val careStage: String, // Android 전환 기간의 임시 호환 필드
     @SerialName("prediction_id") val predictionId: Int = 0,
     @SerialName("risk_score") val riskScore: Double? = null,
+    // 근육 건강 점수(#기록탭 §3, #272/#273). 코호트표 미탑재·65세 미만이면 null.
+    @SerialName("muscle_score") val muscleScore: Int? = null,
+    @SerialName("score_band") val scoreBand: String? = null,
+    // 이 점수가 어느 코호트표 기준인지(#273). 추이에서 버전이 바뀐 지점은 비교 불가 경계로 취급한다(리뷰 #275-②).
+    @SerialName("cohort_version") val cohortVersion: String? = null,
     @SerialName("change_percentage_points") val changePercentagePoints: Double? = null,
     @SerialName("comparison_status") val comparisonStatus: String = "baseline",
 )
@@ -33,10 +38,32 @@ data class RiskHistoryResponse(
     val predictions: List<RiskHistoryItem> = emptyList(),
 )
 
+/** GET /risk-predictions/me/latest — 근육 건강 점수 최신값(#기록탭 §3). 필요한 필드만(ignoreUnknownKeys). */
+@Serializable
+data class RiskLatestResponse(
+    @SerialName("muscle_score") val muscleScore: Int? = null,
+    @SerialName("score_band") val scoreBand: String? = null,
+    @SerialName("cohort_version") val cohortVersion: String? = null,
+)
+
+/** what-if 점수 시뮬레이션(#기록탭 §4). score=null 인 지점은 점수 미제공. */
+@Serializable
+data class ScoreSimPointDto(val days: Int, val score: Int? = null)
+
+@Serializable
+data class ScoreSimulationResponse(
+    val walk: List<ScoreSimPointDto> = emptyList(),
+    val musc: List<ScoreSimPointDto> = emptyList(),
+    @SerialName("cohort_version") val cohortVersion: String? = null,
+)
+
 @Serializable
 data class MissionLogItem(
     @SerialName("mission_log_id") val missionLogId: Int,
     @SerialName("mission_type") val missionType: String,
+    // 기록 탭 달력·선그래프(#기록탭 §5.1/§5.2): 미션명 + 완료 시각(KST ISO). 구버전 응답 대비 기본값.
+    val title: String = "",
+    @SerialName("completed_at") val completedAt: String? = null,
     val success: Boolean,
     @SerialName("counted_for_daily") val countedForDaily: Boolean,
     @SerialName("earned_points") val earnedPoints: Int,
@@ -45,4 +72,45 @@ data class MissionLogItem(
 @Serializable
 data class MissionLogListResponse(
     val logs: List<MissionLogItem> = emptyList(),
+)
+
+/** 걷기 일별 막대(#기록탭 §5.3). 걷기 없는 날도 0으로 내려온다. */
+@Serializable
+data class WalkingDayPoint(
+    val date: String, // "YYYY-MM-DD"
+    val steps: Int = 0,
+    val minutes: Double = 0.0,
+)
+
+@Serializable
+data class WalkingDailyResponse(
+    val days: List<WalkingDayPoint> = emptyList(),
+)
+
+/** 챌린지 유형별 누적 완료(#기록탭 §5.4). 0회 유형도 포함(범례 회색). */
+@Serializable
+data class ChallengeTypeTotal(
+    @SerialName("mission_type") val missionType: String, // walking | exercise | meal | game
+    val count: Int = 0,
+)
+
+@Serializable
+data class ChallengeTotalsResponse(
+    val total: Int = 0,
+    @SerialName("by_type") val byType: List<ChallengeTypeTotal> = emptyList(),
+)
+
+/** 월별 스탬프(#기록탭 §5.2). 활동 있는 날만 담기고 나머지는 앱이 none 처리. */
+@Serializable
+data class StampDay(
+    val date: String, // "YYYY-MM-DD"
+    @SerialName("daily_result") val dailyResult: String, // none | success | great_success
+    @SerialName("counted_mission_count") val countedMissionCount: Int = 0,
+    @SerialName("earned_points") val earnedPoints: Int = 0,
+)
+
+@Serializable
+data class StampsResponse(
+    val month: String,
+    val days: List<StampDay> = emptyList(),
 )

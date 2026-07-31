@@ -9,10 +9,35 @@ interface RecordApi {
     @GET("risk-predictions/me/history")
     suspend fun getRiskHistory(@Query("limit") limit: Int = 7): RiskHistoryResponse
 
+    /** 단일일(date) 또는 기간(from~to, 포함) 조회. 기록 탭 달력·선그래프는 기간 조회를 쓴다(#272). */
     @GET("mission-logs")
-    suspend fun getMissionLogs(@Query("date") date: String? = null): MissionLogListResponse
+    suspend fun getMissionLogs(
+        @Query("date") date: String? = null,
+        @Query("from") from: String? = null,
+        @Query("to") to: String? = null,
+    ): MissionLogListResponse
 
     /** 예측 대시보드(#193) 개인화 입력 — 등록된 신체값 + 최근 7일 걷기/운동 요일 수. */
     @GET("dashboard/prediction-inputs")
     suspend fun getPredictionInputs(): PredictionInputsResponse
+
+    /** 걷기 일별 걸음·분(#기록탭 §5.3). */
+    @GET("dashboard/walking-daily")
+    suspend fun getWalkingDaily(@Query("days") days: Int = 7): WalkingDailyResponse
+
+    /** 챌린지 유형별 누적 완료 횟수(#기록탭 §5.4). */
+    @GET("dashboard/challenge-totals")
+    suspend fun getChallengeTotals(): ChallengeTotalsResponse
+
+    /** 월별 스탬프(#기록탭 §5.2 달력). month="YYYY-MM". */
+    @GET("dashboard/stamps")
+    suspend fun getStamps(@Query("month") month: String): StampsResponse
+
+    /** 근육 건강 점수 최신값(#기록탭 §3). 코호트표 미탑재·65세 미만이면 muscle_score=null. */
+    @GET("risk-predictions/me/latest")
+    suspend fun getLatestPrediction(): RiskLatestResponse
+
+    /** what-if 점수 시뮬레이션(#기록탭 §4) — 걷기 0~7·근력 0~5 각 지점 점수. */
+    @GET("dashboard/score-simulation")
+    suspend fun getScoreSimulation(): ScoreSimulationResponse
 }
