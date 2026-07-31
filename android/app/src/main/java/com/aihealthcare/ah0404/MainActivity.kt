@@ -365,6 +365,7 @@ private fun MainContent(
                 },
             )
             MainTab.RECORDS -> RecordScreen(
+                onGoToMissions = { selectedTab = MainTab.MISSIONS },
                 modifier = contentModifier,
             )
             MainTab.SETTINGS -> SettingsScreen(

@@ -1,11 +1,17 @@
 package com.aihealthcare.ah0404.record
 
+import com.aihealthcare.ah0404.network.ChallengeTotalsResponse
 import com.aihealthcare.ah0404.network.MissionLogItem
 import com.aihealthcare.ah0404.network.MissionLogListResponse
+import com.aihealthcare.ah0404.network.RiskLatestResponse
+import com.aihealthcare.ah0404.network.ScoreSimPointDto
+import com.aihealthcare.ah0404.network.ScoreSimulationResponse
 import com.aihealthcare.ah0404.network.PredictionInputsResponse
 import com.aihealthcare.ah0404.network.RecordApi
 import com.aihealthcare.ah0404.network.RiskHistoryItem
 import com.aihealthcare.ah0404.network.RiskHistoryResponse
+import com.aihealthcare.ah0404.network.StampsResponse
+import com.aihealthcare.ah0404.network.WalkingDailyResponse
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -33,20 +39,22 @@ class RecordViewModelTest {
         override suspend fun getRiskHistory(limit: Int): RiskHistoryResponse {
             historyCalls++; return history()
         }
-        override suspend fun getMissionLogs(date: String?): MissionLogListResponse {
+        override suspend fun getMissionLogs(date: String?, from: String?, to: String?): MissionLogListResponse {
             logsCalls++; return logs()
         }
         override suspend fun getPredictionInputs() = PredictionInputsResponse()
+        override suspend fun getWalkingDaily(days: Int) = WalkingDailyResponse()
+        override suspend fun getChallengeTotals() = ChallengeTotalsResponse()
+        override suspend fun getStamps(month: String) = StampsResponse(month = month)
+        override suspend fun getLatestPrediction() = RiskLatestResponse()
+        override suspend fun getScoreSimulation() = ScoreSimulationResponse()
     }
 
     private fun risk(vararg stages: String) =
         RiskHistoryResponse(stages.map { RiskHistoryItem(createdAt = "2026-07-14T09:00:00+09:00", careStage = it) })
 
     private fun log(success: Boolean, points: Int) =
-        MissionLogItem(mission_logId(), "walking", success, countedForDaily = success, earnedPoints = points)
-
-    // mission_log_id 는 값 의미 없음(합산/카운트만 검증) → 고정.
-    private fun mission_logId() = 1
+        MissionLogItem(missionLogId = 1, missionType = "walking", success = success, countedForDaily = success, earnedPoints = points)
 
     @Test
     fun loads_both_sources_and_aggregates_activity() = runBlocking {
@@ -151,15 +159,21 @@ class RecordViewModelTest {
                 RiskHistoryResponse(listOf(RiskHistoryItem("2026-07-15T09:00:00+09:00", "action_needed")))
             }
         }
-        override suspend fun getMissionLogs(date: String?): MissionLogListResponse {
+        override suspend fun getMissionLogs(date: String?, from: String?, to: String?): MissionLogListResponse {
             logsCalls++
             return if (logsCalls == 1) {
-                gate.await(); MissionLogListResponse(listOf(MissionLogItem(1, "walking", true, true, 7)))
+                gate.await()
+                MissionLogListResponse(listOf(MissionLogItem(missionLogId = 1, missionType = "walking", success = true, countedForDaily = true, earnedPoints = 7)))
             } else {
-                MissionLogListResponse(listOf(MissionLogItem(1, "walking", true, true, 14)))
+                MissionLogListResponse(listOf(MissionLogItem(missionLogId = 1, missionType = "walking", success = true, countedForDaily = true, earnedPoints = 14)))
             }
         }
         override suspend fun getPredictionInputs() = PredictionInputsResponse()
+        override suspend fun getWalkingDaily(days: Int) = WalkingDailyResponse()
+        override suspend fun getChallengeTotals() = ChallengeTotalsResponse()
+        override suspend fun getStamps(month: String) = StampsResponse(month = month)
+        override suspend fun getLatestPrediction() = RiskLatestResponse()
+        override suspend fun getScoreSimulation() = ScoreSimulationResponse()
     }
 
     @Test
@@ -200,5 +214,48 @@ class RecordViewModelTest {
         assertTrue(vm.activityError)   // 활동 섹션만 오류
         assertFalse(vm.historyError)
         assertEquals(2, vm.history.size) // 이력은 정상 반영
+    }
+
+    /**
+     * 리뷰 #275-①·② 회귀 방지: 걷기/근력 시뮬레이션 응답이 **둘 다** UI 상태(MuscleScoreUi)까지 전달되고,
+     * 이력의 점수·비교 상태가 경계 보존 추이(buildScoreTrend)로 매핑된다.
+     */
+    @Test
+    fun sim_and_score_reach_muscle_ui_state() = runBlocking {
+        val api = object : RecordApi {
+            override suspend fun getRiskHistory(limit: Int) = RiskHistoryResponse(
+                listOf(
+                    RiskHistoryItem(
+                        createdAt = "2026-07-22T09:00:00+09:00", careStage = "maintain",
+                        muscleScore = 70, cohortVersion = "v1", comparisonStatus = "baseline",
+                    ),
+                    RiskHistoryItem(
+                        createdAt = "2026-07-29T09:00:00+09:00", careStage = "maintain",
+                        muscleScore = 74, cohortVersion = "v1", comparisonStatus = "comparable",
+                    ),
+                ),
+            )
+            override suspend fun getMissionLogs(date: String?, from: String?, to: String?) = MissionLogListResponse()
+            override suspend fun getPredictionInputs() = PredictionInputsResponse()
+            override suspend fun getWalkingDaily(days: Int) = WalkingDailyResponse()
+            override suspend fun getChallengeTotals() = ChallengeTotalsResponse()
+            override suspend fun getStamps(month: String) = StampsResponse(month = month)
+            override suspend fun getLatestPrediction() = RiskLatestResponse(muscleScore = 74, scoreBand = "maintain")
+            override suspend fun getScoreSimulation() = ScoreSimulationResponse(
+                walk = listOf(ScoreSimPointDto(0, 74), ScoreSimPointDto(7, 76)),
+                musc = listOf(ScoreSimPointDto(0, 74), ScoreSimPointDto(3, 82)),
+            )
+        }
+        val vm = RecordViewModel(api)
+
+        vm.refresh()
+
+        val ui = vm.muscleScore ?: error("muscleScore UI 상태가 구성되지 않았다")
+        assertEquals(74, ui.score)
+        assertEquals("maintain", ui.band)
+        assertEquals(listOf(0, 7), ui.walkSim.map { it.days }) // 걷기 시뮬도 UI 까지 전달(리뷰 #275-①)
+        assertEquals(listOf(0, 3), ui.muscSim.map { it.days })
+        assertEquals(listOf(70, 74), ui.trend.map { it.score })
+        assertEquals(listOf(false, false), ui.trend.map { it.newBaseline }) // 같은 코호트 → 경계 없음
     }
 }

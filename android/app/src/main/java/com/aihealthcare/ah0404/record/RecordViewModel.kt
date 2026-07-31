@@ -7,11 +7,17 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aihealthcare.ah0404.dashboard.DashboardPrefill
+import com.aihealthcare.ah0404.network.ChallengeTotalsResponse
+import com.aihealthcare.ah0404.network.MissionLogItem
 import com.aihealthcare.ah0404.network.PredictionInputsResponse
 import com.aihealthcare.ah0404.network.RecordApi
 import com.aihealthcare.ah0404.network.RiskHistoryItem
+import com.aihealthcare.ah0404.network.WalkingDayPoint
 import com.aihealthcare.ah0404.network.retrofit
 import java.util.Calendar
+import java.util.GregorianCalendar
+import java.util.Locale
+import java.util.TimeZone
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -49,11 +55,62 @@ class RecordViewModel(
     // 예측 대시보드(#193) 개인화 초기값. null 이면 대시보드가 HTML 기본값으로 열린다(엔드포인트 미배포/미완 시).
     var predictionPrefill by mutableStateOf<DashboardPrefill?>(null); private set
 
+    // 근육 건강 정보(#기록탭 §3·§4) UI 상태(실데이터). load 전엔 null → 화면은 로딩 표시.
+    //   MuscleScoreUi 가 internal 이라 프로퍼티도 internal(같은 모듈의 RecordScreen 만 소비).
+    internal var muscleScore by mutableStateOf<MuscleScoreUi?>(null); private set
+
+    // ── 나의 기록 챌린지 통계(#기록탭 §5) ─────────────────────────────────────
+    var lineLogs by mutableStateOf<List<MissionLogItem>>(emptyList()); private set   // §5.1 최근 14일 완료 선그래프
+    var walkingDays by mutableStateOf<List<WalkingDayPoint>>(emptyList()); private set // §5.3 걷기 막대 7일
+    var challengeTotals by mutableStateOf<ChallengeTotalsResponse?>(null); private set  // §5.4 도넛
+    // §5.2 달력: 표시 중인 월의 스탬프(dateKey→daily_result)와 그 달 완료 미션(팝업용).
+    var calYear by mutableStateOf(0); private set
+    var calMonth by mutableStateOf(0); private set // 1~12
+    var stampsByDate by mutableStateOf<Map<String, String>>(emptyMap()); private set
+    var monthLogs by mutableStateOf<List<MissionLogItem>>(emptyList()); private set
+
+    private val kst: TimeZone = TimeZone.getTimeZone("Asia/Seoul")
+
+    init {
+        val now = GregorianCalendar(kst)
+        calYear = now.get(Calendar.YEAR)
+        calMonth = now.get(Calendar.MONTH) + 1
+    }
+
     // 겹친 refresh 중 최신 것만 상태를 commit 하도록 식별하는 세대 토큰.
     private var generation = 0
 
     fun load() {
         viewModelScope.launch { refresh() }
+        loadMonth(calYear, calMonth)
+    }
+
+    /** 달력 월 이동(#기록탭 §5.2). 그 달의 스탬프 + 완료 미션(팝업용)을 다시 불러온다. */
+    fun showPreviousMonth() {
+        val c = GregorianCalendar(kst).apply { clear(); set(calYear, calMonth - 1, 1); add(Calendar.MONTH, -1) }
+        calYear = c.get(Calendar.YEAR); calMonth = c.get(Calendar.MONTH) + 1
+        loadMonth(calYear, calMonth)
+    }
+
+    fun showNextMonth() {
+        val c = GregorianCalendar(kst).apply { clear(); set(calYear, calMonth - 1, 1); add(Calendar.MONTH, 1) }
+        calYear = c.get(Calendar.YEAR); calMonth = c.get(Calendar.MONTH) + 1
+        loadMonth(calYear, calMonth)
+    }
+
+    private fun loadMonth(year: Int, month1: Int) {
+        viewModelScope.launch {
+            val (from, to) = monthBounds(year, month1)
+            val month = String.format(Locale.US, "%04d-%02d", year, month1)
+            val stampsResult = safeCall { api.getStamps(month).days }
+            val logsResult = safeCall { api.getMissionLogs(from = from, to = to).logs }
+            // 이동 중 다른 달을 이미 골랐으면 낡은 응답은 버린다.
+            if (year != calYear || month1 != calMonth) return@launch
+            stampsResult.onSuccess { days -> stampsByDate = days.associate { it.date to it.dailyResult } }
+                .onFailure { Log.w(TAG, "스탬프 조회 실패: ${it.message}") }
+            logsResult.onSuccess { monthLogs = it }
+                .onFailure { Log.w(TAG, "달 미션 로그 조회 실패: ${it.message}") }
+        }
     }
 
     /**
@@ -67,12 +124,22 @@ class RecordViewModel(
         activityError = false
         coroutineScope {
             val historyCall = async { safeCall { api.getRiskHistory().predictions } }
-            val logsCall = async { safeCall { api.getMissionLogs().logs } }
+            // §5.1 선그래프: 최근 14일 완료 미션. §5.4 도넛·§5.3 걷기 막대는 각자 소스.
+            val lineCall = async { safeCall { api.getMissionLogs(from = daysAgoKey(13), to = todayKey()).logs } }
+            val walkingCall = async { safeCall { api.getWalkingDaily(7).days } }
+            val totalsCall = async { safeCall { api.getChallengeTotals() } }
             // 예측 대시보드 개인화(#193): 실패해도(미배포/프로필 미완) 화면은 막지 않고 기본값 폴백.
             val prefillCall = async { safeCall { api.getPredictionInputs() } }
+            // 근육 건강 정보(§3·§4) 실데이터. 미배포/미예측(404)이면 null → "준비 중"·연령 카드로 폴백.
+            val latestCall = async { safeCall { api.getLatestPrediction() } }
+            val simCall = async { safeCall { api.getScoreSimulation() } }
             val historyResult = historyCall.await()
-            val logsResult = logsCall.await()
+            val lineResult = lineCall.await()
+            val walkingResult = walkingCall.await()
+            val totalsResult = totalsCall.await()
             val prefillResult = prefillCall.await()
+            val latestResult = latestCall.await()
+            val simResult = simCall.await()
 
             // 이 refresh 이후 더 최신 refresh 가 시작됐다면, 낡은 결과는 버린다(commit 안 함).
             if (gen != generation) return@coroutineScope
@@ -80,22 +147,56 @@ class RecordViewModel(
             historyResult
                 .onSuccess { history = it }
                 .onFailure { historyError = true; Log.w(TAG, "예측 추이 조회 실패: ${it.message}") }
-            logsResult
+            lineResult
                 .onSuccess { logs ->
-                    // "완료한 미션 수" = 오늘 실제로 완료 집계된 미션 수. success 가 아니라 counted_for_daily 로 센다:
-                    //   운동(누적 10분) 미션은 10분을 넘긴 뒤의 세션도 success=true 로그를 남기지만 counted_for_daily=false
-                    //   (그날 이미 집계됨) → success 로 세면 한 미션을 여러 번 한 게 여러 건으로 부풀려진다(#234).
-                    //   counted_for_daily 는 미션당 하루 1회만 true 라 earnedPoints 합(집계 1회분)과도 일관된다.
+                    lineLogs = logs
+                    // "완료한 미션 수" = 실제 완료 집계된 미션 수(#274). success 가 아니라 counted_for_daily:
+                    //   운동·걷기(누적 목표)는 목표를 넘긴 뒤의 세션도 success=true 지만 counted_for_daily=false
+                    //   (미적립) → success 로 세면 반복 세션이 부풀려진다. counted 는 홈 완료 개수·포인트와 일관.
                     completedMissions = logs.count { it.countedForDaily }
                     totalPoints = logs.sumOf { it.earnedPoints }
                 }
                 .onFailure { activityError = true; Log.w(TAG, "미션 로그 조회 실패: ${it.message}") }
+            walkingResult.onSuccess { walkingDays = it }
+                .onFailure { Log.w(TAG, "걷기 일별 조회 실패: ${it.message}") }
+            totalsResult.onSuccess { challengeTotals = it }
+                .onFailure { Log.w(TAG, "챌린지 집계 조회 실패: ${it.message}") }
             prefillResult
                 .onSuccess { predictionPrefill = it.toDashboardPrefill() }
                 .onFailure { Log.w(TAG, "예측 입력 조회 실패(기본값 폴백): ${it.message}") }
+            simResult.onFailure { Log.w(TAG, "점수 시뮬레이션 조회 실패: ${it.message}") }
+            latestResult.onFailure { Log.w(TAG, "근육 건강 점수 조회 실패: ${it.message}") }
+            // 근육 건강 정보 UI 상태(§3·§4)는 실데이터로 구성한다 — 앱은 점수를 계산하지 않는다(서버 값 표시만).
+            //   5STS(초)는 아직 노출 API가 없어(백엔드 필요) stsSeconds=null → §3.4 안전망 카드는 미표시.
+            muscleScore = MuscleScoreUi(
+                age = predictionPrefill?.age,
+                score = latestResult.getOrNull()?.muscleScore,
+                band = latestResult.getOrNull()?.scoreBand,
+                // 리뷰 #275-②: 비교 불가 경계(model_changed·cohort_version 변경)를 보존한 추이.
+                trend = buildScoreTrend(history),
+                walkSim = simResult.getOrNull()?.walk?.mapNotNull { p -> p.score?.let { ScoreSimPoint(p.days, it) } } ?: emptyList(),
+                muscSim = simResult.getOrNull()?.musc?.mapNotNull { p -> p.score?.let { ScoreSimPoint(p.days, it) } } ?: emptyList(),
+                stsSeconds = null,
+                bmi = null,
+            )
             loaded = true
         }
         if (gen == generation) loading = false
+    }
+
+    private fun dateKeyMillis(millis: Long): String {
+        val c = GregorianCalendar(kst).apply { timeInMillis = millis }
+        return String.format(Locale.US, "%04d-%02d-%02d", c.get(Calendar.YEAR), c.get(Calendar.MONTH) + 1, c.get(Calendar.DAY_OF_MONTH))
+    }
+
+    private fun todayKey(): String = dateKeyMillis(System.currentTimeMillis())
+    private fun daysAgoKey(days: Int): String = dateKeyMillis(System.currentTimeMillis() - days.toLong() * 86_400_000L)
+
+    private fun monthBounds(year: Int, month1: Int): Pair<String, String> {
+        val first = GregorianCalendar(kst).apply { clear(); set(year, month1 - 1, 1) }
+        val last = first.getActualMaximum(Calendar.DAY_OF_MONTH)
+        return String.format(Locale.US, "%04d-%02d-01", year, month1) to
+            String.format(Locale.US, "%04d-%02d-%02d", year, month1, last)
     }
 
     /** 취소 예외는 그대로 전파(구조적 동시성 보존), 실제 오류만 Result.failure 로 변환. */
