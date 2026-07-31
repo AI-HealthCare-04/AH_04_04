@@ -32,6 +32,18 @@ class MealTodayLog(BaseModel):
     logged_at: KstDatetime
 
 
+class MissionTodayProgress(BaseModel):
+    """운동·걷기 미션의 '오늘 누적 진행'. 재생/측정을 안 해도, 목록 진입 시점에 '오늘까지 얼마나 했는지'를
+    보여주려는 값이다(완료 응답의 daily_total_min과 같은 서버 당일 합산 권위값을 목록에도 노출).
+
+    total_min 은 오늘 누적 시간(분), total_steps 는 걷기 전용 누적 걸음(표시용, 운동은 null),
+    goal_reached 는 목표(target_value, 분) 도달 여부다. 아직 오늘 한 게 없으면 total_min=0 으로 내려간다."""
+
+    total_min: float
+    total_steps: int | None = None
+    goal_reached: bool
+
+
 class MissionResponse(BaseSerializerModel):
     mission_template_id: int
     mission_type: str
@@ -46,6 +58,8 @@ class MissionResponse(BaseSerializerModel):
     reward_points: int
     # 단백질(식사) 미션 한정: 오늘 저장된 기록. 없으면 null. 다른 종류 미션은 항상 null.
     today_log: MealTodayLog | None = None
+    # 운동·걷기 미션 한정: 오늘 누적 진행(분·걸음·목표달성). 다른 종류 미션은 항상 null.
+    today_progress: MissionTodayProgress | None = None
 
 
 class MissionListResponse(BaseModel):

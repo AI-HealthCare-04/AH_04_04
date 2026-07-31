@@ -26,6 +26,7 @@ from app.dtos.mission import (
     MissionLogUpdateRequest,
     MissionLogUpdateResponse,
     MissionResponse,
+    MissionTodayProgress,
 )
 from app.models.enums import (
     ActivityLevel,
@@ -76,11 +77,31 @@ class MissionService:
             template.mission_template_id for template in templates if template.mission_type == MissionType.MEAL
         ]
         today_meals = await self.repo.get_today_meal_logs(user.user_id, meal_template_ids)
+        # 오늘 누적 진행(운동·걷기)은 종류당 한 번만 집계한다 — 목록에 같은 종류가 여러 개여도(레벨 등)
+        #   당일 누적은 사용자·종류 단위 권위값이라 동일하므로 중복 SELECT 를 피한다. 목록에 해당 종류가
+        #   없으면 아예 조회하지 않는다(0 을 표시할 카드가 없으니).
+        types = {t.mission_type for t in templates}
+        exercise_min = await self.repo.sum_exercise_minutes_today(user.user_id) if MissionType.EXERCISE in types else None
+        walking_totals = await self.repo.sum_walking_totals_today(user.user_id) if MissionType.WALKING in types else None
         # 단백질(식사) 미션엔 오늘 저장된 기록을 붙여, 앱이 재진입 시 카드 선택 상태를 복원하게 한다(지시서 §4.1).
+        #   운동·걷기 미션엔 오늘 누적 진행을 붙여, 재생/측정 전에도 '오늘까지 N분'을 목록에서 볼 수 있게 한다.
         for resp, template in zip(responses, templates, strict=True):
-            meal = today_meals.get(template.mission_template_id)
-            if meal is not None:
-                resp.today_log = MealTodayLog(eaten=meal.protein_foods, logged_at=meal.created_at)
+            if template.mission_type == MissionType.MEAL:
+                meal = today_meals.get(template.mission_template_id)
+                if meal is not None:
+                    resp.today_log = MealTodayLog(eaten=meal.protein_foods, logged_at=meal.created_at)
+            elif template.mission_type == MissionType.EXERCISE and exercise_min is not None:
+                resp.today_progress = MissionTodayProgress(
+                    total_min=exercise_min,
+                    goal_reached=exercise_min >= template.default_target_value,
+                )
+            elif template.mission_type == MissionType.WALKING and walking_totals is not None:
+                total_min, total_steps = walking_totals
+                resp.today_progress = MissionTodayProgress(
+                    total_min=total_min,
+                    total_steps=total_steps,
+                    goal_reached=total_min >= template.default_target_value,
+                )
         return responses
 
     @staticmethod
