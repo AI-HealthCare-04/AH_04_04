@@ -42,6 +42,9 @@ fun MiniGameScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
         StreamingVideoPlayer(
             url = BuildConfig.MINI_GAME_VIDEO_URL,
             autoPlay = true,
+            // 영상 끝(STATE_ENDED) → 자동 복귀(#344): 근력·유산소(포스터 복귀)·루틴(자동 완료)과 동작 통일.
+            //   마지막 프레임에 멈춘 채 머무르면 시니어 사용자에게 '고장'으로 읽힌다.
+            onEnded = onBack,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),

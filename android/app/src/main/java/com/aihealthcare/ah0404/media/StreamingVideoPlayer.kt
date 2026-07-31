@@ -1,10 +1,16 @@
 package com.aihealthcare.ah0404.media
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -12,6 +18,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -37,6 +44,9 @@ import com.aihealthcare.ah0404.settings.AppSettings
  *    직전 위치를 보관했다가 넘긴다. 0(기본)이면 처음부터.
  *  - `onPositionSaved`: 이탈(dispose) 직전 현재 재생 위치(ms)를 알린다(#235). 호출부가 url 별로 보관해 다음
  *    진입의 [startPositionMs] 로 되돌려준다. 영상이 끝까지 재생됐으면 0 을 넘겨 다음 진입은 처음부터 시작한다.
+ *  - `onEnded`: 영상이 끝나면(STATE_ENDED) 알린다(#344). 미니게임이 자동 복귀에 쓴다(다른 재생기와 동작 통일).
+ *  - 실패·버퍼링(#345): onPlayerError → 안내 + '다시 시도'(플레이어 재생성, 실패 지점부터 이어재생),
+ *    버퍼링 동안 로딩 인디케이터. 검은 화면에서 말없이 멈추던 문제 해소.
  */
 @UnstableApi
 @Composable
@@ -47,14 +57,23 @@ fun StreamingVideoPlayer(
     startPositionMs: Long = 0L,
     onIsPlayingChanged: (Boolean) -> Unit = {},
     onPositionSaved: (Long) -> Unit = {},
+    onEnded: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     // 콜백 최신값 유지(리스너를 매 재구성마다 재등록하지 않도록) — 리스너는 player 단위로만 붙였다 뗀다.
     val currentOnIsPlayingChanged by rememberUpdatedState(onIsPlayingChanged)
     val currentOnPositionSaved by rememberUpdatedState(onPositionSaved)
+    val currentOnEnded by rememberUpdatedState(onEnded)
 
-    val player = remember(url) {
+    // 재생 실패·버퍼링 상태(#345). retryKey 가 오르면 플레이어를 새로 만들어 재시도한다.
+    //   retryPositionMs: 재시도 시 실패 지점부터 이어가도록 마지막 위치를 보관(최초엔 startPositionMs).
+    var playbackError by remember(url) { mutableStateOf(false) }
+    var buffering by remember(url) { mutableStateOf(true) }
+    var retryKey by remember(url) { mutableIntStateOf(0) }
+    var retryPositionMs by remember(url) { mutableLongStateOf(startPositionMs) }
+
+    val player = remember(url, retryKey) {
         val cacheFactory = CacheDataSource.Factory()
             .setCache(VideoCache.get(context))
             .setUpstreamDataSourceFactory(DefaultDataSource.Factory(context))
@@ -64,8 +83,9 @@ fun StreamingVideoPlayer(
             .build()
             .apply {
                 setMediaItem(MediaItem.fromUri(url))
-                // 이어보기(#235): prepare 전에 seek 해 두면 준비 완료 후 그 위치부터 재생된다. 0 이면 처음부터.
-                if (startPositionMs > 0L) seekTo(startPositionMs)
+                // 이어보기(#235) + 재시도 이어재생(#345): prepare 전에 seek 해 두면 준비 완료 후 그 위치부터
+                //   재생된다. 최초엔 startPositionMs, 재시도면 실패 시점 위치. 0 이면 처음부터.
+                if (retryPositionMs > 0L) seekTo(retryPositionMs)
                 prepare()
                 playWhenReady = autoPlay
                 volume = AppSettings.soundScale // 설정 소리 크기 적용(C-2)
@@ -81,6 +101,15 @@ fun StreamingVideoPlayer(
             override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
                 // 컨트롤러 톱니로 옵션 밖 속도를 골라도 전역 저장·실제 재생 모두 확정 4옵션으로 정규화(지영 리뷰, #288 공용).
                 player.persistNormalizedSpeed(context, playbackParameters.speed)
+            }
+            override fun onPlaybackStateChanged(state: Int) {
+                buffering = state == Player.STATE_BUFFERING
+                if (state == Player.STATE_ENDED) currentOnEnded() // 미니게임 자동 복귀(#344)
+            }
+            override fun onPlayerError(error: PlaybackException) {
+                // 네트워크 단절·서버 무응답(#345): 검은 화면 방치 대신 안내 + 재시도.
+                playbackError = true
+                buffering = false
             }
         }
         player.addListener(listener)
@@ -105,9 +134,22 @@ fun StreamingVideoPlayer(
 
     // factory 는 View 생성 시 1회만 실행되므로, 바뀌는 player 는 update 에서 매 재구성마다 반영한다
     //   (리뷰 #76: url 변경 시 새 ExoPlayer 로 교체되어야 재생 가능한 다른 탭 영상이 정상 재생됨).
-    AndroidView(
-        modifier = modifier,
-        factory = { ctx -> PlayerView(ctx).apply { useController = true } },
-        update = { it.player = player },
-    )
+    Box(modifier = modifier) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx -> PlayerView(ctx).apply { useController = true } },
+            update = { it.player = player },
+        )
+        PlaybackStatusOverlay(
+            buffering = buffering,
+            error = playbackError,
+            onRetry = {
+                // 실패 지점부터 이어가도록 위치를 보관하고 플레이어를 재생성한다(원인이 남았으면 다시 onPlayerError).
+                retryPositionMs = player.currentPosition.coerceAtLeast(0L)
+                playbackError = false
+                buffering = true
+                retryKey++
+            },
+        )
+    }
 }
