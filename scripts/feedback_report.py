@@ -59,8 +59,9 @@ RESPONSES_BY_PROVIDER = text(
 TOTALS = text(
     """
     SELECT
-        COUNT(*)                    AS total,
-        SUM(pf.is_test = TRUE)      AS test_marked
+        COUNT(*)                                 AS stored_total,
+        COALESCE(SUM(pf.is_test = TRUE), 0)      AS test_marked,
+        COALESCE(SUM(pf.is_test = FALSE), 0)     AS real_total
     FROM prediction_feedbacks pf
     """
 )
@@ -86,7 +87,12 @@ async def main() -> None:
     await engine.dispose()
 
     print("# 예측 피드백 집계 (#357) — 실제 사용자 응답 (is_test 제외)")
-    print(f"\n전체 응답 {totals['total']}건 (시연·QA 마킹 제외분: {totals['test_marked'] or 0}건)")
+    # 심사 자료의 '실제 사용자 N'은 real_total 이다 — 저장 전체(stored_total)에는 QA 응답이 섞여
+    # 있으므로 그대로 복사하면 안 된다(리뷰 반영: 세 수치를 분리 표기).
+    print(
+        f"\n실제 집계 대상 {totals['real_total']}건 "
+        f"(저장 전체 {totals['stored_total']}건 - 시연·QA 마킹 {totals['test_marked']}건)"
+    )
     _print_table("모델 버전 × 점수 구간별 불일치율", by_model)
     _print_table("provider 별 응답 수", by_provider)
     print(

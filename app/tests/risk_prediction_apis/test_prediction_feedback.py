@@ -8,13 +8,14 @@ from decimal import Decimal
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette import status
 
-from app.models.enums import FeedbackReason, FeedbackResponse, ModelVariant, RiskLevel
+from app.models.enums import FeedbackReason, FeedbackResponse, ModelVariant, RiskLevel, TermsType
 from app.models.predictions import PredictionFeedback, RiskPrediction
+from app.models.terms import TermsAgreement
 from app.models.users import User
 
 
@@ -22,6 +23,19 @@ async def _guest_auth(db_client: AsyncClient) -> dict[str, str]:
     login = await db_client.post("/api/v1/auth/guest")
     assert login.status_code == status.HTTP_200_OK
     return {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+
+async def _agree_current_terms(db_client: AsyncClient, auth: dict[str, str]) -> None:
+    """현행 카탈로그 버전으로 약관 전체 동의 — 피드백은 sensitive_health 최신 동의가 전제다(#362 리뷰)."""
+    terms = await db_client.get("/api/v1/terms", headers=auth)
+    agreements = [
+        {"terms_type": t["terms_type"], "version": t["version"], "agreed": True}
+        for t in terms.json()["terms"]
+    ]
+    agree_resp = await db_client.post(
+        "/api/v1/users/me/agreements", json={"agreements": agreements}, headers=auth
+    )
+    assert agree_resp.status_code == status.HTTP_200_OK
 
 
 async def _onboard_and_create_prediction(
@@ -34,15 +48,7 @@ async def _onboard_and_create_prediction(
     POST /risk-predictions 는 ML 예측기 실행까지 태우므로, 피드백 계약 검증에는
     프로필 FK 만 갖춘 예측 행을 직접 넣는 편이 빠르고 결정적이다.
     """
-    terms = await db_client.get("/api/v1/terms", headers=auth)
-    agreements = [
-        {"terms_type": t["terms_type"], "version": t["version"], "agreed": True}
-        for t in terms.json()["terms"]
-    ]
-    agree_resp = await db_client.post(
-        "/api/v1/users/me/agreements", json={"agreements": agreements}, headers=auth
-    )
-    assert agree_resp.status_code == status.HTTP_200_OK
+    await _agree_current_terms(db_client, auth)
     session_resp = await db_client.post("/api/v1/health-check/sessions", json={"input_method": "form"}, headers=auth)
     assert session_resp.status_code == status.HTTP_201_CREATED
     profile_resp = await db_client.post(
@@ -142,6 +148,7 @@ async def test_put_feedback_on_other_users_prediction_returns_404(
     prediction_id = await _onboard_and_create_prediction(db_client, owner_auth, db_sessionmaker)
 
     other_auth = await _guest_auth(db_client)
+    await _agree_current_terms(db_client, other_auth)  # 동의 게이트 통과 후 소유권만 검증되게
     resp = await db_client.put(
         f"/api/v1/risk-predictions/{prediction_id}/feedback",
         json={"response": "similar"},
@@ -152,10 +159,45 @@ async def test_put_feedback_on_other_users_prediction_returns_404(
 
 async def test_put_feedback_unknown_prediction_returns_404(db_client: AsyncClient) -> None:
     auth = await _guest_auth(db_client)
+    await _agree_current_terms(db_client, auth)
     resp = await db_client.put(
         "/api/v1/risk-predictions/999999999/feedback", json={"response": "similar"}, headers=auth
     )
     assert resp.status_code == status.HTTP_404_NOT_FOUND
+
+
+async def test_put_feedback_requires_current_sensitive_health_consent(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    """동의 버전 게이트(#362 리뷰 P1): 구버전(1.0) 동의자는 403, 현행 문안 재동의 후 성공.
+
+    체감 응답 수집·활용 목적은 sensitive_health 1.1 에서 추가됐으므로, 1.0 동의만으로는
+    저장할 수 없어야 한다 — 문서·카탈로그 버전 상향만으로는 기존 동의자 경로가 닫히지 않는다.
+    """
+    auth = await _guest_auth(db_client)
+    prediction_id = await _onboard_and_create_prediction(db_client, auth, db_sessionmaker)
+    url = f"/api/v1/risk-predictions/{prediction_id}/feedback"
+
+    # 기존 동의자 시뮬레이션: sensitive_health 동의를 구버전(1.0)으로 강등한다.
+    async with db_sessionmaker() as session:
+        await session.execute(
+            update(TermsAgreement)
+            .where(TermsAgreement.terms_type == TermsType.SENSITIVE_HEALTH)
+            .values(version="1.0")
+        )
+        await session.commit()
+
+    denied = await db_client.put(url, json={"response": "similar"}, headers=auth)
+    assert denied.status_code == status.HTTP_403_FORBIDDEN
+
+    async with db_sessionmaker() as session:
+        count = await session.scalar(select(func.count()).select_from(PredictionFeedback))
+        assert count == 0  # 거부 시 저장되지 않는다
+
+    # 현행 카탈로그 버전으로 재동의(온보딩 완료 사용자도 가능) → 저장 성공
+    await _agree_current_terms(db_client, auth)
+    ok = await db_client.put(url, json={"response": "similar"}, headers=auth)
+    assert ok.status_code == status.HTTP_200_OK
 
 
 async def test_put_feedback_requires_auth(db_client: AsyncClient) -> None:
