@@ -1,0 +1,7 @@
+# 배포 아티팩트 SHA-256 정본 (2026-08-01)
+# test_predictor.py의 무결성 테스트(②)가 이 값을 검증한다.
+# ※ with_waist는 13행 제거본으로 교체되어 이전 문서의 EC837908... 은 폐기됨.
+
+987287e8be9daa87487595865d2113b7f298cdd3248ed107adcd7b580ac4ffe5  sarcopenia_model_minimal.joblib
+0b5052862a66d1a429e3632a4d2eac00babbf3546be6c38748ab52670c5c2c10  sarcopenia_model_with_waist.joblib
+c20061077a9c44485ad21f77227cb27fc9772a91d3f0cb3e91d56e1c6265ff93  cohort_unified_65plus.json
