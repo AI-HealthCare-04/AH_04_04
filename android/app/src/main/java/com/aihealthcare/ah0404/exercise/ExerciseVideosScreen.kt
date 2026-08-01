@@ -33,6 +33,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -59,6 +60,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -69,6 +71,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import kotlin.math.floor
 import com.aihealthcare.ah0404.R
+import com.aihealthcare.ah0404.media.PlaybackStatusOverlay
 import com.aihealthcare.ah0404.media.StreamingVideoPlayer
 import com.aihealthcare.ah0404.media.VideoCache
 import com.aihealthcare.ah0404.media.persistNormalizedSpeed
@@ -481,8 +484,14 @@ private fun ExercisePlayer(
     val currentOnWatched by rememberUpdatedState(onWatched)
     val currentOnPositionSaved by rememberUpdatedState(onPositionSaved)
 
-    // 세로↔전체화면이 공유하는 단일 플레이어(캐시·전역속도). url 이 바뀌면 새로 만든다.
-    val player = remember(url) {
+    // 재생 실패·버퍼링 상태(#345). retryKey 증가 → 플레이어 재생성(재시도), retryPositionMs 는 실패 지점 이어재생용.
+    var playbackError by remember(url) { mutableStateOf(false) }
+    var buffering by remember(url) { mutableStateOf(true) }
+    var retryKey by remember(url) { mutableIntStateOf(0) }
+    var retryPositionMs by remember(url) { mutableLongStateOf(startPositionMs) }
+
+    // 세로↔전체화면이 공유하는 단일 플레이어(캐시·전역속도). url 이 바뀌거나 재시도(#345)면 새로 만든다.
+    val player = remember(url, retryKey) {
         val cacheFactory = CacheDataSource.Factory()
             .setCache(VideoCache.get(context))
             .setUpstreamDataSourceFactory(DefaultDataSource.Factory(context))
@@ -491,8 +500,8 @@ private fun ExercisePlayer(
             .setMediaSourceFactory(DefaultMediaSourceFactory(cacheFactory))
             .build().apply {
                 setMediaItem(MediaItem.fromUri(url))
-                // 이어보기(#235): prepare 전에 seek 하면 준비 후 그 위치부터 재생된다. 0 이면 처음부터.
-                if (startPositionMs > 0L) seekTo(startPositionMs)
+                // 이어보기(#235) + 재시도 이어재생(#345): 최초엔 startPositionMs, 재시도면 실패 시점 위치.
+                if (retryPositionMs > 0L) seekTo(retryPositionMs)
                 prepare()
                 playWhenReady = true // 포스터 탭 = 재생 의사(지영 리뷰 #254 P2)
                 volume = AppSettings.soundScale
@@ -510,12 +519,21 @@ private fun ExercisePlayer(
                 player.persistNormalizedSpeed(context, playbackParameters.speed)
             }
             override fun onPlaybackStateChanged(state: Int) {
+                buffering = state == Player.STATE_BUFFERING
                 if (state == Player.STATE_ENDED) { player.pause(); currentOnExit() }
+            }
+            override fun onPlayerError(error: PlaybackException) {
+                // 네트워크 단절·서버 무응답(#345): 검은 화면 방치 대신 안내 + 재시도(아래 오버레이).
+                playbackError = true
+                buffering = false
             }
         }
         player.addListener(listener)
         onDispose { player.removeListener(listener) }
     }
+
+    // 실패 시 전체화면을 접는다(#345) — 안내·재시도 오버레이는 세로 화면(PortraitPlay)에 있다.
+    LaunchedEffect(playbackError) { if (playbackError) fullscreen = false }
 
     // 백그라운드 시 일시정지, 화면 이탈 시 release + 실제 재생 분 1회 발화. (전체화면 토글로는 재실행 안 됨 — player 안정)
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -526,7 +544,6 @@ private fun ExercisePlayer(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            currentOnWatched(stopwatch.elapsedMinutes(SystemClock.elapsedRealtime()))
             // 이어보기(#235): 완주(STATE_ENDED)면 0(다음 진입 처음부터), 아니면 현재 위치를 보관.
             val savedMs = if (player.playbackState == Player.STATE_ENDED) 0L else player.currentPosition
             currentOnPositionSaved(savedMs)
@@ -534,13 +551,37 @@ private fun ExercisePlayer(
         }
     }
 
+    // 실제 재생 분 발화는 '화면 이탈' 1회만(#345 주의): 위 블록은 재시도(플레이어 재생성)마다 dispose 되므로
+    //   거기 두면 스톱워치 누적값이 중복 발화돼 시청 분이 이중 집계된다. 화면 수명(Unit) 에서만 알린다.
+    DisposableEffect(Unit) {
+        onDispose { currentOnWatched(stopwatch.elapsedMinutes(SystemClock.elapsedRealtime())) }
+    }
+
     // 뒤로가기: 전체화면이면 세로로 접고, 세로면 포스터로 나간다(중간 이탈도 안전 복귀, 스펙 §3-3).
     BackHandler { if (fullscreen) fullscreen = false else onExit() }
 
     if (fullscreen) {
-        FullscreenLandscapeStage(player = player, stage = item.stage, onCollapse = { fullscreen = false })
+        FullscreenLandscapeStage(
+            player = player,
+            stage = item.stage,
+            onCollapse = { fullscreen = false },
+            buffering = buffering,
+        )
     } else {
-        PortraitPlay(player = player, item = item, onExpand = { fullscreen = true }, onExit = onExit)
+        PortraitPlay(
+            player = player,
+            item = item,
+            onExpand = { fullscreen = true },
+            onExit = onExit,
+            buffering = buffering,
+            playbackError = playbackError,
+            onRetry = {
+                retryPositionMs = player.currentPosition.coerceAtLeast(0L)
+                playbackError = false
+                buffering = true
+                retryKey++
+            },
+        )
     }
 }
 
@@ -552,6 +593,9 @@ private fun PortraitPlay(
     item: ExerciseVideoItem,
     onExpand: () -> Unit,
     onExit: () -> Unit,
+    buffering: Boolean = false,
+    playbackError: Boolean = false,
+    onRetry: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier.fillMaxSize().systemBarsPadding().padding(Dimens.ScreenPadding),
@@ -574,6 +618,8 @@ private fun PortraitPlay(
             contentAlignment = Alignment.Center,
         ) {
             PlayerSurface(player, Modifier.fillMaxSize())
+            // 실패·버퍼링 표시(#345): 검은 화면과 구분되는 안내 + 재시도.
+            PlaybackStatusOverlay(buffering = buffering, error = playbackError, onRetry = onRetry)
         }
         // ★ 출처표시(법적 의무) — 재생 내내 노출. 근력(공공누리 5종) 출처가 길어 작은 화면(320dp·큰글꼴)에서
         //   전체보기 버튼을 밀어낼 수 있으므로, 출처는 스크롤 영역에 두고 버튼은 하단 고정 → 둘 다 항상 도달 가능.
@@ -595,7 +641,12 @@ private fun PortraitPlay(
  */
 @UnstableApi
 @Composable
-private fun FullscreenLandscapeStage(player: ExoPlayer, stage: String, onCollapse: () -> Unit) {
+private fun FullscreenLandscapeStage(
+    player: ExoPlayer,
+    stage: String,
+    onCollapse: () -> Unit,
+    buffering: Boolean = false,
+) {
     val activity = LocalContext.current as? Activity
     DisposableEffect(Unit) {
         val prevOrientation = activity?.requestedOrientation
@@ -610,6 +661,9 @@ private fun FullscreenLandscapeStage(player: ExoPlayer, stage: String, onCollaps
     }
     Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
         PlayerSurface(player, Modifier.fillMaxSize())
+        // 버퍼링 표시(리뷰 #348 2차): 전체화면에서도 느린 연결·서버 무응답이 검은 화면으로 보이지 않게.
+        //   오류(playbackError)는 세로로 접혀 PortraitPlay 오버레이가 안내하므로 여기선 로딩만 겹친다.
+        PlaybackStatusOverlay(buffering = buffering, error = false, onRetry = {})
 
         // ★ 상단 바: 닫기 + 출처를 함께 둔다. Media3 기본 컨트롤러(시크바·재생버튼)는 '하단'에 뜨므로, 출처를
         //   하단에 두면 컨트롤러가 보이는 동안 가려진다(정인 리뷰 P1, 출처는 법적 의무). 상단 고정으로 컨트롤러

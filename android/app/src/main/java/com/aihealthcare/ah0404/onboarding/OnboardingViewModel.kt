@@ -33,20 +33,8 @@ internal fun previousOnboardingStep(step: OnbStep): OnbStep? = when (step) {
 internal fun parseChairStandSeconds(input: String): Double? =
     input.trim().toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }
 
-/**
- * 키·몸무게 '모름' 시 성별·연령대 추정치 (cm, kg). 상수 표 — 나중에 교체 가능.
- *   남 50–74: 166/65 · 75+: 163/62   /   여 50–74: 153/56 · 75+: 150/53
- * #298 C: 만 50~64 구간은 65–74 추정치를 **임시 재사용**한다. '추정치' 라벨이 붙고 65세 미만은 예측이 실행되지
- *   않아 모델 입력 왜곡은 없으나, KNHANES 기반 50~64 실제 통계 확보 후 교체 예정 — 후속 이슈 #326.
- * 성별 미선택/미상은 남성 기준으로 폴백(성별 선택 후 다시 '모름' 누르면 갱신).
- */
-internal fun estimateBody(sex: String?, age: Int?): Pair<Int, Int> {
-    val is75plus = age != null && age >= 75
-    return when (sex) {
-        "female" -> if (is75plus) 150 to 53 else 153 to 56
-        else -> if (is75plus) 163 to 62 else 166 to 65
-    }
-}
+/** 추정값은 정수면 불필요한 `.0` 없이, 소수면 원래 정밀도로 입력칸에 표시한다. */
+private fun Double.toInputText(): String = if (this % 1.0 == 0.0) toInt().toString() else toString()
 
 /**
  * 온보딩 흐름 상태머신 + 백엔드 배선.
@@ -124,13 +112,13 @@ class OnboardingViewModel(
             return if (sex == null || !ageValid) {
                 "성별·생년월일을 먼저 입력하면 사용할 수 있어요"
             } else {
-                "정확한 값을 직접 입력해 주세요"
+                "키·몸무게 추정은 만 50세 이상부터 제공해요. 정확한 값을 직접 입력해 주세요."
             }
         }
 
     /** 화면 표시값: 추정이면 현재 성별·나이로 라이브 계산(성별/생일 바꾸면 즉시 갱신), 아니면 수동 입력값. */
-    val heightInput: String get() = if (heightEstimatedValid) estimateBody(sex, ageYears()).first.toString() else heightCm
-    val weightInput: String get() = if (weightEstimatedValid) estimateBody(sex, ageYears()).second.toString() else weightKg
+    val heightInput: String get() = if (heightEstimatedValid) estimateBody(sex, ageYears()).first.toInputText() else heightCm
+    val weightInput: String get() = if (weightEstimatedValid) estimateBody(sex, ageYears()).second.toInputText() else weightKg
 
     /** 키 인라인 검증 문구(#298 A-2). 직접 입력값이 현실 범위 밖이면 그 자리에서 안내(추정치·빈칸은 조용). */
     val heightError: String?
@@ -294,8 +282,8 @@ class OnboardingViewModel(
         // 유효한 추정만 반영한다(리뷰 #313): '모름' 후 연령을 50세 미만으로 바꾼 무효 추정은 여기서 값이 없어(빈칸)
         //   아래 '키·몸무게·성별 모두 입력' 검증에 걸려 거부된다 → 65–74 추정값이 50세 미만 프로필로 새지 않는다.
         val estimate = if (hasEstimatedValue) estimateBody(sex, ageYears()) else null
-        val h = if (heightEstimatedValid) estimate!!.first.toDouble() else heightCm.toDoubleOrNull()
-        val w = if (weightEstimatedValid) estimate!!.second.toDouble() else weightKg.toDoubleOrNull()
+        val h = if (heightEstimatedValid) estimate!!.first else heightCm.toDoubleOrNull()
+        val w = if (weightEstimatedValid) estimate!!.second else weightKg.toDoubleOrNull()
         if (sex == null || h == null || w == null) {
             error = "키·몸무게·성별을 모두 입력해 주세요."; return@launchStep
         }

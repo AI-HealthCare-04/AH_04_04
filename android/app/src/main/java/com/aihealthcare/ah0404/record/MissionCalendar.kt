@@ -21,6 +21,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -60,6 +61,9 @@ internal fun MissionCalendar(
     year: Int,
     month1: Int, // 1~12
     resultByDate: Map<String, String>, // dateKey -> daily_result
+    // '기록함(목표 미달성)' 날짜(#343 문제 2) — 스탬프 없는 날에만 옅은 점(·)으로 표시해
+    //   완료 스탬프(⭐/🏆)의 '목표 달성' 의미를 흐리지 않는다.
+    recordedOnlyDates: Set<String> = emptySet(),
     onPrevMonth: () -> Unit,
     onNextMonth: () -> Unit,
     onDaySelected: (String) -> Unit,
@@ -110,8 +114,13 @@ internal fun MissionCalendar(
                         val dk = dayKeyOf(year, month1, day)
                         val result = resultByDate[dk]
                         val emoji = stampEmoji(result)
+                        val recordedOnly = emoji.isEmpty() && dk in recordedOnlyDates
                         val dayNum = day
-                        val cellDesc = if (emoji.isEmpty()) "${month1}월 ${dayNum}일" else "${month1}월 ${dayNum}일 ${stampLabel(result)}"
+                        val cellDesc = when {
+                            emoji.isNotEmpty() -> "${month1}월 ${dayNum}일 ${stampLabel(result)}"
+                            recordedOnly -> "${month1}월 ${dayNum}일 기록 있음"
+                            else -> "${month1}월 ${dayNum}일"
+                        }
                         Box(
                             Modifier
                                 .weight(1f)
@@ -123,8 +132,14 @@ internal fun MissionCalendar(
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text("$dayNum", style = MaterialTheme.typography.bodyMedium)
                                 Text(
-                                    if (emoji.isEmpty()) " " else emoji,
+                                    when {
+                                        emoji.isNotEmpty() -> emoji
+                                        recordedOnly -> "·" // 기록만 있는 날(#343): 스탬프와 구분되는 옅은 점
+                                        else -> " "
+                                    },
                                     style = MaterialTheme.typography.bodyMedium,
+                                    color = if (recordedOnly) MaterialTheme.colorScheme.onSurfaceVariant
+                                    else Color.Unspecified,
                                 )
                             }
                         }

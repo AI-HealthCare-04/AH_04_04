@@ -32,6 +32,8 @@ data class Mission(
     @SerialName("today_log") val todayLog: MealTodayLog? = null,
     // 운동·걷기 미션 한정: 오늘 누적 진행(분·걸음·목표달성). 다른 종류는 null. 재생/측정 전에도 '오늘까지 N분'을 보여준다.
     @SerialName("today_progress") val todayProgress: MissionTodayProgress? = null,
+    // 게임 미션 한정(#346): 오늘 완료 여부(하루 1회 counted 기준). 다른 종류·구버전 서버는 null.
+    @SerialName("today_done") val todayDone: Boolean? = null,
 )
 
 // 단백질 미션의 '오늘 기록' — 재진입 시 앱이 선택 상태를 복원한다(GET /missions today_log).

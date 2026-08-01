@@ -224,6 +224,17 @@ private fun MissionCard(mission: Mission, onClick: (() -> Unit)? = null) {
             )
         }
 
+        // 1회성 미션(식사·게임)의 '오늘 했음' 배지(#346) — 진행바 대신 완료/기록 문구로 표시.
+        missionTodayBadge(mission)?.let { badge ->
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = badge,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+
         if (onClick != null) {
             Spacer(modifier = Modifier.height(8.dp))
             Text(

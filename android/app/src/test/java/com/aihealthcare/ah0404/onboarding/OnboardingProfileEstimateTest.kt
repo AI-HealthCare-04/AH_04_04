@@ -54,13 +54,18 @@ class OnboardingProfileEstimateTest {
     private fun vm(y: Int = 2026, m: Int = 7, d: Int = 15) =
         OnboardingViewModel(FakeApi(), todayYear = y, todayMonth = m, todayDay = d)
 
-    // ── estimateBody 표 ──────────────────────────────────────────────
-    @Test fun estimate_male_65_74() = assertEquals(166 to 65, estimateBody("male", 68))
-    @Test fun estimate_male_75plus() = assertEquals(163 to 62, estimateBody("male", 80))
-    @Test fun estimate_female_65_74() = assertEquals(153 to 56, estimateBody("female", 68))
-    @Test fun estimate_female_75plus() = assertEquals(150 to 53, estimateBody("female", 82))
-    @Test fun estimate_null_sex_falls_back_to_male() = assertEquals(166 to 65, estimateBody(null, 68))
-    @Test fun estimate_null_age_uses_65_74_band() = assertEquals(166 to 65, estimateBody("male", null))
+    // ── KNHANES 2022~2024 단일나이 ±3세 추정표(#326) ─────────────────
+    @Test fun estimate_male_50() = assertEquals(172.5 to 74.5, estimateBody("male", 50))
+    @Test fun estimate_male_59() = assertEquals(169.8 to 70.6, estimateBody("male", 59))
+    @Test fun estimate_male_60() = assertEquals(169.6 to 70.4, estimateBody("male", 60))
+    @Test fun estimate_male_64() = assertEquals(168.7 to 69.2, estimateBody("male", 64))
+    @Test fun estimate_female_50() = assertEquals(159.5 to 58.0, estimateBody("female", 50))
+    @Test fun estimate_female_64() = assertEquals(156.0 to 57.9, estimateBody("female", 64))
+    @Test fun estimate_male_79() = assertEquals(165.9 to 65.3, estimateBody("male", 79))
+    @Test fun estimate_male_80plus() = assertEquals(164.0 to 61.2, estimateBody("male", 80))
+    @Test fun estimate_female_80plus() = assertEquals(149.3 to 53.0, estimateBody("female", 82))
+    @Test fun estimate_null_sex_falls_back_to_male() = assertEquals(167.6 to 67.8, estimateBody(null, 68))
+    @Test fun estimate_null_age_uses_age_65() = assertEquals(168.5 to 68.9, estimateBody("male", null))
 
     // ── '모름' 활성 조건 ─────────────────────────────────────────────
     @Test
@@ -76,11 +81,19 @@ class OnboardingProfileEstimateTest {
     // ── 추정 플래그/표시값 ───────────────────────────────────────────
     @Test
     fun height_unknown_sets_flag_and_shows_estimate() {
-        val vm = vm().apply { sex = "female"; birthYear = "1958"; birthMonth = "3"; birthDay = "1" } // 68 → 65-74
+        val vm = vm().apply { sex = "female"; birthYear = "1958"; birthMonth = "3"; birthDay = "1" } // 68세
         vm.markHeightUnknown()
         assertTrue(vm.heightEstimated)
         assertTrue(vm.hasEstimatedValue)
-        assertEquals("153", vm.heightInput) // 여 65-74
+        assertEquals("154.9", vm.heightInput)
+    }
+
+    @Test
+    fun integer_estimate_omits_trailing_decimal() {
+        val vm = vm().apply { sex = "female"; birthYear = "1971"; birthMonth = "1"; birthDay = "1" } // 55세
+        vm.markWeightUnknown()
+        assertTrue(vm.weightEstimated)
+        assertEquals("58", vm.weightInput)
     }
 
     @Test
@@ -97,28 +110,28 @@ class OnboardingProfileEstimateTest {
     // ── #75-2: 추정 후 성별·생년월일 변경 시 라이브 재계산 ────────────────
     @Test
     fun estimate_recomputes_when_demographics_change() {
-        val vm = vm().apply { sex = "male"; birthYear = "1960"; birthMonth = "1"; birthDay = "1" } // 66 → 65-74
+        val vm = vm().apply { sex = "male"; birthYear = "1960"; birthMonth = "1"; birthDay = "1" } // 66세
         vm.markHeightUnknown()
-        assertEquals("166", vm.heightInput)            // 남 65-74
-        vm.sex = "female"; vm.birthYear = "1945"        // 81 → 75+
-        assertEquals("150", vm.heightInput)            // 여 75+ 로 재계산(고정 안 됨)
+        assertEquals("168.1", vm.heightInput)          // 남 66세
+        vm.sex = "female"; vm.birthYear = "1945"        // 81 → 80+
+        assertEquals("149.3", vm.heightInput)          // 여 80+ 로 재계산(고정 안 됨)
     }
 
-    // ── #75-3: 만 나이 75세 경계(생일 전/당일) ─────────────────────────
+    // ── #75-3: 생일 전/당일의 만 나이 경계(74 → 75) ───────────────────
     @Test
-    fun age_boundary_before_birthday_uses_younger_band() {
-        // 오늘 2026-07-15, 생일 07-16(아직 안 지남) → 74세 → 65-74
+    fun age_boundary_before_birthday_uses_age_74_value() {
+        // 오늘 2026-07-15, 생일 07-16(아직 안 지남) → 74세
         val vm = vm(2026, 7, 15).apply { sex = "male"; birthYear = "1951"; birthMonth = "7"; birthDay = "16" }
         vm.markHeightUnknown()
-        assertEquals("166", vm.heightInput)
+        assertEquals("166.2", vm.heightInput)
     }
 
     @Test
-    fun age_boundary_on_birthday_uses_older_band() {
-        // 오늘 2026-07-15, 생일 07-15(오늘) → 75세 → 75+
+    fun age_boundary_on_birthday_uses_age_75_value() {
+        // 오늘 2026-07-15, 생일 07-15(오늘) → 75세 단일나이 값
         val vm = vm(2026, 7, 15).apply { sex = "male"; birthYear = "1951"; birthMonth = "7"; birthDay = "15" }
         vm.markHeightUnknown()
-        assertEquals("163", vm.heightInput)
+        assertEquals("166.1", vm.heightInput)
     }
 
     // ── #298 C: 추정('모름')은 만 50세 이상(50~64 추정표 확장). 50세 미만만 직접 입력 ──────────
