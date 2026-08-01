@@ -166,7 +166,7 @@ class OnboardingProfileValidationTest {
         val vm = vm(2026, 7, 15).apply { sex = "male"; birthYear = "1970"; birthMonth = "1"; birthDay = "1" } // 56
         vm.markHeightUnknown(); vm.markWeightUnknown()
         assertTrue("56세 시점엔 추정 유효", vm.hasEstimatedValue)
-        assertEquals("추정 표시값(남 166)", "166", vm.heightInput)
+        assertEquals("추정 표시값(KNHANES 56세 남성)", "170.4", vm.heightInput)
 
         vm.birthYear = "2000" // 26세로 변경 → 추정 대상 미만
         assertFalse("50세 미만이 되면 추정은 무효 — 표시·제출에서 무시", vm.hasEstimatedValue)
