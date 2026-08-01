@@ -1,10 +1,10 @@
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.dtos.base import KstDatetime
-from app.models.enums import ActivityInputSource
+from app.models.enums import ActivityInputSource, FeedbackReason, FeedbackResponse
 
 
 class RiskPredictionCreateRequest(BaseModel):
@@ -93,3 +93,25 @@ class RiskPredictionHistoryItem(BaseModel):
 
 class RiskPredictionHistoryResponse(BaseModel):
     predictions: list[RiskPredictionHistoryItem]
+
+
+class PredictionFeedbackRequest(BaseModel):
+    """예측 결과 체감 피드백(#357). reason 은 '다르게 느껴져요' 선택 시 선택 입력이다."""
+
+    response: FeedbackResponse
+    reason: FeedbackReason | None = None
+
+    @model_validator(mode="after")
+    def _reason_only_for_different(self) -> "PredictionFeedbackRequest":
+        # too_high/too_low/other 는 'different'의 불일치 사유다(#357 계약, 리뷰 반영).
+        #   similar/unsure 에 사유가 붙으면 집계의 사유 분포가 오염되므로 422 로 거른다.
+        if self.reason is not None and self.response is not FeedbackResponse.DIFFERENT:
+            raise ValueError("reason 은 response='different' 일 때만 보낼 수 있습니다.")
+        return self
+
+
+class PredictionFeedbackResponse(BaseModel):
+    prediction_id: int
+    response: FeedbackResponse
+    reason: FeedbackReason | None = None
+    created_at: KstDatetime

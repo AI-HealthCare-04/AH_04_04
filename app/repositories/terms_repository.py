@@ -8,7 +8,7 @@
 # =====================================================================================
 
 # func   : DB 내장 함수 호출용 (여기서는 현재시각 func.now())
-from sqlalchemy import func
+from sqlalchemy import func, select
 
 # MySQL 전용 insert입니다. .on_duplicate_key_update(...)를 붙여
 # "있으면 수정, 없으면 삽입"을 쿼리 한 번(원자적)으로 처리합니다.
@@ -25,6 +25,15 @@ class TermsRepository:
     # 생성자: 이 레포지토리는 '세션'을 하나 받아서 계속 사용합니다.
     def __init__(self, session: AsyncSession):
         self.session = session
+
+    # 사용자의 특정 약관 동의 결과를 조회합니다. (user_id, terms_type) 유니크라 최대 1행.
+    #   동의 버전 게이트(#362 리뷰)가 사용: 현행 문안 동의 여부를 기능 접근 전에 확인한다.
+    async def get_agreement(self, user_id: int, terms_type: TermsType) -> TermsAgreement | None:
+        stmt = select(TermsAgreement).where(
+            TermsAgreement.user_id == user_id,
+            TermsAgreement.terms_type == terms_type,
+        )
+        return await self.session.scalar(stmt)
 
     # 사용자의 약관 동의 결과 1건을 저장합니다. 없으면 삽입(insert), 이미 있으면 갱신(update) — upsert.
     # 한 사용자는 약관 종류(terms_type)별로 최신 동의 1행만 유지합니다.

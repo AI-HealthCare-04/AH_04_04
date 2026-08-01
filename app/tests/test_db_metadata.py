@@ -18,6 +18,7 @@ def test_core_db_metadata_tables() -> None:
         "personalized_settings",
         "physical_activity_logs",
         "physical_assessments",
+        "prediction_feedbacks",
         "risk_predictions",
         "sensor_sessions",
         "sts_overlay_events",

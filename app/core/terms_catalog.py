@@ -51,7 +51,9 @@ TERMS_CATALOG: tuple[TermSpec, ...] = (
     ),
     TermSpec(
         terms_type=TermsType.SENSITIVE_HEALTH,
-        version="1.0",
+        # 1.1(#357): 체감 피드백 수집 항목·서비스 개선 목적 추가 + 탈퇴 파기 방식 명확화(#356).
+        #   버전이 오르면 구버전 동의 제출은 409 로 거부되어 최신 문안 재동의로 유도된다.
+        version="1.1",
         title="민감정보(건강정보) 수집·이용 동의",
         url=config.TERMS_SENSITIVE_HEALTH_URL,
         is_required=True,

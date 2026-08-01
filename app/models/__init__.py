@@ -3,7 +3,7 @@ from app.models.analytics import StsOverlayEvent
 from app.models.dashboard import DailyActivitySummary
 from app.models.health import HealthCheckSession, HealthProfile, PhysicalAssessment
 from app.models.missions import GameLog, MealLog, MissionLog, MissionTemplate, PhysicalActivityLog, SensorSession
-from app.models.predictions import RiskPrediction
+from app.models.predictions import PredictionFeedback, RiskPrediction
 from app.models.settings import PersonalizedSetting
 from app.models.terms import TermsAgreement
 from app.models.users import OAuthLoginNonce, User
@@ -21,6 +21,7 @@ __all__ = [
     "PhysicalActivityLog",
     "PhysicalAssessment",
     "PersonalizedSetting",
+    "PredictionFeedback",
     "RiskPrediction",
     "SensorSession",
     "StsOverlayEvent",

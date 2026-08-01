@@ -88,8 +88,15 @@ def test_real_terms_docs_leave_no_raw_markdown(src) -> None:
     assert not re.search(r"<p>\d+\.\s", body), f"{src.name}: 번호 목록이 문단으로 새었다"
 
 
-def test_all_four_terms_docs_exist() -> None:
-    """게시 대상 4개 문서가 모두 존재한다(terms_catalog 과의 어긋남 방지)."""
-    # 게시 대상 문서 집합이 terms_catalog 과 어긋나게 줄면 조용히 빠진 채 배포되므로 여기서 고정한다.
+def test_terms_docs_match_catalog() -> None:
+    """게시 대상 문서 집합이 terms_catalog 의 현행 버전과 정확히 일치한다(어긋남 방지).
+
+    하드코딩 목록 대신 카탈로그에서 파일명을 파생한다 — 버전 개정(예: sensitive-health 1.1, #357)
+    때 카탈로그만 올리고 문서를 빠뜨리면(또는 그 반대) 여기서 걸린다. 구버전 문안은 git 이력과
+    서버 호스팅본으로 보존된다(docs/terms/README.md).
+    """
+    from app.core.terms_catalog import TERMS_CATALOG
+
+    expected = {f"{str(spec.terms_type).replace('_', '-')}-{spec.version}.md" for spec in TERMS_CATALOG}
     names = {p.name for p in TERMS_DIR.glob("*-*.md")}
-    assert names == {"service-1.0.md", "privacy-1.0.md", "sensitive-health-1.0.md", "marketing-1.0.md"}
+    assert names == expected

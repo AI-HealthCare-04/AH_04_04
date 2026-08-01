@@ -3,13 +3,17 @@ from datetime import timedelta
 from decimal import Decimal
 
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.terms_catalog import CATALOG_BY_TYPE
 from app.core.utils.clock import today_kst
 from app.dtos.dashboard import ScoreSimPoint, ScoreSimulationResponse
 from app.dtos.risk_prediction import (
     CareStage,
     CohortDistributionResponse,
+    PredictionFeedbackRequest,
+    PredictionFeedbackResponse,
     RiskComparisonStatus,
     RiskPredictionCreateRequest,
     RiskPredictionCreateResponse,
@@ -29,13 +33,14 @@ from app.ml.predictor import (
     load_cohort_version,
     percentile_low,
 )
-from app.models.enums import ActivityInputSource, InputMethod, OnboardingStatus, RiskLevel
+from app.models.enums import ActivityInputSource, InputMethod, OnboardingStatus, RiskLevel, TermsType
 from app.models.health import HealthProfile
-from app.models.predictions import RiskPrediction
+from app.models.predictions import PredictionFeedback, RiskPrediction
 from app.models.users import User
 from app.repositories.dashboard_repository import DashboardRepository
 from app.repositories.health_profile_repository import HealthProfileRepository
 from app.repositories.risk_prediction_repository import RiskPredictionRepository
+from app.repositories.terms_repository import TermsRepository
 from app.services.activity_metrics import derive_activity_day_counts
 
 DENSITY_METHOD = "boundary_reflected_gaussian_kde_v1"
@@ -48,6 +53,7 @@ class RiskPredictionService:
         self.dashboard_repo = DashboardRepository(session)
         self.profile_repo = HealthProfileRepository(session)
         self.prediction_repo = RiskPredictionRepository(session)
+        self.terms_repo = TermsRepository(session)
         self.predictor = predictor or RiskPredictor()
 
     async def create_prediction(
@@ -98,6 +104,58 @@ class RiskPredictionService:
             previous = prediction
         return RiskPredictionHistoryResponse(
             predictions=items,
+        )
+
+    async def submit_feedback(
+        self,
+        user: User,
+        prediction_id: int,
+        data: PredictionFeedbackRequest,
+    ) -> PredictionFeedbackResponse:
+        """예측 체감 피드백 저장(#357 옵션 B) — 멱등 PUT 계약.
+
+        같은 요청을 반복해도 결과가 같고, 응답을 바꾸면 마지막 값으로 덮어써 예측당 1행을
+        유지한다(UNIQUE 보장). 응답은 주관적 체감 신호라 정답 라벨로 쓰지 않는다(이슈 #357).
+        """
+        # 동의 버전 게이트(#362 리뷰 P1): 체감 응답은 민감정보 항목이라, 이 수집·활용 목적이 명시된
+        #   **현행** sensitive_health 문안(1.1+)에 동의한 사용자만 저장한다. 문서·카탈로그 버전 상향만으로는
+        #   이미 온보딩을 마친 1.0 동의자가 재동의 없이 제출하는 경로가 닫히지 않는다 — 서버가 직접 막고
+        #   403 으로 재동의를 유도한다(앱 재동의 게이트가 생겨도 우회 제출 방어로 유지).
+        current_terms = CATALOG_BY_TYPE[str(TermsType.SENSITIVE_HEALTH)]
+        agreement = await self.terms_repo.get_agreement(user.user_id, TermsType.SENSITIVE_HEALTH)
+        if agreement is None or not agreement.agreed or agreement.version != current_terms.version:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"체감 피드백 저장에는 민감정보 동의 최신 버전({current_terms.version}) 동의가 필요합니다. "
+                    "약관 재동의 후 다시 시도해 주세요."
+                ),
+            )
+        prediction = await self.prediction_repo.get_prediction_for_user(prediction_id, user.user_id)
+        if prediction is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Risk prediction not found.")
+        feedback = await self.prediction_repo.get_feedback(prediction_id)
+        if feedback is None:
+            try:
+                # 모바일 이중 요청이 동시에 들어오면 둘 다 '없음'을 보고 INSERT 를 경쟁할 수 있다.
+                # SAVEPOINT 로 감싸 UNIQUE 충돌 시 기존 행을 갱신 경로로 복구한다(auth 선례).
+                async with self.session.begin_nested():
+                    feedback = await self.prediction_repo.add_feedback(
+                        PredictionFeedback(prediction_id=prediction_id, response=data.response, reason=data.reason)
+                    )
+            except IntegrityError:
+                feedback = await self.prediction_repo.get_feedback(prediction_id)
+                if feedback is None:
+                    raise
+        feedback.response = data.response
+        feedback.reason = data.reason
+        await self.session.commit()
+        await self.session.refresh(feedback)
+        return PredictionFeedbackResponse(
+            prediction_id=prediction_id,
+            response=feedback.response,
+            reason=feedback.reason,
+            created_at=feedback.created_at,
         )
 
     async def get_score_simulation(self, user: User) -> ScoreSimulationResponse:

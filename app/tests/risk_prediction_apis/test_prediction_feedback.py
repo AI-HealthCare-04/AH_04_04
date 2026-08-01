@@ -1,0 +1,252 @@
+# =====================================================================================
+# #357 옵션 B: 예측 결과 체감 피드백 PUT /api/v1/risk-predictions/{prediction_id}/feedback.
+#   - 멱등 계약: 같은 요청 반복은 같은 결과, 다른 응답은 덮어쓰기 — 예측당 1행 유지(UNIQUE).
+#   - 소유권: 남의 예측·없는 예측은 동일하게 404(존재 여부 비노출).
+#   - 응답은 주관적 체감 신호로 정의한다 — 저장 필드에 피처·점수·모델 버전 복제가 없어야 한다.
+# =====================================================================================
+from decimal import Decimal
+
+import pytest
+from httpx import AsyncClient
+from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from starlette import status
+
+from app.models.enums import FeedbackReason, FeedbackResponse, ModelVariant, RiskLevel, TermsType
+from app.models.predictions import PredictionFeedback, RiskPrediction
+from app.models.terms import TermsAgreement
+from app.models.users import User
+
+
+async def _guest_auth(db_client: AsyncClient) -> dict[str, str]:
+    login = await db_client.post("/api/v1/auth/guest")
+    assert login.status_code == status.HTTP_200_OK
+    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+
+async def _agree_current_terms(db_client: AsyncClient, auth: dict[str, str]) -> None:
+    """현행 카탈로그 버전으로 약관 전체 동의 — 피드백은 sensitive_health 최신 동의가 전제다(#362 리뷰)."""
+    terms = await db_client.get("/api/v1/terms", headers=auth)
+    agreements = [
+        {"terms_type": t["terms_type"], "version": t["version"], "agreed": True}
+        for t in terms.json()["terms"]
+    ]
+    agree_resp = await db_client.post(
+        "/api/v1/users/me/agreements", json={"agreements": agreements}, headers=auth
+    )
+    assert agree_resp.status_code == status.HTTP_200_OK
+
+
+async def _onboard_and_create_prediction(
+    db_client: AsyncClient,
+    auth: dict[str, str],
+    db_sessionmaker: async_sessionmaker[AsyncSession],
+) -> int:
+    """온보딩(약관→세션→건강 프로필)을 API 로 밟고, 예측 행은 직접 삽입해 prediction_id 를 돌려준다.
+
+    POST /risk-predictions 는 ML 예측기 실행까지 태우므로, 피드백 계약 검증에는
+    프로필 FK 만 갖춘 예측 행을 직접 넣는 편이 빠르고 결정적이다.
+    """
+    await _agree_current_terms(db_client, auth)
+    session_resp = await db_client.post("/api/v1/health-check/sessions", json={"input_method": "form"}, headers=auth)
+    assert session_resp.status_code == status.HTTP_201_CREATED
+    profile_resp = await db_client.post(
+        "/api/v1/health-profiles",
+        json={
+            "session_id": session_resp.json()["session_id"],
+            "birth_date": "1958-03-01",
+            "sex": "male",
+            "height_cm": 170,
+            "weight_kg": 65,
+            "walk_days": 3,
+            "musc_days": 1,
+            "activity_input_source": "self_report",
+            "input_method": "form",
+            "has_estimated_value": False,
+        },
+        headers=auth,
+    )
+    assert profile_resp.status_code == status.HTTP_201_CREATED
+
+    async with db_sessionmaker() as session:
+        user_id = await session.scalar(select(User.user_id).order_by(User.user_id.desc()).limit(1))
+        assert user_id is not None
+        prediction = RiskPrediction(
+            user_id=user_id,
+            profile_id=profile_resp.json()["profile_id"],
+            model_version="test-model-1",
+            model_variant=ModelVariant.MINIMAL,
+            internal_risk_score=Decimal("0.123"),
+            internal_risk_level=RiskLevel.LOW,
+            input_snapshot={},
+        )
+        session.add(prediction)
+        await session.commit()
+        return prediction.prediction_id
+
+
+async def test_put_feedback_creates_row(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    auth = await _guest_auth(db_client)
+    prediction_id = await _onboard_and_create_prediction(db_client, auth, db_sessionmaker)
+
+    resp = await db_client.put(
+        f"/api/v1/risk-predictions/{prediction_id}/feedback",
+        json={"response": "different", "reason": "too_high"},
+        headers=auth,
+    )
+    assert resp.status_code == status.HTTP_200_OK
+    body = resp.json()
+    assert body["prediction_id"] == prediction_id
+    assert body["response"] == "different"
+    assert body["reason"] == "too_high"
+
+    async with db_sessionmaker() as session:
+        row = await session.scalar(
+            select(PredictionFeedback).where(PredictionFeedback.prediction_id == prediction_id)
+        )
+        assert row is not None
+        assert row.is_test is False  # 실사용 응답 기본값 — 시연 마킹 전에는 집계 대상
+
+
+async def test_put_feedback_is_idempotent_and_overwrites(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    auth = await _guest_auth(db_client)
+    prediction_id = await _onboard_and_create_prediction(db_client, auth, db_sessionmaker)
+    url = f"/api/v1/risk-predictions/{prediction_id}/feedback"
+
+    first = await db_client.put(url, json={"response": "similar"}, headers=auth)
+    retried = await db_client.put(url, json={"response": "similar"}, headers=auth)
+    assert first.status_code == retried.status_code == status.HTTP_200_OK
+    assert first.json() == retried.json()  # 멱등: 재시도해도 같은 결과
+
+    changed = await db_client.put(url, json={"response": "different", "reason": "too_low"}, headers=auth)
+    assert changed.status_code == status.HTTP_200_OK
+    assert changed.json()["response"] == "different"
+    assert changed.json()["reason"] == "too_low"
+
+    async with db_sessionmaker() as session:
+        count = await session.scalar(
+            select(func.count())
+            .select_from(PredictionFeedback)
+            .where(PredictionFeedback.prediction_id == prediction_id)
+        )
+        assert count == 1  # 덮어쓰기 — 예측당 1행(UNIQUE)
+        row = await session.scalar(
+            select(PredictionFeedback).where(PredictionFeedback.prediction_id == prediction_id)
+        )
+        assert row is not None and row.response.value == "different"
+
+
+async def test_put_feedback_on_other_users_prediction_returns_404(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    owner_auth = await _guest_auth(db_client)
+    prediction_id = await _onboard_and_create_prediction(db_client, owner_auth, db_sessionmaker)
+
+    other_auth = await _guest_auth(db_client)
+    await _agree_current_terms(db_client, other_auth)  # 동의 게이트 통과 후 소유권만 검증되게
+    resp = await db_client.put(
+        f"/api/v1/risk-predictions/{prediction_id}/feedback",
+        json={"response": "similar"},
+        headers=other_auth,
+    )
+    assert resp.status_code == status.HTTP_404_NOT_FOUND
+
+
+async def test_put_feedback_unknown_prediction_returns_404(db_client: AsyncClient) -> None:
+    auth = await _guest_auth(db_client)
+    await _agree_current_terms(db_client, auth)
+    resp = await db_client.put(
+        "/api/v1/risk-predictions/999999999/feedback", json={"response": "similar"}, headers=auth
+    )
+    assert resp.status_code == status.HTTP_404_NOT_FOUND
+
+
+async def test_put_feedback_requires_current_sensitive_health_consent(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    """동의 버전 게이트(#362 리뷰 P1): 구버전(1.0) 동의자는 403, 현행 문안 재동의 후 성공.
+
+    체감 응답 수집·활용 목적은 sensitive_health 1.1 에서 추가됐으므로, 1.0 동의만으로는
+    저장할 수 없어야 한다 — 문서·카탈로그 버전 상향만으로는 기존 동의자 경로가 닫히지 않는다.
+    """
+    auth = await _guest_auth(db_client)
+    prediction_id = await _onboard_and_create_prediction(db_client, auth, db_sessionmaker)
+    url = f"/api/v1/risk-predictions/{prediction_id}/feedback"
+
+    # 기존 동의자 시뮬레이션: sensitive_health 동의를 구버전(1.0)으로 강등한다.
+    async with db_sessionmaker() as session:
+        await session.execute(
+            update(TermsAgreement)
+            .where(TermsAgreement.terms_type == TermsType.SENSITIVE_HEALTH)
+            .values(version="1.0")
+        )
+        await session.commit()
+
+    denied = await db_client.put(url, json={"response": "similar"}, headers=auth)
+    assert denied.status_code == status.HTTP_403_FORBIDDEN
+
+    async with db_sessionmaker() as session:
+        count = await session.scalar(select(func.count()).select_from(PredictionFeedback))
+        assert count == 0  # 거부 시 저장되지 않는다
+
+    # 현행 카탈로그 버전으로 재동의(온보딩 완료 사용자도 가능) → 저장 성공
+    await _agree_current_terms(db_client, auth)
+    ok = await db_client.put(url, json={"response": "similar"}, headers=auth)
+    assert ok.status_code == status.HTTP_200_OK
+
+
+async def test_put_feedback_requires_auth(db_client: AsyncClient) -> None:
+    resp = await db_client.put("/api/v1/risk-predictions/1/feedback", json={"response": "similar"})
+    assert resp.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+async def test_put_feedback_rejects_unknown_response_value(db_client: AsyncClient) -> None:
+    auth = await _guest_auth(db_client)
+    resp = await db_client.put(
+        "/api/v1/risk-predictions/1/feedback", json={"response": "great"}, headers=auth
+    )
+    assert resp.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+async def test_put_feedback_rejects_reason_without_different(db_client: AsyncClient) -> None:
+    # reason(too_high/too_low/other)은 'different'의 불일치 사유다(리뷰 반영) — 다른 응답에 붙으면
+    # 사유 분포 집계가 오염되므로 422. different + reason 은 기존대로 허용된다.
+    auth = await _guest_auth(db_client)
+    for response in ("similar", "unsure"):
+        resp = await db_client.put(
+            "/api/v1/risk-predictions/1/feedback",
+            json={"response": response, "reason": "too_high"},
+            headers=auth,
+        )
+        assert resp.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT, response
+
+
+async def test_db_check_rejects_reason_for_non_different_response(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    """API 검증을 우회하는 경로(운영 SQL·후속 코드)도 DB CHECK 가 막는다(리뷰 반영)."""
+    auth = await _guest_auth(db_client)
+    prediction_id = await _onboard_and_create_prediction(db_client, auth, db_sessionmaker)
+
+    async with db_sessionmaker() as session:
+        session.add(
+            PredictionFeedback(
+                prediction_id=prediction_id,
+                response=FeedbackResponse.SIMILAR,
+                reason=FeedbackReason.TOO_HIGH,
+            )
+        )
+        # MySQL 은 CHECK 위반(3819)을 IntegrityError 가 아니라 OperationalError 로 돌려준다.
+        with pytest.raises((IntegrityError, OperationalError)):
+            await session.commit()
+
+
+def test_feedback_stores_no_model_snapshot_duplicates() -> None:
+    # 지영 리뷰(#357): 피처·점수·모델 버전은 risk_predictions 에만 존재해야 한다(복제 금지).
+    columns = {c.name for c in PredictionFeedback.__table__.columns}
+    assert columns == {"feedback_id", "prediction_id", "response", "reason", "is_test", "created_at"}
