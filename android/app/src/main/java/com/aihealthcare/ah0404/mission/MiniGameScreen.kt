@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -37,10 +38,13 @@ fun MiniGameScreen(
     modifier: Modifier = Modifier,
     // 완료 기록 대상 미션. 호출부(MainActivity)가 미션 목록에서 고른 게임 미션을 넘긴다. null 이면 기록 생략(방어).
     mission: Mission? = null,
-    // 완료 기록 '성공' 시 1회 — 호출부가 미션 목록을 재조회해 카드 today_done 배지를 갱신한다.
+    // 완료 기록 시도 후 호출(성공·유실·실패 공통) — 호출부가 미션 목록을 재조회해 서버 권위값으로 조정한다(#348 2차).
     onCompleted: () -> Unit = {},
     vm: MiniGameViewModel = viewModel(),
 ) {
+    // 재진입 복구(#348 2차): 직전 방문에서 기록에 최종 실패한 완주가 있으면 다시 시도한다(포인트 유실 방지).
+    LaunchedEffect(Unit) { vm.retryPendingIfAny(onCompleted) }
+
     Column(
         modifier = modifier
             .fillMaxSize()

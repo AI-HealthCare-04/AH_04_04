@@ -561,7 +561,12 @@ private fun ExercisePlayer(
     BackHandler { if (fullscreen) fullscreen = false else onExit() }
 
     if (fullscreen) {
-        FullscreenLandscapeStage(player = player, stage = item.stage, onCollapse = { fullscreen = false })
+        FullscreenLandscapeStage(
+            player = player,
+            stage = item.stage,
+            onCollapse = { fullscreen = false },
+            buffering = buffering,
+        )
     } else {
         PortraitPlay(
             player = player,
@@ -636,7 +641,12 @@ private fun PortraitPlay(
  */
 @UnstableApi
 @Composable
-private fun FullscreenLandscapeStage(player: ExoPlayer, stage: String, onCollapse: () -> Unit) {
+private fun FullscreenLandscapeStage(
+    player: ExoPlayer,
+    stage: String,
+    onCollapse: () -> Unit,
+    buffering: Boolean = false,
+) {
     val activity = LocalContext.current as? Activity
     DisposableEffect(Unit) {
         val prevOrientation = activity?.requestedOrientation
@@ -651,6 +661,9 @@ private fun FullscreenLandscapeStage(player: ExoPlayer, stage: String, onCollaps
     }
     Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
         PlayerSurface(player, Modifier.fillMaxSize())
+        // 버퍼링 표시(리뷰 #348 2차): 전체화면에서도 느린 연결·서버 무응답이 검은 화면으로 보이지 않게.
+        //   오류(playbackError)는 세로로 접혀 PortraitPlay 오버레이가 안내하므로 여기선 로딩만 겹친다.
+        PlaybackStatusOverlay(buffering = buffering, error = false, onRetry = {})
 
         // ★ 상단 바: 닫기 + 출처를 함께 둔다. Media3 기본 컨트롤러(시크바·재생버튼)는 '하단'에 뜨므로, 출처를
         //   하단에 두면 컨트롤러가 보이는 동안 가려진다(정인 리뷰 P1, 출처는 법적 의무). 상단 고정으로 컨트롤러
