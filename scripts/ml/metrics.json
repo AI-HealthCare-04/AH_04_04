@@ -1,0 +1,184 @@
+{
+  "meta": {
+    "label": "sarcopenia_awgs2025 (recomputed)",
+    "n": 4279,
+    "prevalence": 0.1327,
+    "auprc_baseline": 0.1327,
+    "seed": 42,
+    "cv": "StratifiedKFold(5, shuffle, seed=42)",
+    "ece_bins": 10
+  },
+  "headline_5fold_oof": {
+    "minimal": {
+      "n": 4279,
+      "prevalence": 0.1327,
+      "auroc": 0.8227,
+      "auprc": 0.4361,
+      "brier": 0.093,
+      "ece": 0.0053,
+      "auroc_ci95": [
+        0.8061,
+        0.8385
+      ],
+      "auprc_ci95": [
+        0.3919,
+        0.4865
+      ],
+      "fold_auroc_mean_std": [
+        0.8232,
+        0.008
+      ],
+      "fold_auprc_mean_std": [
+        0.444,
+        0.0136
+      ],
+      "folds": [
+        {
+          "auroc": 0.8256,
+          "auprc": 0.4431,
+          "brier": 0.0929,
+          "ece": 0.0166
+        },
+        {
+          "auroc": 0.8137,
+          "auprc": 0.424,
+          "brier": 0.0939,
+          "ece": 0.0196
+        },
+        {
+          "auroc": 0.8285,
+          "auprc": 0.4367,
+          "brier": 0.0935,
+          "ece": 0.0233
+        },
+        {
+          "auroc": 0.8141,
+          "auprc": 0.4643,
+          "brier": 0.0931,
+          "ece": 0.0121
+        },
+        {
+          "auroc": 0.834,
+          "auprc": 0.4519,
+          "brier": 0.0919,
+          "ece": 0.0151
+        }
+      ]
+    },
+    "with_waist": {
+      "n": 4266,
+      "prevalence": 0.1324,
+      "auroc": 0.8354,
+      "auprc": 0.4584,
+      "brier": 0.0908,
+      "ece": 0.0134,
+      "auroc_ci95": [
+        0.8195,
+        0.8513
+      ],
+      "auprc_ci95": [
+        0.4181,
+        0.5058
+      ],
+      "fold_auroc_mean_std": [
+        0.8359,
+        0.0039
+      ],
+      "fold_auprc_mean_std": [
+        0.4636,
+        0.0113
+      ],
+      "folds": [
+        {
+          "auroc": 0.8339,
+          "auprc": 0.4686,
+          "brier": 0.0907,
+          "ece": 0.0217
+        },
+        {
+          "auroc": 0.836,
+          "auprc": 0.4798,
+          "brier": 0.0893,
+          "ece": 0.0211
+        },
+        {
+          "auroc": 0.8297,
+          "auprc": 0.4656,
+          "brier": 0.0912,
+          "ece": 0.0181
+        },
+        {
+          "auroc": 0.8404,
+          "auprc": 0.4582,
+          "brier": 0.0914,
+          "ece": 0.0184
+        },
+        {
+          "auroc": 0.8394,
+          "auprc": 0.4457,
+          "brier": 0.0914,
+          "ece": 0.0212
+        }
+      ]
+    }
+  },
+  "comparisons": {
+    "days_vs_binary_minimal": {
+      "days": {
+        "auroc": 0.8227,
+        "auprc": 0.4361,
+        "brier": 0.093,
+        "ece": 0.0053
+      },
+      "binary": {
+        "auroc": 0.822,
+        "auprc": 0.4368,
+        "brier": 0.0931,
+        "ece": 0.0063
+      }
+    },
+    "lr_vs_tree_minimal_days": {
+      "lr": {
+        "auroc": 0.8227,
+        "auprc": 0.4361,
+        "brier": 0.093,
+        "ece": 0.0053
+      },
+      "tree": {
+        "auroc": 0.786,
+        "auprc": 0.377,
+        "brier": 0.1027,
+        "ece": 0.0513
+      }
+    },
+    "unweighted_vs_survey_weighted_minimal_days": {
+      "unweighted": {
+        "auroc": 0.8227,
+        "auprc": 0.4361,
+        "brier": 0.093,
+        "ece": 0.0053
+      },
+      "survey_weighted_wt_hs": {
+        "auroc": 0.8162,
+        "auprc": 0.4113,
+        "brier": 0.0918,
+        "ece": 0.0092
+      },
+      "note": "wt_hs (health-survey weight) normalized to mean 1; scale-invariant for AUROC/AUPRC"
+    },
+    "cv5_vs_holdout8020_minimal_days": {
+      "cv5_oof": {
+        "auroc": 0.8227,
+        "auprc": 0.4361,
+        "brier": 0.093,
+        "ece": 0.0053
+      },
+      "holdout_8020": {
+        "auroc": 0.8085,
+        "auprc": 0.4069,
+        "brier": 0.0965,
+        "ece": 0.0227
+      }
+    }
+  }
+}

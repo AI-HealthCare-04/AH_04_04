@@ -1,0 +1,11 @@
+block,variant,n,auroc,auprc,brier,ece
+headline_5fold_oof,minimal,4279,0.8227,0.4361,0.093,0.0053
+headline_5fold_oof,with_waist,4266,0.8354,0.4584,0.0908,0.0134
+days_vs_binary_minimal,days,4279,0.8227,0.4361,0.093,0.0053
+days_vs_binary_minimal,binary,4279,0.822,0.4368,0.0931,0.0063
+lr_vs_tree_minimal_days,lr,4279,0.8227,0.4361,0.093,0.0053
+lr_vs_tree_minimal_days,tree,4279,0.786,0.377,0.1027,0.0513
+unweighted_vs_survey_weighted_minimal_days,unweighted,4279,0.8227,0.4361,0.093,0.0053
+unweighted_vs_survey_weighted_minimal_days,survey_weighted_wt_hs,4279,0.8162,0.4113,0.0918,0.0092
+cv5_vs_holdout8020_minimal_days,cv5_oof,4279,0.8227,0.4361,0.093,0.0053
+cv5_vs_holdout8020_minimal_days,holdout_8020,4279,0.8085,0.4069,0.0965,0.0227

@@ -1,54 +1,42 @@
-# Sarcopenia Continuous Trend API Contract
+# 근감소증 연속 점수 추이 API 계약
 
-## Purpose
+## 목적
 
-The product exposes the model's continuous sarcopenia screening score and its change over time. The client may label
-the value with user-friendly language such as "muscle-health management need," but the API contract remains explicit
-that the source is a calibrated model score and not a diagnosis.
+제품은 모델의 연속 근감소증 선별 점수와 그 시간에 따른 변화를 노출한다. 클라이언트는 이 값을 "근육 건강 관리 필요도" 같은 사용자 친화적 표현으로 표시할 수 있으나, API 계약은 그 출처가 **보정된 모델 점수이며 진단이 아님**을 명시적으로 유지한다.
 
-## Public score
+## 공개 점수
 
-- `risk_score`: continuous model output from `0.0` to `1.0`
-- Client display: multiply by 100 when presenting a percentage or a 0–100 management-need value
-- `change_percentage_points`: `(current risk_score - previous risk_score) * 100`, rounded to one decimal place
-  - negative: predicted score decreased
-  - positive: predicted score increased
-  - `null`: no valid comparison baseline
+- `risk_score`: `0.0`~`1.0` 범위의 연속 모델 출력
+- 클라이언트 표시: 백분율 또는 0–100 관리 필요도로 보여줄 때 100을 곱한다
+- `change_percentage_points`: `(현재 risk_score − 이전 risk_score) * 100`, 소수점 첫째 자리 반올림
+  - 음수: 예측 점수가 낮아짐
+  - 양수: 예측 점수가 높아짐
+  - `null`: 유효한 비교 기준선이 없음
 
-The API does not expose `internal_risk_level`, `model_version`, or `model_variant` in history items.
+API는 이력 항목에 `internal_risk_level`, `model_version`, `model_variant`를 노출하지 않는다.
 
-## Comparison policy
+## 비교 정책
 
-History is returned from oldest to newest within the requested limit.
+이력은 요청한 개수 범위 안에서 **오래된 것 → 최신 순**으로 반환된다.
 
-| `comparison_status` | meaning | `change_percentage_points` |
+| `comparison_status` | 의미 | `change_percentage_points` |
 | --- | --- | --- |
-| `baseline` | first visible item in the returned series | `null` |
-| `comparable` | immediately previous item uses the same model version | numeric |
-| `model_changed` | immediately previous item uses a different model version | `null` |
+| `baseline` | 반환된 계열에서 처음 보이는 항목 | `null` |
+| `comparable` | 바로 이전 항목이 같은 모델 버전 | 숫자 |
+| `model_changed` | 바로 이전 항목이 다른 모델 버전 | `null` |
 
-The server owns this policy. Android must not parse or compare model-version strings. Scores from different model
-versions are never connected as a health change; the first record after a model-version change establishes a new
-baseline.
+**이 정책은 서버가 소유한다.** 안드로이드는 모델 버전 문자열을 파싱하거나 비교해서는 안 된다. 서로 다른 모델 버전의 점수는 결코 건강 변화로 이어 붙이지 않으며, 모델 버전이 바뀐 뒤의 첫 기록이 **새 기준선**이 된다.
 
-When `comparison_status` is `model_changed`, the client must not draw a line from the previous point. It starts a new
-visual segment and baseline so scores produced by different model versions are never presented as one continuous trend.
+`comparison_status`가 `model_changed`이면 클라이언트는 이전 점에서 선을 이어 그리면 안 된다. 새로운 시각적 구간과 기준선으로 시작해, 다른 모델 버전이 만든 점수가 하나의 연속 추이로 제시되는 일이 없도록 한다.
 
-## Compatibility and removal plan
+## 호환성과 제거 계획
 
-`care_stage` remains in responses temporarily because the current Android flow consumes it. It is not the final trend
-contract. After Android switches to the continuous chart, `risk_level`, `care_stage`, and `selected_threshold`
-dependencies should be removed or restricted to internal compatibility paths.
+`care_stage`는 현재 안드로이드 흐름이 사용하고 있어 응답에 **한시적으로** 남아 있다. 최종 추이 계약이 아니다. 안드로이드가 연속 차트로 전환한 뒤에는 `risk_level`, `care_stage`, `selected_threshold` 의존을 제거하거나 내부 호환 경로로만 한정해야 한다.
 
-The history endpoint now returns records from oldest to newest for chart consumption. Until the Android record screen
-is updated, this also changes the visible order of its existing timeline because that screen renders the server order
-without sorting. Coordinate the merge and deployment order with the Android trend-chart change.
+이력 엔드포인트는 차트 소비를 위해 이제 오래된 것부터 최신 순으로 반환한다. 안드로이드 기록 화면이 갱신되기 전까지는 이 변경이 기존 타임라인의 표시 순서에도 영향을 준다. 그 화면이 서버 순서를 정렬 없이 그대로 렌더링하기 때문이다. **머지·배포 순서를 안드로이드 추이 차트 변경과 함께 조율할 것.**
 
-This contract is model-family neutral. It should describe how to handle any future model-version boundary without
-referring to retired AWGS-era labels in the public API or client behavior.
+이 계약은 **모델 계열에 중립적이다.** 공개 API나 클라이언트 동작에서 은퇴한 AWGS 시대 라벨을 언급하지 않고, 앞으로 어떤 모델 버전 경계가 생기더라도 그것을 다루는 방법만 기술해야 한다.
 
-## Terms and user communication
+## 약관 및 사용자 고지
 
-The draft service terms, privacy policy, and sensitive-health consent are updated in the same PR to disclose the
-continuous score and change-over-time presentation. The user-facing screen must still state that the result is a
-screening reference, not a medical diagnosis, and must avoid definitive wording such as "you have sarcopenia."
+서비스 이용약관·개인정보 처리방침·민감정보(건강정보) 수집·이용 동의 초안을 같은 PR에서 갱신해 연속 점수와 시간에 따른 변화 표시를 고지한다. 사용자에게 보이는 화면은 여전히 **결과가 선별 참고값이며 의학적 진단이 아님**을 밝혀야 하고, "근감소증입니다" 같은 단정적 표현을 피해야 한다.
