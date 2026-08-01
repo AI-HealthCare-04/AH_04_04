@@ -83,6 +83,23 @@ internal fun completedMissionsOn(logs: List<MissionLogItem>, dayKey: String): Li
     logs.filter { it.countedForDaily && it.completedAt != null && dateKey(it.completedAt!!) == dayKey }
         .sortedBy { it.completedAt }
 
+/**
+ * '기록함(목표 미달성)' 흔적이 있는 날짜 집합(#343 문제 2). 단백질 '안 먹었어요'(0종) 저장은
+ * counted_for_daily=false 라 완료 통계 어디에도 안 나타나 성실한 기록이 화면상 무(無)로 보였다.
+ * 완료 통계(포인트·성공 판정)의 의미는 그대로 두고, 달력에 옅은 흔적만 따로 표시하기 위한 값이다.
+ * (meal 은 목표 1종이라 counted=false 완료 로그 == '안 먹었어요' 기록)
+ */
+internal fun mealRecordedOnlyDates(logs: List<MissionLogItem>): Set<String> =
+    logs.filter { it.missionType == "meal" && !it.countedForDaily && it.completedAt != null }
+        .map { dateKey(it.completedAt!!) }
+        .toSet()
+
+/** 그날 '안 먹었어요'로 기록한 단백질 항목(달력 팝업용, #343 문제 2). 기록 시각 오름차순. */
+internal fun mealRecordedOnlyOn(logs: List<MissionLogItem>, dayKey: String): List<MissionLogItem> =
+    logs.filter {
+        it.missionType == "meal" && !it.countedForDaily && it.completedAt != null && dateKey(it.completedAt!!) == dayKey
+    }.sortedBy { it.completedAt }
+
 /** ISO(KST) 시각 → "오전/오후 h:mm". 파싱 실패 시 빈 문자열. */
 internal fun koreanTime(iso: String?): String {
     if (iso == null || iso.length < 16) return ""

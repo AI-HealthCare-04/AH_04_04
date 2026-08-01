@@ -57,8 +57,6 @@ import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
 import com.aihealthcare.ah0404.ui.components.AigoSegmentedSelector
 import com.aihealthcare.ah0404.ui.components.AigoTextField
 import com.aihealthcare.ah0404.ui.components.AigoTonalButton
-import com.aihealthcare.ah0404.ui.components.MEDICAL_DISCLAIMER_DEFAULT
-import com.aihealthcare.ah0404.ui.components.MedicalDisclaimer
 import com.aihealthcare.ah0404.ui.components.SegmentOption
 import com.aihealthcare.ah0404.ui.theme.Dimens
 
@@ -83,12 +81,17 @@ fun OnboardingScreen(
     val activity = LocalContext.current as Activity
     val authState by authVm.state.collectAsState()
     // 화면 진입 시 stale 상태 복구(#153 후속): 토큰이 없는데(로그아웃·세션리셋) 이 Activity-수명 VM 에
-    //   이전 온보딩 step(예: RESULT)이 남아 있으면 WELCOME 으로 되돌린다. 안 그러면 '홈으로 시작하기'가
-    //   토큰 없는 완료로 처리돼 LOGIN_REQUIRED ↔ 리셋 사이를 도는 무한루프가 생긴다.
+    //   이전 온보딩 step(예: ASSESSMENT)이나 완주 신호가 남아 있으면 WELCOME 으로 되돌린다. 안 그러면 토큰 없는
+    //   완료로 처리돼 LOGIN_REQUIRED ↔ 리셋 사이를 도는 무한루프가 생긴다.
     LaunchedEffect(Unit) {
         if (TokenHolder.token.isBlank() && vm.step != OnbStep.WELCOME) {
             vm.resetToWelcome()
         }
+    }
+    // 온보딩 완주(#299): 체력검사 제출/스킵 → 예측 생성이 끝나면 별도 결과화면 없이 곧장 홈으로. 완료는 step 이
+    //   아니라 finished 플래그로 알린다. false→true 전이에 한 번만 홈 라우팅(onComplete).
+    LaunchedEffect(vm.finished) {
+        if (vm.finished) onComplete(vm.isGuest)
     }
     var showExitConfirmation by remember { mutableStateOf(false) }
     // 소셜 로그인 결과 분기(#153): 완료 계정은 약관을 건너뛰고 홈으로, 미완료 계정은 온보딩(약관)을 이어감.
@@ -118,7 +121,6 @@ fun OnboardingScreen(
             OnbStep.TERMS -> TermsStep(vm)
             OnbStep.PROFILE -> ProfileStep(vm)
             OnbStep.ASSESSMENT -> AssessmentStep(vm)
-            OnbStep.RESULT -> ResultStep(vm, onComplete)
         }
 
         if (vm.loading || authState.loading != null) {
@@ -140,11 +142,7 @@ fun OnboardingScreen(
         if (showExitConfirmation) {
             AigoDialog(
                 title = "앱을 종료할까요?",
-                message = if (vm.step == OnbStep.RESULT) {
-                    "결과 화면을 닫고 앱을 종료할까요?"
-                } else {
-                    "입력 중인 온보딩을 나가면 다시 이어서 진행할 수 없어요."
-                },
+                message = "입력 중인 온보딩을 나가면 다시 이어서 진행할 수 없어요.",
                 confirmText = "종료",
                 onConfirm = onExit,
                 dismissText = "계속하기",
@@ -346,7 +344,11 @@ private fun openTermsUrl(context: Context, url: String): Boolean {
     }
 }
 
-/** 숫자 입력 + 오른쪽 '모름' 버튼. '모름' 누르면 추정치로 채워지고, 채워졌으면 안내 문구를 보여준다. */
+/**
+ * 숫자 입력 + 오른쪽 '모름' 버튼. '모름' 누르면 추정치로 채워지고, 채워졌으면 안내 문구를 보여준다.
+ *  - [error]: 값이 현실 범위를 벗어나면 그 자리에서 인라인 경고(#298 A-2).
+ *  - [unknownReason]: '모름'이 비활성일 때 **왜 못 누르는지** 안내(#298 B).
+ */
 @Composable
 private fun FieldWithUnknown(
     value: String,
@@ -355,6 +357,8 @@ private fun FieldWithUnknown(
     onUnknown: () -> Unit,
     estimated: Boolean,
     unknownEnabled: Boolean,
+    error: String? = null,
+    unknownReason: String? = null,
 ) {
     val focusManager = LocalFocusManager.current
 
@@ -363,7 +367,7 @@ private fun FieldWithUnknown(
         horizontalArrangement = Arrangement.spacedBy(Dimens.Space8),
         verticalAlignment = Alignment.Top,
     ) {
-        AigoTextField(value, onValueChange, label, Modifier.weight(1f), keyboardType = KeyboardType.Number)
+        AigoTextField(value, onValueChange, label, Modifier.weight(1f), keyboardType = KeyboardType.Number, isError = error != null)
         OutlinedButton(
             onClick = {
                 focusManager.clearFocus()
@@ -375,12 +379,20 @@ private fun FieldWithUnknown(
             Text("모름", style = MaterialTheme.typography.bodyLarge)
         }
     }
+    error?.let {
+        Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+    }
     if (estimated) {
         Text(
             "추정치로 입력했어요. 정확한 값을 아시면 직접 입력해 주세요.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+    if (!unknownEnabled) {
+        unknownReason?.let {
+            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
@@ -392,10 +404,19 @@ private fun ProfileStep(vm: OnboardingViewModel) {
         onBack = { vm.goBack() },
         content = {
             Text("생년월일", style = MaterialTheme.typography.titleMedium)
+            val birthError = vm.birthDateError
             Row(horizontalArrangement = Arrangement.spacedBy(Dimens.Space8)) {
-                AigoTextField(vm.birthYear, { vm.birthYear = it }, "년", Modifier.weight(1.3f), keyboardType = KeyboardType.Number)
-                AigoTextField(vm.birthMonth, { vm.birthMonth = it }, "월", Modifier.weight(1f), keyboardType = KeyboardType.Number)
-                AigoTextField(vm.birthDay, { vm.birthDay = it }, "일", Modifier.weight(1f), keyboardType = KeyboardType.Number)
+                AigoTextField(vm.birthYear, { vm.birthYear = it }, "년", Modifier.weight(1.3f), isError = birthError != null, keyboardType = KeyboardType.Number)
+                AigoTextField(vm.birthMonth, { vm.birthMonth = it }, "월", Modifier.weight(1f), isError = birthError != null, keyboardType = KeyboardType.Number)
+                AigoTextField(vm.birthDay, { vm.birthDay = it }, "일", Modifier.weight(1f), isError = birthError != null, keyboardType = KeyboardType.Number)
+            }
+            // 생년월일 즉시 검증(#298 A): "다음"까지 미루지 않고 그 자리에서 안내.
+            birthError?.let {
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+            }
+            // 만 65세 미만 안내(#298 C): 막지 않고 희망적 톤으로 — 가입은 계속 가능, 예측만 "준비 중".
+            vm.underAgeNotice?.let {
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             Text("성별", style = MaterialTheme.typography.titleMedium)
@@ -420,16 +441,20 @@ private fun ProfileStep(vm: OnboardingViewModel) {
                 onValueChange = vm::setHeight,
                 label = "키 (cm)",
                 onUnknown = vm::markHeightUnknown,
-                estimated = vm.heightEstimated,
+                estimated = vm.heightEstimatedValid,
                 unknownEnabled = vm.canEstimate,
+                error = vm.heightError,
+                unknownReason = vm.estimateUnavailableReason,
             )
             FieldWithUnknown(
                 value = vm.weightInput,
                 onValueChange = vm::setWeight,
                 label = "몸무게 (kg)",
                 onUnknown = vm::markWeightUnknown,
-                estimated = vm.weightEstimated,
+                estimated = vm.weightEstimatedValid,
                 unknownEnabled = vm.canEstimate,
+                error = vm.weightError,
+                unknownReason = vm.estimateUnavailableReason,
             )
             FieldWithUnknown(
                 value = vm.waistCm,
@@ -534,29 +559,3 @@ private fun AssessmentStep(vm: OnboardingViewModel) {
     )
 }
 
-@Composable
-private fun ResultStep(vm: OnboardingViewModel, onComplete: (isGuest: Boolean) -> Unit) {
-    val r = vm.result
-    val (emoji, title) = when (r?.careStage) {
-        "good" -> "👍" to "아주 좋아요!"
-        "action_needed" -> "💪" to "조금만 더 함께 챙겨봐요"
-        else -> "🙂" to "잘 유지하고 있어요"
-    }
-    StepScaffold(
-        title = "$emoji  $title",
-        content = {
-            Text(
-                text = r?.displayMessage ?: "오늘부터 가볍게 시작해 볼까요?",
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            // 또래 분포 병합 차트(#193)는 기록탭 근육 건강 정보로 이관됨(결정 2026-07-31, #302). 온보딩 결과
-            //   화면 자체도 #299/#311에서 제거 예정이라 여기선 문구·고지만 남긴다.
-            Spacer(Modifier.height(Dimens.Space16))
-            // 결과 화면 필수 고지(§0-3): 서버 disclaimer 있으면 그대로, 없으면 기본 문구.
-            MedicalDisclaimer(text = r?.disclaimer ?: MEDICAL_DISCLAIMER_DEFAULT)
-        },
-        footer = {
-            AigoPrimaryButton(text = "홈으로 시작하기", onClick = { onComplete(vm.isGuest) })
-        },
-    )
-}

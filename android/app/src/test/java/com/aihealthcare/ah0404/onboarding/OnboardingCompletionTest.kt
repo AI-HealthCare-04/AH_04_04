@@ -1,0 +1,176 @@
+package com.aihealthcare.ah0404.onboarding
+
+import com.aihealthcare.ah0404.network.AgreementsRequest
+import com.aihealthcare.ah0404.network.AgreementsResponse
+import com.aihealthcare.ah0404.network.HealthProfileRequest
+import com.aihealthcare.ah0404.network.HealthProfileResponse
+import com.aihealthcare.ah0404.network.OnboardingApi
+import com.aihealthcare.ah0404.network.PhysicalAssessmentRequest
+import com.aihealthcare.ah0404.network.RiskPredictionRequest
+import com.aihealthcare.ah0404.network.RiskPredictionResponse
+import com.aihealthcare.ah0404.network.SessionCreateRequest
+import com.aihealthcare.ah0404.network.SessionResponse
+import com.aihealthcare.ah0404.network.SkipResponse
+import com.aihealthcare.ah0404.network.SocialLoginRequest
+import com.aihealthcare.ah0404.network.Term
+import com.aihealthcare.ah0404.network.TermsListResponse
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.ResponseBody.Companion.toResponseBody
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import retrofit2.HttpException
+import retrofit2.Response
+
+/**
+ * 온보딩 완주(#299) — 결과화면(RESULT) 제거 후, 체력검사 제출/스킵 → 예측 생성이 끝나면 별도 결과화면 없이
+ *  완주 신호(finished)만 세워 화면 호스트가 곧장 홈으로 보낸다. 완주해도 step 은 RESULT 로 가지 않는다(스텝 자체가 없음).
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+class OnboardingCompletionTest {
+
+    private val dispatcher = StandardTestDispatcher()
+    @Before fun setUp() = Dispatchers.setMain(dispatcher)
+    @After fun tearDown() = Dispatchers.resetMain()
+
+    /** 완주까지 필요한 응답만 실제로 주는 happy-path fake. 예측 호출 여부를 기록한다. */
+    private class FakeApi : OnboardingApi {
+        var riskPredicted = false; private set
+
+        override suspend fun guestLogin() = TODO()
+        override suspend fun loginGoogle(body: SocialLoginRequest) = TODO()
+        override suspend fun loginKakao(body: SocialLoginRequest) = TODO()
+        override suspend fun getTerms() = TermsListResponse(
+            listOf(
+                Term("service", "1", isRequired = true),
+                Term("privacy", "1", isRequired = true),
+                Term("sensitive_health", "1", isRequired = true),
+            ),
+        )
+        override suspend fun agreeTerms(body: AgreementsRequest) = AgreementsResponse("terms_agreed")
+        override suspend fun createSession(body: SessionCreateRequest) =
+            SessionResponse(sessionId = 1, status = "started")
+        override suspend fun skipHealthCheck(sessionId: Int) =
+            SkipResponse(sessionId = sessionId, status = "skipped", onboardingStatus = "completed")
+        override suspend fun createHealthProfile(body: HealthProfileRequest) =
+            HealthProfileResponse(profileId = 1, bmi = 22.3, proteinChallengeAllowed = true)
+        override suspend fun createPhysicalAssessment(body: PhysicalAssessmentRequest) = TODO()
+        override suspend fun createRiskPrediction(body: RiskPredictionRequest): RiskPredictionResponse {
+            riskPredicted = true
+            return RiskPredictionResponse(
+                predictionId = 1,
+                careStage = "good",
+                displayMessage = "좋아요",
+                onboardingStatus = "completed",
+            )
+        }
+        override suspend fun getHome() = TODO()
+    }
+
+    @Test
+    fun completes_to_home_without_result_step() = runTest {
+        val api = FakeApi()
+        val vm = OnboardingViewModel(api, todayYear = 2026, todayMonth = 7, todayDay = 15)
+
+        vm.continueAuthenticated(); advanceUntilIdle()
+        assertEquals(OnbStep.TERMS, vm.step)
+
+        vm.agreeAll(); vm.submitAgreements(); advanceUntilIdle()
+        assertEquals(OnbStep.PROFILE, vm.step)
+
+        // 만 68세(2026 기준) 유효 프로필
+        vm.apply {
+            sex = "male"; birthYear = "1958"; birthMonth = "3"; birthDay = "1"
+            setHeight("168"); setWeight("63"); walkDays = 5; muscDays = 2
+        }
+        vm.submitProfile(); advanceUntilIdle()
+        assertEquals(OnbStep.ASSESSMENT, vm.step)
+        assertFalse("체력검사 전엔 완주 신호가 없다", vm.finished)
+
+        vm.skipAssessment(); advanceUntilIdle()
+        assertTrue("체력검사 스킵 → 예측까지 끝나면 완주 신호", vm.finished)
+        assertTrue("예측은 미리 생성해 둔다(대시보드 캐시)", api.riskPredicted)
+        assertEquals("완주해도 step 은 ASSESSMENT 그대로 — RESULT 스텝은 없다(#299)", OnbStep.ASSESSMENT, vm.step)
+    }
+
+    @Test
+    fun restart_clears_stale_finished_signal() = runTest {
+        // Activity 수명 VM 특성상 완주 신호(finished)가 남은 채 재진입할 수 있다 —
+        //   start()/continueAuthenticated() 시작점에서 finished=false 를 깔아 stale 완주로 즉시 홈
+        //   라우팅되는 경로를 원천 차단하는지 검증(리뷰 #311 nit).
+        val api = FakeApi()
+        val vm = OnboardingViewModel(api, todayYear = 2026, todayMonth = 7, todayDay = 15)
+
+        // 1) 한 번 완주시켜 finished=true 로 만든다.
+        vm.continueAuthenticated(); advanceUntilIdle()
+        vm.agreeAll(); vm.submitAgreements(); advanceUntilIdle()
+        vm.apply {
+            sex = "male"; birthYear = "1958"; birthMonth = "3"; birthDay = "1"
+            setHeight("168"); setWeight("63"); walkDays = 5; muscDays = 2
+        }
+        vm.submitProfile(); advanceUntilIdle()
+        vm.skipAssessment(); advanceUntilIdle()
+        assertTrue(vm.finished)
+
+        // 2) resetToWelcome 를 거치지 않고 재로그인(같은 Activity 범위 VM) — 시작점에서 완주 신호가 걷힌다.
+        vm.continueAuthenticated(); advanceUntilIdle()
+        assertFalse("재시작은 stale finished 를 초기화한다(리뷰 #311)", vm.finished)
+        assertEquals(OnbStep.TERMS, vm.step)
+    }
+
+    // ── 예측 422 처리 범위(리뷰 #313): 준비 중 코드만 완주로, 그 외 422 는 실제 오류로 ──
+    private fun http422(body: String) =
+        HttpException(Response.error<Any>(422, body.toResponseBody("application/json".toMediaType())))
+
+    @Test
+    fun preparing_422_completes_onboarding_without_prediction() = runTest {
+        // 서버가 code=sarcopenia_prediction_preparing 로 준 422 는 '예측 없는 정상 완주'로 넘긴다(#298 C).
+        val api = object : OnboardingApi by FakeApi() {
+            override suspend fun createRiskPrediction(body: RiskPredictionRequest): RiskPredictionResponse =
+                throw http422("""{"detail":{"code":"sarcopenia_prediction_preparing","message":"준비 중"}}""")
+        }
+        val vm = OnboardingViewModel(api, todayYear = 2026, todayMonth = 7, todayDay = 15)
+        vm.continueAuthenticated(); advanceUntilIdle()
+        vm.agreeAll(); vm.submitAgreements(); advanceUntilIdle()
+        vm.apply {
+            sex = "male"; birthYear = "1970"; birthMonth = "1"; birthDay = "1" // 56세(≥14, <65)
+            setHeight("168"); setWeight("63"); walkDays = 5; muscDays = 2
+        }
+        vm.submitProfile(); advanceUntilIdle()
+        vm.skipAssessment(); advanceUntilIdle()
+        assertTrue("준비 중 422 는 예측 없이 완주", vm.finished)
+        assertNull("예측 결과는 없다(준비 중)", vm.result)
+        assertNull("에러가 아니다", vm.error)
+    }
+
+    @Test
+    fun non_preparing_422_surfaces_error_and_does_not_complete() = runTest {
+        // 준비 중 코드가 아닌 422(검증성 오류 등)는 '예측 없는 완주'로 위장하지 않고 에러+재시도로 돌린다(리뷰 #313).
+        val api = object : OnboardingApi by FakeApi() {
+            override suspend fun createRiskPrediction(body: RiskPredictionRequest): RiskPredictionResponse =
+                throw http422("""{"detail":"프로필 값이 올바르지 않습니다"}""")
+        }
+        val vm = OnboardingViewModel(api, todayYear = 2026, todayMonth = 7, todayDay = 15)
+        vm.continueAuthenticated(); advanceUntilIdle()
+        vm.agreeAll(); vm.submitAgreements(); advanceUntilIdle()
+        vm.apply {
+            sex = "male"; birthYear = "1970"; birthMonth = "1"; birthDay = "1"
+            setHeight("168"); setWeight("63"); walkDays = 5; muscDays = 2
+        }
+        vm.submitProfile(); advanceUntilIdle()
+        vm.skipAssessment(); advanceUntilIdle()
+        assertFalse("다른 422 는 완주로 위장되지 않는다", vm.finished)
+        assertTrue("에러로 재시도를 유도한다", vm.error != null)
+    }
+}
