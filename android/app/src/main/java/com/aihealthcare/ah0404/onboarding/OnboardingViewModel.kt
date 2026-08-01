@@ -94,8 +94,11 @@ class OnboardingViewModel(
     // 추정('모름')은 나이·성별에 종속된다 — '모름' 선택 후 생년월일을 추정 대상 미만(만 50세 미만)으로 바꾸면
     //   플래그(heightEstimated 등)만 남아 무효 추정값이 표시·제출될 수 있다(리뷰 #313). canEstimate 를 함께 확인해
     //   '유효한 추정'만 인정한다 — 무효 추정은 표시·제출·has_estimated_value 모두에서 무시하고 직접 입력을 유도한다.
-    private val heightEstimatedValid: Boolean get() = heightEstimated && canEstimate
-    private val weightEstimatedValid: Boolean get() = weightEstimated && canEstimate
+    // 화면 표시("추정치로 입력했어요")·인라인 검증(heightError)도 원본 플래그가 아닌 이 유효 상태를 써야 무효
+    //   추정이 남았을 때 표시·검증·제출이 일관된다(리뷰 #313 재리뷰 — 원본 플래그 사용 시 '추정치 입력' + '직접
+    //   입력하세요'가 동시에 뜨는 모순). 그래서 public 으로 노출한다.
+    val heightEstimatedValid: Boolean get() = heightEstimated && canEstimate
+    val weightEstimatedValid: Boolean get() = weightEstimated && canEstimate
 
     /** 키·몸무게 중 하나라도 유효한 '모름'(추정)이면 true → has_estimated_value 로 전송. */
     val hasEstimatedValue: Boolean get() = heightEstimatedValid || weightEstimatedValid
@@ -128,7 +131,7 @@ class OnboardingViewModel(
     /** 키 인라인 검증 문구(#298 A-2). 직접 입력값이 현실 범위 밖이면 그 자리에서 안내(추정치·빈칸은 조용). */
     val heightError: String?
         get() {
-            if (heightEstimated || heightCm.isBlank()) return null
+            if (heightEstimatedValid || heightCm.isBlank()) return null
             val h = heightCm.toDoubleOrNull() ?: return "키를 숫자로 입력해 주세요"
             return if (h < HEIGHT_MIN_CM || h > HEIGHT_MAX_CM) {
                 "키는 ${HEIGHT_MIN_CM.toInt()}~${HEIGHT_MAX_CM.toInt()}cm 사이로 입력해 주세요"
@@ -140,7 +143,7 @@ class OnboardingViewModel(
     /** 몸무게 인라인 검증 문구(#298 A-2). */
     val weightError: String?
         get() {
-            if (weightEstimated || weightKg.isBlank()) return null
+            if (weightEstimatedValid || weightKg.isBlank()) return null
             val w = weightKg.toDoubleOrNull() ?: return "몸무게를 숫자로 입력해 주세요"
             return if (w < WEIGHT_MIN_KG || w > WEIGHT_MAX_KG) {
                 "몸무게는 ${WEIGHT_MIN_KG.toInt()}~${WEIGHT_MAX_KG.toInt()}kg 사이로 입력해 주세요"

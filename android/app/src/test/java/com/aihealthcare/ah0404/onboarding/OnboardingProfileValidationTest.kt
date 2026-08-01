@@ -159,5 +159,10 @@ class OnboardingProfileValidationTest {
         assertFalse("50세 미만이 되면 추정은 무효 — 표시·제출에서 무시", vm.hasEstimatedValue)
         assertEquals("표시값도 추정치가 아니라 빈 입력값", "", vm.heightInput)
         assertEquals("", vm.weightInput)
+        // 화면 표시 상태도 무효로 통일(리뷰 #313 재리뷰): 공개 유효상태 false → '추정치로 입력했어요' 미표시.
+        //   동시에 '정확한 값을 직접 입력' 안내만 노출돼 문구가 모순되지 않는다.
+        assertFalse("공개 유효상태 false → '추정치 입력' 표시 안 됨", vm.heightEstimatedValid)
+        assertFalse(vm.weightEstimatedValid)
+        assertTrue("직접 입력 안내만 노출(모순 없음)", vm.estimateUnavailableReason?.contains("직접") == true)
     }
 }
