@@ -21,6 +21,7 @@ from app.models.enums import (
     TargetUnit,
 )
 from app.models.missions import MissionTemplate
+from app.services.mission_scoring import BONUS_POINTS
 
 # 구버전에서 운동을 하위단계별 2개 미션으로 넣었던 흔적.
 #   '운동하기' 단일 미션으로 통합하며, 이미 시드된 DB에서는 아래 title을 비활성화(is_active=False)해
@@ -117,6 +118,20 @@ MISSION_TEMPLATES: list[dict] = [
         "default_target_value": 1,
         "target_unit": TargetUnit.COUNT,
         "reward_points": 5,
+    },
+    # 보너스 — 사용자가 고르는 미션이 아니라, 그날 미션을 다 채웠을 때 서버가 얹어 주는 적립.
+    #   GET /missions 목록에는 나오지 않는다(get_active_templates 가 mission_type=bonus 를 제외).
+    #   운영 DB 는 마이그레이션 0020 이 같은 행을 넣으므로, 여기 항목은 새 DB(로컬·테스트)용이다.
+    {
+        "mission_type": MissionType.BONUS,
+        "title": "모든 미션 완료 보너스",
+        "description": "그날 미션을 모두 완료하면 드리는 추가 포인트예요.",
+        "level": ActivityLevel.NORMAL,
+        "display_order": 90,
+        "default_target_value": 1,
+        "target_unit": TargetUnit.COUNT,
+        "daily_count_limit": 1,
+        "reward_points": BONUS_POINTS,
     },
 ]
 

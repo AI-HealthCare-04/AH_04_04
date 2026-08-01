@@ -56,7 +56,12 @@ class MissionRepository:
         exclude_kidney_check=True면 신장/단백질 제한 사용자에게 위험한
         (requires_kidney_check=True) 미션을 제외한다. (안전 필터)
         """
-        stmt = select(MissionTemplate).where(MissionTemplate.is_active.is_(True))
+        # 보너스는 사용자가 수행하는 미션이 아니라 서버가 얹어 주는 적립이라 목록에서 항상 뺀다.
+        #   (여기서 빼야 '그날 보이는 미션 종류' 판정에도 보너스가 섞이지 않는다.)
+        stmt = select(MissionTemplate).where(
+            MissionTemplate.is_active.is_(True),
+            MissionTemplate.mission_type != MissionType.BONUS,
+        )
         if level is not None:
             stmt = stmt.where(
                 or_(
@@ -74,6 +79,43 @@ class MissionRepository:
 
     async def get_template(self, mission_template_id: int) -> MissionTemplate | None:
         return await self.session.get(MissionTemplate, mission_template_id)
+
+    async def get_bonus_template(self) -> MissionTemplate | None:
+        """보너스 적립에 쓰는 단일 템플릿. 마이그레이션(0019)이 한 행만 넣으므로 하나만 있다.
+        아직 시드되지 않은 환경(구 DB)에서는 None → 서비스가 조용히 보너스를 건너뛴다."""
+        stmt = select(MissionTemplate).where(MissionTemplate.mission_type == MissionType.BONUS).limit(1)
+        return await self.session.scalar(stmt)
+
+    async def add_bonus_log(self, user_id: int, template: MissionTemplate) -> MissionLog:
+        """보너스 포인트를 mission_logs 한 행으로 적립한다.
+
+        별도 보너스 테이블을 만들지 않는 이유: 포인트 잔액(get_current_points)·적립 이력(get_earn_logs)·
+        당일 합계(sum_earned_points_today)가 모두 mission_logs.earned_points 에서만 파생되므로,
+        여기 한 행으로 넣으면 세 경로가 코드 변경 없이 그대로 맞는다(단일 원천 유지).
+
+        ★ created_on_device_at 에 **그날 KST 자정**을 박는다. 기존 유니크 제약
+          (user_id, mission_template_id, created_on_device_at) 이 그대로 "하루 한 번" 보장이 되어,
+          동시 요청 두 건이 함께 지급을 시도해도 DB 가 두 번째를 거부한다.
+          (기기에서 만든 시각이 아니라 서버가 정하는 값이지만, 이 컬럼의 역할은 '같은 수행의 중복 차단'
+           이라는 자연 키이므로 의미가 어긋나지 않는다.)
+        """
+        day_start, _ = self._day_bounds(today_kst())
+        log = MissionLog(
+            user_id=user_id,
+            mission_template_id=template.mission_template_id,
+            mission_type=MissionType.BONUS,
+            status=MissionStatus.COMPLETED,
+            performed_at=day_start,
+            success=True,
+            # 일일 판정(daily_result)은 '사용자가 수행한' 미션 수로만 매겨야 하므로 보너스는 세지 않는다.
+            #   counted_breakdown_today 가 counted_for_daily=True 만 세므로 False 로 두면 자동으로 빠진다.
+            counted_for_daily=False,
+            earned_points=template.reward_points,
+            created_on_device_at=day_start,
+        )
+        self.session.add(log)
+        await self.session.flush()
+        return log
 
     # ---------------- user_activity_profiles (읽기 전용) ----------------
 
@@ -264,6 +306,18 @@ class MissionRepository:
             MissionLog.created_at < end,
         )
         return int(await self.session.scalar(stmt) or 0) > 0
+
+    async def has_bonus_today(self, user_id: int) -> bool:
+        """오늘 보너스를 이미 받았는지. 하루 한 번만 지급하기 위한 사전 확인이며,
+        동시 요청은 add_bonus_log 의 유니크 제약이 최종적으로 막는다."""
+        start, end = self._day_bounds(today_kst())
+        stmt = select(MissionLog.mission_log_id).where(
+            MissionLog.user_id == user_id,
+            MissionLog.mission_type == MissionType.BONUS,
+            MissionLog.created_at >= start,
+            MissionLog.created_at < end,
+        )
+        return await self.session.scalar(stmt.limit(1)) is not None
 
     async def sum_earned_points_today(self, user_id: int) -> int:
         start, end = self._day_bounds(today_kst())

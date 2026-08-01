@@ -17,6 +17,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import default_logger as logger
 from app.core.protein_categories import PROTEIN_CATEGORY_IDS, PROTEIN_DAILY_GOAL_COUNT
 from app.core.utils.clock import today_kst
 from app.dtos.mission import (
@@ -42,7 +43,11 @@ from app.models.missions import GameLog, MealLog, MissionLog, MissionTemplate, P
 from app.models.users import User
 from app.repositories.health_profile_repository import HealthProfileRepository
 from app.repositories.mission_repository import MissionRepository
-from app.services.mission_scoring import compute_daily_result, compute_earned_points
+from app.services.mission_scoring import (
+    compute_daily_result,
+    compute_earned_points,
+    is_all_missions_complete,
+)
 
 
 class MissionService:
@@ -133,6 +138,17 @@ class MissionService:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="미션 종류가 템플릿과 일치하지 않습니다.",
+            )
+
+        # ★ 보너스는 서버가 조건을 판정해 스스로 적립하는 종류다(_maybe_award_bonus). 일반 생성 API 로는
+        #   절대 만들 수 없어야 한다 — 막지 않으면 인증된 사용자가 보너스 템플릿 id 로 completed 를 보내
+        #   10점을 임의 적립할 수 있고, 자연 키(created_on_device_at)만 바꾸면 반복도 가능하다.
+        #   종류별 status 검증(_ensure_can_create)은 BONUS 를 어느 허용 집합에도 넣지 않아 걸러내지 못하므로
+        #   여기서 명시적으로 거부한다. 재전송 조회보다 앞에 둬서 기존 보너스 로그를 돌려주지도 않는다.
+        if template.mission_type == MissionType.BONUS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="보너스는 직접 기록할 수 없습니다.",
             )
 
         # 오프라인 재전송 방어(#91, #105) — 여기서 먼저 걸러 아래 검증·삽입을 아예 타지 않는다.
@@ -621,6 +637,8 @@ class MissionService:
         walking = breakdown.get(MissionType.WALKING, 0)
         game = breakdown.get(MissionType.GAME, 0)
         counted = meal + exercise + walking + game
+        # 포인트를 합산하기 '전에' 보너스를 지급해야 오늘 요약(earned_points)에 함께 잡힌다.
+        await self._maybe_award_bonus(user_id, breakdown)
         points = await self.repo.sum_earned_points_today(user_id)
         daily_result = compute_daily_result(counted)
         await self.repo.upsert_daily_summary(
@@ -634,3 +652,43 @@ class MissionService:
             daily_result=daily_result,
         )
         return daily_result
+
+    async def _maybe_award_bonus(self, user_id: int, breakdown: dict[MissionType, int]) -> None:
+        """그날 보이는 미션을 전부 채웠으면 보너스 포인트를 1회 적립한다(미션 탭 하단 카드의 약속).
+
+        '보이는 미션'은 GET /missions 와 **같은 규칙**으로 뽑는다 — 레벨 필터(걷기는 사용자 레벨 1개만)와
+        신장/단백질 안전 필터. 그래야 화면에 보이는 카드와 보너스 조건이 어긋나지 않고, 식사 미션이
+        숨겨지는 사용자도 나머지를 다 채우면 보너스를 받는다.
+
+        중복 지급은 두 겹으로 막는다: 지급 전 조회(has_bonus_today) + DB 유니크 제약(add_bonus_log 주석).
+        동시 요청으로 제약에 걸리면 이미 지급된 것이므로 SAVEPOINT 만 되돌리고 조용히 넘어간다 —
+        여기서 예외가 새면 방금 끝낸 미션 완료까지 통째로 롤백된다.
+        """
+        completed = {mission_type for mission_type, count in breakdown.items() if count > 0}
+        # 아직 아무것도 못 채운 날은 보너스가 나올 수 없다 — 목록·이력 조회를 아예 하지 않는다.
+        #   (미션 완료 요청 대부분이 이 경로라 불필요한 쿼리 3~4개를 아낀다.)
+        if not completed:
+            return
+        # 레벨 기본값(EASY)·안전 필터 모두 get_missions 와 동일하게 맞춘다.
+        level = await self.repo.get_user_current_level(user_id) or ActivityLevel.EASY
+        profile = await self.health_repo.get_latest_profile(user_id)
+        templates = await self.repo.get_active_templates(
+            level=level,
+            exclude_kidney_check=self._should_hide_kidney_missions(profile),
+        )
+        required = {template.mission_type for template in templates}
+        if not is_all_missions_complete(required, completed):
+            return
+        if await self.repo.has_bonus_today(user_id):
+            return
+        bonus_template = await self.repo.get_bonus_template()
+        if bonus_template is None:
+            # 템플릿 미시드 환경 — 보너스만 건너뛰고 미션 완료 자체는 정상 처리한다.
+            logger.warning("보너스 템플릿이 없어 지급을 건너뜁니다(user_id=%s)", user_id)
+            return
+        try:
+            async with self.session.begin_nested():
+                await self.repo.add_bonus_log(user_id, bonus_template)
+        except IntegrityError:
+            # 같은 날 두 요청이 동시에 통과 → 유니크 제약이 두 번째를 막은 정상 경로.
+            logger.info("보너스가 이미 지급돼 있어 건너뜁니다(user_id=%s)", user_id)
