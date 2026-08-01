@@ -1,5 +1,8 @@
 package com.aihealthcare.ah0404.mission
 
+import com.aihealthcare.ah0404.network.MealTodayLog
+import com.aihealthcare.ah0404.network.Mission
+
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -96,5 +99,51 @@ class MissionRoutingTest {
     @Test
     fun `둘 다 none 이면 추측 안내를 하지 않는다`() {
         assertEquals(null, proteinHiddenReason("none", "none"))
+    }
+
+    // ── #346: 1회성 미션(식사·게임) '오늘 했음' 배지 ────────────────────
+
+    private fun mission(
+        type: String,
+        todayLog: MealTodayLog? = null,
+        todayDone: Boolean? = null,
+    ) = Mission(
+        missionTemplateId = 1,
+        missionType = type,
+        title = "m",
+        description = null,
+        level = "easy",
+        targetValue = 1,
+        targetUnit = "reps",
+        requiresSafetyNotice = false,
+        rewardPoints = 10,
+        todayLog = todayLog,
+        todayDone = todayDone,
+    )
+
+    @Test
+    fun `식사 배지 - 달성·안먹었어요·미기록을 구분한다`() {
+        assertEquals(
+            "오늘 단백질 챙겼어요 🎉 · 2가지",
+            missionTodayBadge(mission("meal", todayLog = MealTodayLog(eaten = listOf("a", "b"), loggedAt = "t"))),
+        )
+        assertEquals(
+            "오늘은 안 드신 것으로 기록했어요",
+            missionTodayBadge(mission("meal", todayLog = MealTodayLog(eaten = emptyList(), loggedAt = "t"))),
+        )
+        assertEquals(null, missionTodayBadge(mission("meal"))) // 미기록이면 표시 없음
+    }
+
+    @Test
+    fun `게임 배지 - 오늘 완료만 표시하고 구버전 서버(null)는 무시한다`() {
+        assertEquals("오늘 게임 했어요 🎉", missionTodayBadge(mission("game", todayDone = true)))
+        assertEquals(null, missionTodayBadge(mission("game", todayDone = false)))
+        assertEquals(null, missionTodayBadge(mission("game", todayDone = null)))
+    }
+
+    @Test
+    fun `걷기·운동은 배지 대신 기존 진행바 담당(null)`() {
+        assertEquals(null, missionTodayBadge(mission("walking")))
+        assertEquals(null, missionTodayBadge(mission("exercise")))
     }
 }
