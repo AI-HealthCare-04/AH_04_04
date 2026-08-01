@@ -1,0 +1,140 @@
+# 심사 5-1 — 전체 API P95 부하 테스트 (#364)
+
+> **상태: 스크립트 준비 완료 · 실측 미수행.**
+> 실측은 실서버(EC2 dev)에 부하를 거는 작업이라 **팀 시점 합의 후** 진행한다.
+> 실측이 끝나면 아래 "측정 조건"과 "결과" 절의 빈칸을 채워 이 문서를 갱신한다.
+
+## 목적
+
+심사 평가항목 **5-1 「전체 API의 성능이 P95 Latency가 3초 이내로 수렴하는가?」** 의 근거 산출.
+성능이 나쁘다는 정황은 없으나 **측정 기록이 없으면 채점표 기준 1점**이므로, 재현 가능한
+부하 스크립트와 실측 결과를 저장소에 남긴다.
+
+| 점수 | 기준 |
+|---|---|
+| 5 | P95 3초 이내 성능 테스트 결과를 제시 |
+| 1 | 성능 테스트를 수행하지 않았다 ← 실측 전 현재 위치 |
+
+## 도구와 시나리오
+
+- 도구: **k6** (`brew install k6`). 스크립트: [`scripts/bench/loadtest_k6.js`](../../scripts/bench/loadtest_k6.js)
+- 시나리오는 단일 엔드포인트 난타가 아니라 **실제 사용 흐름**이다:
+
+```
+로그인(게스트) → 홈·내정보 조회 → 오늘의 미션 조회 → (미션 완료 기록, WRITES=1일 때)
+→ 기록 탭(미션 로그·대시보드) → 예측(최신·이력·코호트) → 정적 리소스(약관·팁·FAQ·운동영상)
+```
+
+- 이슈 #364 의 1·2·3순위 엔드포인트를 모두 커버한다(총 17개 + 쓰기 2개).
+- **워밍업 구간(기본 1분)은 별도 시나리오로 분리**되어 P95 임계값 판정에서 제외된다
+  (첫 요청은 커넥션 풀·캐시 초기화가 섞이기 때문).
+- 판정 기준은 k6 threshold 로 스크립트에 내장: **엔드포인트별 P95 < 3000ms**, 에러율 < 5%.
+
+## 실행 방법
+
+```bash
+k6 run --summary-trend-stats "p(50),p(95),p(99),max" \
+  -e BASE_URL=https://aigo-health.duckdns.org/api/v1 \
+  -e VUS=50 -e DURATION=5m -e WARMUP=1m -e WRITES=1 \
+  scripts/bench/loadtest_k6.js
+```
+
+상세 결과는 실행 디렉터리에 `loadtest-summary.json` 으로도 남는다(결과 표 작성용).
+
+### 실행 전 체크리스트
+
+- [ ] **팀 시점 합의** — 실서버 부하이므로 데모·QA와 겹치지 않는 시간대로.
+- [ ] k6 설치 (`brew install k6`)
+- [ ] 테스트 계정 준비 (아래 절)
+- [ ] `WRITES=1` 로 돌릴 경우: 미션 로그가 실DB에 쌓인다는 점 팀에 공지(게스트 계정 행이므로
+      서비스 데이터와 섞이지는 않지만, 집계 대시보드에 노이즈가 될 수 있음)
+
+### 테스트 계정 — 게스트 토큰 vs 실계정 토큰
+
+| 방식 | 장점 | 한계 |
+|---|---|---|
+| 게스트(`POST /auth/guest`, 기본값) | 토큰 발급 자동화 — VU당 1회 자동 로그인 | **기록이 비어 있어** 목록·집계 조회가 비현실적으로 빠르게 나온다. 예측 조회는 404. |
+| 실계정 토큰(`-e TOKENS=tok1,tok2`) | 미션 로그·예측 이력이 쌓인 상태의 **현실적인 조회 성능** | 간편로그인으로 수동 발급 필요 |
+
+권장 구성: **부하 흐름은 게스트로 걸되, 기록이 쌓인 실계정 토큰 1-2개를 `TOKENS` 로 섞어**
+목록 조회 계열(P95 위험군)이 실제 데이터 위에서도 측정되게 한다.
+
+배정 방식(스크립트 동작): 본 측정은 **게스트 시나리오(main_guest, VU 수 = VUS - 토큰 수)와
+토큰마다 vus:1 인 실계정 시나리오(main_real_N)** 로 명시 분리된다 — `VUS=50, TOKENS 2개`면 본
+측정 내내 실계정 2 VU + 게스트 48 VU 가 보장된다. 각 main_real_N 시나리오는 정의부의
+`env.TOKEN_INDEX` 로 토큰을 1:1 로 고정하므로(공식 지원 API), 전역 `__VU` 번호나 k6 의 VU
+재사용 방식에 의존하지 않으며, 인덱스가 어긋나면 즉시 abort 되어 Bearer undefined 부하가
+조용히 섞이는 일을 막는다. 전 VU 실계정은 VUS 수만큼 토큰을 넘기면 된다. 임계값 판정은
+본 측정 시나리오 공통의 `phase:main` 태그 기준이라 워밍업만 제외된다.
+
+정상 404 처리: 게스트·신규 계정의 예측/프로필 조회 404 는 요청별
+`expectedStatuses` 로 선언되어 지연만 측정되고 `http_req_failed` 실패율(<5%)을
+오염시키지 않는다. 선언되지 않은 상태코드(401·5xx 등)는 그대로 실패로 집계된다.
+
+쓰기 흐름(WRITES=1) 계약: 미션 종류별 규칙이 달라(식사·게임=즉시완료만, 걷기·운동=시작 후
+상세 첨부 완료) 스크립트는 **걷기**로 고정한다 — 시작(in_progress) → 종료(completed +
+walking_detail). 이 페이로드가 서버 계약과 일치함은
+`app/tests/test_loadtest_write_flow_contract.py` 가 CI 에서 고정한다(스크립트 수정 시 함께 갱신).
+
+실측 전 스모크(dry-run): 본 실행 전에 짧게 돌려 임계값·페이로드가 계약대로 동작하는지 확인한다.
+
+```bash
+k6 run -e BASE_URL=https://aigo-health.duckdns.org/api/v1 \
+  -e VUS=2 -e DURATION=20s -e WARMUP=5s -e WRITES=1 scripts/bench/loadtest_k6.js
+```
+
+## 측정 조건 (실측 후 기입)
+
+| 항목 | 값 |
+|---|---|
+| 측정 일시 | _(미실측)_ |
+| 대상 환경 | EC2 dev (`https://aigo-health.duckdns.org`) |
+| 동시 사용자(VU) / 지속 시간 | _(예: 50 VU, 5분)_ |
+| 워밍업 | _(예: 10 VU, 1분 — 판정 제외)_ |
+| 계정·데이터 상태 | _(게스트 N + 실계정 M, 미션 로그·예측 이력 유무)_ |
+| uvicorn 워커 수 | **1** (현재 `app/Dockerfile` CMD 에 `--workers` 없음 — 단일 프로세스. #363 에서 확인했듯 GIL은 프로세스 단위라 이 값이 처리량에 직접 영향) |
+| WRITES 포함 여부 | _( )_ |
+
+## 결과 (실측 후 기입)
+
+| 엔드포인트 | P50 | P95 | P99 | 최대 | 에러율 | 판정(P95<3s) |
+|---|---|---|---|---|---|---|
+| POST /auth/guest | | | | | | |
+| GET /home | | | | | | |
+| GET /users/me | | | | | | |
+| GET /users/me/settings | | | | | | |
+| GET /missions | | | | | | |
+| POST /mission-logs | | | | | | |
+| PATCH /mission-logs/{id} | | | | | | |
+| GET /mission-logs | | | | | | |
+| GET /dashboard/summary | | | | | | |
+| GET /dashboard/stamps | | | | | | |
+| GET /risk-predictions/me/latest | | | | | | |
+| GET /risk-predictions/me/history | | | | | | |
+| GET /risk-predictions/me/cohort-distribution | | | | | | |
+| GET /health-profiles/me/latest | | | | | | |
+| GET /physical-assessments/me/history | | | | | | |
+| GET /exercise-videos | | | | | | |
+| GET /terms | | | | | | |
+| GET /daily-tips | | | | | | |
+| GET /support/faqs | | | | | | |
+
+### 3초 초과 항목과 조치 (해당 시)
+
+_(원인 분석과 조치 내용, 또는 미조치 사유를 기록. 집계 엔드포인트가 초과할 경우 가장 흔한
+원인은 N+1 쿼리 — `GET /home` 등에서 SQL 로그로 확인.)_
+
+## 한계
+
+- **`POST /auth/google` / `auth/kakao` 는 부하 대상에서 제외했다.** 외부 IdP 실토큰이
+  필요하고, 부하 반복 시 IdP 쪽을 난타하게 되어 현실적으로 불가하다. 대신 `POST /auth/guest`
+  로 서버 측 토큰 발급·계정 생성 경로를 측정한다. IdP 왕복이 포함된 실제 로그인 지연은
+  단건 수동 측정으로 보완할 수 있다(측정 시 함께 기록).
+- **#363 의 측정치는 이 문서의 근거가 아니다.** #363(심사 3-2)은 DB·인증을 거치지 않고
+  추론 경계만 격리 측정한 것으로, 전체 스택 P95 와는 다른 값이다.
+- `POST /risk-predictions` · `/reassess` 는 온보딩·건강 프로필 입력이 선행돼야 해 흐름에
+  넣지 않았다. 실계정 토큰으로 단건 측정해 보완한다(ML 추론 자체는 2.5ms — #363).
+
+## 관련
+
+- #364 (이 문서), #363 (추론 경계 격리 벤치 — 목적 다름), `scripts/bench/async_bench.py` (#363 골격)
