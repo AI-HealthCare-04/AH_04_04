@@ -344,7 +344,11 @@ private fun openTermsUrl(context: Context, url: String): Boolean {
     }
 }
 
-/** 숫자 입력 + 오른쪽 '모름' 버튼. '모름' 누르면 추정치로 채워지고, 채워졌으면 안내 문구를 보여준다. */
+/**
+ * 숫자 입력 + 오른쪽 '모름' 버튼. '모름' 누르면 추정치로 채워지고, 채워졌으면 안내 문구를 보여준다.
+ *  - [error]: 값이 현실 범위를 벗어나면 그 자리에서 인라인 경고(#298 A-2).
+ *  - [unknownReason]: '모름'이 비활성일 때 **왜 못 누르는지** 안내(#298 B).
+ */
 @Composable
 private fun FieldWithUnknown(
     value: String,
@@ -353,6 +357,8 @@ private fun FieldWithUnknown(
     onUnknown: () -> Unit,
     estimated: Boolean,
     unknownEnabled: Boolean,
+    error: String? = null,
+    unknownReason: String? = null,
 ) {
     val focusManager = LocalFocusManager.current
 
@@ -361,7 +367,7 @@ private fun FieldWithUnknown(
         horizontalArrangement = Arrangement.spacedBy(Dimens.Space8),
         verticalAlignment = Alignment.Top,
     ) {
-        AigoTextField(value, onValueChange, label, Modifier.weight(1f), keyboardType = KeyboardType.Number)
+        AigoTextField(value, onValueChange, label, Modifier.weight(1f), keyboardType = KeyboardType.Number, isError = error != null)
         OutlinedButton(
             onClick = {
                 focusManager.clearFocus()
@@ -373,12 +379,20 @@ private fun FieldWithUnknown(
             Text("모름", style = MaterialTheme.typography.bodyLarge)
         }
     }
+    error?.let {
+        Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+    }
     if (estimated) {
         Text(
             "추정치로 입력했어요. 정확한 값을 아시면 직접 입력해 주세요.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+    if (!unknownEnabled) {
+        unknownReason?.let {
+            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
@@ -390,10 +404,19 @@ private fun ProfileStep(vm: OnboardingViewModel) {
         onBack = { vm.goBack() },
         content = {
             Text("생년월일", style = MaterialTheme.typography.titleMedium)
+            val birthError = vm.birthDateError
             Row(horizontalArrangement = Arrangement.spacedBy(Dimens.Space8)) {
-                AigoTextField(vm.birthYear, { vm.birthYear = it }, "년", Modifier.weight(1.3f), keyboardType = KeyboardType.Number)
-                AigoTextField(vm.birthMonth, { vm.birthMonth = it }, "월", Modifier.weight(1f), keyboardType = KeyboardType.Number)
-                AigoTextField(vm.birthDay, { vm.birthDay = it }, "일", Modifier.weight(1f), keyboardType = KeyboardType.Number)
+                AigoTextField(vm.birthYear, { vm.birthYear = it }, "년", Modifier.weight(1.3f), isError = birthError != null, keyboardType = KeyboardType.Number)
+                AigoTextField(vm.birthMonth, { vm.birthMonth = it }, "월", Modifier.weight(1f), isError = birthError != null, keyboardType = KeyboardType.Number)
+                AigoTextField(vm.birthDay, { vm.birthDay = it }, "일", Modifier.weight(1f), isError = birthError != null, keyboardType = KeyboardType.Number)
+            }
+            // 생년월일 즉시 검증(#298 A): "다음"까지 미루지 않고 그 자리에서 안내.
+            birthError?.let {
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+            }
+            // 만 65세 미만 안내(#298 C): 막지 않고 희망적 톤으로 — 가입은 계속 가능, 예측만 "준비 중".
+            vm.underAgeNotice?.let {
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             Text("성별", style = MaterialTheme.typography.titleMedium)
@@ -418,16 +441,20 @@ private fun ProfileStep(vm: OnboardingViewModel) {
                 onValueChange = vm::setHeight,
                 label = "키 (cm)",
                 onUnknown = vm::markHeightUnknown,
-                estimated = vm.heightEstimated,
+                estimated = vm.heightEstimatedValid,
                 unknownEnabled = vm.canEstimate,
+                error = vm.heightError,
+                unknownReason = vm.estimateUnavailableReason,
             )
             FieldWithUnknown(
                 value = vm.weightInput,
                 onValueChange = vm::setWeight,
                 label = "몸무게 (kg)",
                 onUnknown = vm::markWeightUnknown,
-                estimated = vm.weightEstimated,
+                estimated = vm.weightEstimatedValid,
                 unknownEnabled = vm.canEstimate,
+                error = vm.weightError,
+                unknownReason = vm.estimateUnavailableReason,
             )
             FieldWithUnknown(
                 value = vm.waistCm,

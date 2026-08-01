@@ -2,6 +2,7 @@ package com.aihealthcare.ah0404.onboarding
 
 import com.aihealthcare.ah0404.network.AgreementsRequest
 import com.aihealthcare.ah0404.network.HealthProfileRequest
+import com.aihealthcare.ah0404.network.HealthProfileResponse
 import com.aihealthcare.ah0404.network.OnboardingApi
 import com.aihealthcare.ah0404.network.PhysicalAssessmentRequest
 import com.aihealthcare.ah0404.network.RiskPredictionRequest
@@ -17,6 +18,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -119,34 +121,40 @@ class OnboardingProfileEstimateTest {
         assertEquals("163", vm.heightInput)
     }
 
-    // ── #75-4: 만 65세 이상만 지원(추정표·위험도 모델 대상) ──────────────────
+    // ── #298 C: 추정('모름')은 만 50세 이상(50~64 추정표 확장). 50세 미만만 직접 입력 ──────────
     @Test
-    fun under_65_cannot_estimate() {
-        // 오늘 2026 기준 1990년생 → 36세. 성별·생일 유효해도 '모름' 불가.
+    fun under_50_cannot_estimate() {
+        // 오늘 2026 기준 1990년생 → 36세. 성별·생일 유효해도 추정 근거 없어 '모름' 불가.
         val vm = vm().apply { sex = "male"; birthYear = "1990"; birthMonth = "1"; birthDay = "1" }
         assertFalse(vm.canEstimate)
         vm.markHeightUnknown()
-        assertFalse(vm.heightEstimated) // 무시됨(고령 추정치 안 들어감)
+        assertFalse(vm.heightEstimated) // 무시됨
     }
 
     @Test
-    fun age_64_is_not_supported_but_65_is() {
-        val at64 = vm(2026, 7, 15).apply { sex = "male"; birthYear = "1961"; birthMonth = "7"; birthDay = "16" } // 64
-        assertFalse(at64.canEstimate)
-        val at65 = vm(2026, 7, 15).apply { sex = "male"; birthYear = "1961"; birthMonth = "7"; birthDay = "15" } // 65
-        assertTrue(at65.canEstimate)
+    fun age_49_cannot_estimate_but_50_can() {
+        val at49 = vm(2026, 7, 15).apply { sex = "male"; birthYear = "1977"; birthMonth = "7"; birthDay = "16" } // 48
+        assertFalse(at49.canEstimate)
+        val at50 = vm(2026, 7, 15).apply { sex = "male"; birthYear = "1976"; birthMonth = "7"; birthDay = "15" } // 50
+        assertTrue(at50.canEstimate)
     }
 
     @Test
-    fun submit_rejects_under_65() = runTest {
-        val vm = vm(2026, 7, 15).apply {
+    fun submit_allows_under_65_without_age_block() = runTest {
+        // #298 C: 만 65세 미만(단 14세 이상)이라고 프로필 제출을 막지 않는다. createHealthProfile 이 정상 응답하는
+        //   fake 로 성공 경로를 직접 검증한다(리뷰 #313 nit: TODO() 예외에 기대던 취약 구조 제거).
+        val api = object : OnboardingApi by FakeApi() {
+            override suspend fun createHealthProfile(body: HealthProfileRequest) =
+                HealthProfileResponse(profileId = 1, bmi = 22.5, proteinChallengeAllowed = true)
+        }
+        val vm = OnboardingViewModel(api, todayYear = 2026, todayMonth = 7, todayDay = 15).apply {
             birthYear = "1990"; birthMonth = "1"; birthDay = "1" // 36세
             sex = "male"; walkDays = 5; muscDays = 2
             setHeight("170"); setWeight("65")
         }
         vm.submitProfile(); advanceUntilIdle()
-        assertTrue(vm.error?.contains("65세") == true)
-        assertFalse(vm.step == OnbStep.ASSESSMENT)
+        assertNull("정상 저장 → 에러 없음(나이 게이트 없음)", vm.error)
+        assertEquals("체력검사 단계로 진행(#298 C)", OnbStep.ASSESSMENT, vm.step)
     }
 
     // ── #267 지영님 블로커: 활동 일수 미응답(null)은 제출 차단 — '미응답'과 '주 0일'을 구분해야 예측 입력이 왜곡되지 않는다 ──
@@ -175,6 +183,21 @@ class OnboardingProfileEstimateTest {
         assertFalse("0일도 유효 응답 — 일수 미선택 에러가 뜨면 안 됨", vm.error?.contains("일수를 선택") == true)
     }
 
+    // 입력 순서 회귀(리뷰 #313): 50세+에서 '모름' 선택 후 26세로 바꾸면, 무효 추정(65–74 값)이 제출되지 않고
+    //   키·몸무게 직접 입력을 요구한다 → 50세 미만 프로필에 추정값이 새는 경로 차단.
+    @Test
+    fun submit_rejects_stale_estimate_after_age_dropped_below_50() = runTest {
+        val vm = vm(2026, 7, 15).apply {
+            sex = "male"; birthYear = "1970"; birthMonth = "1"; birthDay = "1" // 56세
+            walkDays = 5; muscDays = 2
+        }
+        vm.markHeightUnknown(); vm.markWeightUnknown() // 56세 시점 추정 활성
+        vm.birthYear = "2000" // 26세로 변경 → 추정 무효
+        vm.submitProfile(); advanceUntilIdle()
+        assertTrue("무효 추정은 제출 안 되고 직접 입력을 요구", vm.error?.contains("입력") == true)
+        assertFalse("체력검사로 진행하지 않는다", vm.step == OnbStep.ASSESSMENT)
+    }
+
     @Test
     fun waist_unknown_clears_field() {
         val vm = vm().apply { waistCm = "88" }
@@ -182,16 +205,28 @@ class OnboardingProfileEstimateTest {
         assertEquals("", vm.waistCm)
     }
 
-    // ── 재란 #75 nit: 수동 "0"/음수는 백엔드 gt=0 전에 앱에서 차단 ──────────
+    // ── #298 A-2: 키·몸무게 현실 범위 밖(0·음수·극단값)은 백엔드 이전에 앱에서 차단 ──────────
     @Test
-    fun submit_rejects_nonpositive_height() = runTest {
+    fun submit_rejects_out_of_range_height() = runTest {
         val vm = vm().apply {
             birthYear = "1958"; birthMonth = "3"; birthDay = "1"
             sex = "male"; walkDays = 5; muscDays = 2
-            setWeight("60"); setHeight("0")
+            setWeight("60"); setHeight("0") // 90cm 미만 → 거부
         }
         vm.submitProfile(); advanceUntilIdle()
-        assertTrue(vm.error?.contains("0보다 큰") == true)
+        assertTrue("키 범위 안내 문구", vm.error?.contains("cm 사이") == true)
+        assertFalse(vm.step == OnbStep.ASSESSMENT)
+    }
+
+    @Test
+    fun submit_rejects_over_range_weight() = runTest {
+        val vm = vm().apply {
+            birthYear = "1958"; birthMonth = "3"; birthDay = "1"
+            sex = "male"; walkDays = 5; muscDays = 2
+            setHeight("170"); setWeight("999") // 200kg 초과 → 거부(DB Numeric(5,2) 초과 500 이전 방어)
+        }
+        vm.submitProfile(); advanceUntilIdle()
+        assertTrue("몸무게 범위 안내 문구", vm.error?.contains("kg 사이") == true)
         assertFalse(vm.step == OnbStep.ASSESSMENT)
     }
 }
