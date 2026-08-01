@@ -24,15 +24,15 @@ import json
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
-from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import HistGradientBoostingClassifier
-from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
-from sklearn.model_selection import StratifiedKFold, train_test_split
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+import pandas as pd  # type: ignore[import-untyped]
+from sklearn.compose import ColumnTransformer  # type: ignore[import-untyped]
+from sklearn.ensemble import HistGradientBoostingClassifier  # type: ignore[import-untyped]
+from sklearn.impute import SimpleImputer  # type: ignore[import-untyped]
+from sklearn.linear_model import LogisticRegression  # type: ignore[import-untyped]
+from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score  # type: ignore[import-untyped]
+from sklearn.model_selection import StratifiedKFold, train_test_split  # type: ignore[import-untyped]
+from sklearn.pipeline import Pipeline  # type: ignore[import-untyped]
+from sklearn.preprocessing import StandardScaler  # type: ignore[import-untyped]
 
 SEED = 42
 BASELINE_LABEL = "sarcopenia_awgs2025 (recomputed)"
