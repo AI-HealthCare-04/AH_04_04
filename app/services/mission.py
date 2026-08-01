@@ -83,6 +83,8 @@ class MissionService:
         types = {t.mission_type for t in templates}
         exercise_min = await self.repo.sum_exercise_minutes_today(user.user_id) if MissionType.EXERCISE in types else None
         walking_totals = await self.repo.sum_walking_totals_today(user.user_id) if MissionType.WALKING in types else None
+        # 게임(1회성)의 '오늘 했음'(#346): 하루 1회 상한(#272)과 같은 counted 기준. 게임 카드가 없으면 미조회.
+        game_done_today = await self.repo.has_counted_today(user.user_id, MissionType.GAME) if MissionType.GAME in types else None
         # 단백질(식사) 미션엔 오늘 저장된 기록을 붙여, 앱이 재진입 시 카드 선택 상태를 복원하게 한다(지시서 §4.1).
         #   운동·걷기 미션엔 오늘 누적 진행을 붙여, 재생/측정 전에도 '오늘까지 N분'을 목록에서 볼 수 있게 한다.
         for resp, template in zip(responses, templates, strict=True):
@@ -102,6 +104,8 @@ class MissionService:
                     total_steps=total_steps,
                     goal_reached=total_min >= template.default_target_value,
                 )
+            elif template.mission_type == MissionType.GAME and game_done_today is not None:
+                resp.today_done = game_done_today
         return responses
 
     @staticmethod

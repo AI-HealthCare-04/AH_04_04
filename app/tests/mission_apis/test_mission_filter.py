@@ -146,9 +146,10 @@ def _service_with_templates(
     *,
     exercise_min: float = 0.0,
     walking: tuple[float, int] = (0.0, 0),
+    game_done: bool = False,
 ) -> tuple[MissionService, dict[str, int]]:
     service = MissionService(session=None)  # type: ignore[arg-type]
-    calls = {"exercise": 0, "walking": 0}
+    calls = {"exercise": 0, "walking": 0, "game": 0}
 
     async def fake_current_level(user_id: object) -> object:
         return None
@@ -172,6 +173,11 @@ def _service_with_templates(
     async def fake_meal_logs(user_id: object, template_ids: object) -> dict[object, object]:
         return {}  # 식사 배치 조회 — 운동·걷기 테스트에선 오늘 기록 없음(빈 dict)
 
+    async def fake_has_counted_today(user_id: object, mission_type: object) -> bool:
+        calls["game"] += 1
+        return game_done
+
+    service.repo.has_counted_today = fake_has_counted_today  # type: ignore[assignment]
     service.repo.get_user_current_level = fake_current_level  # type: ignore[assignment]
     service.health_repo.get_latest_profile = fake_latest_profile  # type: ignore[assignment]
     service.repo.get_active_templates = fake_active_templates  # type: ignore[assignment]
@@ -189,7 +195,7 @@ def test_get_missions_attaches_exercise_today_progress_below_goal() -> None:
 
     resp = asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
 
-    assert calls == {"exercise": 1, "walking": 0}  # 운동만 있으니 걷기 집계는 안 탄다
+    assert calls == {"exercise": 1, "walking": 0, "game": 0}  # 운동만 있으니 걷기·게임 집계는 안 탄다
     progress = resp[0].today_progress
     assert progress is not None
     assert progress.total_min == 4.0
@@ -217,12 +223,50 @@ def test_get_missions_attaches_walking_today_progress_with_steps() -> None:
 
     resp = asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
 
-    assert calls == {"exercise": 0, "walking": 1}
+    assert calls == {"exercise": 0, "walking": 1, "game": 0}
     progress = resp[0].today_progress
     assert progress is not None
     assert progress.total_min == 12.0
     assert progress.total_steps == 1500  # 걷기는 걸음 누적도 표시
     assert progress.goal_reached is False
+
+
+def test_get_missions_attaches_game_today_done() -> None:
+    # 게임(1회성, #346): 오늘 counted 완료가 있으면 today_done=True — 카드가 '오늘 했음' 배지를 그린다.
+    service, calls = _service_with_templates(
+        [_template(MissionType.GAME, template_id=4, target_value=1)],
+        game_done=True,
+    )
+
+    resp = asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
+
+    assert calls == {"exercise": 0, "walking": 0, "game": 1}
+    assert resp[0].today_done is True
+    assert resp[0].today_progress is None  # 1회성이라 진행바용 progress 는 없다
+
+
+def test_get_missions_game_today_done_false_when_not_played() -> None:
+    service, _ = _service_with_templates(
+        [_template(MissionType.GAME, template_id=4, target_value=1)],
+        game_done=False,
+    )
+
+    resp = asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
+
+    assert resp[0].today_done is False  # null 이 아니라 False — 앱이 '아직 안 함'을 구분
+
+
+def test_get_missions_today_done_null_for_non_game_types() -> None:
+    # today_done 은 게임 한정 — 다른 종류엔 붙지 않고, 게임이 목록에 없으면 조회도 안 탄다.
+    service, calls = _service_with_templates(
+        [_template(MissionType.EXERCISE, template_id=1, target_value=10)],
+        game_done=True,
+    )
+
+    resp = asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
+
+    assert calls["game"] == 0
+    assert resp[0].today_done is None
 
 
 def test_get_missions_skips_progress_queries_when_type_absent() -> None:
@@ -233,7 +277,7 @@ def test_get_missions_skips_progress_queries_when_type_absent() -> None:
 
     resp = asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
 
-    assert calls == {"exercise": 0, "walking": 0}
+    assert calls == {"exercise": 0, "walking": 0, "game": 0}
     assert resp[0].today_progress is None  # 식사 미션엔 today_progress 안 붙는다
 
 
