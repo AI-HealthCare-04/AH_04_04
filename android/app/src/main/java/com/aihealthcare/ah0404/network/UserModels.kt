@@ -1,5 +1,6 @@
 package com.aihealthcare.ah0404.network
 
+import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -26,4 +27,11 @@ data class UserInfoResponse(
 @Serializable
 data class UserUpdateRequest(
     val nickname: String,
+)
+
+/** 회원탈퇴 요청(#356). 서버가 confirm=true 를 강제한다(오조작 방어). */
+@Serializable
+data class UserWithdrawRequest(
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
+    val confirm: Boolean = true,
 )

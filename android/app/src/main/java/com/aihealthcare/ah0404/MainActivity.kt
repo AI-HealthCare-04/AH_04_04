@@ -202,6 +202,13 @@ class MainActivity : ComponentActivity() {
                                 onLogout = {
                                     authLoginViewModel.signOut { sessionRevision++ }
                                 },
+                                // 탈퇴 결과 불명(#356 리뷰 2차 P1): 서버가 파기를 커밋했을 수 있으므로
+                                //   즉시 로그아웃과 같은 정리(세션 + 공급자 credential)를 시작한다.
+                                //   AuthLoginViewModel 은 Activity 범위라 전역 라우팅으로 MAIN VM 들이
+                                //   폐기돼도 정리가 완주하고, 안내 문구는 로그인 화면 상태로 남는다.
+                                onWithdrawUncertain = {
+                                    authLoginViewModel.signOut(WITHDRAW_UNCERTAIN_NOTICE) { sessionRevision++ }
+                                },
                                 onExit = activity::finish,
                             )
                         }
@@ -259,10 +266,15 @@ internal fun mainBackAction(selectedTab: MainTab): MainBackAction =
         MainBackAction.RETURN_HOME
     }
 
+/** 탈퇴 결과 불명 시 로그인 화면에 남기는 안내(#356 리뷰) — 정리가 끝난 뒤 표시되므로 문구와 상태가 일치한다. */
+internal const val WITHDRAW_UNCERTAIN_NOTICE =
+    "탈퇴 처리 결과를 확인할 수 없어 로그아웃했어요. 다시 로그인해 계정 상태를 확인해 주세요."
+
 @androidx.media3.common.util.UnstableApi
 @Composable
 private fun MainContent(
     onLogout: () -> Unit,
+    onWithdrawUncertain: () -> Unit,
     onExit: () -> Unit,
 ) {
     // rememberSaveable: 재생성(글꼴 크기·다크모드 등) 후에도 이탈 시 복귀할 탭을 보존한다.
@@ -412,6 +424,19 @@ private fun MainContent(
             MainTab.SETTINGS -> SettingsScreen(
                 onOpenSupport = { subScreen = "support" },
                 onOpenProfile = { subScreen = "profile" },
+                // 회원탈퇴 성공(#356): 서버 계정은 이미 정리됐으니 로그아웃과 같은 로컬 정리를 태운다
+                //   (토큰·세션 + 공급자 credential 해제). credential 이 남으면 다음 로그인에서 같은 계정이
+                //   자동 선택돼 의도치 않은 신규 가입이 즉시 일어난다(#187 교훈).
+                onWithdrawn = {
+                    selectedTab = MainTab.HOME
+                    onLogout()
+                },
+                // 결과 불명(#356 리뷰 2차): 위와 같은 정리를 즉시 태우되, 로그인 화면에 '성공을 단정하지
+                //   않는' 안내를 남긴다(Activity 범위 상태 — 이 화면이 폐기돼도 살아남는다).
+                onWithdrawUncertain = {
+                    selectedTab = MainTab.HOME
+                    onWithdrawUncertain()
+                },
                 // 로그아웃(#154): 재로그인 후 설정 탭으로 튀지 않게 홈으로 되돌린 뒤,
                 //   상위(MAIN 라우팅 스코프)에 위임한다. 실제 세션 정리·라우팅 재평가는 거기서 한다.
                 onLogout = {
