@@ -1,0 +1,59 @@
+{
+  "meta": {
+    "cpu_count": 20,
+    "python": "3.13.14",
+    "concurrency": 16,
+    "seconds_per_condition": 20.0,
+    "note": "health 지연 = 예측 부하 중 가벼운 엔드포인트의 응답 시간(이벤트 루프 점유 지표)"
+  },
+  "results": [
+    {
+      "condition": "A. 부하 없음(기준선)",
+      "load_path": null,
+      "concurrency": 0,
+      "health_samples": 663,
+      "health_p50_ms": 3.61,
+      "health_p95_ms": 5.54,
+      "health_p99_ms": 6.97,
+      "health_max_ms": 22.75,
+      "predict_rps": null
+    },
+    {
+      "condition": "B. 블로킹 추론",
+      "load_path": "/predict-blocking",
+      "concurrency": 16,
+      "health_samples": 77,
+      "health_p50_ms": 176.41,
+      "health_p95_ms": 595.99,
+      "health_p99_ms": 938.49,
+      "health_max_ms": 938.49,
+      "predict_rps": 148.5
+    },
+    {
+      "condition": "C. run_in_executor (현재 구현)",
+      "load_path": "/predict-executor",
+      "concurrency": 16,
+      "health_samples": 76,
+      "health_p50_ms": 192.79,
+      "health_p95_ms": 545.27,
+      "health_p99_ms": 652.36,
+      "health_max_ms": 652.36,
+      "predict_rps": 153.5
+    }
+  ],
+  "diagnostics": {
+    "breakdown": {
+      "load_model_bundle_ms": 0.0,
+      "normalize_features_ms": 0.002,
+      "dataframe_build_ms": 0.119,
+      "predict_proba_ms": 2.138,
+      "predict_sync_total_ms": 2.544
+    },
+    "gil_check": {
+      "serial_ms": 955.8,
+      "threads4_ms": 1009.3,
+      "speedup": 0.95,
+      "interpretation": "1.0 부근 = GIL-bound (스레드 오프로딩으로 이벤트 루프가 풀리지 않음)"
+    }
+  }
+}
