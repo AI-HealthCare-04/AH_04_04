@@ -9,6 +9,7 @@ import com.aihealthcare.ah0404.network.PhysicalAssessmentResponse
 import com.aihealthcare.ah0404.network.RecordApi
 import com.aihealthcare.ah0404.network.RiskPredictionRequest
 import com.aihealthcare.ah0404.network.SessionCreateRequest
+import com.aihealthcare.ah0404.network.SessionResponse
 import com.aihealthcare.ah0404.network.SocialLoginRequest
 import com.aihealthcare.ah0404.network.StsAssessmentItem
 import com.aihealthcare.ah0404.network.StsHistoryResponse
@@ -57,6 +58,11 @@ class StsTrendViewModelTest {
 
     private class FakeAssessmentApi(private val fail: Boolean = false) : OnboardingApi {
         val requests = mutableListOf<PhysicalAssessmentRequest>()
+        var sessionCalls = 0
+        override suspend fun createSession(body: SessionCreateRequest): SessionResponse {
+            sessionCalls++
+            return SessionResponse(sessionId = 42, status = "started")
+        }
         override suspend fun createPhysicalAssessment(body: PhysicalAssessmentRequest): PhysicalAssessmentResponse {
             requests += body
             if (fail) throw RuntimeException("network down")
@@ -71,7 +77,6 @@ class StsTrendViewModelTest {
         override suspend fun loginKakao(body: SocialLoginRequest) = TODO()
         override suspend fun getTerms() = TODO()
         override suspend fun agreeTerms(body: AgreementsRequest) = TODO()
-        override suspend fun createSession(body: SessionCreateRequest) = TODO()
         override suspend fun skipHealthCheck(sessionId: Int) = TODO()
         override suspend fun createHealthProfile(body: HealthProfileRequest) = TODO()
         override suspend fun createRiskPrediction(body: RiskPredictionRequest) = TODO()
@@ -97,7 +102,7 @@ class StsTrendViewModelTest {
 
         val req = assessmentApi.requests.single()
         assertEquals("reassessment", req.assessmentType)
-        assertEquals(null, req.sessionId) // 온보딩 세션 없는 독립 제출(#180 허용 경로)
+        assertEquals(42, req.sessionId) // 멱등 세션 경유 제출(리뷰 #355 P1 — 세션당 1건 유니크 #180)
         assertEquals(10.8, req.chairStand5TimeSec)
         assertEquals(1, recordApi.historyCalls) // 성공 → 이력 재조회
         assertEquals(1, vm.history.size)
@@ -119,10 +124,39 @@ class StsTrendViewModelTest {
         advanceUntilIdle()
         assertEquals(2, failing.requests.size)
         assertEquals(12.5, failing.requests[1].chairStand5TimeSec) // 재측정 없이 같은 값 재전송
+        // 멱등(리뷰 #355 P1): 재시도는 같은 세션 id 를 재사용한다 — 세션 생성은 1회뿐.
+        assertEquals(1, failing.sessionCalls)
+        assertEquals(failing.requests[0].sessionId, failing.requests[1].sessionId)
     }
 
     @Test
-    fun `이력 조회 실패는 빈 목록으로 흡수한다`() = runTest(dispatcher) {
+    fun `이력 조회 실패 - 기존 목록 유지 + loadError 구분, 재조회로 복구`() = runTest(dispatcher) {
+        var fail = false
+        val recordApi = object : FakeRecordApi() {
+            override suspend fun getStsHistory(limit: Int): StsHistoryResponse {
+                if (fail) throw RuntimeException("down")
+                return StsHistoryResponse(assessments = listOf(item(1, 10.8)))
+            }
+        }
+        val vm = StsTrendViewModel(recordApi, FakeAssessmentApi())
+
+        vm.load(); advanceUntilIdle()
+        assertEquals(1, vm.history.size)
+        assertFalse(vm.loadError)
+
+        fail = true
+        vm.load(); advanceUntilIdle()
+        assertEquals(1, vm.history.size) // 기존 목록 유지(리뷰 #355 P2) — '측정 전'으로 위장하지 않는다
+        assertTrue(vm.loadError)
+
+        fail = false
+        vm.load(); advanceUntilIdle() // 카드의 '다시 불러오기'
+        assertFalse(vm.loadError)
+        assertEquals(1, vm.history.size)
+    }
+
+    @Test
+    fun `최초 조회 실패 - 빈 목록 + loadError(미측정과 구분)`() = runTest(dispatcher) {
         val recordApi = object : FakeRecordApi() {
             override suspend fun getStsHistory(limit: Int): StsHistoryResponse = throw RuntimeException("down")
         }
@@ -130,6 +164,7 @@ class StsTrendViewModelTest {
         vm.load()
         advanceUntilIdle()
         assertTrue(vm.loaded)
+        assertTrue(vm.loadError) // 화면은 '기록 없음'이 아니라 '불러오지 못함 + 다시 불러오기'를 그린다
         assertEquals(0, vm.history.size)
     }
 }

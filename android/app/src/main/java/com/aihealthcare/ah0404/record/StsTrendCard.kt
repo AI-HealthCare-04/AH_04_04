@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.media3.common.util.UnstableApi
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aihealthcare.ah0404.fitness.StsAssessmentScreen
 import com.aihealthcare.ah0404.ui.components.AigoCard
@@ -32,6 +33,7 @@ import com.aihealthcare.ah0404.ui.theme.Dimens
  *  - 점수(score) 유무와 무관하게 표시한다: 5STS 는 직접 수행 지표라 예측 점수가 없는 사용자
  *    (스킵·65세 미만 등)에게도 유효하다.
  */
+@androidx.annotation.OptIn(UnstableApi::class) // StsAssessmentScreen(미디어 가이드 영상) 재사용 — 호출부 전파 없이 opt-in
 @Composable
 internal fun StsTrendCard(vm: StsTrendViewModel = viewModel()) {
     LaunchedEffect(Unit) { vm.load() }
@@ -42,8 +44,19 @@ internal fun StsTrendCard(vm: StsTrendViewModel = viewModel()) {
         Spacer(Modifier.height(Dimens.Space8))
 
         val latest = vm.history.firstOrNull()
+        // 조회 실패(리뷰 #355 P2)는 '측정 전'과 구분해 표시 — 기존 목록이 있으면 목록은 그대로 두고 안내만 얹는다.
+        if (vm.loadError) {
+            Text(
+                "측정 이력을 불러오지 못했어요.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
+            Spacer(Modifier.height(Dimens.Space4))
+            AigoSecondaryButton(text = "다시 불러오기", onClick = vm::load)
+            Spacer(Modifier.height(Dimens.Space8))
+        }
         if (latest == null) {
-            if (vm.loaded) {
+            if (vm.loaded && !vm.loadError) {
                 Text(
                     "아직 측정 기록이 없어요. 지금 한 번 재보실래요?",
                     style = MaterialTheme.typography.bodyLarge,
