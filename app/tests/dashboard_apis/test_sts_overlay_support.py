@@ -1,18 +1,27 @@
 # =====================================================================================
 # §3.4 근력 기능 안전망 카드 지원 백엔드 E2E:
 #   - GET  /dashboard/muscle-score-context : 최신 5STS(초) + BMI (카드 발화 입력)
-#   - POST /events/sts-overlay-shown        : 카드 노출 이벤트 수집(발화율 관측)
+#   - POST /events/sts-overlay-shown        : 카드 노출 이벤트 수집(발화율 분자)
+#   - POST /events/sts-score-viewed         : 점수 화면 조회 이벤트 수집(발화율 분모, #373)
+#   - 주간 발화율 집계·보존 정리 계약(#373): scripts.sts_overlay_report / scripts.prune_sts_events
 # =====================================================================================
 from decimal import Decimal
 
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette import status
 
-from app.models.analytics import StsOverlayEvent
+from app.models.analytics import StsOverlayEvent, StsScoreViewEvent
 from app.models.enums import AssessmentType
 from app.models.health import PhysicalAssessment
+from scripts.prune_sts_events import prune
+from scripts.sts_overlay_report import (
+    EXPOSURE_BREAKDOWN,
+    WEEKLY_EXPOSED_USERS,
+    WEEKLY_VIEWER_USERS,
+    merge_weekly_rate,
+)
 
 API = "/api/v1"
 
@@ -28,9 +37,15 @@ async def _create_profile(db_client: AsyncClient, auth: dict[str, str]) -> None:
     await db_client.post(
         f"{API}/health-profiles",
         json={
-            "birth_date": "1958-03-21", "sex": "male", "height_cm": 170, "weight_kg": 70,
-            "walk_days": 5, "musc_days": 0, "activity_input_source": "self_report",
-            "input_method": "form", "has_estimated_value": False,
+            "birth_date": "1958-03-21",
+            "sex": "male",
+            "height_cm": 170,
+            "weight_kg": 70,
+            "walk_days": 5,
+            "musc_days": 0,
+            "activity_input_source": "self_report",
+            "input_method": "form",
+            "has_estimated_value": False,
         },
         headers=auth,
     )
@@ -99,10 +114,148 @@ async def test_sts_overlay_shown_is_recorded(
 
 async def test_sts_overlay_shown_rejects_invalid_tier(db_client: AsyncClient) -> None:
     auth, _ = await _guest(db_client)
-    resp = await db_client.post(
-        f"{API}/events/sts-overlay-shown", json={"tier": "extreme"}, headers=auth
-    )
+    resp = await db_client.post(f"{API}/events/sts-overlay-shown", json={"tier": "extreme"}, headers=auth)
     assert resp.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+# ── #373 발화율 분모·집계·보존 계약 ─────────────────────────────────────────────
+
+
+async def test_sts_score_viewed_is_recorded(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    auth, user_id = await _guest(db_client)
+    resp = await db_client.post(f"{API}/events/sts-score-viewed", headers=auth)
+    assert resp.status_code == status.HTTP_201_CREATED
+
+    async with db_sessionmaker() as s:
+        row = await s.scalar(select(StsScoreViewEvent).where(StsScoreViewEvent.user_id == user_id))
+        assert row is not None
+        assert row.created_at is not None
+
+
+async def test_sts_score_viewed_requires_auth(db_client: AsyncClient) -> None:
+    resp = await db_client.post(f"{API}/events/sts-score-viewed")
+    assert resp.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+async def _seed_event(
+    s: AsyncSession,
+    table: str,
+    user_id: int,
+    *,
+    days_ago: int,
+    tier: str | None = None,
+    sts_sec: float | None = None,
+) -> None:
+    """집계·보존 테스트용 시드. created_at 을 DB 시계 기준 과거로 밀어 넣는다(주 경계 계산과 동일 시계)."""
+    columns = ["user_id", "created_at"]
+    values = [":u", "DATE_SUB(NOW(), INTERVAL :d DAY)"]
+    params: dict[str, object] = {"u": user_id, "d": days_ago}
+    if tier:
+        columns.insert(1, "tier")
+        values.insert(1, ":t")
+        params["t"] = tier
+    if sts_sec is not None:
+        columns.append("sts_sec")
+        values.append(":sts")
+        params["sts"] = sts_sec
+    await s.execute(
+        text(f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({', '.join(values)})"),  # noqa: S608
+        params,
+    )
+
+
+async def test_weekly_ignition_rate_dedupes_users_and_marks_missing_denominator(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    """#373 집계 계약: 사용자·ISO 주 단위 COUNT(DISTINCT) — fire-and-forget 재시도 중복(멱등키 없음)이
+    지표를 부풀리지 않고, 분모 0 인 주는 0% 가 아니라 '-'(산출 불가)로 표기된다."""
+    auth_a, user_a = await _guest(db_client)
+    auth_b, user_b = await _guest(db_client)
+
+    async with db_sessionmaker() as s:
+        # 이번 주: A 노출 2건(재시도 중복) + A·B 조회(A 는 2건 중복) → 노출 1명 / 조회 2명 = 50.0%
+        await _seed_event(s, "sts_overlay_events", user_a, days_ago=0, tier="basic")
+        await _seed_event(s, "sts_overlay_events", user_a, days_ago=0, tier="basic")
+        await _seed_event(s, "sts_score_view_events", user_a, days_ago=0)
+        await _seed_event(s, "sts_score_view_events", user_a, days_ago=0)
+        await _seed_event(s, "sts_score_view_events", user_b, days_ago=0)
+        # 지난 주(7일 전 = 항상 이전 ISO 주): B 노출만 있고 조회 이벤트 없음 → 발화율 '-'
+        await _seed_event(s, "sts_overlay_events", user_b, days_ago=7, tier="strong")
+        # 2주 전(14일 전): A·B 노출인데 조회는 A 뿐 — 조회 유실/주 경계 분리 시나리오(리뷰 P1).
+        #   100% 초과 값(200.0%)을 정상 지표처럼 내보내면 안 되고 수집 결함으로 표기돼야 한다.
+        await _seed_event(s, "sts_overlay_events", user_a, days_ago=14, tier="basic")
+        await _seed_event(s, "sts_overlay_events", user_b, days_ago=14, tier="basic")
+        await _seed_event(s, "sts_score_view_events", user_a, days_ago=14)
+        await s.commit()
+
+        exposed = [dict(r) for r in (await s.execute(WEEKLY_EXPOSED_USERS, {"weeks": 12})).mappings()]
+        viewers = [dict(r) for r in (await s.execute(WEEKLY_VIEWER_USERS, {"weeks": 12})).mappings()]
+
+    rows = merge_weekly_rate(exposed, viewers)
+    assert len(rows) == 3
+    two_weeks_ago, last_week, this_week = rows[0], rows[1], rows[2]
+    assert two_weeks_ago["노출 사용자"] == 2
+    assert two_weeks_ago["조회 사용자"] == 1
+    assert two_weeks_ago["발화율"] == "오류(노출>조회)", "분자>분모는 지표가 아니라 수집 결함 신호다"
+    assert last_week["노출 사용자"] == 1
+    assert last_week["조회 사용자"] == 0
+    assert last_week["발화율"] == "-", "분모 없는 주는 0% 로 오독되면 안 된다"
+    assert this_week["노출 사용자"] == 1, "같은 사용자의 재시도 중복은 1명으로 접힌다"
+    assert this_week["조회 사용자"] == 2
+    assert this_week["발화율"] == "50.0%"
+
+
+async def test_exposure_breakdown_averages_are_user_weighted(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    """#373 리뷰 P2: 컷 재조정 근거인 평균은 사용자 단위 균등 가중이어야 한다 —
+    재시도가 많은 사용자의 원시 행이 평균을 끌고 가면(행 가중) 컷 판단이 편향된다."""
+    auth_a, user_a = await _guest(db_client)
+    auth_b, user_b = await _guest(db_client)
+
+    async with db_sessionmaker() as s:
+        # A: 같은 노출이 재시도로 3행(sts 20.0), B: 1행(sts 12.0).
+        #   행 가중 평균 = (20*3 + 12) / 4 = 18.0 (오염) / 사용자 가중 평균 = (20 + 12) / 2 = 16.0 (정답)
+        for _ in range(3):
+            await _seed_event(s, "sts_overlay_events", user_a, days_ago=0, tier="basic", sts_sec=20.0)
+        await _seed_event(s, "sts_overlay_events", user_b, days_ago=0, tier="basic", sts_sec=12.0)
+        await s.commit()
+
+        rows = [dict(r) for r in (await s.execute(EXPOSURE_BREAKDOWN, {"weeks": 12})).mappings()]
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["tier"] == "basic"
+    assert row["events"] == 4, "행 수는 재시도 포함 원본 그대로"
+    assert row["users"] == 2
+    assert float(row["avg_sts_sec"]) == 16.0, "재시도 3행이 평균을 18.0 으로 끌고 가면 안 된다"
+
+
+async def test_prune_deletes_only_expired_events(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    """#373 보존 계약: 90일 경과분만 삭제. dry-run(기본)은 건수만 세고 지우지 않는다."""
+    auth, user_id = await _guest(db_client)
+    async with db_sessionmaker() as s:
+        for table, tier in (("sts_overlay_events", "basic"), ("sts_score_view_events", None)):
+            await _seed_event(s, table, user_id, days_ago=91, tier=tier)  # 보존기간 경과
+            await _seed_event(s, table, user_id, days_ago=1, tier=tier)  # 보존 대상
+        await s.commit()
+
+        dry = await prune(await s.connection(), apply=False)
+        await s.commit()
+        assert dry == {"sts_overlay_events": 1, "sts_score_view_events": 1}
+        remaining_after_dry = await s.scalar(text("SELECT COUNT(*) FROM sts_overlay_events"))
+        assert remaining_after_dry == 2, "dry-run 은 삭제하지 않는다"
+
+        applied = await prune(await s.connection(), apply=True)
+        await s.commit()
+        assert applied == {"sts_overlay_events": 1, "sts_score_view_events": 1}
+        for table in ("sts_overlay_events", "sts_score_view_events"):
+            remaining = await s.scalar(text(f"SELECT COUNT(*) FROM {table}"))  # noqa: S608
+            assert remaining == 1, f"{table}: 최근 이벤트는 남아야 한다"
 
 
 # DTO-DB 입력 경계(지영 리뷰): 저장 스키마를 넘는 값은 commit 단계 500 이 아니라 422 로 거부돼야 한다.
@@ -119,9 +272,7 @@ async def test_sts_overlay_shown_rejects_out_of_range_inputs(db_client: AsyncCli
     )
     assert over_bmi.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     # 음수(ge=0) 거부
-    neg = await db_client.post(
-        f"{API}/events/sts-overlay-shown", json={"tier": "basic", "sts_sec": -1}, headers=auth
-    )
+    neg = await db_client.post(f"{API}/events/sts-overlay-shown", json={"tier": "basic", "sts_sec": -1}, headers=auth)
     assert neg.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     # score_band 확정값(good/maintain/caution) 외 문자열 거부 → DB String(20) 초과 불가
     bad_band = await db_client.post(
