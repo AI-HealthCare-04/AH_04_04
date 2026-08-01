@@ -66,4 +66,19 @@ class RequestSerializationTest {
         // walking_detail.duration_min 필수
         assertTrue(s.contains("\"duration_min\":10"))
     }
+
+    @Test
+    fun gameComplete_serialization_includes_success() {
+        // 회귀(최종 RC QA): 게임 즉시완료는 서버가 counted_for_daily = bool(success) 로 판정 —
+        //   success 누락 시 시청 완주가 영원히 비적립된다. 와이어 JSON 에 success:true 필수.
+        val body = MissionLogCreateRequest(
+            missionTemplateId = 6,
+            missionType = "game",
+            status = "completed",
+            success = true,
+        )
+        val s = json.encodeToString(body)
+        println("POST /mission-logs(game)  →  $s")
+        assertTrue(s.contains("\"success\":true"))
+    }
 }

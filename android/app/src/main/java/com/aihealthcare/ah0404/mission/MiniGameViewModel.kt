@@ -64,6 +64,7 @@ class MiniGameViewModel(
                         missionTemplateId = mission.missionTemplateId,
                         missionType = "game",
                         status = "completed",
+                        success = true, // 서버 적립 판정 필수(counted_for_daily = success) — 누락이 비적립 원인이었다
                     )
                 )
                 return true

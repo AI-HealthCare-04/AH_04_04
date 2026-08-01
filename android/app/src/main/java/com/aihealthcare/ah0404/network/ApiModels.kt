@@ -69,6 +69,10 @@ data class MissionLogCreateRequest(
     @SerialName("mission_template_id") val missionTemplateId: Int,
     @SerialName("mission_type") val missionType: String,   // "walking" | "exercise" | "meal" | "game"
     val status: String,                                    // "in_progress" | "completed"
+    // 게임 즉시완료에서 필수: 서버 _complete_immediately 가 counted_for_daily = bool(success) 로
+    //   판정한다 — 누락 시 시청 완주가 영원히 비적립(최종 RC QA 발견). 걷기/운동 시작(in_progress)은
+    //   서버가 무시하므로 null(미전송) 유지.
+    val success: Boolean? = null,
     // 운동(requires_safety_notice=true)에서만 필요. 걷기 데모에선 null로 두면 전송 안 됨.
     @SerialName("safety_notice_confirmed") val safetyNoticeConfirmed: Boolean? = null,
     // 기기에서 이 기록(측정)이 만들어진 시각(ISO-8601). 서버가 재전송을 같은 수행으로 알아보는 자연 키(#158).
