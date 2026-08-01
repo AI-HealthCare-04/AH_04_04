@@ -27,6 +27,8 @@ sealed class ProteinSaveState {
         val earnedPoints: Int,
         val newlyCounted: Boolean,
         val savedCount: Int,
+        /** 이번 저장으로 회수된 포인트(#343 문제 3, 리뷰 #350). 달성 상태에서 미달로 내려간 저장에만 > 0. */
+        val revokedPoints: Int = 0,
     ) : ProteinSaveState()
 
     data class Error(val message: String) : ProteinSaveState()
@@ -49,6 +51,11 @@ internal fun proteinResultMessage(result: ProteinSaveState.Saved): String = when
         "오늘 단백질을 잘 챙기셨어요.\n${result.earnedPoints}포인트를 받았어요!"
     result.countedForDaily ->
         "오늘 단백질을 잘 챙기셨어요.\n오늘 ${result.earnedPoints}포인트가 이미 반영되어 있어요."
+    // 회수 발생(#343 문제 3, 리뷰 #350): 경고 다이얼로그에서 예고한 회수가 실제로 됐음을 결과에서도 확인시킨다.
+    result.savedCount == 0 && result.revokedPoints > 0 ->
+        "오늘은 단백질을 안 드신 것으로 저장했어요.\n받았던 ${result.revokedPoints}포인트는 취소됐어요."
+    result.revokedPoints > 0 ->
+        "오늘 드신 단백질을 저장했어요.\n목표 미달로 받았던 ${result.revokedPoints}포인트는 취소됐어요."
     result.savedCount == 0 ->
         "오늘은 단백질을 안 드신 것으로 저장했어요.\n${PROTEIN_DAILY_GOAL}가지 이상 드시면 포인트를 받을 수 있어요."
     else ->
@@ -153,6 +160,9 @@ class ProteinChallengeViewModel(
                     earnedPoints = resp.earnedPoints,
                     newlyCounted = resp.countedForDaily && !wasCounted,
                     savedCount = selectedIds.size,
+                    // 달성 → 미달 전환(#343 문제 3): 서버 upsert 가 counted 를 되돌렸으면 적립됐던
+                    //   템플릿 포인트가 회수된 것 — 결과 오버레이에 사실대로 알린다(리뷰 #350).
+                    revokedPoints = if (wasCounted && !resp.countedForDaily) mission.rewardPoints else 0,
                 )
             } catch (e: Exception) {
                 _saveState.value = ProteinSaveState.Error(e.message ?: "저장에 실패했어요. 잠시 후 다시 시도해 주세요.")

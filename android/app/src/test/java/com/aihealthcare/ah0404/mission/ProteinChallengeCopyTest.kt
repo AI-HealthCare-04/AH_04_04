@@ -108,4 +108,24 @@ class ProteinChallengeCopyTest {
         // 달성 상태에서 가짓수만 바뀌는 재저장(1→3)은 여전히 달성 — 확인 불필요.
         assertFalse(proteinDowngradeNeedsConfirm(previousEatenCount = 1, newCount = 3))
     }
+
+    // ── 리뷰 #350: 회수 발생 시 결과 문구에 포인트 취소 명시 ─────────────
+
+    @Test
+    fun `안먹었어요 저장으로 회수되면 취소 포인트를 결과에 명시한다`() {
+        val msg = proteinResultMessage(
+            ProteinSaveState.Saved(countedForDaily = false, earnedPoints = 0, newlyCounted = false, savedCount = 0, revokedPoints = 10),
+        )
+        assertTrue(msg.contains("안 드신 것으로 저장"))
+        assertTrue(msg.contains("10포인트는 취소"))
+    }
+
+    @Test
+    fun `회수 없는 안먹었어요 저장은 기존 안내 유지`() {
+        val msg = proteinResultMessage(
+            ProteinSaveState.Saved(countedForDaily = false, earnedPoints = 0, newlyCounted = false, savedCount = 0),
+        )
+        assertFalse(msg.contains("취소"))
+        assertTrue(msg.contains("포인트를 받을 수 있어요"))
+    }
 }
