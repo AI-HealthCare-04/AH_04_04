@@ -11,6 +11,7 @@
       부동소수까지 비트 단위로 동일해야 정상이다.
 """
 from __future__ import annotations
+
 import hashlib
 from datetime import date
 from pathlib import Path
@@ -18,13 +19,13 @@ from types import SimpleNamespace
 
 import pytest
 
+import app.ml.predictor as predictor_mod
 from app.ml.predictor import (
     ARTIFACT_DIR,
     AgeNotSupportedError,
     RiskPredictor,
     features_from_health_profile,
 )
-import app.ml.predictor as predictor_mod
 
 # ── ② 고정 해시 (배포 아티팩트) ─────────────────────────────
 EXPECTED_SHA256 = {

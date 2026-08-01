@@ -17,18 +17,22 @@ AWGS 2025 라벨은 저장 컬럼(2019)이 아니라 컴포넌트에서 재계�
   저악력   = grip<28(남)/18(여);  라벨 = 저근육량 AND 저악력
 """
 from __future__ import annotations
-import argparse, json, csv
+
+import argparse
+import csv
+import json
 from pathlib import Path
+
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
 from sklearn.model_selection import StratifiedKFold, train_test_split
-from sklearn.metrics import roc_auc_score, average_precision_score, brier_score_loss
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
 SEED = 42
 BASELINE_LABEL = "sarcopenia_awgs2025 (recomputed)"
@@ -92,24 +96,30 @@ def metric_set(y, p, w=None):
     w = w / w.mean()
     br = float(np.average((p - y) ** 2, weights=w))
     # weighted ECE
-    edges = np.linspace(0, 1, 11); idx = np.clip(np.digitize(p, edges) - 1, 0, 9); e = 0.0; W = w.sum()
+    edges = np.linspace(0, 1, 11)
+    idx = np.clip(np.digitize(p, edges) - 1, 0, 9)
+    e = 0.0
+    w_total = w.sum()
     for b in range(10):
         m = idx == b
         if m.any():
             wm = w[m].sum()
-            e += (wm / W) * abs(np.average(y[m], weights=w[m]) - np.average(p[m], weights=w[m]))
+            e += (wm / w_total) * abs(np.average(y[m], weights=w[m]) - np.average(p[m], weights=w[m]))
     return dict(auroc=float(roc_auc_score(y, p, sample_weight=w)),
                 auprc=float(average_precision_score(y, p, sample_weight=w)),
                 brier=br, ece=float(e))
 
 
 def boot_ci(y, p, fn, n=1000):
-    rng = np.random.default_rng(SEED); vals = []
+    rng = np.random.default_rng(SEED)
+    vals = []
     idx = np.arange(len(y))
     for _ in range(n):
         s = rng.choice(idx, len(idx), replace=True)
-        try: vals.append(fn(y[s], p[s]))
-        except Exception: pass
+        try:
+            vals.append(fn(y[s], p[s]))
+        except Exception:
+            pass
     lo, hi = np.percentile(vals, [2.5, 97.5])
     return round(float(lo), 4), round(float(hi), 4)
 
@@ -118,7 +128,8 @@ def oof(df, cols, kind="lr"):
     y = df["y2025"].values.astype(int)
     X = df[cols]
     skf = StratifiedKFold(5, shuffle=True, random_state=SEED)
-    p = np.zeros(len(y)); folds = []
+    p = np.zeros(len(y))
+    folds = []
     for tr, te in skf.split(X, y):
         mdl = make_model(cols, kind).fit(X.iloc[tr], y[tr])
         p[te] = mdl.predict_proba(X.iloc[te])[:, 1]
@@ -128,7 +139,8 @@ def oof(df, cols, kind="lr"):
 
 
 def holdout(df, cols, kind="lr"):
-    y = df["y2025"].values.astype(int); X = df[cols]
+    y = df["y2025"].values.astype(int)
+    X = df[cols]
     Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, stratify=y, random_state=SEED)
     mdl = make_model(cols, kind).fit(Xtr, ytr)
     p = mdl.predict_proba(Xte)[:, 1]
@@ -142,7 +154,8 @@ def main():
     ap.add_argument("--out_dir", default=".")
     a = ap.parse_args()
     df = load(Path(a.data_dir))
-    prev = float(df["y2025"].mean()); n = len(df)
+    prev = float(df["y2025"].mean())
+    n = len(df)
     out = {"meta": {"label": BASELINE_LABEL, "n": n, "prevalence": round(prev, 4),
                     "auprc_baseline": round(prev, 4), "seed": SEED,
                     "cv": "StratifiedKFold(5, shuffle, seed=42)", "ece_bins": 10}}
@@ -191,7 +204,8 @@ def main():
 
     out["comparisons"] = cmp
 
-    outdir = Path(a.out_dir); outdir.mkdir(parents=True, exist_ok=True)
+    outdir = Path(a.out_dir)
+    outdir.mkdir(parents=True, exist_ok=True)
     json.dump(out, open(outdir / "metrics.json", "w"), ensure_ascii=False, indent=2)
     # flat csv
     rows = []
@@ -205,7 +219,9 @@ def main():
                              "auroc": m["auroc"], "auprc": m["auprc"], "brier": m["brier"], "ece": m["ece"]})
     with open(outdir / "metrics.csv", "w", newline="") as f:
         wtr = csv.DictWriter(f, fieldnames=["block", "variant", "n", "auroc", "auprc", "brier", "ece"])
-        wtr.writeheader(); [wtr.writerow(r) for r in rows]
+        wtr.writeheader()
+        for row in rows:
+            wtr.writerow(row)
 
     print(f"label prevalence={prev:.4f} n={n}")
     print("HEADLINE 5-fold OOF:")

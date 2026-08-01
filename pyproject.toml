@@ -65,6 +65,9 @@ ignore = ["UP046", "E501"]
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "app/core/db/migrations/*" = ["ALL"]
+# 머신러닝 관례상 특징 행렬은 대문자 X(X, Xtr, Xte), 레이블은 소문자 y 로 쓴다.
+# 소문자로 바꾸면 관련 문헌·scikit-learn 문서와 대조하기 어려워지므로 이 디렉터리에서만 N806 을 허용한다.
+"scripts/ml/*" = ["N806"]
 
 [tool.ruff.format]
 quote-style = "double"
