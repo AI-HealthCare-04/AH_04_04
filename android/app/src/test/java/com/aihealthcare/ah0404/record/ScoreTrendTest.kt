@@ -115,14 +115,15 @@ class ScoreTrendTest {
 
     @Test
     fun empty_trend_copy_guides_instead_of_silence() {
-        // #334 문제3: 예측 1건(추이 두 점 미만)이면 침묵 대신 왜 비었는지·언제·무엇을 하면 되는지 안내.
+        // #334 문제3 + 리뷰 #339: 점수가 있을 때만 도달하므로 침묵 대신 정확한 안내를 준다.
         val one = buildScoreTrend(listOf(item("2026-07-01", 72)))
         assertEquals(1, one.size)
+        // size=1: 두 번째 점은 '내 정보' 저장(재평가)에서 생김 — 챌린지 아님(리뷰 #339-①).
         assertEquals(
-            "다음 재평가부터 변화를 이어서 보여드려요. 걷기·근력 챌린지를 하면 다음 점수가 쌓여요.",
+            "다음 재평가 때 변화를 보여드려요. '내 정보'에서 정보를 업데이트해 저장하면 새 점수가 쌓여요.",
             trendEmptyCopy(one.size),
         )
-        // 점수 있는 이력이 아예 없으면(65세 미만 등으로 전부 제외) 첫 평가 안내.
-        assertEquals("첫 평가를 마치면 여기에서 변화를 보여드려요.", trendEmptyCopy(0))
+        // size=0: 점수는 있는데 추이만 비었다 = 추이 조회 실패. '첫 평가를 마치면'은 점수 존재와 모순이므로 조회 실패 안내(리뷰 #339-②).
+        assertEquals("변화 추이를 불러오지 못했어요. 잠시 후 다시 확인해 주세요.", trendEmptyCopy(0))
     }
 }
