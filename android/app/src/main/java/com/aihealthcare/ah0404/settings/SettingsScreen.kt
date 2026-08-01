@@ -241,6 +241,19 @@ fun SettingsScreen(
         )
     }
 
+    // 결과 불명(리뷰 P1: 타임아웃·연결 끊김·401) — 서버가 이미 파기를 커밋했을 수 있으므로
+    //   확인/닫기 어느 쪽이든 로그아웃과 같은 로컬 정리(세션 + 공급자 credential)로만 마무리한다.
+    //   credential 이 남으면 다음 로그인에서 같은 계정이 자동 선택돼 빈 신규 계정이 즉시 생긴다.
+    vm.withdrawNotice?.let { msg ->
+        AigoDialog(
+            title = "알림",
+            message = msg,
+            confirmText = "확인",
+            onConfirm = { vm.acknowledgeWithdrawNotice(onWithdrawn) },
+            onDismissRequest = { vm.acknowledgeWithdrawNotice(onWithdrawn) },
+        )
+    }
+
     if (showLogoutConfirm) {
         AigoDialog(
             title = "로그아웃",
