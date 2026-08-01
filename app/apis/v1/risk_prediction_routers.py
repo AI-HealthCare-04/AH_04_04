@@ -7,6 +7,8 @@ from app.core.db.session import get_db_session
 from app.dependencies.security import get_request_user
 from app.dtos.risk_prediction import (
     CohortDistributionResponse,
+    PredictionFeedbackRequest,
+    PredictionFeedbackResponse,
     RiskPredictionCreateRequest,
     RiskPredictionCreateResponse,
     RiskPredictionHistoryResponse,
@@ -63,6 +65,22 @@ async def create_risk_prediction(
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> RiskPredictionCreateResponse:
     return await RiskPredictionService(session).create_prediction(user, data)
+
+
+@risk_prediction_router.put(
+    "/{prediction_id}/feedback",
+    response_model=PredictionFeedbackResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def submit_prediction_feedback(
+    prediction_id: int,
+    data: PredictionFeedbackRequest,
+    user: Annotated[User, Depends(get_request_user)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> PredictionFeedbackResponse:
+    # #357 옵션 B: 예측 결과 체감 피드백. PUT 멱등 계약이라 모바일 재시도에 안전하고,
+    # prediction_id UNIQUE 로 예측당 응답 1회가 보장된다(지영 리뷰).
+    return await RiskPredictionService(session).submit_feedback(user, prediction_id, data)
 
 
 @risk_prediction_router.post(

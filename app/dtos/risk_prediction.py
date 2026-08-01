@@ -4,7 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from app.dtos.base import KstDatetime
-from app.models.enums import ActivityInputSource
+from app.models.enums import ActivityInputSource, FeedbackReason, FeedbackResponse
 
 
 class RiskPredictionCreateRequest(BaseModel):
@@ -93,3 +93,17 @@ class RiskPredictionHistoryItem(BaseModel):
 
 class RiskPredictionHistoryResponse(BaseModel):
     predictions: list[RiskPredictionHistoryItem]
+
+
+class PredictionFeedbackRequest(BaseModel):
+    """예측 결과 체감 피드백(#357). reason 은 '다르게 느껴져요' 선택 시 선택 입력이다."""
+
+    response: FeedbackResponse
+    reason: FeedbackReason | None = None
+
+
+class PredictionFeedbackResponse(BaseModel):
+    prediction_id: int
+    response: FeedbackResponse
+    reason: FeedbackReason | None = None
+    created_at: KstDatetime

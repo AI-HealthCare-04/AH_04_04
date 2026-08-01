@@ -112,6 +112,18 @@ class RiskLevel(StrEnum):
     HIGH = "high"
 
 
+class FeedbackResponse(StrEnum):
+    SIMILAR = "similar"
+    UNSURE = "unsure"
+    DIFFERENT = "different"
+
+
+class FeedbackReason(StrEnum):
+    TOO_HIGH = "too_high"
+    TOO_LOW = "too_low"
+    OTHER = "other"
+
+
 class MissionType(StrEnum):
     MEAL = "meal"
     EXERCISE = "exercise"
