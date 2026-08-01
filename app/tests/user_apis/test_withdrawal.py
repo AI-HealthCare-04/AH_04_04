@@ -72,9 +72,13 @@ async def _complete_onboarding(db_client: AsyncClient, auth: dict[str, str]) -> 
         {"terms_type": t["terms_type"], "version": t["version"], "agreed": True}
         for t in terms.json()["terms"]
     ]
-    await db_client.post("/api/v1/users/me/agreements", json={"agreements": agreements}, headers=auth)
-    session_resp = await db_client.post("/api/v1/health-check-sessions", json={"input_method": "form"}, headers=auth)
-    await db_client.post(
+    agree_resp = await db_client.post(
+        "/api/v1/users/me/agreements", json={"agreements": agreements}, headers=auth
+    )
+    assert agree_resp.status_code == status.HTTP_200_OK
+    session_resp = await db_client.post("/api/v1/health-check/sessions", json={"input_method": "form"}, headers=auth)
+    assert session_resp.status_code == status.HTTP_201_CREATED
+    profile_resp = await db_client.post(
         "/api/v1/health-profiles",
         json={
             "session_id": session_resp.json()["session_id"],
@@ -90,6 +94,7 @@ async def _complete_onboarding(db_client: AsyncClient, auth: dict[str, str]) -> 
         },
         headers=auth,
     )
+    assert profile_resp.status_code == status.HTTP_201_CREATED
 
 
 async def test_withdraw_purges_linked_user_data(
