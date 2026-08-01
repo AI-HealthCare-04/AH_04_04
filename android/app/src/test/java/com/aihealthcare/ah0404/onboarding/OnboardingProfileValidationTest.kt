@@ -100,10 +100,11 @@ class OnboardingProfileValidationTest {
     @Test fun estimate_reason_when_missing_sex_or_birth() =
         assertTrue(vm().estimateUnavailableReason?.contains("성별") == true)
 
-    @Test fun estimate_reason_direct_input_below_50() =
-        assertTrue(
+    @Test fun estimate_reason_explains_age_limit_and_direct_input_below_50() =
+        assertEquals(
+            "키·몸무게 추정은 만 50세 이상부터 제공해요. 정확한 값을 직접 입력해 주세요.",
             vm(2026, 7, 15).apply { sex = "male"; birthYear = "1990"; birthMonth = "1"; birthDay = "1" } // 36
-                .estimateUnavailableReason?.contains("직접") == true,
+                .estimateUnavailableReason,
         )
 
     @Test fun estimate_reason_null_when_can_estimate() =
@@ -130,12 +131,12 @@ class OnboardingProfileValidationTest {
         assertNotNull(vm(2026, 7, 15).apply { birthYear = "2012"; birthMonth = "1"; birthDay = "1" }.underAgeNotice) // 14세(생일 지남)
 
     @Test
-    fun estimate_available_at_63_reuses_65_74_table() {
+    fun estimate_available_at_63_uses_knhanes_value() {
         val vm = vm(2026, 7, 15).apply { sex = "female"; birthYear = "1963"; birthMonth = "1"; birthDay = "1" } // 63
         assertTrue("50~64 도 추정 가능(#298 C)", vm.canEstimate)
         vm.markHeightUnknown()
         assertTrue(vm.heightEstimated)
-        assertEquals("50~64 는 65–74 추정치 재사용(여 153cm)", "153", vm.heightInput)
+        assertEquals("50~64 는 KNHANES 실제 통계를 사용(여 63세 156.3cm)", "156.3", vm.heightInput)
     }
 
     @Test
@@ -165,7 +166,7 @@ class OnboardingProfileValidationTest {
         val vm = vm(2026, 7, 15).apply { sex = "male"; birthYear = "1970"; birthMonth = "1"; birthDay = "1" } // 56
         vm.markHeightUnknown(); vm.markWeightUnknown()
         assertTrue("56세 시점엔 추정 유효", vm.hasEstimatedValue)
-        assertEquals("추정 표시값(남 166)", "166", vm.heightInput)
+        assertEquals("추정 표시값(KNHANES 56세 남성)", "170.4", vm.heightInput)
 
         vm.birthYear = "2000" // 26세로 변경 → 추정 대상 미만
         assertFalse("50세 미만이 되면 추정은 무효 — 표시·제출에서 무시", vm.hasEstimatedValue)
