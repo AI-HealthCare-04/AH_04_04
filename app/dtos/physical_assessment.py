@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
@@ -53,6 +54,22 @@ class PhysicalAssessmentCreateRequest(BaseModel):
 class PhysicalAssessmentActivityProfile(BaseModel):
     current_level: ActivityLevel
     level_reason: LevelReason
+
+
+class PhysicalAssessmentHistoryItem(BaseModel):
+    """5STS 측정 이력 항목(#353). 측정 기록(시간 존재)만 담는다 — 스킵 기록은 추이에 안 쓴다.
+
+    비의료 가드레일(#57): 시간·시각 등 사실만 내려주고 판정(저하 등)은 포함하지 않는다.
+    """
+
+    physical_assessment_id: int
+    assessment_type: AssessmentType
+    chair_stand_5_time_sec: float
+    created_at: datetime
+
+
+class PhysicalAssessmentHistoryResponse(BaseModel):
+    assessments: list[PhysicalAssessmentHistoryItem]
 
 
 class PhysicalAssessmentResponse(BaseModel):
