@@ -59,6 +59,26 @@ k6 run --summary-trend-stats "p(50),p(95),p(99),max" \
 권장 구성: **부하 흐름은 게스트로 걸되, 기록이 쌓인 실계정 토큰 1-2개를 `TOKENS` 로 섞어**
 목록 조회 계열(P95 위험군)이 실제 데이터 위에서도 측정되게 한다.
 
+배정 방식(스크립트 동작): `TOKENS` 의 토큰은 **앞번호 VU 에 1:1 배정**되고 나머지 VU 는
+게스트로 로그인한다 — 즉 `VUS=50, TOKENS 2개`면 실계정 2 VU + 게스트 48 VU 혼합이다.
+전 VU 를 실계정으로 돌리려면 VUS 수만큼 토큰을 넘긴다.
+
+정상 404 처리: 게스트·신규 계정의 예측/프로필 조회 404 는 요청별
+`expectedStatuses` 로 선언되어 지연만 측정되고 `http_req_failed` 실패율(<5%)을
+오염시키지 않는다. 선언되지 않은 상태코드(401·5xx 등)는 그대로 실패로 집계된다.
+
+쓰기 흐름(WRITES=1) 계약: 미션 종류별 규칙이 달라(식사·게임=즉시완료만, 걷기·운동=시작 후
+상세 첨부 완료) 스크립트는 **걷기**로 고정한다 — 시작(in_progress) → 종료(completed +
+walking_detail). 이 페이로드가 서버 계약과 일치함은
+`app/tests/test_loadtest_write_flow_contract.py` 가 CI 에서 고정한다(스크립트 수정 시 함께 갱신).
+
+실측 전 스모크(dry-run): 본 실행 전에 짧게 돌려 임계값·페이로드가 계약대로 동작하는지 확인한다.
+
+```bash
+k6 run -e BASE_URL=https://aigo-health.duckdns.org/api/v1 \
+  -e VUS=2 -e DURATION=20s -e WARMUP=5s -e WRITES=1 scripts/bench/loadtest_k6.js
+```
+
 ## 측정 조건 (실측 후 기입)
 
 | 항목 | 값 |

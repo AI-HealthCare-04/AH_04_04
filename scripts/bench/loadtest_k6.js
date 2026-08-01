@@ -19,8 +19,10 @@
 //   WARMUP    워밍업 시간 (기본 1m) — 커넥션 풀·캐시 초기화 구간. 임계값 판정에서 제외됨.
 //   WRITES    1이면 미션 기록 쓰기(POST/PATCH mission-logs) 포함 (기본 0 — 실DB에 행이 쌓이므로
 //             실측 시점에만 켠다)
-//   TOKENS    쉼표로 구분한 실계정 액세스 토큰 목록 (선택). 지정하면 VU들이 나눠 쓴다.
-//             미지정 시 VU마다 POST /auth/guest 로 게스트 토큰을 1회 발급해 사용.
+//   TOKENS    쉼표로 구분한 실계정 액세스 토큰 목록 (선택). **앞번호 VU 에 1:1 배정**되고
+//             나머지 VU 는 게스트 토큰을 발급받는다 — 실계정·게스트 혼합 부하(리뷰 반영:
+//             '전부 실계정'이 아니라 토큰 수만큼만 실계정). 전 VU 실계정을 원하면 VUS 만큼 넘길 것.
+//             미지정 시 전 VU 게스트.
 //             ⚠️ 게스트 계정은 기록이 비어 있어 목록 조회가 비현실적으로 빠르게 나온다.
 //                기록(미션 로그·예측 이력)이 쌓인 계정 토큰을 섞는 편이 정확하다.
 // =====================================================================================
@@ -94,8 +96,9 @@ function authHeaders() {
 
 function ensureLogin() {
   if (vuToken) return;
-  if (TOKENS.length > 0) {
-    vuToken = TOKENS[(__VU - 1) % TOKENS.length];
+  // 실계정 토큰은 앞번호 VU 에 1:1 배정 — 나머지는 게스트(혼합 부하, 리뷰 반영).
+  if (TOKENS.length > 0 && __VU <= TOKENS.length) {
+    vuToken = TOKENS[__VU - 1];
     return;
   }
   const r = http.post(`${BASE}/auth/guest`, null, { tags: { name: "POST /auth/guest" } });
@@ -103,8 +106,19 @@ function ensureLogin() {
   vuToken = r.json("access_token");
 }
 
+// 요청별 파라미터: tags + 인증 헤더 + **요청별 기대 상태코드**(responseCallback).
+//   k6 의 http_req_failed 는 기본적으로 4xx 를 실패로 집계하므로, 게스트의 정상 404 를
+//   허용하는 요청은 여기서 expectedStatuses 로 선언해야 전역 rate<0.05 임계값이 오염되지
+//   않는다(리뷰 반영). 선언하지 않은 상태코드(401·500 등)는 그대로 실패로 잡힌다.
+function params(name, okStatuses) {
+  return Object.assign(
+    { tags: { name }, responseCallback: http.expectedStatuses(...okStatuses) },
+    authHeaders(),
+  );
+}
+
 function get(path, name, okStatuses = [200]) {
-  const r = http.get(`${BASE}${path}`, Object.assign({ tags: { name } }, authHeaders()));
+  const r = http.get(`${BASE}${path}`, params(name, okStatuses));
   check(r, { [`${name} ok`]: (res) => okStatuses.includes(res.status) });
   return r;
 }
@@ -123,20 +137,31 @@ export default function () {
     const missions = get("/missions?status=available", "GET /missions");
     if (WRITES) {
       // 실제 흐름의 '미션 완료 기록'. 실DB에 행이 남으므로 WRITES=1 일 때만.
-      const first = (missions.json("missions") || missions.json("items") || [])[0];
-      if (first) {
+      // 서버 계약(리뷰 반영): 종류별로 생성·완료 규칙이 다르다 —
+      //   meal/game 은 즉시완료(completed)만 허용되어 in_progress 생성이 400 으로 거부되고,
+      //   walking/exercise 완료(PATCH)는 각각 walking_detail / exercise_detail 이 필수다.
+      // 측정 대상을 **걷기(walking)** 로 고정한다: 시작(in_progress) → 종료(completed +
+      //   walking_detail). success 는 보내지 않는다 — 걷기 성공은 서버가 당일 누적으로 판정한다.
+      // 이 페이로드 시퀀스는 app/tests/test_loadtest_write_flow_contract.py 가 서버 계약과
+      //   일치함을 고정한다(스크립트를 바꾸면 그 테스트도 함께 갱신할 것).
+      const walking = (missions.json("missions") || []).find((m) => m.mission_type === "walking");
+      if (walking) {
         const createBody = JSON.stringify({
-          mission_template_id: first.mission_template_id || first.id,
-          mission_type: first.mission_type || "walking",
+          mission_template_id: walking.mission_template_id,
+          mission_type: "walking",
           status: "in_progress",
         });
         const created = http.post(`${BASE}/mission-logs`, createBody,
-          Object.assign({ tags: { name: "POST /mission-logs" } }, authHeaders()));
+          params("POST /mission-logs", [200, 201]));
         check(created, { "mission-log create 2xx": (r) => r.status >= 200 && r.status < 300 });
-        const logId = created.json("mission_log_id") || created.json("id");
+        const logId = created.json("mission_log_id");
         if (logId) {
-          const patched = http.patch(`${BASE}/mission-logs/${logId}`, JSON.stringify({ success: true }),
-            Object.assign({ tags: { name: "PATCH /mission-logs/{id}" } }, authHeaders()));
+          const patchBody = JSON.stringify({
+            status: "completed",
+            walking_detail: { duration_min: 5, steps: 600 },
+          });
+          const patched = http.patch(`${BASE}/mission-logs/${logId}`, patchBody,
+            params("PATCH /mission-logs/{id}", [200]));
           check(patched, { "mission-log patch 2xx": (r) => r.status >= 200 && r.status < 300 });
         }
       }
