@@ -122,6 +122,13 @@ class OnboardingProfileValidationTest {
     @Test fun under_age_notice_absent_when_birthdate_invalid() =
         assertNull(vm().apply { birthYear = "1958"; birthMonth = "13"; birthDay = "1" }.underAgeNotice)
 
+    // 14세 미만은 '가입 불가'(birthDateError)와 '이용 안내'가 충돌하므로 안내 미노출(리뷰 #313).
+    @Test fun under_age_notice_absent_below_14() =
+        assertNull(vm(2026, 7, 15).apply { birthYear = "2020"; birthMonth = "1"; birthDay = "1" }.underAgeNotice) // 6세
+
+    @Test fun under_age_notice_shown_at_14_boundary() =
+        assertNotNull(vm(2026, 7, 15).apply { birthYear = "2012"; birthMonth = "1"; birthDay = "1" }.underAgeNotice) // 14세(생일 지남)
+
     @Test
     fun estimate_available_at_63_reuses_65_74_table() {
         val vm = vm(2026, 7, 15).apply { sex = "female"; birthYear = "1963"; birthMonth = "1"; birthDay = "1" } // 63
@@ -137,5 +144,20 @@ class OnboardingProfileValidationTest {
         assertFalse(vm.canEstimate)
         vm.markHeightUnknown()
         assertFalse("50 미만은 추정 입력 무시", vm.heightEstimated)
+    }
+
+    // 입력 순서 회귀(리뷰 #313): 50세+에서 '모름' 선택 후 생년월일을 50세 미만으로 바꾸면 추정이 무효화돼
+    //   표시·has_estimated_value 에서 무시된다 → 65–74 추정값이 50세 미만 프로필로 새지 않는다.
+    @Test
+    fun stale_estimate_invalidated_when_age_dropped_below_50() {
+        val vm = vm(2026, 7, 15).apply { sex = "male"; birthYear = "1970"; birthMonth = "1"; birthDay = "1" } // 56
+        vm.markHeightUnknown(); vm.markWeightUnknown()
+        assertTrue("56세 시점엔 추정 유효", vm.hasEstimatedValue)
+        assertEquals("추정 표시값(남 166)", "166", vm.heightInput)
+
+        vm.birthYear = "2000" // 26세로 변경 → 추정 대상 미만
+        assertFalse("50세 미만이 되면 추정은 무효 — 표시·제출에서 무시", vm.hasEstimatedValue)
+        assertEquals("표시값도 추정치가 아니라 빈 입력값", "", vm.heightInput)
+        assertEquals("", vm.weightInput)
     }
 }

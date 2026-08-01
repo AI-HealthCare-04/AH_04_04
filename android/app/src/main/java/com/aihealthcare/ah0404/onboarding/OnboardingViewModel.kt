@@ -91,8 +91,14 @@ class OnboardingViewModel(
     var heightEstimated by mutableStateOf(false); private set
     var weightEstimated by mutableStateOf(false); private set
 
-    /** 키·몸무게 중 하나라도 '모름'(추정)이면 true → has_estimated_value 로 전송. */
-    val hasEstimatedValue: Boolean get() = heightEstimated || weightEstimated
+    // 추정('모름')은 나이·성별에 종속된다 — '모름' 선택 후 생년월일을 추정 대상 미만(만 50세 미만)으로 바꾸면
+    //   플래그(heightEstimated 등)만 남아 무효 추정값이 표시·제출될 수 있다(리뷰 #313). canEstimate 를 함께 확인해
+    //   '유효한 추정'만 인정한다 — 무효 추정은 표시·제출·has_estimated_value 모두에서 무시하고 직접 입력을 유도한다.
+    private val heightEstimatedValid: Boolean get() = heightEstimated && canEstimate
+    private val weightEstimatedValid: Boolean get() = weightEstimated && canEstimate
+
+    /** 키·몸무게 중 하나라도 유효한 '모름'(추정)이면 true → has_estimated_value 로 전송. */
+    val hasEstimatedValue: Boolean get() = heightEstimatedValid || weightEstimatedValid
 
     /**
      * '모름'은 유효한 성별·생년월일 + **만 50세 이상**일 때 허용(#298 C: 50~64 추정표 확장, 리뷰 #75-2).
@@ -116,8 +122,8 @@ class OnboardingViewModel(
         }
 
     /** 화면 표시값: 추정이면 현재 성별·나이로 라이브 계산(성별/생일 바꾸면 즉시 갱신), 아니면 수동 입력값. */
-    val heightInput: String get() = if (heightEstimated) estimateBody(sex, ageYears()).first.toString() else heightCm
-    val weightInput: String get() = if (weightEstimated) estimateBody(sex, ageYears()).second.toString() else weightKg
+    val heightInput: String get() = if (heightEstimatedValid) estimateBody(sex, ageYears()).first.toString() else heightCm
+    val weightInput: String get() = if (weightEstimatedValid) estimateBody(sex, ageYears()).second.toString() else weightKg
 
     /** 키 인라인 검증 문구(#298 A-2). 직접 입력값이 현실 범위 밖이면 그 자리에서 안내(추정치·빈칸은 조용). */
     val heightError: String?
@@ -278,9 +284,11 @@ class OnboardingViewModel(
         // #298 C: 만 65세 미만도 가입·온보딩을 완료할 수 있다(예측만 "준비 중"). 나이 자체로 제출을 막지 않는다.
         //   생년월일 자체가 유효하면(composeBirthDate 통과) age 는 항상 산출된다.
         // 추정('모름')이면 제출 시점의 최종 성별·나이로 계산(버튼 누른 시점 아님, 리뷰 #75-2).
+        // 유효한 추정만 반영한다(리뷰 #313): '모름' 후 연령을 50세 미만으로 바꾼 무효 추정은 여기서 값이 없어(빈칸)
+        //   아래 '키·몸무게·성별 모두 입력' 검증에 걸려 거부된다 → 65–74 추정값이 50세 미만 프로필로 새지 않는다.
         val estimate = if (hasEstimatedValue) estimateBody(sex, ageYears()) else null
-        val h = if (heightEstimated) estimate!!.first.toDouble() else heightCm.toDoubleOrNull()
-        val w = if (weightEstimated) estimate!!.second.toDouble() else weightKg.toDoubleOrNull()
+        val h = if (heightEstimatedValid) estimate!!.first.toDouble() else heightCm.toDoubleOrNull()
+        val w = if (weightEstimatedValid) estimate!!.second.toDouble() else weightKg.toDoubleOrNull()
         if (sex == null || h == null || w == null) {
             error = "키·몸무게·성별을 모두 입력해 주세요."; return@launchStep
         }
@@ -438,7 +446,9 @@ class OnboardingViewModel(
         get() {
             if (composeBirthDate() == null) return null
             val age = ageYears() ?: return null
-            return if (age < MIN_SUPPORTED_AGE) {
+            // 만 14~64세에게만 노출한다(리뷰 #313). 14세 미만은 birthDateError 가 '가입 불가'를 안내하므로,
+            //   여기서 '예측 제외 기능 자유롭게 이용' 문구까지 뜨면 서로 충돌한다 → 하한(MIN_SIGNUP_AGE) 미만은 제외.
+            return if (age in MIN_SIGNUP_AGE until MIN_SUPPORTED_AGE) {
                 "지금은 만 65세 이상 어르신에게 근감소증 예측을 제공하고 있어요. 50~64세 예측도 준비 중이니, " +
                     "그전까지는 예측을 제외한 기능을 자유롭게 이용하실 수 있어요."
             } else {

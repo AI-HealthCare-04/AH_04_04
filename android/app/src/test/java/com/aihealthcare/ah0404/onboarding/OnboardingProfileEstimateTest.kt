@@ -183,6 +183,21 @@ class OnboardingProfileEstimateTest {
         assertFalse("0일도 유효 응답 — 일수 미선택 에러가 뜨면 안 됨", vm.error?.contains("일수를 선택") == true)
     }
 
+    // 입력 순서 회귀(리뷰 #313): 50세+에서 '모름' 선택 후 26세로 바꾸면, 무효 추정(65–74 값)이 제출되지 않고
+    //   키·몸무게 직접 입력을 요구한다 → 50세 미만 프로필에 추정값이 새는 경로 차단.
+    @Test
+    fun submit_rejects_stale_estimate_after_age_dropped_below_50() = runTest {
+        val vm = vm(2026, 7, 15).apply {
+            sex = "male"; birthYear = "1970"; birthMonth = "1"; birthDay = "1" // 56세
+            walkDays = 5; muscDays = 2
+        }
+        vm.markHeightUnknown(); vm.markWeightUnknown() // 56세 시점 추정 활성
+        vm.birthYear = "2000" // 26세로 변경 → 추정 무효
+        vm.submitProfile(); advanceUntilIdle()
+        assertTrue("무효 추정은 제출 안 되고 직접 입력을 요구", vm.error?.contains("입력") == true)
+        assertFalse("체력검사로 진행하지 않는다", vm.step == OnbStep.ASSESSMENT)
+    }
+
     @Test
     fun waist_unknown_clears_field() {
         val vm = vm().apply { waistCm = "88" }
