@@ -7,6 +7,8 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aihealthcare.ah0404.network.SettingsApi
+import com.aihealthcare.ah0404.network.UserApi
+import com.aihealthcare.ah0404.network.UserWithdrawRequest
 import com.aihealthcare.ah0404.network.UserSettingsResponse
 import com.aihealthcare.ah0404.network.UserSettingsUpdateRequest
 import com.aihealthcare.ah0404.network.retrofit
@@ -28,7 +30,15 @@ import kotlinx.coroutines.sync.withLock
  */
 class SettingsViewModel(
     private val api: SettingsApi = retrofit.create(SettingsApi::class.java),
+    // 회원탈퇴(#356) 전용. 설정 화면이 계정 액션(로그아웃·탈퇴)을 함께 갖고 있어 여기에 둔다.
+    private val userApi: UserApi = retrofit.create(UserApi::class.java),
 ) : ViewModel() {
+
+    /** 회원탈퇴 진행 중(버튼 비활성·이중 요청 방지). */
+    var withdrawing by mutableStateOf(false); private set
+
+    /** 회원탈퇴 실패 안내. null 이면 오류 없음. */
+    var withdrawError by mutableStateOf<String?>(null); private set
 
     var loading by mutableStateOf(false); private set
     var loaded by mutableStateOf(false); private set
@@ -146,6 +156,33 @@ class SettingsViewModel(
         } catch (e: Exception) {
             Result.failure(e)
         }
+
+    /**
+     * 회원탈퇴(#356). 성공(204) 시에만 [onWithdrawn] 을 부른다 — 호출부가 세션·공급자 credential 을
+     * 정리하고 로그인 화면으로 보낸다(로그아웃과 동일 경로 재사용).
+     *
+     * 서버는 연결 데이터를 실제 삭제하고 계정을 익명화하므로, 실패 시 되돌릴 상태가 없다(재시도만 하면 된다).
+     */
+    fun withdraw(onWithdrawn: () -> Unit) {
+        if (withdrawing) return
+        // 플래그는 코루틴 **밖**에서 즉시 세운다: 안에서 세우면 첫 요청이 디스패치되기 전에 들어온
+        //   두 번째 호출이 가드를 통과해 탈퇴 요청이 두 번 나간다(빠른 연타·상태 전이 틈).
+        withdrawing = true
+        withdrawError = null
+        viewModelScope.launch {
+            try {
+                userApi.withdraw(UserWithdrawRequest())
+                onWithdrawn()
+            } catch (e: Exception) {
+                Log.w(TAG, "회원탈퇴 실패: ${e.message}")
+                withdrawError = "탈퇴 처리에 실패했어요. 잠시 후 다시 시도해 주세요."
+            } finally {
+                withdrawing = false
+            }
+        }
+    }
+
+    fun dismissWithdrawError() { withdrawError = null }
 
     companion object {
         const val TAG = "Settings"

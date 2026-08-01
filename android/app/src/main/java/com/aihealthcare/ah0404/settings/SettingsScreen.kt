@@ -54,12 +54,16 @@ fun SettingsScreen(
     onOpenSupport: () -> Unit,
     onOpenProfile: () -> Unit,
     onLogout: () -> Unit = {},
+    // 회원탈퇴 성공 후(#356) — 호출부가 세션·공급자 credential 정리 후 로그인 화면으로 보낸다(로그아웃과 동일 경로).
+    onWithdrawn: () -> Unit = {},
     modifier: Modifier = Modifier,
     vm: SettingsViewModel = viewModel(),
 ) {
     val context = LocalContext.current
     // 로그아웃 확인 다이얼로그(#154). 시니어 대상이라 실수 방지로 한 번 되묻는다.
     var showLogoutConfirm by rememberSaveable { mutableStateOf(false) }
+    // 회원탈퇴 확인(#356). 되돌릴 수 없는 파괴적 액션이라 로그아웃과 별도로 강하게 안내한다.
+    var showWithdrawConfirm by rememberSaveable { mutableStateOf(false) }
     // 진입마다 서버 설정 재조회(리뷰 #68 교훈).
     LaunchedEffect(Unit) { vm.load() }
     // 전역 적용값(글자·소리)을 VM 의 최종 설정값에 항상 동기화(묶음 C-2, 리뷰 #86-1).
@@ -163,6 +167,21 @@ fun SettingsScreen(
                 onClick = { showLogoutConfirm = true },
             )
 
+            // 회원탈퇴(#356) — 계정 액션 최하단. 파괴적 액션이라 텍스트 버튼 + 오류색으로 시각 구분해
+            //   일상 동작(로그아웃)과 혼동하지 않게 한다.
+            Spacer(Modifier.height(Dimens.Space8))
+            TextButton(
+                onClick = { showWithdrawConfirm = true },
+                enabled = !vm.withdrawing,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    if (vm.withdrawing) "탈퇴 처리 중…" else "회원탈퇴",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+
             // #131 파형 수집 진입 — 디버그 빌드에서만 노출(릴리스에는 대상 Activity 자체가 없음).
             //   명시 인텐트를 문자열 ComponentName 으로 실행해, debug 소스셋 전용 Activity 를
             //   릴리스에서 컴파일 참조하지 않는다(참조하면 릴리스 빌드가 깨진다).
@@ -192,6 +211,33 @@ fun SettingsScreen(
             confirmText = "확인",
             onConfirm = vm::dismissSaveError,
             onDismissRequest = vm::dismissSaveError,
+        )
+    }
+
+    if (showWithdrawConfirm) {
+        AigoDialog(
+            title = "회원탈퇴",
+            // 서버가 연결 데이터를 실제 삭제하고 재로그인 시 신규 가입이 되므로(#356 옵션 2),
+            //   '삭제됨'과 '복구되지 않음'을 둘 다 명시한다.
+            message = "탈퇴하면 그동안의 기록·포인트가 모두 삭제되고 되돌릴 수 없어요.\n" +
+                "같은 계정으로 다시 로그인하면 처음부터 새로 시작하게 돼요.",
+            confirmText = "탈퇴하기",
+            onConfirm = {
+                showWithdrawConfirm = false
+                vm.withdraw(onWithdrawn)
+            },
+            onDismissRequest = { showWithdrawConfirm = false },
+            dismissText = "취소",
+        )
+    }
+
+    vm.withdrawError?.let { msg ->
+        AigoDialog(
+            title = "알림",
+            message = msg,
+            confirmText = "확인",
+            onConfirm = vm::dismissWithdrawError,
+            onDismissRequest = vm::dismissWithdrawError,
         )
     }
 

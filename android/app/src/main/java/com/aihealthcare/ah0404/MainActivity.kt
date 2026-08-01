@@ -412,6 +412,13 @@ private fun MainContent(
             MainTab.SETTINGS -> SettingsScreen(
                 onOpenSupport = { subScreen = "support" },
                 onOpenProfile = { subScreen = "profile" },
+                // 회원탈퇴 성공(#356): 서버 계정은 이미 정리됐으니 로그아웃과 같은 로컬 정리를 태운다
+                //   (토큰·세션 + 공급자 credential 해제). credential 이 남으면 다음 로그인에서 같은 계정이
+                //   자동 선택돼 의도치 않은 신규 가입이 즉시 일어난다(#187 교훈).
+                onWithdrawn = {
+                    selectedTab = MainTab.HOME
+                    onLogout()
+                },
                 // 로그아웃(#154): 재로그인 후 설정 탭으로 튀지 않게 홈으로 되돌린 뒤,
                 //   상위(MAIN 라우팅 스코프)에 위임한다. 실제 세션 정리·라우팅 재평가는 거기서 한다.
                 onLogout = {
