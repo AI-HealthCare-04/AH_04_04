@@ -50,6 +50,10 @@ interface RecordApi {
     @GET("risk-predictions/me/cohort-distribution")
     suspend fun getCohortDistribution(): CohortDistributionResponse
 
+    /** 5STS 측정 이력(#353, 최신순·측정 기록만). 스킵만 있으면 빈 목록. */
+    @GET("physical-assessments/me/history")
+    suspend fun getStsHistory(@Query("limit") limit: Int = 20): StsHistoryResponse
+
     /**
      * 근육 건강 점수 재평가 — 최신 프로필 + 최근 활동으로 **새 예측을 생성**한다.
      *  '내 정보' 저장 후 이걸 불러야 편집이 점수에 실제 반영된다: GET latest 는 저장된 마지막

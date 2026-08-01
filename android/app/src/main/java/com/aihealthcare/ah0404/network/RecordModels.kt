@@ -131,3 +131,20 @@ data class StampsResponse(
     val month: String,
     val days: List<StampDay> = emptyList(),
 )
+
+// ── 5STS 측정 이력(#353, GET /physical-assessments/me/history) ────────────────
+//   측정 기록(시간 존재)만 내려온다 — 스킵 기록은 추이에 안 쓰므로 서버가 제외.
+//   비의료(#57): 시간·유형·시각 사실만. 판정 필드 없음.
+
+@Serializable
+data class StsAssessmentItem(
+    @SerialName("physical_assessment_id") val physicalAssessmentId: Int,
+    @SerialName("assessment_type") val assessmentType: String = "initial",
+    @SerialName("chair_stand_5_time_sec") val chairStand5TimeSec: Double,
+    @SerialName("created_at") val createdAt: String,
+)
+
+@Serializable
+data class StsHistoryResponse(
+    val assessments: List<StsAssessmentItem> = emptyList(),
+)
