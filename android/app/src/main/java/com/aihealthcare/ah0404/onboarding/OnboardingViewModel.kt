@@ -107,7 +107,11 @@ class OnboardingViewModel(
      * '모름'은 유효한 성별·생년월일 + **만 50세 이상**일 때 허용(#298 C: 50~64 추정표 확장, 리뷰 #75-2).
      *  50세 미만은 추정 근거가 없어 직접 입력만 받는다(사유는 [estimateUnavailableReason] 로 안내).
      */
-    val canEstimate: Boolean get() = sex != null && (ageYears() ?: 0) >= MIN_ESTIMATE_AGE
+    // composeBirthDate() != null 을 함께 요구한다(리뷰 #313): ageYears() 는 숫자 변환만 하고 날짜 유효성(월 범위·
+    //   실제 일수·미래)을 안 봐서, 1958-13-01·1958-02-30 같은 무효 날짜에도 canEstimate 가 참이 돼 birthDateError
+    //   (가입 불가)와 '모름 추정 활성'이 동시에 뜬다. 유효한 생년월일일 때만 추정을 허용한다.
+    val canEstimate: Boolean get() =
+        sex != null && composeBirthDate() != null && (ageYears() ?: 0) >= MIN_ESTIMATE_AGE
 
     /**
      * '모름'(추정) 버튼이 비활성인 이유(#298 B). 활성이면 null. 성별·생년월일이 없으면 그 안내를,

@@ -146,6 +146,18 @@ class OnboardingProfileValidationTest {
         assertFalse("50 미만은 추정 입력 무시", vm.heightEstimated)
     }
 
+    // 유효하지 않은 과거 날짜(월 13·2월 30)에선 추정 비활성(리뷰 #313): ageYears 는 날짜 유효성을 안 보므로
+    //   composeBirthDate 유효성까지 확인해, birthDateError(가입불가)와 '모름 활성'이 동시에 뜨지 않게 한다.
+    @Test
+    fun estimate_blocked_for_invalid_past_date() {
+        assertFalse("월 13 은 무효 날짜 → 추정 비활성",
+            vm(2026, 7, 15).apply { sex = "male"; birthYear = "1958"; birthMonth = "13"; birthDay = "1" }.canEstimate)
+        assertFalse("2월 30 은 무효 날짜 → 추정 비활성",
+            vm(2026, 7, 15).apply { sex = "male"; birthYear = "1958"; birthMonth = "2"; birthDay = "30" }.canEstimate)
+        assertTrue("같은 나이대라도 유효 날짜면 활성",
+            vm(2026, 7, 15).apply { sex = "male"; birthYear = "1958"; birthMonth = "3"; birthDay = "1" }.canEstimate) // 68세
+    }
+
     // 입력 순서 회귀(리뷰 #313): 50세+에서 '모름' 선택 후 생년월일을 50세 미만으로 바꾸면 추정이 무효화돼
     //   표시·has_estimated_value 에서 무시된다 → 65–74 추정값이 50세 미만 프로필로 새지 않는다.
     @Test
