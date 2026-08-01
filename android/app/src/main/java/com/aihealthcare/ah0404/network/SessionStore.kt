@@ -1,6 +1,8 @@
 package com.aihealthcare.ah0404.network
 
 import android.content.Context
+import android.content.SharedPreferences
+import android.util.Log
 
 /** 현재 로그인 세션(#153). 영속화 정책을 한곳에서 강제하기 위한 값 객체. */
 data class AuthSession(
@@ -27,10 +29,17 @@ data class AuthSession(
  *  딸린 서버 상태의 캐시**이며, 로그인마다 서버값으로 덮어써진다. 계정별 PersistedSession 전환은 #105 후속.
  */
 object SessionStore {
+    private const val TAG = "SessionStore"
     private const val PREFS = "aigo_session"
     private const val KEY_TOKEN = "access_token"
     private const val KEY_ONBOARDED = "onboarding_completed"
     private const val KEY_USER_ID = "user_id"
+
+    /**
+     * 토큰 암복호화 계층(#358, 심사 5-4). 디스크에는 항상 암호문 봉투(v1:...)만 남는다.
+     * Keystore 는 JVM 테스트에 없으므로 테스트가 fake 를 주입할 수 있게 var 로 둔다(운영 교체 금지).
+     */
+    internal var tokenCipher: TokenCipher = KeystoreTokenCipher
 
     /**
      * 라우팅 게이트(#153): "이번 세션이 온보딩을 마쳤는가". 시작 시 [restore] 로 디스크값을 실어오고,
@@ -64,10 +73,44 @@ object SessionStore {
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
+    /**
+     * 토큰을 암호문 봉투로 디스크에 남긴다(#358). 암호화 실패(키 손상·Keystore 불가)는 크래시 대신
+     * 저장 생략 — 이번 세션은 메모리 토큰으로 그대로 동작하고, 다음 실행은 재로그인으로 복구된다.
+     * 저장 실패 시 이전 잔재(토큰·user_id)도 지워 평문·불일치 상태가 남지 않게 한다.
+     */
+    private fun persistToken(editor: SharedPreferences.Editor, token: String): Boolean =
+        runCatching { tokenCipher.encrypt(token) }
+            .map { sealed ->
+                editor.putString(KEY_TOKEN, sealed)
+                true
+            }
+            .getOrElse { e ->
+                Log.w(TAG, "토큰 암호화 실패 — 디스크 저장을 생략한다: ${e.javaClass.simpleName}")
+                editor.remove(KEY_TOKEN).remove(KEY_USER_ID)
+                false
+            }
+
     /** 앱 시작 시: 저장된 토큰 + 완료 플래그를 메모리로 복원. */
     fun restore(context: Context) {
         val p = prefs(context)
-        val token = p.getString(KEY_TOKEN, null).orEmpty()
+        val stored = p.getString(KEY_TOKEN, null).orEmpty()
+        // #358: 디스크의 토큰은 암호문 봉투(v1:...)여야 한다.
+        //  - 봉투 → 복호화. 실패(키 손상·기기 복원·값 훼손)는 크래시 대신 빈 토큰 = 로그아웃 폴백.
+        //  - 평문(#358 이전 저장분) → 마이그레이션: 폐기하고 재로그인 유도(팀 합의 — 1회성이라
+        //    재암호화 경로를 만들지 않는다. 시연 계정은 배포 전에 재로그인 처리).
+        //  어느 쪽이든 복원 불가면 디스크 잔재를 지운다. 완료 플래그는 로그아웃(#154)과 같은 의미로
+        //  보존해 같은 계정 재로그인 시 온보딩을 반복하지 않는다.
+        val token = when {
+            stored.isBlank() -> ""
+            TokenEnvelope.isEnvelope(stored) -> tokenCipher.decrypt(stored).orEmpty()
+            else -> {
+                Log.w(TAG, "#358 이전 평문 토큰 발견 — 폐기하고 재로그인을 유도한다")
+                ""
+            }
+        }
+        if (token.isBlank() && stored.isNotBlank()) {
+            p.edit().remove(KEY_TOKEN).remove(KEY_USER_ID).apply()
+        }
         val onboarded = p.getBoolean(KEY_ONBOARDED, false)
         val storedUserId = runCatching {
             p.getInt(KEY_USER_ID, -1).takeIf { it > 0 }
@@ -109,8 +152,10 @@ object SessionStore {
         persistentUserId = currentUserId.takeIf { eligible }
         val editor = prefs(context).edit()
         if (eligible) {
-            editor.putString(KEY_TOKEN, session.accessToken).putBoolean(KEY_ONBOARDED, true)
-            persistentUserId?.let { editor.putInt(KEY_USER_ID, it) } ?: editor.remove(KEY_USER_ID)
+            editor.putBoolean(KEY_ONBOARDED, true)
+            if (persistToken(editor, session.accessToken)) {
+                persistentUserId?.let { editor.putInt(KEY_USER_ID, it) } ?: editor.remove(KEY_USER_ID)
+            }
         } else {
             editor.remove(KEY_TOKEN).remove(KEY_USER_ID).putBoolean(KEY_ONBOARDED, false)
         }
@@ -127,10 +172,10 @@ object SessionStore {
         sessionOnboarded = true
         if (!isGuest) {
             persistentUserId = currentUserId
-            val editor = prefs(context).edit()
-                .putString(KEY_TOKEN, TokenHolder.token)
-                .putBoolean(KEY_ONBOARDED, true)
-            persistentUserId?.let { editor.putInt(KEY_USER_ID, it) } ?: editor.remove(KEY_USER_ID)
+            val editor = prefs(context).edit().putBoolean(KEY_ONBOARDED, true)
+            if (persistToken(editor, TokenHolder.token)) {
+                persistentUserId?.let { editor.putInt(KEY_USER_ID, it) } ?: editor.remove(KEY_USER_ID)
+            }
             editor.apply()
         } else {
             persistentUserId = null
