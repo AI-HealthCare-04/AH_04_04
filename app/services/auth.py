@@ -70,7 +70,7 @@ class AuthService:
             await self.user_repo.update_last_login(user)
             is_new_user = False
         else:
-            # 탈퇴 계정 복구 경로는 제거했다(#356 옵션 2): 탈퇴 시 social_id 를 익명화하므로
+            # 탈퇴 계정 복구 경로는 제거했다(#356 옵션 2): 탈퇴 시 users 행이 물리 삭제되므로
             #   같은 소셜 계정으로 다시 로그인해도 유니크 충돌 없이 **신규 가입**이 된다
             #   (온보딩·약관 동의를 처음부터 다시 밟는다). 이전 데이터는 탈퇴 시 이미 파기됐다.
             try:

@@ -1,19 +1,48 @@
 import uuid
 from datetime import datetime
+from typing import cast
 
-from sqlalchemy import delete, select
+from sqlalchemy import ColumnElement, Table, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
-from app.models.activity import ActivityLevelChangeLog, UserActivityProfile
-from app.models.analytics import StsOverlayEvent
-from app.models.dashboard import DailyActivitySummary
-from app.models.health import HealthCheckSession, HealthProfile, PhysicalAssessment
-from app.models.missions import GameLog, MealLog, MissionLog, PhysicalActivityLog, SensorSession
-from app.models.predictions import RiskPrediction
-from app.models.settings import PersonalizedSetting
-from app.models.terms import TermsAgreement
+from app.models.base import Base
 from app.models.users import AuthProvider, OnboardingStatus, User
+
+
+def user_reachable_conditions(user_id: int) -> dict[Table, ColumnElement[bool]]:
+    """users 에서 FK 그래프로 도달 가능한 테이블별로 '이 사용자의 행' 조건을 만든다(#356 리뷰 P2).
+
+    직접 user_id 를 가진 테이블은 물론, mission_logs 를 경유하는 상세 로그처럼 간접 참조하는
+    테이블도 부모 PK 서브쿼리로 걸린다. 메타데이터를 순회하므로 **새 테이블이 추가되어도
+    (예: #357 prediction_feedbacks) 코드 수정 없이 파기·검증 대상에 포함된다.**
+    테스트(test_withdrawal.py)도 이 함수를 사용해 파기와 검증의 대상 집합을 일치시킨다.
+    """
+    users_table = cast(Table, User.__table__)
+    conditions: dict[Table, ColumnElement[bool] | None] = {users_table: users_table.c.user_id == user_id}
+
+    def condition_for(table: Table) -> ColumnElement[bool] | None:
+        if table in conditions:
+            return conditions[table]
+        conditions[table] = None  # 순환 FK 가드: 계산 중 재방문한 경로는 무시한다
+        parts: list[ColumnElement[bool]] = []
+        for fk in table.foreign_keys:
+            parent = fk.column.table
+            if parent is table:
+                continue
+            parent_condition = condition_for(parent)
+            if parent_condition is not None:
+                parts.append(fk.parent.in_(select(fk.column).where(parent_condition)))
+        conditions[table] = or_(*parts) if parts else None
+        return conditions[table]
+
+    for table in Base.metadata.sorted_tables:
+        condition_for(table)
+    return {
+        table: condition
+        for table, condition in conditions.items()
+        if condition is not None and table is not users_table
+    }
 
 
 class UserRepository:
@@ -21,8 +50,19 @@ class UserRepository:
         self.session = session
 
     async def get_user(self, user_id: int) -> User | None:
-        # 탈퇴(soft-delete)된 사용자는 조회되지 않는다 → 인증 경로에서 자동으로 401 처리된다.
+        # 탈퇴한 사용자는 행이 물리 삭제되어 조회되지 않는다 → 인증 경로에서 자동으로 401 처리된다.
         stmt = select(User).where(User.user_id == user_id, User.deleted_at.is_(None))
+        return await self.session.scalar(stmt)
+
+    async def get_user_for_update(self, user_id: int) -> User | None:
+        """탈퇴 처리용 조회 — users 행에 배타 잠금(FOR UPDATE)을 건다(#356 리뷰 P1).
+
+        탈퇴 트랜잭션이 진행되는 동안, 같은 user_id 를 FK 로 참조하는 동시 INSERT 는
+        부모 행 잠금에 막혀 대기한다. 탈퇴가 커밋되면 부모 행이 사라져 FK 위반으로 거부되고,
+        INSERT 가 먼저 커밋되면 그 행까지 이번 파기에서 함께 삭제된다 — 어느 순서든
+        '204 이후 데이터 잔존'이 불가능하다. 이미 삭제된 경우 None(동시 탈퇴 경합).
+        """
+        stmt = select(User).where(User.user_id == user_id).with_for_update()
         return await self.session.scalar(stmt)
 
     async def get_by_provider_social_id(self, provider: AuthProvider, social_id: str) -> User | None:
@@ -63,49 +103,27 @@ class UserRepository:
         await self.session.flush()
         return user
 
-    async def soft_delete(self, user: User) -> None:
-        """탈퇴 처리(#356): 개인 식별자 익명화 + deleted_at 기록.
+    async def purge_user_data(self, user_id: int) -> None:
+        """탈퇴 사용자의 연결 데이터를 전부 삭제한다(#356 — 익명화 ≠ 파기).
 
-        social_id 를 `deleted:<uuid4>` 로 치환해 UNIQUE(provider, social_id) 를 비운다 —
-        같은 소셜 계정으로 다시 로그인하면 **복구가 아니라 신규 가입**이 된다(옵션 2, 팀 결정).
-        원본 social_id·닉네임은 남기지 않는다(개인정보 최소화). users 행 자체는 남겨
-        탈퇴 사실과 시점은 보존한다. 연결 데이터 파기는 [purge_user_data] 가 담당한다.
+        [user_reachable_conditions] 가 FK 그래프에서 찾은 테이블을 **자식 → 부모 순서**
+        (sorted_tables 역순)로 지운다(ON DELETE CASCADE 미설정). 서브쿼리가 참조하는
+        부모 행은 아직 남아 있는 시점이라 안전하다. users 행 자체는 [delete_account] 가 지운다.
         """
-        user.social_id = f"deleted:{uuid.uuid4().hex}"  # VARCHAR(100) 내(40자)
-        user.nickname = "탈퇴한 사용자"
-        user.deleted_at = datetime.now(config.TIMEZONE)
+        conditions = user_reachable_conditions(user_id)
+        for table in reversed(Base.metadata.sorted_tables):
+            condition = conditions.get(table)
+            if condition is not None:
+                await self.session.execute(delete(table).where(condition))
         await self.session.flush()
 
-    async def purge_user_data(self, user_id: int) -> None:
-        """탈퇴 사용자의 연결 데이터를 실제 삭제한다(#356 — 리뷰 반영: 익명화 ≠ 파기).
+    async def delete_account(self, user: User) -> None:
+        """users 행 물리 삭제(#356 리뷰 P1 — 익명화 잔존 대신 삭제).
 
-        건강 프로필·신체평가·예측·미션 기록·약관 동의 등 user_id 를 직·간접 참조하는 모든 행이
-        대상이다. FK 제약 때문에 **자식 → 부모 순서**로 지운다(ON DELETE CASCADE 미설정).
-        mission_logs 를 경유하는 상세 로그(식사·활동·게임·센서)는 user_id 컬럼이 없어 서브쿼리로 건다.
-
-        ⚠️ 테이블이 새로 추가되면 여기에 함께 등록해야 한다 —
-           `test_withdrawal.py` 가 메타데이터를 순회해 누락을 잡는다(잔존 행 0 검증).
+        행이 사라지면 (1) UNIQUE(provider, social_id) 가 비워져 같은 소셜 계정 재로그인은
+        **신규 가입**이 되고(옵션 2), (2) 탈퇴 커밋 이후 도착하는 늦은 INSERT 는 FK 위반으로
+        거부되어 파기 후 데이터가 되살아날 수 없다. 원본 social_id·닉네임도 남지 않는다
+        (개인정보 최소화). 자식 데이터는 [purge_user_data] 로 먼저 지워야 FK 에 걸리지 않는다.
         """
-        mission_log_ids = select(MissionLog.mission_log_id).where(MissionLog.user_id == user_id)
-        # 1) mission_logs 자식(상세 로그) — user_id 컬럼이 없어 부모 id 서브쿼리로 건다.
-        await self.session.execute(delete(GameLog).where(GameLog.mission_log_id.in_(mission_log_ids)))
-        await self.session.execute(delete(MealLog).where(MealLog.mission_log_id.in_(mission_log_ids)))
-        await self.session.execute(
-            delete(PhysicalActivityLog).where(PhysicalActivityLog.mission_log_id.in_(mission_log_ids))
-        )
-        await self.session.execute(delete(SensorSession).where(SensorSession.mission_log_id.in_(mission_log_ids)))
-        # 2) health_profiles·physical_assessments 를 무는 자식
-        await self.session.execute(delete(RiskPrediction).where(RiskPrediction.user_id == user_id))
-        await self.session.execute(delete(UserActivityProfile).where(UserActivityProfile.user_id == user_id))
-        await self.session.execute(delete(ActivityLevelChangeLog).where(ActivityLevelChangeLog.user_id == user_id))
-        # 3) health_check_sessions 자식 → 부모 순
-        await self.session.execute(delete(PhysicalAssessment).where(PhysicalAssessment.user_id == user_id))
-        await self.session.execute(delete(HealthProfile).where(HealthProfile.user_id == user_id))
-        await self.session.execute(delete(MissionLog).where(MissionLog.user_id == user_id))
-        await self.session.execute(delete(HealthCheckSession).where(HealthCheckSession.user_id == user_id))
-        # 4) users 직속 나머지
-        await self.session.execute(delete(TermsAgreement).where(TermsAgreement.user_id == user_id))
-        await self.session.execute(delete(DailyActivitySummary).where(DailyActivitySummary.user_id == user_id))
-        await self.session.execute(delete(StsOverlayEvent).where(StsOverlayEvent.user_id == user_id))
-        await self.session.execute(delete(PersonalizedSetting).where(PersonalizedSetting.user_id == user_id))
+        await self.session.delete(user)
         await self.session.flush()
