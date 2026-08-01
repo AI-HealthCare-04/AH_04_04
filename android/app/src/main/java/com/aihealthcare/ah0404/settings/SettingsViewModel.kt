@@ -170,6 +170,10 @@ class SettingsViewModel(
      *    다이얼로그 생존·사용자 확인에 의존하면 인터셉터의 전역 라우팅(OFFLINE/LOGIN_REQUIRED)이
      *    이 VM 을 먼저 폐기해 정리가 유실될 수 있다(리뷰 2차 P1). 호출부는 Activity 범위
      *    (AuthLoginViewModel.signOut)에서 정리하고, 안내는 라우팅 후에도 남는 로그인 화면 상태로 남긴다.
+     *  - 요청 시작 후의 **CancellationException 도 결과 불명이다**(리뷰 3차 P1): 인터셉터가 전역 상태를
+     *    Retrofit continuation 보다 먼저 발행하면 MAIN 재라우팅이 이 VM 을 폐기해 suspend 호출이
+     *    취소로 끝난다 — 요청은 이미 서버로 나갔을 수 있다. [onUncertain] 을 호출한 뒤 재전파해
+     *    구조적 동시성은 보존하되 Activity 범위 정리는 놓치지 않는다.
      */
     fun withdraw(onWithdrawn: () -> Unit, onUncertain: () -> Unit) {
         if (withdrawing) return
@@ -182,7 +186,12 @@ class SettingsViewModel(
                 userApi.withdraw(UserWithdrawRequest())
                 onWithdrawn()
             } catch (e: CancellationException) {
-                throw e // safeCall 과 동일 — VM 취소를 탈퇴 실패로 바꾸지 않는다(구조적 동시성 보존)
+                // 여기 도달했다 = userApi.withdraw 가 이미 호출됐다 → 요청이 서버로 나갔을 수 있는데
+                //   전역 라우팅이 이 VM 을 폐기하며 취소된 상황(리뷰 3차 P1). 결과 불명과 동일하게
+                //   Activity 범위 정리를 시작한 뒤 재전파한다(onUncertain 은 suspend 하지 않는다).
+                onUncertain()
+                Log.w(TAG, "회원탈퇴 중 취소 — 결과 불명으로 간주, 안전 측 정리 즉시 시작")
+                throw e
             } catch (e: HttpException) {
                 if (e.code() != 401 && e.code() in 400..499) {
                     Log.w(TAG, "회원탈퇴 서버 거절: HTTP ${e.code()}")
