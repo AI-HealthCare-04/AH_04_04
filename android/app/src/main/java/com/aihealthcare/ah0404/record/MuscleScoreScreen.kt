@@ -1,6 +1,5 @@
 package com.aihealthcare.ah0404.record
 
-import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -363,9 +362,11 @@ private fun StsSafetyCard(ui: MuscleScoreUi, onGoToMissions: () -> Unit) {
     val strong = ui.bmi != null && ui.bmi >= 25.0 // 강한 티어(아시아 비만 기준)
     val tier = if (strong) "strong" else "basic"
 
-    // 발화율 관측(§3.4, 필수): 카드 노출 시 이벤트 로깅. (서버 수집 엔드포인트는 백엔드 필요 목록.)
-    LaunchedEffect(tier, sts, ui.bmi, ui.band) {
-        Log.i("sts_overlay_shown", "tier=$tier, sts_sec=$sts, bmi=${ui.bmi}, score_band=${ui.band}")
+    // 발화율 관측(§3.4, 필수): 카드 노출 시 서버 수집(POST /events/sts-overlay-shown, #366).
+    //   키를 Unit 으로 고정 — 컴포지션 진입(화면 진입) 1회만 전송해, 리컴포지션·값 갱신으로
+    //   같은 노출이 여러 건 집계되는 것을 막는다. 실패해도 카드 표시를 막지 않는다(fire-and-forget).
+    LaunchedEffect(Unit) {
+        StsOverlayReporter.report(tier = tier, stsSec = sts, bmi = ui.bmi, scoreBand = ui.band)
     }
 
     AigoCard {
