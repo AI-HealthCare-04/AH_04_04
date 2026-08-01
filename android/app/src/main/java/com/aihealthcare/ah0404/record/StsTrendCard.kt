@@ -92,9 +92,9 @@ internal fun StsTrendCard(vm: StsTrendViewModel = viewModel()) {
         }
 
         Spacer(Modifier.height(Dimens.Space8))
-        // 권장 주기 안내(#353 요청 1) — 과도한 반복 측정은 피로·낙상 위험. 구체 주기는 팀 확인 항목.
+        // 권장 주기 안내(#353 요청 1) — 3개월 근거는 STS_REMEASURE_INTERVAL_NOTICE·docs/sts_remeasure_interval.md.
         Text(
-            "한 달에 한 번 정도 다시 재보시면 변화를 볼 수 있어요.",
+            STS_REMEASURE_INTERVAL_NOTICE,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

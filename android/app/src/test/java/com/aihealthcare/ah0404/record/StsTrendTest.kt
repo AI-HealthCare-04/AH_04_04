@@ -2,7 +2,9 @@ package com.aihealthcare.ah0404.record
 
 import com.aihealthcare.ah0404.network.StsAssessmentItem
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -48,5 +50,12 @@ class StsTrendTest {
         val lines = stsRecentLines(items)
         assertEquals(5, lines.size)
         assertEquals("07.21 · 11.0초", lines[0])
+    }
+
+    @Test
+    fun `권장 재측정 주기 안내 - 3개월(낙상예방 운동 최소 12주·MDC 약 3초 근거)`() {
+        // 문구 회귀 방지: 주기를 바꾸려면 docs/sts_remeasure_interval.md 의 근거부터 갱신할 것.
+        assertTrue(STS_REMEASURE_INTERVAL_NOTICE.contains("3개월"))
+        assertFalse(STS_REMEASURE_INTERVAL_NOTICE.contains("한 달"))
     }
 }
