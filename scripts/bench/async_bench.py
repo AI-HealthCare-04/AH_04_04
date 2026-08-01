@@ -31,7 +31,8 @@ DB·인증을 거치지 않고 추론 경계만 격리해 측정한다. 실제 �
 
     uv run --no-sync python scripts/bench/async_bench.py
 
-결과는 stdout 표 + `scripts/bench/async_bench_result.json` 으로 남는다.
+부하 생성기와 health probe는 서로 다른 프로세스/이벤트 루프에서 실행한다. 결과는
+stdout 표 + 최신 요약 `scripts/bench/async_bench_result.json` + 회차별 JSON으로 남는다.
 """
 
 from __future__ import annotations
@@ -40,10 +41,12 @@ import argparse
 import asyncio
 import json
 import os
+import platform
 import statistics
 import subprocess
 import sys
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -54,6 +57,9 @@ if str(REPO_ROOT) not in sys.path:
 HOST = "127.0.0.1"
 PORT = 8899
 BASE = f"http://{HOST}:{PORT}"
+SERVER_WORKERS = 1
+MIN_P99_SAMPLES = 100
+PROBE_INTERVAL_SECONDS = 0.02
 
 # 결정성 테스트와 같은 고정 입력(나이 고정 → 시계 비의존).
 FEATURES = {
@@ -102,16 +108,39 @@ def serve() -> None:
     import uvicorn
 
     # workers=1: 이벤트 루프 하나에서의 거동을 보는 것이 목적이다.
-    uvicorn.run(build_app(), host=HOST, port=PORT, log_level="error", workers=1)
+    uvicorn.run(build_app(), host=HOST, port=PORT, log_level="error", workers=SERVER_WORKERS)
 
 
 # ────────────────────────────── 측정 ──────────────────────────────
-def pct(values: list[float], q: float) -> float:
+def percentile(values: list[float], q: float) -> float:
+    """선형 보간 percentile(type 7): position=(n-1)*q.
+
+    표본 최댓값을 단순히 고르는 기존 int(n*q) 방식보다 작은 표본에서 덜 불연속적이다.
+    다만 P99는 꼬리 표본이 최소 1개 이상 있어야 하므로 n>=100일 때만 외부에 보고한다.
+    """
     if not values:
         return float("nan")
+    if not 0 <= q <= 1:
+        raise ValueError("q must be between 0 and 1")
     ordered = sorted(values)
-    idx = min(int(len(ordered) * q), len(ordered) - 1)
-    return ordered[idx]
+    position = (len(ordered) - 1) * q
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    fraction = position - lower
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
+
+
+def summarize_health(health_ms: list[float]) -> dict[str, float | int | str | None]:
+    samples = len(health_ms)
+    p99_reliable = samples >= MIN_P99_SAMPLES
+    return {
+        "health_samples": samples,
+        "health_p50_ms": round(statistics.median(health_ms), 2) if health_ms else None,
+        "health_p95_ms": round(percentile(health_ms, 0.95), 2) if health_ms else None,
+        "health_p99_ms": round(percentile(health_ms, 0.99), 2) if health_ms and p99_reliable else None,
+        "health_p99_note": None if p99_reliable else f"표본 부족(n<{MIN_P99_SAMPLES})",
+        "health_max_ms": round(max(health_ms), 2) if health_ms else None,
+    }
 
 
 async def probe_health(client, stop: asyncio.Event, out: list[float], interval: float) -> None:
@@ -135,46 +164,122 @@ async def load_worker(client, path: str, stop: asyncio.Event, counter: list[int]
             pass
 
 
-async def run_condition(name: str, path: str | None, concurrency: int, seconds: float) -> dict:
-    """path=None 이면 부하 없이 기준선만 측정한다."""
+async def run_load_client(path: str, concurrency: int, seconds: float) -> dict[str, float | int]:
+    """별도 프로세스에서 예측 부하만 생성한다.
+
+    부모 프로세스의 health probe 이벤트 루프와 분리해 클라이언트 측 스케줄링 지연이
+    서버 지연에 섞이지 않게 한다. stdin START 신호 전에는 요청을 시작하지 않는다.
+    """
     import httpx
 
-    limits = httpx.Limits(max_connections=concurrency + 8, max_keepalive_connections=concurrency + 8)
+    limits = httpx.Limits(max_connections=concurrency + 4, max_keepalive_connections=concurrency + 4)
     async with httpx.AsyncClient(limits=limits, timeout=30.0) as client:
-        await client.get(f"{BASE}/health")  # 커넥션 워밍업
+        await client.get(f"{BASE}/health")
+        print("READY", flush=True)
+        command = await asyncio.to_thread(sys.stdin.readline)
+        if command.strip() != "START":
+            raise RuntimeError("load client did not receive START")
 
         stop = asyncio.Event()
-        health_ms: list[float] = []
         done = [0]
-
-        tasks = [asyncio.create_task(probe_health(client, stop, health_ms, 0.02))]
-        if path is not None:
-            tasks += [asyncio.create_task(load_worker(client, path, stop, done)) for _ in range(concurrency)]
-
-        t0 = time.perf_counter()
+        tasks = [asyncio.create_task(load_worker(client, path, stop, done)) for _ in range(concurrency)]
+        started = time.perf_counter()
         await asyncio.sleep(seconds)
         stop.set()
-        elapsed = time.perf_counter() - t0
-        # 워커는 stop 을 보고 스스로 빠져나온다. 진행 중인 요청까지만 기다리고,
-        # 그 안에 안 끝나면 취소한다 — 높은 동시성에서 백로그 때문에 teardown 이 막히는 것을 막는다.
         try:
             await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=10.0)
         except TimeoutError:
-            for t in tasks:
-                t.cancel()
+            for task in tasks:
+                task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+        elapsed = time.perf_counter() - started
+    return {"requests": done[0], "elapsed_seconds": elapsed}
 
-    return {
+
+async def run_condition(name: str, path: str | None, concurrency: int, seconds: float) -> dict:
+    """path=None 이면 부하 없이 기준선만 측정한다.
+
+    부하 생성은 별도 프로세스, health probe는 현재 프로세스에서 실행한다.
+    """
+    import httpx
+
+    load_process: subprocess.Popen[str] | None = None
+    load_result: dict[str, float | int] | None = None
+    limits = httpx.Limits(max_connections=4, max_keepalive_connections=4)
+    health_ms: list[float] = []
+    try:
+        async with httpx.AsyncClient(limits=limits, timeout=30.0) as client:
+            await client.get(f"{BASE}/health")  # 커넥션 워밍업
+            stop = asyncio.Event()
+
+            if path is not None:
+                load_process = subprocess.Popen(
+                    [
+                        sys.executable,
+                        __file__,
+                        "--load-client",
+                        path,
+                        "--concurrency",
+                        str(concurrency),
+                        "--seconds",
+                        str(seconds),
+                    ],
+                    cwd=str(REPO_ROOT),
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                assert load_process.stdout is not None
+                ready = await asyncio.wait_for(asyncio.to_thread(load_process.stdout.readline), timeout=30.0)
+                if ready.strip() != "READY":
+                    raise RuntimeError(f"load client startup failed: {ready.strip()}")
+
+            probe_task = asyncio.create_task(
+                probe_health(client, stop, health_ms, PROBE_INTERVAL_SECONDS)
+            )
+            try:
+                if load_process is not None:
+                    assert load_process.stdin is not None
+                    load_process.stdin.write("START\n")
+                    load_process.stdin.flush()
+                await asyncio.sleep(seconds)
+            finally:
+                stop.set()
+                await probe_task
+
+            if load_process is not None:
+                try:
+                    stdout, stderr = await asyncio.to_thread(load_process.communicate, timeout=15.0)
+                except subprocess.TimeoutExpired:
+                    load_process.terminate()
+                    await asyncio.to_thread(load_process.communicate, timeout=10.0)
+                    raise RuntimeError("load client teardown timed out") from None
+                if load_process.returncode != 0:
+                    raise RuntimeError(f"load client failed: {stderr.strip()}")
+                lines = [line for line in stdout.splitlines() if line.strip()]
+                load_result = json.loads(lines[-1])
+    finally:
+        if load_process is not None and load_process.poll() is None:
+            load_process.terminate()
+            try:
+                await asyncio.to_thread(load_process.communicate, timeout=5.0)
+            except subprocess.TimeoutExpired:
+                load_process.kill()
+                await asyncio.to_thread(load_process.communicate, timeout=5.0)
+
+    result = {
         "condition": name,
         "load_path": path,
         "concurrency": concurrency if path else 0,
-        "health_samples": len(health_ms),
-        "health_p50_ms": round(statistics.median(health_ms), 2) if health_ms else None,
-        "health_p95_ms": round(pct(health_ms, 0.95), 2) if health_ms else None,
-        "health_p99_ms": round(pct(health_ms, 0.99), 2) if health_ms else None,
-        "health_max_ms": round(max(health_ms), 2) if health_ms else None,
-        "predict_rps": round(done[0] / elapsed, 1) if path else None,
+        **summarize_health(health_ms),
+        "predict_rps": (
+            round(float(load_result["requests"]) / float(load_result["elapsed_seconds"]), 1)
+            if load_result is not None
+            else None
+        ),
     }
+    return result
 
 
 def diagnose() -> dict:
@@ -246,7 +351,17 @@ def diagnose() -> dict:
     }
 
 
-async def main_async(concurrency: int, seconds: float) -> None:
+def format_ms(value: float | None, width: int = 8) -> str:
+    return f"{value:>{width}.2f}ms" if value is not None else f"{'—':>{width + 2}}"
+
+
+def validate_run_id(run_id: str) -> str:
+    if not run_id or not all(ch.isalnum() or ch in "-_" for ch in run_id):
+        raise ValueError("run-id must contain only letters, numbers, '-' or '_'")
+    return run_id
+
+
+async def main_async(concurrency: int, seconds: float, run_id: str, output_dir: Path) -> None:
     results = []
     for name, path in (
         ("A. 부하 없음(기준선)", None),
@@ -261,10 +376,18 @@ async def main_async(concurrency: int, seconds: float) -> None:
     diag = diagnose()
 
     meta = {
+        "run_id": run_id,
+        "recorded_at_utc": datetime.now(UTC).isoformat(),
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
         "cpu_count": os.cpu_count(),
         "python": sys.version.split()[0],
+        "server_workers": SERVER_WORKERS,
         "concurrency": concurrency,
         "seconds_per_condition": seconds,
+        "percentile_method": "linear interpolation at (n-1)*q; P99 reported only when n>=100",
+        "client_isolation": "prediction load subprocess; health probe parent-process event loop",
         "note": "health 지연 = 예측 부하 중 가벼운 엔드포인트의 응답 시간(이벤트 루프 점유 지표)",
     }
 
@@ -276,10 +399,10 @@ async def main_async(concurrency: int, seconds: float) -> None:
         print(
             f"{r['condition']:<32}"
             f"{r['health_samples']:>6d}"
-            f"{r['health_p50_ms']:>10.2f}ms"
-            f"{r['health_p95_ms']:>8.2f}ms"
-            f"{r['health_p99_ms']:>8.2f}ms"
-            f"{r['health_max_ms']:>8.2f}ms"
+            f"{format_ms(r['health_p50_ms'], 10)}"
+            f"{format_ms(r['health_p95_ms'])}"
+            f"{format_ms(r['health_p99_ms'])}"
+            f"{format_ms(r['health_max_ms'])}"
             f"{(r['predict_rps'] if r['predict_rps'] is not None else 0):>12.1f}"
         )
 
@@ -290,24 +413,44 @@ async def main_async(concurrency: int, seconds: float) -> None:
     g = diag["gil_check"]
     print(f"GIL 판별: 직렬 {g['serial_ms']}ms vs 4스레드 {g['threads4_ms']}ms → 속도향상 {g['speedup']}x")
 
-    out = REPO_ROOT / "scripts" / "bench" / "async_bench_result.json"
-    out.write_text(
-        json.dumps({"meta": meta, "results": results, "diagnostics": diag}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    print(f"\n결과 저장: {out.relative_to(REPO_ROOT)}")
+    payload = {"meta": meta, "results": results, "diagnostics": diag}
+    serialized = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    latest = output_dir / "async_bench_result.json"
+    archive_dir = output_dir / "results"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    archive = archive_dir / f"async_bench_{run_id}.json"
+    with archive.open("x", encoding="utf-8") as archive_file:
+        archive_file.write(serialized)
+    latest.write_text(serialized, encoding="utf-8")
+    print(f"\n최신 결과: {latest}")
+    print(f"회차 보존: {archive}")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--serve", action="store_true", help="내부용: 서버 프로세스로 기동")
+    ap.add_argument("--load-client", metavar="PATH", help="내부용: 별도 프로세스 부하 생성기")
     ap.add_argument("--concurrency", type=int, default=64)
     ap.add_argument("--seconds", type=float, default=6.0)
+    ap.add_argument("--run-id", help="결과 파일 식별자(기본: UTC 시각)")
+    ap.add_argument(
+        "--output-dir",
+        type=Path,
+        default=REPO_ROOT / "scripts" / "bench",
+        help="최신/회차별 결과 저장 디렉터리",
+    )
     args = ap.parse_args()
 
     if args.serve:
         serve()
         return
+    if args.load_client:
+        result = asyncio.run(run_load_client(args.load_client, args.concurrency, args.seconds))
+        print(json.dumps(result), flush=True)
+        return
+
+    run_id = validate_run_id(args.run_id or datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ"))
 
     server = subprocess.Popen(
         [sys.executable, __file__, "--serve"],
@@ -328,7 +471,7 @@ def main() -> None:
             raise SystemExit("서버 기동 실패")
 
         print(f"서버 준비됨 (동시성 {args.concurrency}, 조건당 {args.seconds}s)\n")
-        asyncio.run(main_async(args.concurrency, args.seconds))
+        asyncio.run(main_async(args.concurrency, args.seconds, run_id, args.output_dir.resolve()))
     finally:
         server.terminate()
         server.wait(timeout=10)
