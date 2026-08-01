@@ -19,14 +19,15 @@
 //   WARMUP    워밍업 시간 (기본 1m) — 커넥션 풀·캐시 초기화 구간. 임계값 판정에서 제외됨.
 //   WRITES    1이면 미션 기록 쓰기(POST/PATCH mission-logs) 포함 (기본 0 — 실DB에 행이 쌓이므로
 //             실측 시점에만 켠다)
-//   TOKENS    쉼표로 구분한 실계정 액세스 토큰 목록 (선택). **앞번호 VU 에 1:1 배정**되고
-//             나머지 VU 는 게스트 토큰을 발급받는다 — 실계정·게스트 혼합 부하(리뷰 반영:
-//             '전부 실계정'이 아니라 토큰 수만큼만 실계정). 전 VU 실계정을 원하면 VUS 만큼 넘길 것.
-//             미지정 시 전 VU 게스트.
+//   TOKENS    쉼표로 구분한 실계정 액세스 토큰 목록 (선택). 본 측정이 **실계정 시나리오
+//             (main_real, VU 수 = 토큰 수)와 게스트 시나리오(main_guest, VU 수 = VUS - 토큰 수)로
+//             명시 분리**되어 혼합 비율이 실행 전체에서 보장된다(리뷰 반영 — 전역 __VU 번호로
+//             역할을 추론하지 않는다). 전 VU 실계정을 원하면 VUS 만큼 넘길 것. 미지정 시 전 VU 게스트.
 //             ⚠️ 게스트 계정은 기록이 비어 있어 목록 조회가 비현실적으로 빠르게 나온다.
 //                기록(미션 로그·예측 이력)이 쌓인 계정 토큰을 섞는 편이 정확하다.
 // =====================================================================================
 import http from "k6/http";
+import exec from "k6/execution";
 import { check, group, sleep } from "k6";
 import { textSummary } from "https://jslib.k6.io/k6-summary/0.0.2/index.js";
 
@@ -61,49 +62,75 @@ const NAMES = [
 ];
 if (WRITES) NAMES.push("POST /mission-logs", "PATCH /mission-logs/{id}");
 
-// 엔드포인트별 P95 < 3초(심사 5-1) — 워밍업(scenario:warmup)은 판정에서 제외.
+// 실계정/게스트 VU 수 — 본 측정을 **별도 시나리오로 명시 분리**해 혼합 비율을 보장한다(리뷰 반영).
+//   __VU 는 테스트 전역 식별자라 시나리오 간 재사용·번호 범위를 보장할 수 없어, 전역 번호로
+//   역할을 추론하면 본 측정이 전부 게스트가 되는 등 비율이 깨질 수 있다. 대신 시나리오별 VU 수를
+//   고정하고, 실계정 시나리오 안에서는 시나리오-로컬 ID(exec.vu.idInScenario, 항상 1부터)로
+//   토큰을 1:1 배정한다.
+const REAL_VUS = Math.min(TOKENS.length, VUS);
+const GUEST_VUS = Math.max(0, VUS - REAL_VUS);
+
+// 엔드포인트별 P95 < 3초(심사 5-1) — 워밍업(phase:warmup)은 판정에서 제외.
+//   본 측정이 두 시나리오(main_guest·main_real)로 나뉘므로 시나리오명 대신 공통 phase 태그로 판정한다.
 const thresholds = {
-  "http_req_failed{scenario:main}": ["rate<0.05"],
+  "http_req_failed{phase:main}": ["rate<0.05"],
 };
 for (const name of NAMES) {
-  thresholds[`http_req_duration{scenario:main,name:${name}}`] = ["p(95)<3000"];
+  thresholds[`http_req_duration{phase:main,name:${name}}`] = ["p(95)<3000"];
 }
 
-export const options = {
-  scenarios: {
-    warmup: {
-      executor: "constant-vus",
-      vus: Math.max(1, Math.floor(VUS / 5)),
-      duration: WARMUP,
-    },
-    main: {
-      executor: "constant-vus",
-      vus: VUS,
-      duration: DURATION,
-      startTime: WARMUP,
-    },
+const scenarios = {
+  warmup: {
+    executor: "constant-vus",
+    exec: "guestFlow",
+    vus: Math.max(1, Math.floor(VUS / 5)),
+    duration: WARMUP,
+    tags: { phase: "warmup" },
   },
-  thresholds,
 };
+if (GUEST_VUS > 0) {
+  scenarios.main_guest = {
+    executor: "constant-vus",
+    exec: "guestFlow",
+    vus: GUEST_VUS,
+    duration: DURATION,
+    startTime: WARMUP,
+    tags: { phase: "main" },
+  };
+}
+if (REAL_VUS > 0) {
+  scenarios.main_real = {
+    executor: "constant-vus",
+    exec: "realFlow",
+    vus: REAL_VUS,
+    duration: DURATION,
+    startTime: WARMUP,
+    tags: { phase: "main" },
+  };
+}
+
+export const options = { scenarios, thresholds };
 
 // VU마다 토큰 1개를 유지한다(모듈 스코프 = VU 스코프). 게스트 로그인은 VU당 1회만 —
 // 매 이터레이션 새 게스트를 만들면 계정 생성만 난타하는 비현실적 부하가 된다.
+// (한 VU 가 warmup 후 main 에 재사용되어도 게스트 토큰 재사용은 무해하다. 실계정 시나리오는
+//  시나리오-로컬 ID 로 매번 결정적으로 배정하므로 재사용과 무관하다.)
 let vuToken = null;
 
 function authHeaders() {
   return { headers: { Authorization: `Bearer ${vuToken}`, "Content-Type": "application/json" } };
 }
 
-function ensureLogin() {
+function ensureGuestLogin() {
   if (vuToken) return;
-  // 실계정 토큰은 앞번호 VU 에 1:1 배정 — 나머지는 게스트(혼합 부하, 리뷰 반영).
-  if (TOKENS.length > 0 && __VU <= TOKENS.length) {
-    vuToken = TOKENS[__VU - 1];
-    return;
-  }
   const r = http.post(`${BASE}/auth/guest`, null, { tags: { name: "POST /auth/guest" } });
   check(r, { "guest login 200": (res) => res.status === 200 });
   vuToken = r.json("access_token");
+}
+
+function ensureRealLogin() {
+  // main_real 시나리오 전용 — idInScenario 는 이 시나리오 안에서 항상 1..REAL_VUS 라 배정이 보장된다.
+  vuToken = TOKENS[(exec.vu.idInScenario - 1) % TOKENS.length];
 }
 
 // 요청별 파라미터: tags + 인증 헤더 + **요청별 기대 상태코드**(responseCallback).
@@ -123,9 +150,18 @@ function get(path, name, okStatuses = [200]) {
   return r;
 }
 
-export default function () {
-  ensureLogin();
+// 시나리오 진입점 — 로그인 방식만 다르고 사용자 흐름(journey)은 동일하다.
+export function guestFlow() {
+  ensureGuestLogin();
+  journey();
+}
 
+export function realFlow() {
+  ensureRealLogin();
+  journey();
+}
+
+function journey() {
   group("홈 진입", () => {
     get("/home", "GET /home");
     get("/users/me", "GET /users/me");
