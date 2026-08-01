@@ -3,9 +3,9 @@
 보너스 포인트는 별도 테이블 없이 mission_logs 한 행으로 적립한다. 포인트 잔액·적립 이력·당일 합계가
 모두 mission_logs.earned_points 에서만 파생되므로(단일 원천), 종류만 늘리면 세 경로가 그대로 맞는다.
 
-Revision ID: 0019_mission_bonus
-Revises: 0018_prediction_feedbacks
-Create Date: 2026-08-01 12:00:00
+Revision ID: 0020_mission_bonus
+Revises: 0019_sts_score_view
+Create Date: 2026-08-02 00:30:00
 """
 
 from collections.abc import Sequence
@@ -13,8 +13,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0019_mission_bonus"
-down_revision: str = "0018_prediction_feedbacks"
+revision: str = "0020_mission_bonus"
+down_revision: str = "0019_sts_score_view"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

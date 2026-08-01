@@ -121,7 +121,7 @@ MISSION_TEMPLATES: list[dict] = [
     },
     # 보너스 — 사용자가 고르는 미션이 아니라, 그날 미션을 다 채웠을 때 서버가 얹어 주는 적립.
     #   GET /missions 목록에는 나오지 않는다(get_active_templates 가 mission_type=bonus 를 제외).
-    #   운영 DB 는 마이그레이션 0019 가 같은 행을 넣으므로, 여기 항목은 새 DB(로컬·테스트)용이다.
+    #   운영 DB 는 마이그레이션 0020 이 같은 행을 넣으므로, 여기 항목은 새 DB(로컬·테스트)용이다.
     {
         "mission_type": MissionType.BONUS,
         "title": "모든 미션 완료 보너스",

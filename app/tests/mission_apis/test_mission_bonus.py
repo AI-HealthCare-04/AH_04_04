@@ -57,7 +57,7 @@ async def _seed_template(
 
 
 async def _seed_bonus_template(sm: async_sessionmaker[AsyncSession]) -> int:
-    """보너스 템플릿(운영에서는 마이그레이션 0019 가 넣는 행). 테스트 DB 는 매번 비워지므로 여기서 시드한다."""
+    """보너스 템플릿(운영에서는 마이그레이션 0020 이 넣는 행). 테스트 DB 는 매번 비워지므로 여기서 시드한다."""
     return await _seed_template(
         sm, mission_type=MissionType.BONUS, reward_points=BONUS_POINTS, daily_count_limit=1, display_order=90
     )
