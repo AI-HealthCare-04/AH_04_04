@@ -1,57 +1,74 @@
-# AWGS 2025 Days Deployment Validation Summary
+# AWGS 2025 일수(days) 배포본 검증 요약
 
-## Setup
+## 검증 조건
 
-- Source: KNHANES 2022-2024
-- Population: age 65 or older with concurrent BIA and grip-strength measurements
-- Labeled sample: 4,279 participants; 568 positive cases; observed prevalence 13.27%
-- Target: `sarcopenia_awgs2025`
-- Definition: low ASMI or low ASM/BMI, together with low grip strength
-- Model: unweighted logistic regression using app-collectable inputs
-- Activity features:
-  - `walk_days`: 0-7 days per week with at least 30 minutes of walking
-  - `musc_days`: 0-5 strength-training days per week, where 5 means 5 or more days
+- 자료원: 국민건강영양조사(KNHANES) 2022–2024
+- 대상: 65세 이상 중 BIA(체성분)와 악력을 함께 측정한 참여자
+- 라벨 표본: 4,279명, 양성 568건, 관측 유병률 13.27%
+  - `with waist`(허리 포함) 모델은 이 중 4,266행으로 평가한다. 13행은 허리둘레 결측.
+- 목표 라벨: `sarcopenia_awgs2025`
+- 정의: 저근육량(낮은 ASMI **또는** 낮은 ASM/BMI)과 저악력의 결합
+- 모델: 앱에서 수집 가능한 입력만 사용한 비가중 로지스틱 회귀
+- 활동량 변수:
+  - `walk_days`: 주당 30분 이상 걷기를 실천한 일수(0–7)
+  - `musc_days`: 주당 근력운동 일수(0–5). 5는 "5일 이상"을 뜻한다.
 
-The final deployment artifacts were fitted on all available 2022-2024 labeled rows. Validation results below come
-from cross-validation or a held-out random 80/20 split, not from the final full-data fit itself. The reported results
-are internal validation only; this AWGS 2025 days deployment has no temporal or external validation result yet.
+최종 배포 아티팩트는 2022–2024 라벨 표본 **전체**로 적합했다. 아래 검증 수치는 교차검증 또는 80/20 홀드아웃에서 나온 값이며, 전체 데이터로 적합한 최종 모델 자체를 그 데이터로 재평가한 값이 아니다. 보고된 결과는 **내부 검증 전용**이며, 이 AWGS 2025 일수 배포본에는 아직 시간적(temporal) 검증이나 외부 검증 결과가 없다.
 
-## Why activity inputs changed
+## 활동량 입력을 바꾼 이유
 
-Earlier internal AWGS 2025 model candidates used binary activity-practice inputs. The days v3 deployment uses
-KNHANES-compatible day counts so the service can show a more meaningful predicted-score trend as users complete
-walking and strength challenges.
+초기 AWGS 2025 모델 **후보**들은 활동 실천 여부를 이분형(y/n) 플래그로 받았다. days v3 배포본은 KNHANES와 호환되는 **일수**를 사용한다. 사용자가 걷기·근력 챌린지를 수행할수록 예측 점수 추이가 의미 있게 반응하도록 하기 위해서다.
 
-KNHANES stores walking days with 0-7 day resolution, while the strength-training item is top-coded at 5 or more days.
-The service therefore keeps `walk_days` on a 0-7 scale and caps only `musc_days` at 5.
+KNHANES는 걷기 일수를 0–7일 해상도로 저장하고, 근력운동 항목은 "5일 이상"으로 top-coding 한다. 서비스도 이를 따라 `walk_days`는 0–7로 두고 `musc_days`만 5에서 상한 처리한다.
 
-## Performance
+## 성능
 
-| variant | evaluation | AUROC | AUPRC | Brier | ECE |
-| --- | --- | ---: | ---: | ---: | ---: |
-| with waist | 5-fold cross-validation | 0.836 | - | - | - |
-| minimal | 5-fold cross-validation | 0.822 | - | - | - |
+5-fold 층화 교차검증의 out-of-fold(OOF) 평가, `random_state=42`. ECE는 동일 폭 10구간(bin). 신뢰구간은 부트스트랩 백분위 구간(1,000회 재표본).
 
-The days-based activity variables are intended mainly to support longitudinal sensitivity to challenge success counts.
-Overall discrimination is materially similar to the earlier binary-input AWGS 2025 candidate.
+| 모델 | n | AUROC [95% CI] | AUPRC [95% CI] | Brier | ECE |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| with waist (허리 포함) | 4,266 | 0.8354 [0.8195, 0.8513] | 0.4584 [0.4181, 0.5058] | 0.0908 | 0.0134 |
+| minimal (허리 없음) | 4,279 | 0.8227 [0.8061, 0.8385] | 0.4361 [0.3919, 0.4865] | 0.0930 | 0.0053 |
 
-## Continuous score and transitional threshold
+fold별 AUROC: minimal 0.823 ± 0.008, with waist 0.836 ± 0.004.
 
-`selected_threshold=0.20` is retained as a transitional high-tier/action boundary so the existing `risk_level` and
-`care_stage` pipeline continues to operate until the continuous API and client migration are complete. The current
-predictor derives its middle compatibility band at half that threshold (`0.10`). Neither boundary defines the
-continuous graph scale, and the planned trend must use `risk_score` together with `model_version`.
+### 지표 선택 근거
 
-## Variant policy
+유병률이 13.27%인 불균형 자료에서 AUROC는 낙관적으로 보인다. 그래서 AUPRC는 **무작위 기준선(= 유병률 0.1327) 대비**로 읽는다 — minimal의 0.4361은 기준선의 **3.3배**다.
 
-- Use `self_report_plus_waist_days` when `waist_cm` is present.
-- Use `self_report_minimal_days` when waist circumference is unavailable.
-- Do not impute waist circumference merely to select the waist-aware model; the analysis did not show a benefit over
-  the minimal fallback for imputed waist values.
+또한 이 서비스는 순위만 쓰는 것이 아니라 **예측 확률 자체를 노출**한다. 사용자에게 보이는 점수·백분위·what-if 시뮬레이션이 모두 그 확률의 결정적(deterministic) 변환이다. 따라서 화면에 찍히는 값을 좌우하는 것은 판별력보다 **보정(calibration)** 이며, 이것이 판별 지표와 나란히 Brier·ECE를 함께 보고하는 이유다.
 
-## Artifact contract
+일수 기반 활동 변수의 주된 목적은 챌린지 성공 횟수에 대한 종단적 민감도 확보다. 전반적인 판별력은 초기 이분형 입력 AWGS 2025 **후보**와 실질적으로 동등하다.
 
-Both joblib bundles contain:
+### 이 표를 읽을 때의 유의사항
+
+1. **일수 인코딩과 이분형 인코딩은 성능 차이가 없다**(AUROC 0.8227 vs 0.8220, AUPRC 0.4361 vs 0.4368). 판별력을 높이려고 바꾼 것이 아니다. 일수라야 "근력운동을 하루 더 하면 내 점수가 얼마나 달라지는가"에 답할 수 있고, 이분형 플래그로는 그 질문을 표현할 수 없기 때문에 바꿨다. 결과적으로 **측정된 성능 손실 없이 제품 기능을 얻은** 변경이다.
+2. **통합 OOF의 ECE가 fold별 값보다 낮다**(minimal 통합 0.0053 vs fold별 0.012–0.023). 이는 정상이다. 통합 표본은 보정 구간(bin)당 행 수가 약 5배라 구간 추정이 안정적이고, fold별로 서로 반대 방향인 편차가 부분적으로 상쇄된다. **별도의 더 잘 보정된 모델이 존재한다는 뜻이 아니다.**
+3. **두 모델은 완전히 동일한 표본에서 평가된 것이 아니다**(4,279 vs 4,266, 「검증 조건」 참고). 0.3% 차이는 관측된 성능 격차를 설명하기엔 너무 작지만, 엄밀히 짝지어진(paired) 비교는 아니다.
+
+### 재현 방법
+
+```bash
+python scripts/ml/evaluate_model.py --data_dir <KNHANES 전처리 parquet 폴더> --out_dir scripts/ml
+```
+
+모든 난수는 `random_state=42`로 고정돼 있다. 커밋된 산출물은 `scripts/ml/metrics.json`(헤드라인·fold별·신뢰구간 및 모든 비교 실험)과 `scripts/ml/metrics.csv`(flat 형태)다. KNHANES 원자료는 이용 조건상 저장소에 두지 않으므로, 이 지표 파일이 검토 가능한 기록 역할을 한다.
+
+버린 대안을 포함한 전체 실험·의사결정 이력은 `docs/ml/모델_탐색_의사결정_이력.md`에 있다.
+
+## 연속 점수와 과도기 임계값
+
+`selected_threshold=0.20`은 기존 `risk_level`·`care_stage` 파이프라인이 연속 점수 API와 클라이언트 이행이 끝날 때까지 계속 동작하도록 남겨 둔 **과도기용** 상위 구간/행동 권고 경계다. 현재 predictor는 중간 호환 구간을 그 절반(`0.10`)에서 도출한다. 두 경계 중 어느 것도 연속 그래프의 축척을 정의하지 않으며, 추이 기능은 반드시 `risk_score`를 `model_version`과 함께 사용해야 한다.
+
+## 모델 선택 정책
+
+- `waist_cm`이 있으면 `self_report_plus_waist_days`를 사용한다.
+- 허리둘레가 없으면 `self_report_minimal_days`를 사용한다.
+- 허리 인지 모델을 쓰려는 목적만으로 허리둘레를 **대치(impute)하지 않는다.** 분석 결과, 대치한 허리값은 허리를 제외한 minimal 모델보다 나은 성능을 보이지 못했다.
+
+## 아티팩트 계약
+
+두 joblib 번들은 다음을 포함한다.
 
 - `model`
 - `feature_columns`
@@ -62,19 +79,33 @@ Both joblib bundles contain:
 - `probability_type`
 - `model_version`
 
-The repository contract tests verify these fields, the exact feature order, binary model classes, the AWGS 2025
-target, threshold `0.20`, and days v3 model versions.
+저장소의 계약 테스트(`app/tests/ml/test_predictor.py`)가 이 필드들과 정확한 피처 순서, 이진 분류 클래스, AWGS 2025 목표 라벨, 임계값 `0.20`, days v3 모델 버전을 검증한다.
 
 ### SHA-256
 
-| artifact | SHA-256 |
+정본: `docs/ml/ARTIFACT_HASHES.txt`. 아래 값은 `app/tests/ml/test_determinism.py`가 검증하므로, 아티팩트가 바뀌면 조용히 배포되는 대신 **테스트가 실패한다.**
+
+| 아티팩트 | SHA-256 |
 | --- | --- |
-| `sarcopenia_model_minimal.joblib` | `987287E8BE9DAA87487595865D2113B7F298CDD3248ED107ADCD7B580AC4FFE5` |
-| `sarcopenia_model_with_waist.joblib` | `EC8379081480587EC2AE757B63242D79B95FC071FCE74CAC00DA9EBE1D9B47F7` |
+| `sarcopenia_model_minimal.joblib` | `987287e8be9daa87487595865d2113b7f298cdd3248ed107adcd7b580ac4ffe5` |
+| `sarcopenia_model_with_waist.joblib` | `0b5052862a66d1a429e3632a4d2eac00babbf3546be6c38748ab52670c5c2c10` |
+| `cohort_unified_65plus.json` | `c20061077a9c44485ad21f77227cb27fc9772a91d3f0cb3e91d56e1c6265ff93` |
 
-## Interpretation limits
+`with waist` 번들은 허리둘레 결측 13행을 학습 표본에서 제외한 뒤 재생성됐다. 이전 해시 `EC837908...`은 폐기된 번들을 가리키므로 사용하지 않는다.
 
-- The reported v3 results are internal validation, not temporal or external validation.
-- The labeled sample selection can under-represent frailer and oldest participants.
-- App users may have a different input distribution from KNHANES participants.
-- Model-version boundaries must be retained when continuous scores are exposed as a trend.
+## 결정성(determinism)
+
+추론은 구조적으로 결정적이다. 로지스틱 회귀의 `predict_proba`는 표집(sampling)이 없는 순수 행렬 연산이고, 그 뒤의 점수·구간·what-if 변환도 모두 그 확률의 결정적 함수다. `app/tests/ml/test_determinism.py`가 이를 3개 층위로 검증한다.
+
+1. **추론 결정성** — 고정 입력으로 `predict_sync`를 100회 반복해 근사비교가 아닌 `==`로 비교한다. 두 아티팩트 모두 대상이다. 여기서는 **부동소수 완전 일치가 올바른 단언**이다. 오차를 허용하면 실제 버그를 가리게 된다.
+2. **아티팩트 무결성** — 위의 SHA-256 값. 1층에서 말하는 "같은 모델"이 실제로 배포된 모델임을 성립시킨다.
+3. **시스템 경로 결정성** — 시계를 고정한 상태에서 프로필 → 점수 전 경로(나이 산출, 코호트표 조회, 구간화)를 50회 반복한다. 모델 **주변**에서 유입되는 비결정성을 잡아내는 층위다.
+
+결과: 모든 층위에서 편차 0, 비트 단위 일치. 나이는 설계상 현재 날짜에 의존하므로 1·2층은 입력을 나이로 고정하고 3층은 시계를 고정한다. 생일이 지나 점수가 달라지는 것은 **의도된 동작**이지 비결정성이 아니다.
+
+## 해석상의 한계
+
+- 보고된 v3 결과는 내부 검증이며, 시간적(temporal) 검증이나 외부 검증이 아니다.
+- 라벨 표본 선정 방식상 더 허약하거나 초고령인 참여자가 과소대표될 수 있다.
+- 앱 사용자의 입력 분포는 KNHANES 참여자와 다를 수 있다.
+- 연속 점수를 추이로 노출할 때는 모델 버전 경계를 반드시 유지해야 한다.
