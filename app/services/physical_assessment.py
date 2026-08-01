@@ -9,6 +9,8 @@ from app.core.utils.clock import now_kst
 from app.dtos.physical_assessment import (
     PhysicalAssessmentActivityProfile,
     PhysicalAssessmentCreateRequest,
+    PhysicalAssessmentHistoryItem,
+    PhysicalAssessmentHistoryResponse,
     PhysicalAssessmentResponse,
 )
 from app.models.activity import ActivityLevelChangeLog, UserActivityProfile
@@ -37,6 +39,28 @@ class PhysicalAssessmentService:
         self.activity_repo = ActivityProfileRepository(session)
         self.health_repo = HealthProfileRepository(session)
         self.health_check_repo = HealthCheckRepository(session)
+
+    async def get_latest_measured(self, user: User) -> PhysicalAssessmentHistoryItem:
+        """최신 5STS 측정값(#353). 스킵만 있고 측정이 없으면 404 — 앱이 '아직 측정 전' 상태를 구분한다."""
+        rows = await self.repo.get_measured_history(user.user_id, limit=1)
+        if not rows:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="측정 기록이 없습니다.")
+        return self._to_history_item(rows[0])
+
+    async def get_measured_history(self, user: User, limit: int) -> PhysicalAssessmentHistoryResponse:
+        """5STS 측정 이력(최신순, #353). 추이 표시는 앱이 시간 역순 그대로 그린다(낮을수록 좋음 표기는 앱 몫)."""
+        rows = await self.repo.get_measured_history(user.user_id, limit)
+        return PhysicalAssessmentHistoryResponse(assessments=[self._to_history_item(row) for row in rows])
+
+    @staticmethod
+    def _to_history_item(assessment: PhysicalAssessment) -> PhysicalAssessmentHistoryItem:
+        # 이력은 측정 기록만 조회하므로(chair_stand IS NOT NULL) 시간 값이 항상 존재한다.
+        return PhysicalAssessmentHistoryItem(
+            physical_assessment_id=assessment.physical_assessment_id,
+            assessment_type=assessment.assessment_type,
+            chair_stand_5_time_sec=float(assessment.chair_stand_5_time_sec or 0),
+            created_at=assessment.created_at,
+        )
 
     async def create_assessment(
         self,
