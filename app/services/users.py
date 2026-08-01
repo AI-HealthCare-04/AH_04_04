@@ -57,13 +57,21 @@ class UserManageService:
         return user
 
     async def withdraw(self, user: User, data: UserWithdrawRequest) -> None:
-        # soft-delete: deleted_at만 찍는다. 이후 get_user가 이 사용자를 걸러내 기존 토큰도 즉시 무효화된다.
-        # 물리 파기/보존기간은 파기정책 확정 후 별도 배치로 분리한다(soft-delete 우선).
+        """회원탈퇴(#356). 연결 데이터를 **실제 삭제**하고 계정은 익명화 후 soft-delete 한다.
+
+        팀 결정(옵션 2, #356): 같은 소셜 계정으로 다시 로그인해도 복구되지 않고 신규 가입이 된다.
+        - 연결 데이터(건강 프로필·신체평가·예측·미션 기록·약관 동의 등)는 purge_user_data 로 삭제한다
+          — 익명화만으로는 '기록이 삭제된다'고 안내할 수 없기 때문(리뷰 지적).
+        - users 행은 남기되 social_id·닉네임을 익명화해 재로그인 시 신규 생성되게 한다.
+        - 삭제와 익명화가 한 트랜잭션이라, 도중 실패하면 둘 다 롤백돼 어중간한 상태가 남지 않는다.
+        - 탈퇴 즉시 get_user 의 deleted_at 필터로 기존 토큰이 무효화된다.
+        """
         if data.confirm is not True:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="회원탈퇴를 진행하려면 confirm이 true여야 합니다.",
             )
+        await self.user_repo.purge_user_data(user.user_id)
         await self.user_repo.soft_delete(user)
         await self.session.commit()
 

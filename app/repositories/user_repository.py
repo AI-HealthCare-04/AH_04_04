@@ -1,10 +1,18 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
+from app.models.activity import ActivityLevelChangeLog, UserActivityProfile
+from app.models.analytics import StsOverlayEvent
+from app.models.dashboard import DailyActivitySummary
+from app.models.health import HealthCheckSession, HealthProfile, PhysicalAssessment
+from app.models.missions import GameLog, MealLog, MissionLog, PhysicalActivityLog, SensorSession
+from app.models.predictions import RiskPrediction
+from app.models.settings import PersonalizedSetting
+from app.models.terms import TermsAgreement
 from app.models.users import AuthProvider, OnboardingStatus, User
 
 
@@ -24,23 +32,6 @@ class UserRepository:
             User.deleted_at.is_(None),
         )
         return await self.session.scalar(stmt)
-
-    async def get_deleted_by_provider_social_id(self, provider: AuthProvider, social_id: str) -> User | None:
-        # 탈퇴(soft-delete)한 동일 소셜 계정 조회. 재로그인 시 신규 생성 대신 복구하기 위함.
-        #   (provider, social_id) 유니크 제약이 있어, 삭제행을 두고 그대로 create하면 IntegrityError가 난다.
-        stmt = select(User).where(
-            User.provider == provider,
-            User.social_id == social_id,
-            User.deleted_at.is_not(None),
-        )
-        return await self.session.scalar(stmt)
-
-    async def restore(self, user: User) -> User:
-        # 탈퇴 계정 복구: deleted_at 해제 + 마지막 로그인 갱신.
-        user.deleted_at = None
-        user.last_login_at = datetime.now(config.TIMEZONE)
-        await self.session.flush()
-        return user
 
     # 소셜 로그인(google/kakao) 사용자 생성. provider만 다르고 흐름은 동일하므로 공통 메서드로 둡니다.
     async def create_social_user(self, provider: AuthProvider, social_id: str, nickname: str) -> User:
@@ -73,6 +64,48 @@ class UserRepository:
         return user
 
     async def soft_delete(self, user: User) -> None:
-        # 물리 삭제가 아니라 deleted_at만 찍는다(soft-delete). 조회/인증에서 자동 제외된다.
+        """탈퇴 처리(#356): 개인 식별자 익명화 + deleted_at 기록.
+
+        social_id 를 `deleted:<uuid4>` 로 치환해 UNIQUE(provider, social_id) 를 비운다 —
+        같은 소셜 계정으로 다시 로그인하면 **복구가 아니라 신규 가입**이 된다(옵션 2, 팀 결정).
+        원본 social_id·닉네임은 남기지 않는다(개인정보 최소화). users 행 자체는 남겨
+        탈퇴 사실과 시점은 보존한다. 연결 데이터 파기는 [purge_user_data] 가 담당한다.
+        """
+        user.social_id = f"deleted:{uuid.uuid4().hex}"  # VARCHAR(100) 내(40자)
+        user.nickname = "탈퇴한 사용자"
         user.deleted_at = datetime.now(config.TIMEZONE)
+        await self.session.flush()
+
+    async def purge_user_data(self, user_id: int) -> None:
+        """탈퇴 사용자의 연결 데이터를 실제 삭제한다(#356 — 리뷰 반영: 익명화 ≠ 파기).
+
+        건강 프로필·신체평가·예측·미션 기록·약관 동의 등 user_id 를 직·간접 참조하는 모든 행이
+        대상이다. FK 제약 때문에 **자식 → 부모 순서**로 지운다(ON DELETE CASCADE 미설정).
+        mission_logs 를 경유하는 상세 로그(식사·활동·게임·센서)는 user_id 컬럼이 없어 서브쿼리로 건다.
+
+        ⚠️ 테이블이 새로 추가되면 여기에 함께 등록해야 한다 —
+           `test_withdrawal.py` 가 메타데이터를 순회해 누락을 잡는다(잔존 행 0 검증).
+        """
+        mission_log_ids = select(MissionLog.mission_log_id).where(MissionLog.user_id == user_id)
+        # 1) mission_logs 자식(상세 로그) — user_id 컬럼이 없어 부모 id 서브쿼리로 건다.
+        await self.session.execute(delete(GameLog).where(GameLog.mission_log_id.in_(mission_log_ids)))
+        await self.session.execute(delete(MealLog).where(MealLog.mission_log_id.in_(mission_log_ids)))
+        await self.session.execute(
+            delete(PhysicalActivityLog).where(PhysicalActivityLog.mission_log_id.in_(mission_log_ids))
+        )
+        await self.session.execute(delete(SensorSession).where(SensorSession.mission_log_id.in_(mission_log_ids)))
+        # 2) health_profiles·physical_assessments 를 무는 자식
+        await self.session.execute(delete(RiskPrediction).where(RiskPrediction.user_id == user_id))
+        await self.session.execute(delete(UserActivityProfile).where(UserActivityProfile.user_id == user_id))
+        await self.session.execute(delete(ActivityLevelChangeLog).where(ActivityLevelChangeLog.user_id == user_id))
+        # 3) health_check_sessions 자식 → 부모 순
+        await self.session.execute(delete(PhysicalAssessment).where(PhysicalAssessment.user_id == user_id))
+        await self.session.execute(delete(HealthProfile).where(HealthProfile.user_id == user_id))
+        await self.session.execute(delete(MissionLog).where(MissionLog.user_id == user_id))
+        await self.session.execute(delete(HealthCheckSession).where(HealthCheckSession.user_id == user_id))
+        # 4) users 직속 나머지
+        await self.session.execute(delete(TermsAgreement).where(TermsAgreement.user_id == user_id))
+        await self.session.execute(delete(DailyActivitySummary).where(DailyActivitySummary.user_id == user_id))
+        await self.session.execute(delete(StsOverlayEvent).where(StsOverlayEvent.user_id == user_id))
+        await self.session.execute(delete(PersonalizedSetting).where(PersonalizedSetting.user_id == user_id))
         await self.session.flush()

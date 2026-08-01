@@ -70,29 +70,25 @@ class AuthService:
             await self.user_repo.update_last_login(user)
             is_new_user = False
         else:
-            # 탈퇴(soft-delete)한 동일 소셜 계정이 있으면 신규 생성 대신 복구한다.
-            #   (provider, social_id) 유니크 제약 때문에 그냥 create하면 IntegrityError(500)가 난다.
-            deleted = await self.user_repo.get_deleted_by_provider_social_id(provider, profile.social_id)
-            if deleted is not None:
-                user = await self.user_repo.restore(deleted)
+            # 탈퇴 계정 복구 경로는 제거했다(#356 옵션 2): 탈퇴 시 social_id 를 익명화하므로
+            #   같은 소셜 계정으로 다시 로그인해도 유니크 충돌 없이 **신규 가입**이 된다
+            #   (온보딩·약관 동의를 처음부터 다시 밟는다). 이전 데이터는 탈퇴 시 이미 파기됐다.
+            try:
+                # 신규 사용자의 동시 로그인은 두 트랜잭션이 모두 "사용자 없음"을
+                # 확인한 뒤 같은 (provider, social_id)를 생성하려 경쟁할 수 있다.
+                # 사용자 INSERT만 SAVEPOINT로 감싸야 충돌을 복구하면서도 앞서
+                # 기록한 OAuth nonce 소비 내역은 바깥 트랜잭션에 보존된다.
+                async with self.session.begin_nested():
+                    user = await self.user_repo.create_social_user(
+                        provider, profile.social_id, profile.nickname or generate_nickname()
+                    )
+                is_new_user = True
+            except IntegrityError:
+                user = await self.user_repo.get_by_provider_social_id(provider, profile.social_id)
+                if user is None:
+                    raise
+                await self.user_repo.update_last_login(user)
                 is_new_user = False
-            else:
-                try:
-                    # 신규 사용자의 동시 로그인은 두 트랜잭션이 모두 "사용자 없음"을
-                    # 확인한 뒤 같은 (provider, social_id)를 생성하려 경쟁할 수 있다.
-                    # 사용자 INSERT만 SAVEPOINT로 감싸야 충돌을 복구하면서도 앞서
-                    # 기록한 OAuth nonce 소비 내역은 바깥 트랜잭션에 보존된다.
-                    async with self.session.begin_nested():
-                        user = await self.user_repo.create_social_user(
-                            provider, profile.social_id, profile.nickname or generate_nickname()
-                        )
-                    is_new_user = True
-                except IntegrityError:
-                    user = await self.user_repo.get_by_provider_social_id(provider, profile.social_id)
-                    if user is None:
-                        raise
-                    await self.user_repo.update_last_login(user)
-                    is_new_user = False
         await self.session.commit()
         await self.session.refresh(user)
         access_token = str(self.jwt_service.create_access_token(user))
