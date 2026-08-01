@@ -84,10 +84,17 @@ class AuthLoginViewModel(application: Application) : AndroidViewModel(applicatio
      * 공급자가 멈춰도 로그아웃은 완료돼야 하므로 3초로 상한을 두고, 성패와 무관하게 로컬 세션을 정리한 뒤
      * [onDone] 으로 라우팅 재평가를 호출부에 맡긴다.
      */
-    fun signOut(onDone: () -> Unit) {
+    fun signOut(onDone: () -> Unit) = signOut(notice = null, onDone = onDone)
+
+    /**
+     * [notice] 는 정리 완료 후 로그인 화면에 남길 안내(#356 탈퇴 결과 불명). 이 VM 은 Activity 범위라
+     * 라우팅으로 MAIN VM 들이 폐기돼도 문구가 살아남는다 — 화면 다이얼로그의 생존에 의존하지 않는다(리뷰 P1).
+     */
+    fun signOut(notice: String?, onDone: () -> Unit) {
         viewModelScope.launch {
             withTimeoutOrNull(3_000) { SocialSignInClients.signOutProviders(getApplication()) }
             SessionStore.clearAuthentication(getApplication())
+            if (notice != null) mutableState.value = AuthLoginUiState(message = notice)
             onDone()
         }
     }

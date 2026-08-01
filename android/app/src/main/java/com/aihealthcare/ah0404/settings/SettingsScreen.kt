@@ -56,6 +56,9 @@ fun SettingsScreen(
     onLogout: () -> Unit = {},
     // 회원탈퇴 성공 후(#356) — 호출부가 세션·공급자 credential 정리 후 로그인 화면으로 보낸다(로그아웃과 동일 경로).
     onWithdrawn: () -> Unit = {},
+    // 회원탈퇴 **결과 불명**(#356 리뷰 P1: 타임아웃·401·5xx) — 서버가 이미 파기를 커밋했을 수 있어
+    //   호출부(Activity 범위)가 즉시 같은 정리를 태우되, 성공을 단정하지 않는 안내를 로그인 화면에 남긴다.
+    onWithdrawUncertain: () -> Unit = {},
     modifier: Modifier = Modifier,
     vm: SettingsViewModel = viewModel(),
 ) {
@@ -224,7 +227,7 @@ fun SettingsScreen(
             confirmText = "탈퇴하기",
             onConfirm = {
                 showWithdrawConfirm = false
-                vm.withdraw(onWithdrawn)
+                vm.withdraw(onWithdrawn, onWithdrawUncertain)
             },
             onDismissRequest = { showWithdrawConfirm = false },
             dismissText = "취소",
@@ -241,18 +244,9 @@ fun SettingsScreen(
         )
     }
 
-    // 결과 불명(리뷰 P1: 타임아웃·연결 끊김·401) — 서버가 이미 파기를 커밋했을 수 있으므로
-    //   확인/닫기 어느 쪽이든 로그아웃과 같은 로컬 정리(세션 + 공급자 credential)로만 마무리한다.
-    //   credential 이 남으면 다음 로그인에서 같은 계정이 자동 선택돼 빈 신규 계정이 즉시 생긴다.
-    vm.withdrawNotice?.let { msg ->
-        AigoDialog(
-            title = "알림",
-            message = msg,
-            confirmText = "확인",
-            onConfirm = { vm.acknowledgeWithdrawNotice(onWithdrawn) },
-            onDismissRequest = { vm.acknowledgeWithdrawNotice(onWithdrawn) },
-        )
-    }
+    // 결과 불명 안내는 여기(설정 화면 다이얼로그)에 두지 않는다(리뷰 2차 P1): 인터셉터의 전역 라우팅이
+    //   이 화면·VM 을 먼저 폐기할 수 있어, 정리는 vm.withdraw 의 catch 에서 즉시 시작되고 안내는
+    //   Activity 범위(AuthLoginViewModel)가 로그인 화면에 남긴다.
 
     if (showLogoutConfirm) {
         AigoDialog(

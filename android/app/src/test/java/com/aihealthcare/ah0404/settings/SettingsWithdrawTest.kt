@@ -27,11 +27,12 @@ import retrofit2.HttpException
 import retrofit2.Response
 
 /**
- * 회원탈퇴(#356) VM 계약 — 결과를 세 갈래로 구분한다(리뷰 P1):
- *  - 성공: 정리 콜백(세션·공급자 credential 해제는 호출부 몫).
- *  - 명확한 서버 거절(4xx·5xx, 401 제외): 세션 유지 + 재시도 안내.
- *  - 결과 불명(타임아웃·연결 끊김·401): 서버가 이미 파기를 커밋했을 수 있으므로
- *    성공을 단정하지 않는 안내 후, 확인 시 정리 콜백(안전 측 로그아웃).
+ * 회원탈퇴(#356) VM 계약 — 결과 3분기(리뷰 P1 1·2차):
+ *  - 성공: [onWithdrawn](세션·공급자 credential 해제는 호출부 몫).
+ *  - 명확한 서버 거절(**401 제외 4xx 만** — 미처리가 계약상 확실): 세션 유지 + 재시도 안내.
+ *  - 결과 불명(타임아웃·연결 끊김, 401, **5xx 전부**): 서버가 커밋했는지 알 수 없으므로
+ *    [onUncertain] 이 **catch 에서 즉시** 호출된다 — 다이얼로그 확인을 기다리지 않는다
+ *    (전역 라우팅이 VM 을 먼저 폐기해도 Activity 범위 정리가 이미 시작돼 있어야 한다).
  * 진행 중 중복 요청 방지 포함.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -66,30 +67,32 @@ class SettingsWithdrawTest {
         val userApi = FakeUserApi()
         val vm = SettingsViewModel(StubSettingsApi(), userApi)
         var cleaned = 0
+        var uncertain = 0
 
-        vm.withdraw(onWithdrawn = { cleaned++ })
+        vm.withdraw(onWithdrawn = { cleaned++ }, onUncertain = { uncertain++ })
         advanceUntilIdle()
 
         assertEquals(1, userApi.calls)
         assertTrue("서버가 confirm=true 를 강제한다", userApi.requests.single().confirm)
         assertEquals(1, cleaned)
+        assertEquals(0, uncertain)
         assertNull(vm.withdrawError)
-        assertNull(vm.withdrawNotice)
         assertFalse(vm.withdrawing)
     }
 
     @Test
-    fun `명확한 서버 거절 - 정리 콜백 없이 안내 후 재시도 가능`() = runTest(dispatcher) {
+    fun `명확한 서버 거절(400) - 콜백 없이 안내 후 재시도 가능`() = runTest(dispatcher) {
         val userApi = FakeUserApi(failure = httpError(400))
         val vm = SettingsViewModel(StubSettingsApi(), userApi)
         var cleaned = 0
+        var uncertain = 0
 
-        vm.withdraw(onWithdrawn = { cleaned++ })
+        vm.withdraw(onWithdrawn = { cleaned++ }, onUncertain = { uncertain++ })
         advanceUntilIdle()
 
-        assertEquals(0, cleaned) // 서버가 거부를 응답했다 = 미처리 확실 → 세션 유지
+        assertEquals("서버가 거부를 응답했다 = 미처리 확실 → 세션 유지", 0, cleaned)
+        assertEquals("거절은 결과 불명이 아니다", 0, uncertain)
         assertNotNull(vm.withdrawError)
-        assertNull("거절은 결과 불명이 아니다", vm.withdrawNotice)
         assertFalse("실패 후 재시도할 수 있어야 한다", vm.withdrawing)
 
         vm.dismissWithdrawError()
@@ -97,38 +100,53 @@ class SettingsWithdrawTest {
     }
 
     @Test
-    fun `결과 불명(IOException) - 성공 단정 없는 안내 후 확인 시 안전 로그아웃`() = runTest(dispatcher) {
-        // 리뷰 P1 시나리오: 서버는 커밋했는데 응답만 유실. credential 을 유지하면
-        // 다음 로그인에서 같은 계정 자동 선택 → 빈 신규 계정 즉시 생성.
+    fun `결과 불명(IOException) - 확인 대기 없이 즉시 안전 정리를 시작한다`() = runTest(dispatcher) {
+        // 리뷰 2차 P1: 전역 라우팅이 이 VM 을 폐기하기 전에 정리가 시작돼 있어야 한다 —
+        // 다이얼로그 표시·사용자 확인 같은 중간 단계 없이 catch 에서 곧바로 콜백된다.
         val userApi = FakeUserApi(failure = IOException("timeout"))
         val vm = SettingsViewModel(StubSettingsApi(), userApi)
         var cleaned = 0
+        var uncertain = 0
 
-        vm.withdraw(onWithdrawn = { cleaned++ })
-        advanceUntilIdle()
-
-        assertEquals("안내 확인 전에는 정리하지 않는다", 0, cleaned)
-        assertNull("불명은 재시도 오류로 안내하지 않는다", vm.withdrawError)
-        assertEquals(SettingsViewModel.NOTICE_UNCERTAIN, vm.withdrawNotice)
-        assertFalse(vm.withdrawing)
-
-        vm.acknowledgeWithdrawNotice(onWithdrawn = { cleaned++ })
-        assertEquals("확인 시 로그아웃과 같은 로컬 정리를 태운다", 1, cleaned)
-        assertNull(vm.withdrawNotice)
-    }
-
-    @Test
-    fun `결과 불명(401) - 이전 탈퇴가 이미 커밋된 재시도로 보고 안전 로그아웃 안내`() = runTest(dispatcher) {
-        val userApi = FakeUserApi(failure = httpError(401))
-        val vm = SettingsViewModel(StubSettingsApi(), userApi)
-        var cleaned = 0
-
-        vm.withdraw(onWithdrawn = { cleaned++ })
+        vm.withdraw(onWithdrawn = { cleaned++ }, onUncertain = { uncertain++ })
         advanceUntilIdle()
 
         assertEquals(0, cleaned)
+        assertEquals("catch 에서 즉시 1회 호출", 1, uncertain)
+        assertNull("불명은 재시도 오류로 안내하지 않는다", vm.withdrawError)
+        assertFalse(vm.withdrawing)
+    }
+
+    @Test
+    fun `결과 불명(401) - 이전 탈퇴가 이미 커밋된 재시도로 보고 즉시 정리`() = runTest(dispatcher) {
+        val userApi = FakeUserApi(failure = httpError(401))
+        val vm = SettingsViewModel(StubSettingsApi(), userApi)
+        var uncertain = 0
+
+        vm.withdraw(onWithdrawn = {}, onUncertain = { uncertain++ })
+        advanceUntilIdle()
+
+        assertEquals(1, uncertain)
         assertNull(vm.withdrawError)
-        assertEquals(SettingsViewModel.NOTICE_UNCERTAIN, vm.withdrawNotice)
+    }
+
+    @Test
+    fun `결과 불명(5xx) - 500·502·503·504 모두 거절이 아니라 즉시 정리`() = runTest(dispatcher) {
+        // 리뷰 2차 P1: 500 은 커밋 후 응답 생성 실패, 502-504 는 게이트웨이가 원 서버의 최종 응답을
+        // 못 받은 경우가 가능하다 — 서버가 처리했는지 단말이 알 수 없다.
+        for (code in listOf(500, 502, 503, 504)) {
+            val userApi = FakeUserApi(failure = httpError(code))
+            val vm = SettingsViewModel(StubSettingsApi(), userApi)
+            var cleaned = 0
+            var uncertain = 0
+
+            vm.withdraw(onWithdrawn = { cleaned++ }, onUncertain = { uncertain++ })
+            advanceUntilIdle()
+
+            assertEquals("HTTP $code 는 결과 불명", 1, uncertain)
+            assertEquals("HTTP $code 에서 성공 콜백 금지", 0, cleaned)
+            assertNull("HTTP $code 는 재시도 안내 대상이 아니다", vm.withdrawError)
+        }
     }
 
     @Test
@@ -136,8 +154,8 @@ class SettingsWithdrawTest {
         val userApi = FakeUserApi()
         val vm = SettingsViewModel(StubSettingsApi(), userApi)
 
-        vm.withdraw(onWithdrawn = {})
-        vm.withdraw(onWithdrawn = {}) // 첫 요청이 아직 in-flight
+        vm.withdraw(onWithdrawn = {}, onUncertain = {})
+        vm.withdraw(onWithdrawn = {}, onUncertain = {}) // 첫 요청이 아직 in-flight
         advanceUntilIdle()
 
         assertEquals(1, userApi.calls)

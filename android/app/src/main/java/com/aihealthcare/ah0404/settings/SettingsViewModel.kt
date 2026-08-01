@@ -41,13 +41,6 @@ class SettingsViewModel(
     /** 회원탈퇴 실패 안내(명확한 서버 거절 — 세션 유지, 재시도 가능). null 이면 오류 없음. */
     var withdrawError by mutableStateOf<String?>(null); private set
 
-    /**
-     * 회원탈퇴 **결과 불명** 안내(리뷰 P1: 타임아웃·연결 끊김·401). 서버가 이미 파기를 커밋했을 수
-     * 있어 성공을 단정하지 않는 문구를 쓰고, 확인 시 [acknowledgeWithdrawNotice] 가 로그아웃과 같은
-     * 로컬 정리(세션 + 공급자 credential)를 태운다.
-     */
-    var withdrawNotice by mutableStateOf<String?>(null); private set
-
     var loading by mutableStateOf(false); private set
     var loaded by mutableStateOf(false); private set
     var loadError by mutableStateOf(false); private set
@@ -166,20 +159,19 @@ class SettingsViewModel(
         }
 
     /**
-     * 회원탈퇴(#356). 성공(204) 시에만 [onWithdrawn] 을 부른다 — 호출부가 세션·공급자 credential 을
-     * 정리하고 로그인 화면으로 보낸다(로그아웃과 동일 경로 재사용).
-     *
-     * 결과를 세 갈래로 구분한다(리뷰 P1 — "예외 = 서버 미처리"라는 보장은 없다):
-     *  - 성공(204): [onWithdrawn].
-     *  - 명확한 서버 거절(HTTP 4xx·5xx, 401 제외): 서버가 응답으로 거부를 알려온 것이므로
+     * 회원탈퇴(#356). 결과를 세 갈래로 구분한다(리뷰 P1 1·2차 — "예외 = 서버 미처리"라는 보장은 없다):
+     *  - 성공(204): [onWithdrawn] — 호출부가 세션·공급자 credential 을 정리하고 로그인 화면으로 보낸다.
+     *  - 명확한 서버 거절(**401 제외 4xx** — 검증 실패처럼 미처리가 계약상 확실한 경우만):
      *    세션을 유지하고 재시도를 안내한다.
-     *  - **결과 불명**(타임아웃·연결 끊김 등 응답 미도달, 그리고 401): 서버가 이미 파기를 커밋했을 수
-     *    있다. 이때 credential 을 유지하면 다음 로그인에서 같은 계정이 자동 선택돼 빈 신규 계정이
-     *    즉시 만들어진다(A-4 재발). → [withdrawNotice] 로 '성공을 단정하지 않는' 안내를 띄우고,
-     *    확인 시 로그아웃과 같은 로컬 정리를 태운다. (401은 이전 탈퇴가 커밋된 뒤 재시도한
-     *    시나리오가 대표적이라 불명으로 취급한다.)
+     *  - **결과 불명**(타임아웃·연결 끊김 등 응답 미도달, 401, 그리고 **5xx**): 서버가 파기를 커밋했는지
+     *    단말이 알 수 없다 — 500 은 커밋 후 응답 생성 중 실패, 502-504 는 게이트웨이가 원 서버 응답을
+     *    못 받은 경우가 가능하다(리뷰 2차). credential 이 남으면 다음 로그인에서 같은 계정이 자동
+     *    선택돼 빈 신규 계정이 즉시 만들어지므로, [onUncertain] 을 **catch 에서 즉시** 시작한다.
+     *    다이얼로그 생존·사용자 확인에 의존하면 인터셉터의 전역 라우팅(OFFLINE/LOGIN_REQUIRED)이
+     *    이 VM 을 먼저 폐기해 정리가 유실될 수 있다(리뷰 2차 P1). 호출부는 Activity 범위
+     *    (AuthLoginViewModel.signOut)에서 정리하고, 안내는 라우팅 후에도 남는 로그인 화면 상태로 남긴다.
      */
-    fun withdraw(onWithdrawn: () -> Unit) {
+    fun withdraw(onWithdrawn: () -> Unit, onUncertain: () -> Unit) {
         if (withdrawing) return
         // 플래그는 코루틴 **밖**에서 즉시 세운다: 안에서 세우면 첫 요청이 디스패치되기 전에 들어온
         //   두 번째 호출이 가드를 통과해 탈퇴 요청이 두 번 나간다(빠른 연타·상태 전이 틈).
@@ -192,16 +184,16 @@ class SettingsViewModel(
             } catch (e: CancellationException) {
                 throw e // safeCall 과 동일 — VM 취소를 탈퇴 실패로 바꾸지 않는다(구조적 동시성 보존)
             } catch (e: HttpException) {
-                if (e.code() == 401) {
-                    Log.w(TAG, "회원탈퇴 401 — 이전 요청이 이미 처리됐을 수 있음, 결과 불명 처리")
-                    withdrawNotice = NOTICE_UNCERTAIN
-                } else {
+                if (e.code() != 401 && e.code() in 400..499) {
                     Log.w(TAG, "회원탈퇴 서버 거절: HTTP ${e.code()}")
                     withdrawError = "탈퇴 처리에 실패했어요. 잠시 후 다시 시도해 주세요."
+                } else {
+                    Log.w(TAG, "회원탈퇴 결과 불명(HTTP ${e.code()}) — 안전 측 정리 즉시 시작")
+                    onUncertain()
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "회원탈퇴 결과 불명(${e.javaClass.simpleName}): ${e.message}")
-                withdrawNotice = NOTICE_UNCERTAIN
+                Log.w(TAG, "회원탈퇴 결과 불명(${e.javaClass.simpleName}): ${e.message} — 안전 측 정리 즉시 시작")
+                onUncertain()
             } finally {
                 withdrawing = false
             }
@@ -210,17 +202,7 @@ class SettingsViewModel(
 
     fun dismissWithdrawError() { withdrawError = null }
 
-    /** 결과 불명 안내 확인 → 안전 측 로컬 정리(세션 + credential)로 마무리한다. */
-    fun acknowledgeWithdrawNotice(onWithdrawn: () -> Unit) {
-        withdrawNotice = null
-        onWithdrawn()
-    }
-
     companion object {
         const val TAG = "Settings"
-
-        /** 결과 불명 안내(리뷰 P1) — 삭제 성공을 단정하지 않는다. */
-        const val NOTICE_UNCERTAIN =
-            "처리 결과를 확인할 수 없어 로그아웃했어요.\n다시 로그인해 계정 상태를 확인해 주세요."
     }
 }
