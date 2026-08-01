@@ -22,6 +22,7 @@ def test_core_db_metadata_tables() -> None:
         "risk_predictions",
         "sensor_sessions",
         "sts_overlay_events",
+        "sts_score_view_events",
         "terms_agreements",
         "user_activity_profiles",
         "users",
