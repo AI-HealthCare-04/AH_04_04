@@ -252,6 +252,19 @@ class MissionRepository:
         rows = await self.session.execute(stmt)
         return {mission_type: int(count) for mission_type, count in rows.all()}
 
+    async def has_counted_today(self, user_id: int, mission_type: MissionType) -> bool:
+        """오늘 이 종류의 '카운트된' 완료가 있는지. 1회성 미션(게임)의 '오늘 했음' 카드 표시용(#346) —
+        하루 1회 상한(#272)과 같은 counted_for_daily 기준이라 상한 초과 재수행은 세지 않는다."""
+        start, end = self._day_bounds(today_kst())
+        stmt = select(func.count()).where(
+            MissionLog.user_id == user_id,
+            MissionLog.mission_type == mission_type,
+            MissionLog.counted_for_daily.is_(True),
+            MissionLog.created_at >= start,
+            MissionLog.created_at < end,
+        )
+        return int(await self.session.scalar(stmt) or 0) > 0
+
     async def sum_earned_points_today(self, user_id: int) -> int:
         start, end = self._day_bounds(today_kst())
         stmt = select(func.coalesce(func.sum(MissionLog.earned_points), 0)).where(

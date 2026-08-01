@@ -11,9 +11,11 @@ class HealthProfileCreateRequest(BaseModel):
     session_id: int | None = None
     birth_date: date
     sex: Sex
-    height_cm: Decimal = Field(gt=0)
-    weight_kg: Decimal = Field(gt=0)
-    waist_cm: Decimal | None = Field(default=None, gt=0)
+    # 상한(le=)은 근본 방어(#298 A-2): 클라이언트 인라인이 1차지만, 극단값(예: 99999)이 DB Numeric(5,2)=999.99 를
+    #   넘어 DataError 500 이 나기 전에 422 로 거른다. 현실 범위보다 넉넉히 잡아 정상 입력은 막지 않는다.
+    height_cm: Decimal = Field(gt=0, le=250)
+    weight_kg: Decimal = Field(gt=0, le=300)
+    waist_cm: Decimal | None = Field(default=None, gt=0, le=250)
     walk_days: int = Field(ge=0, le=7)
     musc_days: int = Field(ge=0, le=5)
     kidney_status: KidneyStatus = KidneyStatus.UNKNOWN
@@ -40,9 +42,10 @@ class HealthProfilePatchRequest(BaseModel):
     허리둘레는 명시적 null 로 '측정 안 함'을 지울 수 있다(model_fields_set 로 미전송과 구분).
     """
 
-    height_cm: Decimal | None = Field(default=None, gt=0)
-    weight_kg: Decimal | None = Field(default=None, gt=0)
-    waist_cm: Decimal | None = Field(default=None, gt=0)
+    # 상한(le=)은 근본 방어(#298 A-2) — Create 요청과 동일 기준.
+    height_cm: Decimal | None = Field(default=None, gt=0, le=250)
+    weight_kg: Decimal | None = Field(default=None, gt=0, le=300)
+    waist_cm: Decimal | None = Field(default=None, gt=0, le=250)
     kidney_status: KidneyStatus | None = None
     # 단백질(고단백 식사) 미션 게이트(#304): 신장상태와 함께 protein_challenge_allowed 를 정한다. 내정보에서
     #   이 값을 못 바꾸면 온보딩에서 제한으로 저장된 뒤 미션을 영영 되돌릴 수 없다 → 편집 가능하게 추가(미전송이면 유지).

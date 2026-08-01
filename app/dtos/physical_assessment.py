@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
@@ -23,7 +24,9 @@ _DEPRECATED_WALK_6M_KEYS = (
 class PhysicalAssessmentCreateRequest(BaseModel):
     session_id: int | None = None
     assessment_type: AssessmentType = AssessmentType.INITIAL
-    chair_stand_5_time_sec: Decimal | None = Field(default=None, gt=0)
+    # le=600(약 10분): 근본 방어(#298 A-2). 5STS 는 임상적으로 수 초~수십 초지만 측정 방치 시 값이 무한 증가할 수
+    #   있어, DB Numeric(5,2)=999.99 초과 DataError 500 이전에 422 로 거른다. 정상 측정은 막지 않는다.
+    chair_stand_5_time_sec: Decimal | None = Field(default=None, gt=0, le=600)
     chair_stand_skipped: bool = False
     pain_reported: bool = False
     dizziness_reported: bool = False
@@ -51,6 +54,22 @@ class PhysicalAssessmentCreateRequest(BaseModel):
 class PhysicalAssessmentActivityProfile(BaseModel):
     current_level: ActivityLevel
     level_reason: LevelReason
+
+
+class PhysicalAssessmentHistoryItem(BaseModel):
+    """5STS 측정 이력 항목(#353). 측정 기록(시간 존재)만 담는다 — 스킵 기록은 추이에 안 쓴다.
+
+    비의료 가드레일(#57): 시간·시각 등 사실만 내려주고 판정(저하 등)은 포함하지 않는다.
+    """
+
+    physical_assessment_id: int
+    assessment_type: AssessmentType
+    chair_stand_5_time_sec: float
+    created_at: datetime
+
+
+class PhysicalAssessmentHistoryResponse(BaseModel):
+    assessments: list[PhysicalAssessmentHistoryItem]
 
 
 class PhysicalAssessmentResponse(BaseModel):

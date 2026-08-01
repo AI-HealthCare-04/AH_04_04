@@ -32,3 +32,17 @@ class PhysicalAssessmentRepository:
             .limit(1)
         )
         return await self.session.scalar(stmt)
+
+    async def get_measured_history(self, user_id: int, limit: int) -> list[PhysicalAssessment]:
+        """측정 완료(5STS 시간 존재) 이력, 최신순(#353). 스킵 기록은 추이 표시에 무의미해 제외한다."""
+        stmt = (
+            select(PhysicalAssessment)
+            .where(
+                PhysicalAssessment.user_id == user_id,
+                PhysicalAssessment.chair_stand_5_time_sec.is_not(None),
+            )
+            .order_by(PhysicalAssessment.created_at.desc(), PhysicalAssessment.physical_assessment_id.desc())
+            .limit(limit)
+        )
+        result = await self.session.scalars(stmt)
+        return list(result.all())

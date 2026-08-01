@@ -60,6 +60,9 @@ class MissionResponse(BaseSerializerModel):
     today_log: MealTodayLog | None = None
     # 운동·걷기 미션 한정: 오늘 누적 진행(분·걸음·목표달성). 다른 종류 미션은 항상 null.
     today_progress: MissionTodayProgress | None = None
+    # 게임 미션 한정(#346): 오늘 이미 완료했는지(하루 1회 상한 #272 의 counted 기준). 다른 종류는 항상 null.
+    #   1회성 미션이라 진행바 대신 '오늘 했음' 배지를 그리는 데 쓴다.
+    today_done: bool | None = None
 
 
 class MissionListResponse(BaseModel):
