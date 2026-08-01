@@ -1,5 +1,6 @@
 package com.aihealthcare.ah0404.profile
 
+import com.aihealthcare.ah0404.network.StsHistoryResponse
 import com.aihealthcare.ah0404.network.ChallengeTotalsResponse
 import com.aihealthcare.ah0404.network.CohortDistributionResponse
 import com.aihealthcare.ah0404.network.HealthProfileApi
@@ -97,6 +98,7 @@ class HealthInfoViewModelTest {
         override suspend fun getChallengeTotals(): ChallengeTotalsResponse = error("unused")
         override suspend fun getStamps(month: String): StampsResponse = error("unused")
         override suspend fun getLatestPrediction(): RiskLatestResponse = error("unused")
+        override suspend fun getStsHistory(limit: Int): StsHistoryResponse = error("unused")
         override suspend fun getScoreSimulation(): ScoreSimulationResponse = error("unused")
         override suspend fun getCohortDistribution(): CohortDistributionResponse = error("unused")
     }

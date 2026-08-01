@@ -140,6 +140,9 @@ internal fun MuscleDashboardCards(ui: MuscleScoreUi, onGoToMissions: () -> Unit)
         age < 65 -> PreparingCard(onGoToMissions)
         else -> ScorePendingCard()
     }
+    // 5STS 재측정·추이(#353): 점수 추이 아래 보조 지표. 직접 수행 지표라 점수(예측) 유무와 무관하게
+    //   항상 표시한다 — 스킵·65세 미만 사용자도 여기서 측정을 시작할 수 있다.
+    StsTrendCard()
 }
 
 /**
