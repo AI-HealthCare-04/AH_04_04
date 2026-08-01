@@ -67,12 +67,12 @@ async def test_withdraw_missing_confirm_returns_422(db_client: AsyncClient) -> N
 # =====================================================================================
 async def _complete_onboarding(db_client: AsyncClient, auth: dict[str, str]) -> None:
     """탈퇴 대상 사용자에게 삭제될 데이터(약관 동의·세션·건강 프로필)를 만들어 둔다."""
-    terms = await db_client.get("/api/v1/terms")
+    terms = await db_client.get("/api/v1/terms", headers=auth)  # GET /terms 도 인증 필요
     agreements = [
-        {"terms_type": t["terms_type"], "version": t["version"], "is_agreed": True}
+        {"terms_type": t["terms_type"], "version": t["version"], "agreed": True}
         for t in terms.json()["terms"]
     ]
-    await db_client.post("/api/v1/terms/agreements", json={"agreements": agreements}, headers=auth)
+    await db_client.post("/api/v1/users/me/agreements", json={"agreements": agreements}, headers=auth)
     session_resp = await db_client.post("/api/v1/health-check-sessions", json={"input_method": "form"}, headers=auth)
     await db_client.post(
         "/api/v1/health-profiles",
