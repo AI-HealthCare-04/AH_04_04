@@ -292,6 +292,11 @@ private fun MainContent(
         return
     }
 
+    // 미니게임 완료 기록 대상(#348 리뷰): 목록에서 고른 게임 미션. 완주 시 이 미션으로 완료를 기록한다.
+    var miniGameMission by rememberSaveable(stateSaver = MissionStateSaver) {
+        mutableStateOf<Mission?>(null)
+    }
+
     // 단백질 식사 기록 오버레이. 미션 목록에서 식사 미션을 고르면 진입(이 화면이 유일한 기록 지점).
     var proteinMission by rememberSaveable(stateSaver = MissionStateSaver) {
         mutableStateOf<Mission?>(null)
@@ -339,8 +344,13 @@ private fun MainContent(
             return
         }
         "minigame" -> {
-            BackHandler { subScreen = null }
-            MiniGameScreen(onBack = { subScreen = null })
+            BackHandler { subScreen = null; miniGameMission = null }
+            MiniGameScreen(
+                mission = miniGameMission,
+                onBack = { subScreen = null; miniGameMission = null },
+                // 완료 기록 성공(#348 리뷰) → 목록 재조회로 카드 today_done 배지 갱신(#346·#349 연동).
+                onCompleted = { missionVm.loadMissions() },
+            )
             return
         }
     }
@@ -387,7 +397,7 @@ private fun MainContent(
                         MissionDestination.WALKING -> walkingMission = mission
                         // 홈의 '영상 따라 운동하기'와 같은 목적지 — 미션 탭만 '준비 중'으로 막던 문제 해소(#162).
                         MissionDestination.EXERCISE_VIDEOS -> subScreen = "exercise"
-                        MissionDestination.MINI_GAME -> subScreen = "minigame"
+                        MissionDestination.MINI_GAME -> { miniGameMission = mission; subScreen = "minigame" }
                         MissionDestination.PROTEIN_MEAL -> proteinMission = mission
                         MissionDestination.COMING_SOON -> comingSoonMission = mission
                     }
