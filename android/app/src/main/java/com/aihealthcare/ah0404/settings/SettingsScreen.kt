@@ -1,23 +1,38 @@
 package com.aihealthcare.ah0404.settings
 
 import android.content.Intent
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.HeadsetMic
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -28,16 +43,27 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aihealthcare.ah0404.BuildConfig
-import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoDialog
-import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
-import com.aihealthcare.ah0404.ui.components.AigoSegmentedSelector
-import com.aihealthcare.ah0404.ui.components.SegmentOption
-import com.aihealthcare.ah0404.ui.theme.Dimens
+
+// 설정 디자인 고도화 팔레트(시안 토큰). 흰색 대신 바탕+테두리 카드(사용자 피드백 일관).
+private val SBg = Color(0xFFF7F6F0)
+private val SGreen = Color(0xFF1F5D3A)
+private val SInk = Color(0xFF202321)
+private val SMuted = Color(0xFF6B726D)
+private val SCardFill = Color(0xFFF7F6F0)   // 바탕색과 동일(사용자 피드백: 진한 베이지 아님, 바탕색+테두리로 통일)
+private val SCardBorder = Color(0xFFE7E5DB)  // 카드 테두리는 은은하게(박스처럼 도드라지지 않게)
+private val SGreenTint = Color(0xFFE7F3EA)
+private val SUnselBorder = Color(0xFFD3D8CE) // 선택 안 한 알약도 테두리(사용자 피드백)
 
 /**
  * 설정(_15) — 화면 API 계약: GET/PATCH /users/me/settings
@@ -45,13 +71,14 @@ import com.aihealthcare.ah0404.ui.theme.Dimens
  *
  *  SettingsViewModel 로 서버 값 로드 + 변경 시 PATCH 영속화(낙관적 적용 → 실패 시 롤백).
  *  ⛔ 알림·자동로그인은 백엔드 결정상 '미구현'(자동로그인=구현 안 함 / 알림=불필요로 API 제외, 재란 확정)
- *     → "미지원"으로 비활성 표시(후속 없음).
+ *     → 시안 최종구조에서 토글 자체를 노출하지 않는다(배경 음악만).
  *  앱 버전은 서버가 아니라 클라 BuildConfig.
  */
 @Composable
 fun SettingsScreen(
     onBack: (() -> Unit)? = null,
     onOpenSupport: () -> Unit,
+    onOpenFaq: () -> Unit,
     onOpenProfile: () -> Unit,
     onLogout: () -> Unit = {},
     // 회원탈퇴 성공 후(#356) — 호출부가 세션·공급자 credential 정리 후 로그인 화면으로 보낸다(로그아웃과 동일 경로).
@@ -70,11 +97,6 @@ fun SettingsScreen(
     // 진입마다 서버 설정 재조회(리뷰 #68 교훈).
     LaunchedEffect(Unit) { vm.load() }
     // 전역 적용값(글자·소리)을 VM 의 최종 설정값에 항상 동기화(묶음 C-2, 리뷰 #86-1).
-    //   loaded 뿐 아니라 fontSize/soundSize/musicEnabled 변경까지 관찰 → 저장 실패 후 롤백/서버 재조회로 값이
-    //   되돌아와도 전역 배율·로컬 저장값이 서버값으로 수렴한다(실패한 값이 잔류하지 않음).
-    //   ⚠️ loadError 시엔 동기화 안 함(리뷰 #86-1): 최초 GET 실패 시 vm 값은 서버 확인값이 아니라
-    //     기본값(medium)이라, 이를 저장하면 시작 시 복원한 정상 로컬 캐시(예: large)를 덮어쓴다.
-    //     서버가 확인해 준 값(성공) 또는 사용자가 바꾼 값(성공 로드 후)일 때만 전역에 반영한다.
     LaunchedEffect(vm.loaded, vm.loadError, vm.fontSize, vm.soundSize, vm.musicEnabled) {
         if (vm.loaded && !vm.loadError) {
             AppSettings.setFontSize(context, vm.fontSize)
@@ -83,128 +105,119 @@ fun SettingsScreen(
         }
     }
 
-    val sizeOptions = listOf(
-        SegmentOption("small", "작게"),
-        SegmentOption("medium", "보통"),
-        SegmentOption("large", "크게"),
-    )
+    val sizeOptions = listOf("small" to "작게", "medium" to "보통", "large" to "크게")
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .systemBarsPadding()
-            .verticalScroll(rememberScrollState()),
+            .background(SBg)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp),
     ) {
-        TopBar(title = "설정", onBack = onBack)
-
-        Column(
-            Modifier.padding(Dimens.ScreenPadding),
-            verticalArrangement = Arrangement.spacedBy(Dimens.ElementGap),
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            // 내 정보(_14) 진입 — 계정·프로필 정보
-            AigoSecondaryButton(text = "내 정보", onClick = onOpenProfile)
-
-            if (vm.loadError) {
-                AigoCard {
-                    Text(
-                        "설정을 불러오지 못했어요. 기본값이 표시됩니다.",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(Dimens.Space4))
-                    TextButton(onClick = vm::load) { Text("다시 시도") }
+            if (onBack != null) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로", tint = SInk)
                 }
+                Spacer(Modifier.width(4.dp))
             }
-            AigoCard {
-                Text("글자 크기", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(Dimens.Space8))
-                // vm.changeFontSize 가 값을 낙관적으로 바꾸면 위 LaunchedEffect(vm.fontSize) 가
-                //   전역 적용(AppSettings) 을 동기화한다(실패 시 롤백값으로도 수렴). 미리보기 문구로 체감.
-                AigoSegmentedSelector(sizeOptions, vm.fontSize, vm::changeFontSize, horizontal = true)
-                Spacer(Modifier.height(Dimens.Space8))
-                Text("보기: 글자 크기가 이렇게 바뀌어요.", style = MaterialTheme.typography.bodyLarge)
+            Text("설정", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = SInk)
+        }
+        Spacer(Modifier.height(8.dp))
+
+        // 내 정보(_14) 진입 — 계정·프로필 정보
+        SettingsNavCard(
+            icon = Icons.Filled.Person,
+            title = "내 정보",
+            subtitle = "기본 정보와 건강 정보를 확인해요",
+            onClick = onOpenProfile,
+        )
+        Spacer(Modifier.height(14.dp))
+
+        if (vm.loadError) {
+            SettingsCard {
+                Text("설정을 불러오지 못했어요. 기본값이 표시됩니다.", fontSize = 15.sp, lineHeight = 21.sp, color = SMuted)
+                TextButton(onClick = vm::load) { Text("다시 시도", color = SGreen, fontWeight = FontWeight.Bold) }
             }
-            AigoCard {
-                Text("소리 크기", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(Dimens.Space8))
-                AigoSegmentedSelector(sizeOptions, vm.soundSize, vm::changeSoundSize, horizontal = true)
-            }
-            // 운동 난이도 설정 제거(폐기): 재생 속도는 설정이 아니라 영상 안 톱니로 직접 조절한다.
-            AigoCard {
-                Text("펫 종류", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(Dimens.Space8))
-                AigoSegmentedSelector(
-                    listOf(SegmentOption("dog", "강아지"), SegmentOption("cat", "고양이")),
-                    vm.petType, vm::changePetType, horizontal = true,
-                )
-            }
-            AigoCard {
-                ToggleRow("배경 음악", vm.musicEnabled, vm::changeMusicEnabled)
-                // ⛔ 백엔드 결정상 미구현(후속 없음) — "미지원"으로 비활성.
-                ToggleRow("알림 받기 (미지원)", checked = false, onChange = {}, enabled = false)
-                ToggleRow("자동 로그인 (미지원)", checked = false, onChange = {}, enabled = false)
-            }
-            AigoCard {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("앱 버전", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        BuildConfig.VERSION_NAME,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Spacer(Modifier.height(14.dp))
+        }
+
+        SettingsCard {
+            Text("글자 크기", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = SInk)
+            Spacer(Modifier.height(10.dp))
+            SettingSegment(sizeOptions, vm.fontSize, vm::changeFontSize)
+            Spacer(Modifier.height(10.dp))
+            Text("보기: 글자 크기가 이렇게 바뀌어요.", fontSize = 15.sp, lineHeight = 21.sp, color = SMuted)
+        }
+        Spacer(Modifier.height(14.dp))
+
+        SettingsCard {
+            Text("소리 크기", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = SInk)
+            Spacer(Modifier.height(10.dp))
+            SettingSegment(sizeOptions, vm.soundSize, vm::changeSoundSize)
+        }
+        Spacer(Modifier.height(14.dp))
+
+        SettingsCard {
+            Text("펫 종류", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = SInk)
+            Spacer(Modifier.height(10.dp))
+            PetSelector(selected = vm.petType, onSelectDog = { vm.changePetType("dog") })
+        }
+        Spacer(Modifier.height(14.dp))
+
+        SettingsCard {
+            SettingsToggleRow("배경 음악", vm.musicEnabled, vm::changeMusicEnabled)
+        }
+        Spacer(Modifier.height(14.dp))
+
+        SettingsCard(contentPadding = 0.dp) {
+            // 시안 확정: 두 행은 각각 '다른' 화면으로 간다(예전엔 둘 다 합쳐진 고객센터 한 화면으로 갔음).
+            SettingsLinkRow(Icons.AutoMirrored.Filled.HelpOutline, "자주 묻는 질문", onOpenFaq)
+            SettingsDivider()
+            SettingsLinkRow(Icons.Filled.HeadsetMic, "고객센터", onOpenSupport)
+            SettingsDivider()
+            SettingsInfoRow(Icons.Filled.Info, "앱 버전", BuildConfig.VERSION_NAME)
+        }
+        Spacer(Modifier.height(18.dp))
+
+        SettingsOutlineButton("로그아웃") { showLogoutConfirm = true }
+
+        // 회원탈퇴(#356) — 계정 액션 최하단. 되돌릴 수 없는 파괴적 액션이라 로그아웃(아웃라인 버튼)보다
+        //   한 단계 약한 텍스트 버튼 + 오류색으로 두어, 일상 동작과 시각적으로 구분한다.
+        Spacer(Modifier.height(4.dp))
+        TextButton(
+            onClick = { showWithdrawConfirm = true },
+            enabled = !vm.withdrawing,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                if (vm.withdrawing) "탈퇴 처리 중…" else "회원탈퇴",
+                fontSize = 15.sp,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+
+        // #131 파형 수집 진입 — 디버그 빌드에서만 노출(릴리스에는 대상 Activity 자체가 없음).
+        if (BuildConfig.DEBUG) {
+            Spacer(Modifier.height(10.dp))
+            SettingsOutlineButton("🔧 파형 수집 (디버그 · #131)") {
+                runCatching {
+                    context.startActivity(
+                        Intent().setClassName(
+                            context,
+                            "com.aihealthcare.ah0404.sensor.WaveformCaptureActivity",
+                        ),
                     )
                 }
-            }
-            Spacer(Modifier.height(Dimens.Space4))
-            AigoSecondaryButton(
-                text = "고객센터 · 자주 묻는 질문",
-                onClick = onOpenSupport,
-            )
-
-            Spacer(Modifier.height(Dimens.Space4))
-            AigoSecondaryButton(
-                text = "로그아웃",
-                onClick = { showLogoutConfirm = true },
-            )
-
-            // 회원탈퇴(#356) — 계정 액션 최하단. 파괴적 액션이라 텍스트 버튼 + 오류색으로 시각 구분해
-            //   일상 동작(로그아웃)과 혼동하지 않게 한다.
-            Spacer(Modifier.height(Dimens.Space8))
-            TextButton(
-                onClick = { showWithdrawConfirm = true },
-                enabled = !vm.withdrawing,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    if (vm.withdrawing) "탈퇴 처리 중…" else "회원탈퇴",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
-
-            // #131 파형 수집 진입 — 디버그 빌드에서만 노출(릴리스에는 대상 Activity 자체가 없음).
-            //   명시 인텐트를 문자열 ComponentName 으로 실행해, debug 소스셋 전용 Activity 를
-            //   릴리스에서 컴파일 참조하지 않는다(참조하면 릴리스 빌드가 깨진다).
-            if (BuildConfig.DEBUG) {
-                Spacer(Modifier.height(Dimens.Space4))
-                AigoSecondaryButton(
-                    text = "🔧 파형 수집 (디버그 · #131)",
-                    onClick = {
-                        runCatching {
-                            context.startActivity(
-                                Intent().setClassName(
-                                    context,
-                                    "com.aihealthcare.ah0404.sensor.WaveformCaptureActivity",
-                                ),
-                            )
-                        }
-                    },
-                )
             }
         }
+        Spacer(Modifier.height(24.dp))
     }
 
     vm.saveError?.let { msg ->
@@ -263,35 +276,195 @@ fun SettingsScreen(
     }
 }
 
+/** 설정 공통 카드: 바탕보다 살짝 짙게 + 테두리(흰색 지양 — 사용자 피드백). */
 @Composable
-private fun ToggleRow(
-    label: String,
-    checked: Boolean,
-    onChange: (Boolean) -> Unit,
-    enabled: Boolean = true,
-) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(Dimens.MinTouchTarget),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
+private fun SettingsCard(contentPadding: androidx.compose.ui.unit.Dp = 18.dp, content: @Composable () -> Unit) {
+    androidx.compose.material3.Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = SCardFill,
+        border = BorderStroke(1.dp, SCardBorder),
     ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyLarge,
-            color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
-        )
-        Switch(checked = checked, onCheckedChange = onChange, enabled = enabled)
+        Column(Modifier.padding(contentPadding)) { content() }
     }
 }
 
+/** '내 정보' 진입 카드: 아이콘 + 제목/부제 + 화살표. */
+@Composable
+private fun SettingsNavCard(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
+    androidx.compose.material3.Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = SCardFill,
+        border = BorderStroke(1.dp, SCardBorder),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(44.dp).clip(CircleShape).background(SGreenTint),
+                contentAlignment = Alignment.Center,
+            ) { Icon(icon, contentDescription = null, tint = SGreen, modifier = Modifier.size(24.dp)) }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = SInk)
+                Spacer(Modifier.height(2.dp))
+                Text(subtitle, fontSize = 14.sp, lineHeight = 19.sp, color = SMuted)
+            }
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = SMuted)
+        }
+    }
+}
+
+/** 3지 세그먼트(작게/보통/크게). 선택 = 초록 강조 알약. */
+@Composable
+private fun SettingSegment(options: List<Pair<String, String>>, selected: String, onSelect: (String) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        options.forEach { (value, label) ->
+            val sel = selected == value
+            androidx.compose.material3.Surface(
+                onClick = { onSelect(value) },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(12.dp),
+                color = if (sel) SGreenTint else Color.Transparent,
+                border = BorderStroke(if (sel) 1.5.dp else 1.dp, if (sel) SGreen else SUnselBorder),
+            ) {
+                Text(
+                    label,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                    textAlign = TextAlign.Center,
+                    fontSize = 16.sp,
+                    fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium,
+                    color = if (sel) SGreen else SInk,
+                )
+            }
+        }
+    }
+}
+
+/** 펫 선택: 강아지(선택 가능) / 고양이(준비 중, 비활성 — 시안). */
+@Composable
+private fun PetSelector(selected: String, onSelectDog: () -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        val dogSel = selected == "dog"
+        androidx.compose.material3.Surface(
+            onClick = onSelectDog,
+            modifier = Modifier.weight(1f),
+            shape = RoundedCornerShape(14.dp),
+            color = if (dogSel) SGreenTint else Color.Transparent,
+            border = BorderStroke(if (dogSel) 1.5.dp else 1.dp, if (dogSel) SGreen else SUnselBorder),
+        ) {
+            Text(
+                "강아지",
+                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                textAlign = TextAlign.Center,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (dogSel) SGreen else SInk,
+            )
+        }
+        // 고양이: 준비 중(비활성) — 시안 최종구조.
+        androidx.compose.material3.Surface(
+            modifier = Modifier.weight(1f),
+            shape = RoundedCornerShape(14.dp),
+            color = Color.Transparent,
+            border = BorderStroke(1.dp, SUnselBorder),
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("고양이", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = SMuted)
+                Spacer(Modifier.width(8.dp))
+                androidx.compose.material3.Surface(shape = RoundedCornerShape(50), color = Color(0xFFEBEAE3)) {
+                    Text("준비 중", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = SMuted, modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 44.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = SInk)
+        Switch(
+            checked = checked,
+            onCheckedChange = onChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = SGreen,
+            ),
+        )
+    }
+}
+
+@Composable
+private fun SettingsLinkRow(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = SGreen, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(12.dp))
+        Text(label, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = SInk, modifier = Modifier.weight(1f))
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = SMuted)
+    }
+}
+
+@Composable
+private fun SettingsInfoRow(icon: ImageVector, label: String, value: String) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = SMuted, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(12.dp))
+        Text(label, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = SInk, modifier = Modifier.weight(1f))
+        Text(value, fontSize = 15.sp, color = SMuted)
+    }
+}
+
+@Composable
+private fun SettingsDivider() {
+    androidx.compose.material3.HorizontalDivider(
+        modifier = Modifier.padding(horizontal = 18.dp),
+        color = SCardBorder,
+    )
+}
+
+@Composable
+private fun SettingsOutlineButton(text: String, onClick: () -> Unit) {
+    androidx.compose.material3.Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = Color(0xFFFCFBF6),
+        border = BorderStroke(1.5.dp, SGreen),
+    ) {
+        Box(Modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
+            Text(text, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = SGreen)
+        }
+    }
+}
+
+/** 다른 화면(고객센터/내정보 등)에서 재사용하는 상단바 — 유지. */
 @Composable
 internal fun TopBar(title: String, onBack: (() -> Unit)? = null) {
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = Dimens.Space8, vertical = Dimens.Space8),
+            .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (onBack != null) {

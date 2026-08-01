@@ -1,5 +1,7 @@
 package com.aihealthcare.ah0404.home
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -13,9 +15,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -32,20 +36,35 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.aihealthcare.ah0404.R
 import com.aihealthcare.ah0404.network.SessionStore
 import com.aihealthcare.ah0404.pet.PetIdle
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
 import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
-import com.aihealthcare.ah0404.ui.components.MEDICAL_DISCLAIMER_DEFAULT
-import com.aihealthcare.ah0404.ui.components.MedicalDisclaimer
 import com.aihealthcare.ah0404.ui.theme.Dimens
 import java.util.Calendar
 import kotlinx.coroutines.delay
-import kotlin.math.roundToInt
+
+// 홈 디자인 고도화 팔레트(시안 토큰).
+private val HomeBg = Color(0xFFF7F6F0)
+private val HomeGreen = Color(0xFF1F5D3A)
+private val HomeGreenText = Color(0xFF184A2C) // 인사말 — 버튼처럼 더 짙은 녹색(사용자 피드백)
+private val HomeInk = Color(0xFF202321)
+private val HomeMuted = Color(0xFF6B726D)
+private val HomePointBg = Color(0xFFF6E187)
+private val HomePointText = Color(0xFF5B4A17)
+// 카드: 바탕색과 동일 + 테두리로 통일(사용자 피드백). 보조버튼: 바탕보다 약간 밝게.
+private val HomeCardFill = Color(0xFFF7F6F0)
+private val HomeCardBorder = Color(0xFFDEDCCF)
+private val HomeOutlineFill = Color(0xFFFCFBF6)
 
 /**
  * 홈 화면(_3) — 화면 API 계약(재란) `GET /home` 필드 기준.
@@ -210,6 +229,7 @@ private fun HomeContent(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .background(HomeBg)
                 .verticalScroll(rememberScrollState())
                 .padding(Dimens.ScreenPadding),
             verticalArrangement = Arrangement.spacedBy(Dimens.ElementGap),
@@ -229,95 +249,86 @@ private fun HomeContent(
             }
         }
 
-        // 인사 + 포인트(골드 강조)
+        // 인사 + 포인트(노란 알약) + 설정 — 디자인 고도화 시안 반영.
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 "${ui.nickname}님,\n오늘도 좋은 하루예요",
-                style = MaterialTheme.typography.titleLarge,
+                fontSize = 25.sp,
+                lineHeight = 33.sp,
+                fontWeight = FontWeight.Bold,
+                color = HomeGreenText,
                 modifier = Modifier.weight(1f),
             )
             PointsChip(ui.points)
             IconButton(onClick = onOpenSettings) {
-                Icon(Icons.Default.Settings, contentDescription = "설정")
+                Icon(Icons.Default.Settings, contentDescription = "설정", tint = HomeInk)
             }
         }
 
         Text(
             "활동 강도 · ${activityLevelLabel(ui.activityLevel)}",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 15.sp,
+            color = HomeMuted,
         )
 
-        // 🐶 펫 섹션 — 운동강도 ↔ 예측 사이. 배경이미지(placeholder) 위에 펫 + 말풍선을 얹는다.
-        //   스크롤 흐름 안에 있어 위치가 고정되지 않고 콘텐츠와 함께 움직인다(PetIdle 은 GLTextureView 라 인라인 가능).
-        //   TODO(재란): 배경이미지 준비되면 이 Box 의 background 를 Image(painterResource(R.drawable.…)) 로 교체.
+        // 🐶 펫-룸 히어로: 방 배경 이미지 위에 기존 애니메이션 펫(PetIdle) + 말풍선(시안 '기존 움직이는 펫 영역').
+        //   PetIdle 은 GLTextureView 라 스크롤 Column 안에 인라인으로 얹어도 안 깨진다.
+        // 홈 박스가 줄어든 만큼 히어로를 키운다(사용자 피드백). 말풍선이 길거나 큰글꼴이어도 자리가 넉넉하도록 높이 여유.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(220.dp)
-                .clip(RoundedCornerShape(Dimens.Space16))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
+                .height(300.dp)
+                .clip(RoundedCornerShape(24.dp)),
         ) {
+            Image(
+                painter = painterResource(R.drawable.img_home_room),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.matchParentSize(),
+            )
             PetSpeechBubble(
                 text = bubbleMessage.text,
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .padding(Dimens.Space12),
+                    .padding(16.dp),
             )
             PetIdle(
                 modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(Dimens.Space8)
-                    .size(160.dp),
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 8.dp)
+                    .size(210.dp),
             )
         }
 
-        // 건강 상태(위험도 순화 문구) — 비노출 계약: care_stage/display_message 만 + 고지 필수
-        AigoCard {
-            val (emoji, title) = careStageLabel(ui.careStage)
-            Text("$emoji  $title", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(Dimens.Space8))
-            Text(
-                ui.predictionMessage ?: "간단한 건강 확인을 마치면 맞춤 안내를 받을 수 있어요.",
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            Spacer(Modifier.height(Dimens.Space12))
-            MedicalDisclaimer(text = ui.disclaimer ?: MEDICAL_DISCLAIMER_DEFAULT)
+        // (상태 결과 카드 '아주 좋아요' 제거 — 시안 최종구조. 위험도 비노출 정책과도 일치.)
+        // (오늘 걷기 카드 제거 — 시안 최종구조. 걷기 실적은 기록 탭에서 확인.)
+
+        // 오늘의 활동 카드 + 미션 CTA
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            color = HomeCardFill,
+            border = BorderStroke(1.dp, HomeCardBorder),
+        ) {
+            Column(Modifier.padding(20.dp)) {
+                Text("오늘의 활동", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = HomeInk)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "지금까지 미션 ${ui.completedToday}개를 완료했어요.",
+                    fontSize = 16.sp,
+                    color = HomeMuted,
+                )
+                Spacer(Modifier.height(18.dp))
+                HomeCtaButton(text = "오늘의 미션 하러 가기", onClick = onGoMissions)
+            }
         }
 
-        // 오늘 요약 — 완료 미션 개수 하나로 통일(남은 개수 이중 표기 제거) + 미션 CTA.
-        //   예전엔 '오늘의 활동'(완료 수)과 '오늘의 미션'(남은 수)을 둘 다 보여줘 혼선이 있었다.
-        AigoCard {
-            Text("오늘의 활동", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(Dimens.Space8))
-            Text(
-                "지금까지 미션 ${ui.completedToday}개를 완료했어요.",
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            Spacer(Modifier.height(Dimens.Space16))
-            AigoPrimaryButton(
-                text = "오늘의 미션 하러 가기",
-                onClick = onGoMissions,
-            )
-        }
-
-        // 오늘 걷기(#69 today_walking) — 실적(분·걸음). 목표(분)는 GET /missions 원천이라 후속 배선.
-        AigoCard {
-            Text("오늘 걷기", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(Dimens.Space8))
-            Text(
-                // 절삭 대신 반올림(0.9분+걸음이 "0분"으로 보이지 않게, 리뷰 #79).
-                "오늘 ${ui.todayWalkingMin.roundToInt()}분 걸었어요 · %,d보".format(ui.todayWalkingSteps),
-                style = MaterialTheme.typography.bodyLarge,
-            )
-        }
-
-        // '영상 따라 운동하기'는 미션 탭(오늘의 미션 하러 가기)에서 진입 가능하므로 홈의 중복 버튼은 제거했다.
-        AigoSecondaryButton(text = "나의 기록 보기", onClick = onOpenRecords)
+        // 나의 기록 보기(아웃라인)
+        HomeOutlineButton(text = "나의 기록 보기", onClick = onOpenRecords)
 
         // TODO: 백엔드 연결 — 주간 리포트·걸음 목표/비교(계약 GAP: /home 확장 대기)
         Spacer(Modifier.height(Dimens.Space8))
@@ -331,40 +342,91 @@ private fun PetSpeechBubble(
     modifier: Modifier = Modifier,
 ) {
     Surface(
-        modifier = modifier.widthIn(max = 280.dp),
-        color = MaterialTheme.colorScheme.primaryContainer,
-        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        shape = MaterialTheme.shapes.large,
-        tonalElevation = 4.dp,
-        shadowElevation = 4.dp,
+        modifier = modifier.widthIn(max = 260.dp),
+        color = Color(0xFFF3F0E6),
+        contentColor = Color(0xFF2E4A38),
+        shape = RoundedCornerShape(18.dp),
+        shadowElevation = 3.dp,
     ) {
         Text(
             text = text,
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.padding(
-                horizontal = Dimens.Space16,
-                vertical = Dimens.Space12,
-            ),
+            fontSize = 15.sp,
+            lineHeight = 21.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
         )
     }
 }
 
 private fun currentHourOfDay(): Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
 
+/** 포인트 알약(노란 강조) — 시안 '10 P'. */
 @Composable
 private fun PointsChip(points: Int) {
-    Surface(
-        color = MaterialTheme.colorScheme.tertiaryContainer,
-        shape = MaterialTheme.shapes.extraLarge,
-    ) {
+    Surface(color = HomePointBg, shape = RoundedCornerShape(50)) {
         Text(
             text = "%,d P".format(points),
-            style = MaterialTheme.typography.titleMedium,
+            fontSize = 17.sp,
             fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onTertiaryContainer,
-            modifier = Modifier.padding(horizontal = Dimens.Space16, vertical = Dimens.Space8),
+            color = HomePointText,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
+    }
+}
+
+/** 홈 주 CTA: 딥그린 알약 + 오른쪽 원형 화살표(시안). */
+@Composable
+private fun HomeCtaButton(text: String, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = HomeGreen,
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(text, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            Box(
+                Modifier
+                    .align(Alignment.CenterEnd)
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.22f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+    }
+}
+
+/** 홈 보조 버튼: 흰 배경 + 초록 테두리(시안 '나의 기록 보기'). */
+@Composable
+private fun HomeOutlineButton(text: String, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = HomeOutlineFill,
+        border = BorderStroke(1.5.dp, HomeGreen),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 16.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(text, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = HomeGreen)
+        }
     }
 }
 
@@ -372,10 +434,4 @@ private fun activityLevelLabel(level: String): String = when (level) {
     "easy" -> "가볍게"
     "hard" -> "활발히"
     else -> "보통"
-}
-
-private fun careStageLabel(stage: String?): Pair<String, String> = when (stage) {
-    "good" -> "👍" to "아주 좋아요!"
-    "action_needed" -> "💪" to "조금만 더 함께 챙겨봐요"
-    else -> "🙂" to "잘 유지하고 있어요"
 }

@@ -1,6 +1,7 @@
 package com.aihealthcare.ah0404.mission
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,10 +10,23 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.DirectionsWalk
+import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.Restaurant
+import androidx.compose.material.icons.filled.SportsEsports
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -22,8 +36,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlin.math.floor
 import com.aihealthcare.ah0404.network.Mission
@@ -31,9 +49,16 @@ import com.aihealthcare.ah0404.network.MissionTodayProgress
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
 import com.aihealthcare.ah0404.ui.components.AigoTonalButton
-import com.aihealthcare.ah0404.ui.theme.AigoOnWarningContainer
-import com.aihealthcare.ah0404.ui.theme.AigoWarningContainer
 import com.aihealthcare.ah0404.ui.theme.Dimens
+
+// 미션 메인 디자인 고도화 팔레트(시안 spec 토큰).
+private val MGreen = Color(0xFF1E5B3A)   // primary_green(액션 버튼)
+private val MInk = Color(0xFF1C1C1E)      // body_text
+private val MMuted = Color(0xFF6B7280)    // secondary_text
+private val MBg = Color(0xFFF7F6F0)       // screen_background
+private val MTrack = Color(0xFFE3E5E1)    // progress_track(흰색 아님)
+private val MCardBorder = Color(0xFFE6E4DB) // 카드 테두리(흰 카드 구분)
+private val MPointBg = Color(0xFFF0A93B)  // 포인트 배지 골드
 
 internal fun targetUnitLabel(unit: String): String = when (unit) {
     "steps" -> "걸음"
@@ -71,6 +96,35 @@ internal fun todayProgressLine(progress: MissionTodayProgress): String {
 internal fun todayProgressFraction(progress: MissionTodayProgress, targetValue: Int): Float =
     if (targetValue <= 0) 0f else (progress.totalMin / targetValue).coerceIn(0f, 1f)
 
+/** 미션이 오늘 목표를 채웠는지(유형별 완료 신호). 걷기·운동=goalReached, 식사=오늘 기록 있음, 게임=오늘 완료. */
+internal fun missionDone(m: Mission): Boolean = when (m.missionType) {
+    "walking", "exercise" -> m.todayProgress?.goalReached == true
+    "meal" -> m.todayLog != null
+    "game" -> m.todayDone == true
+    else -> false
+}
+
+// pastel=아이콘 원/완료 카드 배경(연한 틴트), icon=아이콘 짙은 브랜드색(spec design_tokens).
+private data class MissionVisual(val pastel: Color, val icon: Color, val vector: ImageVector)
+
+/** 미션 유형별 색·아이콘(시안 spec). 카드는 흰색, 원(pastel)은 연한 틴트, 아이콘은 짙은 브랜드색. */
+private fun missionVisual(type: String): MissionVisual = when (type) {
+    "walking" -> MissionVisual(Color(0xFFE7F5EC), Color(0xFF2FA463), Icons.Filled.DirectionsWalk)
+    "exercise" -> MissionVisual(Color(0xFFFFF1E6), Color(0xFFEF7F16), Icons.Filled.FitnessCenter)
+    "meal" -> MissionVisual(Color(0xFFE6F1FF), Color(0xFF2E6CFF), Icons.Filled.Restaurant)
+    "game" -> MissionVisual(Color(0xFFEFE9F8), Color(0xFF7252B8), Icons.Filled.SportsEsports)
+    else -> MissionVisual(Color(0xFFF0F1EF), Color(0xFF6B7280), Icons.Filled.Star)
+}
+
+/** 카드 제목은 시안 spec의 유형명(걷기/운동/식사/게임 미션) — 백엔드 title 대신 통일. */
+private fun missionTitle(type: String, fallback: String): String = when (type) {
+    "walking" -> "걷기 미션"
+    "exercise" -> "운동 미션"
+    "meal" -> "식사 미션"
+    "game" -> "게임 미션"
+    else -> fallback
+}
+
 @Composable
 fun MissionScreen(
     modifier: Modifier = Modifier,
@@ -82,7 +136,12 @@ fun MissionScreen(
 ) {
     val state by vm.uiState.collectAsState()
 
-    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MBg),
+        contentAlignment = Alignment.Center,
+    ) {
         when (val s = state) {
             is MissionUiState.Loading -> CircularProgressIndicator()
 
@@ -109,15 +168,16 @@ fun MissionScreen(
             is MissionUiState.Success -> LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                    .padding(horizontal = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                item { Spacer(modifier = Modifier.height(8.dp)) }
+                item { Spacer(modifier = Modifier.height(10.dp)) }
                 item {
                     Text(
                         text = "오늘의 미션",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MInk,
                     )
                 }
                 items(s.missions) { mission ->
@@ -127,18 +187,20 @@ fun MissionScreen(
                         onClick = { onMissionClick(mission) },
                     )
                 }
+                // 하단 보너스 포인트 안내 카드(시안). 정보성.
+                item { MissionBonusCard() }
                 // 단백질 미션 숨김 사유(#304 요청 4): 미션이 '사라진' 게 아니라 건강 상태 때문에 쉬는 중임을
-                //   알리고, 되돌릴 수 있는 곳(내 정보)으로 바로 보낸다.
+                //   알리고, 되돌릴 수 있는 곳(내 정보)으로 바로 보낸다. (단백질 미션은 현행 디자인 유지)
                 s.proteinHiddenNotice?.let { notice ->
                     item { ProteinHiddenNoticeCard(notice = notice, onOpenProfileEdit = onOpenProfileEdit) }
                 }
-                item { Spacer(modifier = Modifier.height(8.dp)) }
+                item { Spacer(modifier = Modifier.height(10.dp)) }
             }
         }
     }
 }
 
-/** 단백질 미션 숨김 사유 카드(#304 요청 4). 사유 한 줄 + '내 정보' 이동 버튼. */
+/** 단백질 미션 숨김 사유 카드(#304 요청 4). 사유 한 줄 + '내 정보' 이동 버튼. (단백질 미션 현행 유지) */
 @Composable
 private fun ProteinHiddenNoticeCard(notice: String, onOpenProfileEdit: () -> Unit) {
     AigoCard {
@@ -158,108 +220,144 @@ private fun ProteinHiddenNoticeCard(notice: String, onOpenProfileEdit: () -> Uni
     }
 }
 
+/**
+ * 미션 카드(디자인 고도화 컴팩트): 유형별 색 카드 + 원형 아이콘 + 제목·포인트 + 진행(현재/목표)·진행바 + 액션/완료.
+ * 카드 전체가 터치 영역(시니어 44dp+ 확보). 완료면 액션 버튼 대신 유형색 체크.
+ */
 @Composable
-private fun MissionCard(mission: Mission, onClick: (() -> Unit)? = null) {
-    AigoCard(
-        modifier = if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier,
+private fun MissionCard(mission: Mission, onClick: () -> Unit) {
+    val v = missionVisual(mission.missionType)
+    val done = missionDone(mission)
+    val unit = targetUnitLabel(mission.targetUnit)
+    val cur = when {
+        mission.todayProgress != null ->
+            formatTodayProgressMinutes(mission.todayProgress.totalMin, mission.todayProgress.goalReached)
+        done -> mission.targetValue.toString()
+        else -> "0"
+    }
+    val frac = when {
+        mission.todayProgress != null -> todayProgressFraction(mission.todayProgress, mission.targetValue)
+        done -> 1f
+        else -> 0f
+    }
+    // 미션 카드만 예외: 지시서 색상(유형별 연한 틴트) 사용. 카드가 연하니 아이콘은 짙은 브랜드색으로(흰 원 없음 — 사용자 피드백).
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        // 카드 = 유형색 아주 옅은 틴트(5%). 원 18%, 아이콘 글리프만 브랜드색. (배경색 아님 — 사용자 확정)
+        color = v.icon.copy(alpha = 0.05f),
+        border = BorderStroke(1.dp, v.icon.copy(alpha = 0.15f)),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier
+                .heightIn(min = 108.dp)
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = mission.title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f)
-            )
-            if (mission.requiresSafetyNotice) {
-                SafetyBadge()
+            // 원도 옅게(브랜드색 18% 틴트), 아이콘 글리프만 브랜드색. 카드는 8%로 더 옅게.
+            Box(
+                Modifier.size(56.dp).clip(CircleShape).background(v.icon.copy(alpha = 0.18f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(v.vector, contentDescription = null, tint = v.icon, modifier = Modifier.size(30.dp))
             }
-        }
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        Text(
-            text = mission.description.orEmpty(),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "목표: ${mission.targetValue} ${targetUnitLabel(mission.targetUnit)}",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium
-            )
-            Text(
-                text = "${mission.rewardPoints}pt",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
-
-        // 오늘 누적 진행(운동·걷기) — 재생/측정 전에도, 중간에 끊었어도 '오늘까지 얼마나 했는지'를 목표 아래에 보여준다.
-        mission.todayProgress?.let { progress ->
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = todayProgressLine(progress),
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-                color = if (progress.goalReached) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            LinearProgressIndicator(
-                progress = { todayProgressFraction(progress, mission.targetValue) },
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-
-        // 1회성 미션(식사·게임)의 '오늘 했음' 배지(#346) — 진행바 대신 완료/기록 문구로 표시.
-        missionTodayBadge(mission)?.let { badge ->
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = badge,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
-
-        if (onClick != null) {
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                // 실제 수행/기록 화면이 있는 유형(걷기·식사)은 그 행동을, 나머지는 '준비 중'을 안내한다(리뷰 #225).
-                text = missionCtaLabel(mission.missionType),
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Bold,
-                color = if (missionCtaHighlighted(mission.missionType)) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        missionTitle(mission.missionType, mission.title),
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MInk,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    PointsBadge(mission.rewardPoints)
+                }
+                // 진행현황 + 진행바를 한 세로 묶음(딱 붙임)으로, 버튼은 그 오른쪽에 — 사용자 피드백.
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "$cur$unit / ${mission.targetValue}$unit",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MMuted,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        LinearProgressIndicator(
+                            progress = { frac },
+                            color = v.icon,
+                            trackColor = MTrack,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(8.dp)
+                                .clip(RoundedCornerShape(4.dp)),
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    if (done) {
+                        Box(
+                            Modifier.size(34.dp).clip(CircleShape).background(v.icon),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(Icons.Filled.Check, contentDescription = "완료", tint = Color.White, modifier = Modifier.size(20.dp))
+                        }
+                    } else {
+                        // 식사(단백질)만 '기록하기', 나머지는 '시작하기'(시안). 실제 이동은 카드 클릭이 담당.
+                        Surface(color = MGreen, shape = RoundedCornerShape(12.dp)) {
+                            Text(
+                                if (mission.missionType == "meal") "기록하기" else "시작하기",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
+/** 하단 보너스 안내 카드(시안): 선물 아이콘 + 문구 + 화살표. 정보성(현재 비인터랙티브). */
 @Composable
-private fun SafetyBadge() {
+private fun MissionBonusCard() {
     Surface(
-        color = AigoWarningContainer,
-        shape = MaterialTheme.shapes.small
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        color = Color(0xFFEAF4EC),
+        border = BorderStroke(1.dp, Color(0xFFCFE6D6)),
     ) {
-        Text(
-            text = "안전 확인 필요",
-            style = MaterialTheme.typography.labelSmall,
-            color = AigoOnWarningContainer,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-        )
+        Row(
+            modifier = Modifier.padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("🎁", fontSize = 26.sp)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text("모든 미션을 완료하면", fontSize = 14.sp, color = MMuted)
+                Spacer(Modifier.height(2.dp))
+                Text("추가 보너스 포인트를 드려요!", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MInk)
+            }
+            Text("›", fontSize = 26.sp, color = MMuted)
+        }
+    }
+}
+
+/** 포인트 배지 'Ⓟ N'(골드 원 + 숫자, 시안 top-right). */
+@Composable
+private fun PointsBadge(points: Int) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier.size(20.dp).clip(CircleShape).background(MPointBg),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("P", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.width(5.dp))
+        Text("$points", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MInk)
     }
 }

@@ -70,6 +70,7 @@ import com.aihealthcare.ah0404.record.RecordScreen
 import com.aihealthcare.ah0404.feedback.AppFeedback
 import com.aihealthcare.ah0404.settings.AppSettings
 import com.aihealthcare.ah0404.settings.SettingsScreen
+import com.aihealthcare.ah0404.settings.FaqScreen
 import com.aihealthcare.ah0404.settings.SupportScreen
 import com.aihealthcare.ah0404.ui.components.AigoDialog
 import com.aihealthcare.ah0404.ui.theme.MyApplicationTheme
@@ -346,7 +347,20 @@ private fun MainContent(
         }
         "support" -> {
             BackHandler { subScreen = null }
-            SupportScreen(onBack = { subScreen = null })
+            // 고객센터 → 자주 묻는 질문(시안: 두 화면으로 분리하되 서로 오갈 수 있게).
+            SupportScreen(onBack = { subScreen = null }, onOpenFaq = { subScreen = "faq_from_support" })
+            return
+        }
+        // FAQ 는 두 경로로 열린다 — 설정에서 직접("faq") / 고객센터를 거쳐("faq_from_support").
+        //   돌아갈 곳이 서로 달라(설정 탭 vs 고객센터) 키를 나눈다.
+        "faq" -> {
+            BackHandler { subScreen = null }
+            FaqScreen(onBack = { subScreen = null })
+            return
+        }
+        "faq_from_support" -> {
+            BackHandler { subScreen = "support" }
+            FaqScreen(onBack = { subScreen = "support" })
             return
         }
         "exercise" -> {
@@ -423,6 +437,7 @@ private fun MainContent(
             )
             MainTab.SETTINGS -> SettingsScreen(
                 onOpenSupport = { subScreen = "support" },
+                onOpenFaq = { subScreen = "faq" },
                 onOpenProfile = { subScreen = "profile" },
                 // 회원탈퇴 성공(#356): 서버 계정은 이미 정리됐으니 로그아웃과 같은 로컬 정리를 태운다
                 //   (토큰·세션 + 공급자 credential 해제). credential 이 남으면 다음 로그인에서 같은 계정이
