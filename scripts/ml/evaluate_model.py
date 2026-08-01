@@ -4,7 +4,7 @@
 실행하면 아래를 산출하고 metrics.json / metrics.csv 로 저장한다:
   - minimal / with_waist (일수 기반) 5-fold OOF: AUROC · AUPRC · Brier · ECE(10 bins)
     + fold별 값 + 평균±표준편차 + 부트스트랩 95% CI
-  - 비교 실험: (1) days vs binary  (2) LR vs 트리  (3) 비가중 vs 표집가중  (4) 5-fold vs 80/20
+  - 비교 실험: (1) days vs binary  (2) LR vs 트리  (3) 비가중 OOF 예측의 표집가중 평가  (4) 5-fold vs 80/20
   - AUPRC는 유병률 기준선(0.1327)과 함께 해석
 모든 난수 random_state=42 고정.
 
@@ -206,7 +206,8 @@ def main():
 
     outdir = Path(a.out_dir)
     outdir.mkdir(parents=True, exist_ok=True)
-    json.dump(out, open(outdir / "metrics.json", "w"), ensure_ascii=False, indent=2)
+    with (outdir / "metrics.json").open("w", encoding="utf-8") as metrics_file:
+        json.dump(out, metrics_file, ensure_ascii=False, indent=2)
     # flat csv
     rows = []
     for fs, v in head.items():

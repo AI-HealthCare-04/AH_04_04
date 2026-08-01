@@ -49,10 +49,11 @@ fold별 AUROC: minimal 0.823 ± 0.008, with waist 0.836 ± 0.004.
 ### 재현 방법
 
 ```bash
-python scripts/ml/evaluate_model.py --data_dir <KNHANES 전처리 parquet 폴더> --out_dir scripts/ml
+uv run --group app --with pyarrow python scripts/ml/evaluate_model.py \
+  --data_dir <KNHANES 전처리 parquet 폴더> --out_dir scripts/ml
 ```
 
-모든 난수는 `random_state=42`로 고정돼 있다. 커밋된 산출물은 `scripts/ml/metrics.json`(헤드라인·fold별·신뢰구간 및 모든 비교 실험)과 `scripts/ml/metrics.csv`(flat 형태)다. KNHANES 원자료는 이용 조건상 저장소에 두지 않으므로, 이 지표 파일이 검토 가능한 기록 역할을 한다.
+Parquet 입력을 읽는 데 필요한 `pyarrow`는 위 명령의 `--with pyarrow`로 설치한다. 모든 난수는 `random_state=42`로 고정돼 있다. 커밋된 산출물은 `scripts/ml/metrics.json`(헤드라인·fold별·신뢰구간 및 스크립트에 구현된 비교 실험)과 `scripts/ml/metrics.csv`(flat 형태)다. KNHANES 원자료는 이용 조건상 저장소에 두지 않으므로, 이 지표 파일이 검토 가능한 기록 역할을 한다.
 
 버린 대안을 포함한 전체 실험·의사결정 이력은 `docs/ml/모델_탐색_의사결정_이력.md`에 있다.
 
@@ -89,7 +90,7 @@ python scripts/ml/evaluate_model.py --data_dir <KNHANES 전처리 parquet 폴더
 | --- | --- |
 | `sarcopenia_model_minimal.joblib` | `987287e8be9daa87487595865d2113b7f298cdd3248ed107adcd7b580ac4ffe5` |
 | `sarcopenia_model_with_waist.joblib` | `0b5052862a66d1a429e3632a4d2eac00babbf3546be6c38748ab52670c5c2c10` |
-| `cohort_unified_65plus.json` | `c20061077a9c44485ad21f77227cb27fc9772a91d3f0cb3e91d56e1c6265ff93` |
+| `cohort_unified_65plus.json` | `24d2d052cc776a89dc16d9ea4b1c4761da583bcd55d3091279b4bf3650d019ef` |
 
 `with waist` 번들은 허리둘레 결측 13행을 학습 표본에서 제외한 뒤 재생성됐다. 이전 해시 `EC837908...`은 폐기된 번들을 가리키므로 사용하지 않는다.
 

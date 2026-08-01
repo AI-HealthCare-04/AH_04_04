@@ -28,12 +28,20 @@ from app.ml.predictor import (
 )
 
 # ── ② 고정 해시 (배포 아티팩트) ─────────────────────────────
-EXPECTED_SHA256 = {
-    "sarcopenia_model_minimal.joblib":
-        "987287e8be9daa87487595865d2113b7f298cdd3248ed107adcd7b580ac4ffe5",
-    "sarcopenia_model_with_waist.joblib":
-        "0b5052862a66d1a429e3632a4d2eac00babbf3546be6c38748ab52670c5c2c10",
-}
+HASH_MANIFEST = Path(__file__).resolve().parents[3] / "docs" / "ml" / "ARTIFACT_HASHES.txt"
+
+
+def _load_expected_sha256() -> dict[str, str]:
+    expected: dict[str, str] = {}
+    for line in HASH_MANIFEST.read_text(encoding="utf-8").splitlines():
+        if not line or line.startswith("#"):
+            continue
+        digest, name = line.split(maxsplit=1)
+        expected[name] = digest
+    return expected
+
+
+EXPECTED_SHA256 = _load_expected_sha256()
 
 # 나이로 고정한 입력(시계 비의존). 허리 없으면 minimal, 있으면 with_waist 모델로 라우팅.
 INPUT_MINIMAL = {"age": 72, "sex": 1, "height_cm": 168, "weight_kg": 68, "walk_days": 3, "musc_days": 1}
@@ -73,6 +81,7 @@ def test_full_pipeline_deterministic_with_frozen_clock(monkeypatch):
     )
     pred = RiskPredictor()
     r0 = pred.predict_sync(features_from_health_profile(profile))
+    assert r0.input_snapshot["age"] == 72
     for _ in range(50):
         r = pred.predict_sync(features_from_health_profile(profile))
         assert r.risk_score == r0.risk_score
