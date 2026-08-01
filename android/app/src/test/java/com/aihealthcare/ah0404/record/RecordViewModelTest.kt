@@ -10,6 +10,7 @@ import com.aihealthcare.ah0404.network.RiskReassessRequest
 import com.aihealthcare.ah0404.network.RiskReassessResponse
 import com.aihealthcare.ah0404.network.ScoreSimPointDto
 import com.aihealthcare.ah0404.network.ScoreSimulationResponse
+import com.aihealthcare.ah0404.network.PredictionFeedbackRequest
 import com.aihealthcare.ah0404.network.PredictionInputsResponse
 import com.aihealthcare.ah0404.network.RecordApi
 import com.aihealthcare.ah0404.network.RiskHistoryItem
@@ -75,6 +76,7 @@ class RecordViewModelTest {
         override suspend fun getCohortDistribution(): CohortDistributionResponse = error("이 테스트는 또래 분포를 부르지 않는다")
         override suspend fun reassessRiskPrediction(body: RiskReassessRequest): RiskReassessResponse =
             error("이 테스트는 재평가를 부르지 않는다")
+        override suspend fun submitPredictionFeedback(predictionId: Int, body: PredictionFeedbackRequest) = Unit
     }
 
     private fun risk(vararg stages: String) =
@@ -205,6 +207,7 @@ class RecordViewModelTest {
         override suspend fun getCohortDistribution(): CohortDistributionResponse = error("이 테스트는 또래 분포를 부르지 않는다")
         override suspend fun reassessRiskPrediction(body: RiskReassessRequest): RiskReassessResponse =
             error("이 테스트는 재평가를 부르지 않는다")
+        override suspend fun submitPredictionFeedback(predictionId: Int, body: PredictionFeedbackRequest) = Unit
     }
 
     @Test
@@ -282,6 +285,7 @@ class RecordViewModelTest {
             )
             override suspend fun reassessRiskPrediction(body: RiskReassessRequest): RiskReassessResponse =
                 error("이 테스트는 재평가를 부르지 않는다")
+            override suspend fun submitPredictionFeedback(predictionId: Int, body: PredictionFeedbackRequest) = Unit
         }
         val vm = RecordViewModel(api)
 
@@ -325,6 +329,7 @@ class RecordViewModelTest {
             override suspend fun getCohortDistribution(): CohortDistributionResponse = error("이 테스트는 또래 분포를 부르지 않는다")
             override suspend fun reassessRiskPrediction(body: RiskReassessRequest): RiskReassessResponse =
                 error("이 테스트는 재평가를 부르지 않는다")
+            override suspend fun submitPredictionFeedback(predictionId: Int, body: PredictionFeedbackRequest) = Unit
         }
         val vm = RecordViewModel(api)
         vm.load(); runCurrent() // A: loadMonth 진행 중(getStamps delay 대기)

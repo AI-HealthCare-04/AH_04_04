@@ -85,7 +85,7 @@ fun RecordScreen(
                 //   → 원자료(달력). §5.1 "최근 2주 미션 완료" 선그래프는 아래 달력과 정보가 중복돼 제거했다.
                 val ui = vm.muscleScore
                 if (ui != null) {
-                    MuscleDashboardCards(ui, onGoToMissions)
+                    MuscleDashboardCards(ui, onGoToMissions, onFeedback = vm::submitPredictionFeedback)
                 } else {
                     AigoCard {
                         Text(

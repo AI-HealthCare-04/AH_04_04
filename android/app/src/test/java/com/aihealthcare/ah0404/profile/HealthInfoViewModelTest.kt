@@ -11,6 +11,7 @@ import com.aihealthcare.ah0404.network.PredictionInputsResponse
 import com.aihealthcare.ah0404.network.RecordApi
 import com.aihealthcare.ah0404.network.RiskHistoryResponse
 import com.aihealthcare.ah0404.network.RiskLatestResponse
+import com.aihealthcare.ah0404.network.PredictionFeedbackRequest
 import com.aihealthcare.ah0404.network.RiskReassessRequest
 import com.aihealthcare.ah0404.network.RiskReassessResponse
 import com.aihealthcare.ah0404.network.ScoreSimulationResponse
@@ -89,6 +90,8 @@ class HealthInfoViewModelTest {
             throwOnReassess?.let { throw it }
             return response
         }
+
+        override suspend fun submitPredictionFeedback(predictionId: Int, body: PredictionFeedbackRequest) = Unit
 
         override suspend fun getRiskHistory(limit: Int): RiskHistoryResponse = error("unused")
         override suspend fun getMissionLogs(date: String?, from: String?, to: String?): MissionLogListResponse =

@@ -10,6 +10,7 @@ import com.aihealthcare.ah0404.dashboard.DashboardPrefill
 import com.aihealthcare.ah0404.network.ChallengeTotalsResponse
 import com.aihealthcare.ah0404.network.CohortDistributionResponse
 import com.aihealthcare.ah0404.network.MissionLogItem
+import com.aihealthcare.ah0404.network.PredictionFeedbackRequest
 import com.aihealthcare.ah0404.network.PredictionInputsResponse
 import com.aihealthcare.ah0404.network.RecordApi
 import com.aihealthcare.ah0404.network.RiskHistoryItem
@@ -188,6 +189,8 @@ class RecordViewModel(
                 age = predictionPrefill?.age,
                 score = latestResult.getOrNull()?.muscleScore,
                 band = latestResult.getOrNull()?.scoreBand,
+                // 체감 피드백(#357) 노출 키 — 구버전 서버(필드 없음)면 기본값 0 → null 로 카드 미표시.
+                predictionId = latestResult.getOrNull()?.predictionId?.takeIf { it > 0 },
                 // 리뷰 #275-②: 비교 불가 경계(model_changed·cohort_version 변경)를 보존한 추이.
                 trend = buildScoreTrend(history),
                 walkSim = simResult.getOrNull()?.walk?.mapNotNull { p -> p.score?.let { ScoreSimPoint(p.days, it) } } ?: emptyList(),
@@ -214,6 +217,17 @@ class RecordViewModel(
         val last = first.getActualMaximum(Calendar.DAY_OF_MONTH)
         return String.format(Locale.US, "%04d-%02d-01", year, month1) to
             String.format(Locale.US, "%04d-%02d-%02d", year, month1, last)
+    }
+
+    /**
+     * 예측 체감 피드백 전송(#357). 서버 계약이 멱등 PUT 이고 노출 정책(예측당 1회)은 로컬 기록이
+     * 담당하므로, 실패는 로그만 남기고 사용자 흐름을 막지 않는다(sts-overlay 이벤트와 동일 정책).
+     */
+    fun submitPredictionFeedback(predictionId: Int, response: String) {
+        viewModelScope.launch {
+            safeCall { api.submitPredictionFeedback(predictionId, PredictionFeedbackRequest(response)) }
+                .onFailure { Log.w(TAG, "피드백 전송 실패(무시): ${it.message}") }
+        }
     }
 
     /** 취소 예외는 그대로 전파(구조적 동시성 보존), 실제 오류만 Result.failure 로 변환. */
