@@ -185,7 +185,7 @@ def diagnose() -> dict:
     """
     import threading
 
-    import pandas as pd
+    import pandas as pd  # type: ignore[import-untyped]
 
     from app.ml.predictor import RiskPredictor, load_model_bundle, normalize_features
 
