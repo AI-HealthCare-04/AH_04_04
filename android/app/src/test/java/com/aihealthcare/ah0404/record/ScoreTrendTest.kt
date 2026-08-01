@@ -112,4 +112,18 @@ class ScoreTrendTest {
         val trend = buildScoreTrend(listOf(item("2026-07-01", 0), item("2026-07-08", 4)))
         assertEquals("지난 기록과 비슷하게 유지되고 있어요.", scoreChangeCopy(trend))
     }
+
+    @Test
+    fun empty_trend_copy_guides_instead_of_silence() {
+        // #334 문제3 + 리뷰 #339: 점수가 있을 때만 도달하므로 침묵 대신 정확한 안내를 준다.
+        val one = buildScoreTrend(listOf(item("2026-07-01", 72)))
+        assertEquals(1, one.size)
+        // size=1: 두 번째 점은 '내 정보' 저장(재평가)에서 생김 — 챌린지 아님(리뷰 #339-①).
+        assertEquals(
+            "다음 재평가 때 변화를 보여드려요. '내 정보'에서 정보를 업데이트해 저장하면 새 점수가 쌓여요.",
+            trendEmptyCopy(one.size),
+        )
+        // size=0: 점수는 있는데 추이만 비었다 = 추이 조회 실패. '첫 평가를 마치면'은 점수 존재와 모순이므로 조회 실패 안내(리뷰 #339-②).
+        assertEquals("변화 추이를 불러오지 못했어요. 잠시 후 다시 확인해 주세요.", trendEmptyCopy(0))
+    }
 }

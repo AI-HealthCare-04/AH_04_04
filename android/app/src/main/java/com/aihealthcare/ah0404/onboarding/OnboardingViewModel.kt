@@ -17,6 +17,7 @@ import com.aihealthcare.ah0404.network.Term
 import com.aihealthcare.ah0404.network.TokenHolder
 import com.aihealthcare.ah0404.network.retrofit
 import kotlinx.coroutines.launch
+import retrofit2.HttpException
 
 /** 온보딩 단계. 화면 라우팅의 기준. 체력검사(ASSESSMENT) 제출/스킵 후엔 별도 결과화면 없이 홈으로 간다(#299). */
 enum class OnbStep { WELCOME, TERMS, PROFILE, ASSESSMENT }
@@ -34,7 +35,9 @@ internal fun parseChairStandSeconds(input: String): Double? =
 
 /**
  * 키·몸무게 '모름' 시 성별·연령대 추정치 (cm, kg). 상수 표 — 나중에 교체 가능.
- *   남 65–74: 166/65 · 75+: 163/62   /   여 65–74: 153/56 · 75+: 150/53
+ *   남 50–74: 166/65 · 75+: 163/62   /   여 50–74: 153/56 · 75+: 150/53
+ * #298 C: 만 50~64 구간은 65–74 추정치를 **임시 재사용**한다. '추정치' 라벨이 붙고 65세 미만은 예측이 실행되지
+ *   않아 모델 입력 왜곡은 없으나, KNHANES 기반 50~64 실제 통계 확보 후 교체 예정 — 후속 이슈 #326.
  * 성별 미선택/미상은 남성 기준으로 폴백(성별 선택 후 다시 '모름' 누르면 갱신).
  */
 internal fun estimateBody(sex: String?, age: Int?): Pair<Int, Int> {
@@ -88,18 +91,70 @@ class OnboardingViewModel(
     var heightEstimated by mutableStateOf(false); private set
     var weightEstimated by mutableStateOf(false); private set
 
-    /** 키·몸무게 중 하나라도 '모름'(추정)이면 true → has_estimated_value 로 전송. */
-    val hasEstimatedValue: Boolean get() = heightEstimated || weightEstimated
+    // 추정('모름')은 나이·성별에 종속된다 — '모름' 선택 후 생년월일을 추정 대상 미만(만 50세 미만)으로 바꾸면
+    //   플래그(heightEstimated 등)만 남아 무효 추정값이 표시·제출될 수 있다(리뷰 #313). canEstimate 를 함께 확인해
+    //   '유효한 추정'만 인정한다 — 무효 추정은 표시·제출·has_estimated_value 모두에서 무시하고 직접 입력을 유도한다.
+    // 화면 표시("추정치로 입력했어요")·인라인 검증(heightError)도 원본 플래그가 아닌 이 유효 상태를 써야 무효
+    //   추정이 남았을 때 표시·검증·제출이 일관된다(리뷰 #313 재리뷰 — 원본 플래그 사용 시 '추정치 입력' + '직접
+    //   입력하세요'가 동시에 뜨는 모순). 그래서 public 으로 노출한다.
+    val heightEstimatedValid: Boolean get() = heightEstimated && canEstimate
+    val weightEstimatedValid: Boolean get() = weightEstimated && canEstimate
+
+    /** 키·몸무게 중 하나라도 유효한 '모름'(추정)이면 true → has_estimated_value 로 전송. */
+    val hasEstimatedValue: Boolean get() = heightEstimatedValid || weightEstimatedValid
 
     /**
-     * '모름'은 유효한 성별·생년월일 + **만 65세 이상**일 때만 허용(리뷰 #75-2·#75-4).
-     * 추정표·위험도 모델 모두 65세 이상 대상이라, 64세 이하엔 고령 추정치를 넣지 않는다.
+     * '모름'은 유효한 성별·생년월일 + **만 50세 이상**일 때 허용(#298 C: 50~64 추정표 확장, 리뷰 #75-2).
+     *  50세 미만은 추정 근거가 없어 직접 입력만 받는다(사유는 [estimateUnavailableReason] 로 안내).
      */
-    val canEstimate: Boolean get() = sex != null && (ageYears() ?: 0) >= MIN_SUPPORTED_AGE
+    // composeBirthDate() != null 을 함께 요구한다(리뷰 #313): ageYears() 는 숫자 변환만 하고 날짜 유효성(월 범위·
+    //   실제 일수·미래)을 안 봐서, 1958-13-01·1958-02-30 같은 무효 날짜에도 canEstimate 가 참이 돼 birthDateError
+    //   (가입 불가)와 '모름 추정 활성'이 동시에 뜬다. 유효한 생년월일일 때만 추정을 허용한다.
+    val canEstimate: Boolean get() =
+        sex != null && composeBirthDate() != null && (ageYears() ?: 0) >= MIN_ESTIMATE_AGE
+
+    /**
+     * '모름'(추정) 버튼이 비활성인 이유(#298 B). 활성이면 null. 성별·생년월일이 없으면 그 안내를,
+     *  값은 있으나 추정 대상 연령(만 50세)에 못 미치면 직접 입력을 안내한다.
+     */
+    val estimateUnavailableReason: String?
+        get() {
+            if (canEstimate) return null
+            val ageValid = composeBirthDate() != null && ageYears() != null
+            return if (sex == null || !ageValid) {
+                "성별·생년월일을 먼저 입력하면 사용할 수 있어요"
+            } else {
+                "정확한 값을 직접 입력해 주세요"
+            }
+        }
 
     /** 화면 표시값: 추정이면 현재 성별·나이로 라이브 계산(성별/생일 바꾸면 즉시 갱신), 아니면 수동 입력값. */
-    val heightInput: String get() = if (heightEstimated) estimateBody(sex, ageYears()).first.toString() else heightCm
-    val weightInput: String get() = if (weightEstimated) estimateBody(sex, ageYears()).second.toString() else weightKg
+    val heightInput: String get() = if (heightEstimatedValid) estimateBody(sex, ageYears()).first.toString() else heightCm
+    val weightInput: String get() = if (weightEstimatedValid) estimateBody(sex, ageYears()).second.toString() else weightKg
+
+    /** 키 인라인 검증 문구(#298 A-2). 직접 입력값이 현실 범위 밖이면 그 자리에서 안내(추정치·빈칸은 조용). */
+    val heightError: String?
+        get() {
+            if (heightEstimatedValid || heightCm.isBlank()) return null
+            val h = heightCm.toDoubleOrNull() ?: return "키를 숫자로 입력해 주세요"
+            return if (h < HEIGHT_MIN_CM || h > HEIGHT_MAX_CM) {
+                "키는 ${HEIGHT_MIN_CM.toInt()}~${HEIGHT_MAX_CM.toInt()}cm 사이로 입력해 주세요"
+            } else {
+                null
+            }
+        }
+
+    /** 몸무게 인라인 검증 문구(#298 A-2). */
+    val weightError: String?
+        get() {
+            if (weightEstimatedValid || weightKg.isBlank()) return null
+            val w = weightKg.toDoubleOrNull() ?: return "몸무게를 숫자로 입력해 주세요"
+            return if (w < WEIGHT_MIN_KG || w > WEIGHT_MAX_KG) {
+                "몸무게는 ${WEIGHT_MIN_KG.toInt()}~${WEIGHT_MAX_KG.toInt()}kg 사이로 입력해 주세요"
+            } else {
+                null
+            }
+        }
 
     /** 사용자가 직접 입력 → 실제값이므로 추정 플래그 해제. */
     fun setHeight(value: String) { heightCm = value; heightEstimated = false }
@@ -228,15 +283,19 @@ class OnboardingViewModel(
         val birth = composeBirthDate() ?: run {
             error = "생년월일을 정확히 입력해 주세요."; return@launchStep
         }
-        // 지원 대상: 만 65세 이상(추정표·위험도 모델 모두 65+ 기준, 리뷰 #75-4).
-        val age = ageYears()
-        if (age == null || age < MIN_SUPPORTED_AGE) {
-            error = "이 서비스는 만 65세 이상 어르신을 위한 것이에요. 생년월일을 확인해 주세요."; return@launchStep
+        // 최소 가입 연령 하한(리뷰 #313): 만 14세 미만은 개인정보보호법상 법정대리인 동의가 필요 → 제출 차단.
+        //   (인라인 birthDateError 로도 안내하지만 제출 시점에도 최종 방어.) #298 의 50-64 예측 준비중 안내와는 별개.
+        if ((ageYears() ?: 0) < MIN_SIGNUP_AGE) {
+            error = "만 ${MIN_SIGNUP_AGE}세 이상만 가입할 수 있어요."; return@launchStep
         }
+        // #298 C: 만 65세 미만도 가입·온보딩을 완료할 수 있다(예측만 "준비 중"). 나이 자체로 제출을 막지 않는다.
+        //   생년월일 자체가 유효하면(composeBirthDate 통과) age 는 항상 산출된다.
         // 추정('모름')이면 제출 시점의 최종 성별·나이로 계산(버튼 누른 시점 아님, 리뷰 #75-2).
+        // 유효한 추정만 반영한다(리뷰 #313): '모름' 후 연령을 50세 미만으로 바꾼 무효 추정은 여기서 값이 없어(빈칸)
+        //   아래 '키·몸무게·성별 모두 입력' 검증에 걸려 거부된다 → 65–74 추정값이 50세 미만 프로필로 새지 않는다.
         val estimate = if (hasEstimatedValue) estimateBody(sex, ageYears()) else null
-        val h = if (heightEstimated) estimate!!.first.toDouble() else heightCm.toDoubleOrNull()
-        val w = if (weightEstimated) estimate!!.second.toDouble() else weightKg.toDoubleOrNull()
+        val h = if (heightEstimatedValid) estimate!!.first.toDouble() else heightCm.toDoubleOrNull()
+        val w = if (weightEstimatedValid) estimate!!.second.toDouble() else weightKg.toDoubleOrNull()
         if (sex == null || h == null || w == null) {
             error = "키·몸무게·성별을 모두 입력해 주세요."; return@launchStep
         }
@@ -244,9 +303,12 @@ class OnboardingViewModel(
         if (walkDays == null || muscDays == null) {
             error = "걷기·근력 운동 일수를 선택해 주세요."; return@launchStep
         }
-        // 양수 가드(재란 #75 nit): "0"/음수 수동 입력이 백엔드 gt=0 에서 422 나기 전에 막는다.
-        if (h <= 0 || w <= 0) {
-            error = "키·몸무게는 0보다 큰 값으로 입력해 주세요."; return@launchStep
+        // 현실 범위 가드(#298 A-2): 화면 인라인이 1차지만 제출 시점에도 최종 방어(백엔드 gt=0/le= 이전).
+        if (h < HEIGHT_MIN_CM || h > HEIGHT_MAX_CM) {
+            error = "키는 ${HEIGHT_MIN_CM.toInt()}~${HEIGHT_MAX_CM.toInt()}cm 사이로 입력해 주세요."; return@launchStep
+        }
+        if (w < WEIGHT_MIN_KG || w > WEIGHT_MAX_KG) {
+            error = "몸무게는 ${WEIGHT_MIN_KG.toInt()}~${WEIGHT_MAX_KG.toInt()}kg 사이로 입력해 주세요."; return@launchStep
         }
         val body = HealthProfileRequest(
             birthDate = birth,
@@ -290,12 +352,34 @@ class OnboardingViewModel(
     }
 
     /** 위험도 예측 → 완주. profileId 가 없으면(비정상) 예외로 에러 처리. 예측은 미리 생성해 두되(대시보드 캐시),
-     *  결과화면 없이 완주 신호만 세운다(#299). */
+     *  결과화면 없이 완주 신호만 세운다(#299).
+     *  #298 C: 만 65세 미만은 예측 대상이 아니라 서버가 422(sarcopenia_prediction_preparing)를 준다. 이 경우
+     *  가입/온보딩은 정상 완료돼야 하므로 **예측 없이(result=null) 완주**로 넘긴다(예측은 대시보드에서 "준비 중" 안내). */
     private suspend fun predictAndFinish() {
         val pid = profileId ?: throw IllegalStateException("프로필 정보가 없습니다. 프로필부터 다시 진행해 주세요.")
-        result = api.createRiskPrediction(RiskPredictionRequest(pid))
+        result = try {
+            api.createRiskPrediction(RiskPredictionRequest(pid))
+        } catch (e: HttpException) {
+            // 422 를 무조건 '예측 준비 중'으로 삼키면 다른 검증성 422(프로필 불일치·비즈니스 검증)까지 '예측 없는
+            //   완주'로 위장된다(리뷰 #313). 서버가 이 케이스에만 내려주는 안정 코드(sarcopenia_prediction_preparing)
+            //   일 때만 예측 없이 완주로 넘기고, 그 외 422 는 재던져 에러 안내 + 재시도로 돌린다.
+            if (e.code() == 422 && isSarcopeniaPreparing(e)) {
+                Log.i(TAG, "예측 대상 아님(만 65세 미만 = sarcopenia_prediction_preparing) — 예측 없이 온보딩 완료(#298 C)")
+                null
+            } else {
+                throw e
+            }
+        }
         finished = true
     }
+
+    /**
+     * 422 응답이 '예측 준비 중'(만 65세 미만 등)인지 — 서버가 이 케이스에만 detail.code 로 내려주는 안정 코드로 판별한다.
+     *  본문 파싱 실패나 코드 부재면 false → 그 422 는 준비 중이 아니라 실제 오류로 취급(재던짐). 본문은 한 번만 읽는다.
+     */
+    private fun isSarcopeniaPreparing(e: HttpException): Boolean =
+        runCatching { e.response()?.errorBody()?.string() }.getOrNull()
+            ?.contains("sarcopenia_prediction_preparing") == true
 
     fun dismissError() { error = null }
 
@@ -330,14 +414,77 @@ class OnboardingViewModel(
         val y = birthYear.toIntOrNull() ?: return null
         val m = birthMonth.toIntOrNull() ?: return null
         val d = birthDay.toIntOrNull() ?: return null
-        if (y !in 1900..2025 || m !in 1..12 || d !in 1..31) return null
+        // 상한은 올해(하드코딩 2025 제거, #298): 해가 바뀌어도 미래 연도만 막고 올해 출생은 허용.
+        // 일자는 '해당 월의 실제 일수'로(2월/윤년·30/31일) — 1월 33일·2월 30일 등을 거른다.
+        if (y !in 1900..todayYear || m !in 1..12 || d !in 1..daysInMonth(y, m)) return null
+        // 미래 생일 거부(리뷰 #313): 연도 상한이 todayYear 라 올해 안이면 통과하므로, 올해라도 오늘 이후(월/일)면
+        //   막는다 — 안 그러면 2026-12-31 같은 미래 날짜가 유효 처리돼 ageYears 가 음수가 된다.
+        if (y == todayYear && (m > todayMonth || (m == todayMonth && d > todayDay))) return null
         return "%04d-%02d-%02d".format(y, m, d)
     }
+
+    /** 해당 연·월의 일수(minSdk 24 라 java.time 미사용, desugaring 불필요). 그레고리력 윤년 규칙. */
+    private fun daysInMonth(year: Int, month: Int): Int = when (month) {
+        1, 3, 5, 7, 8, 10, 12 -> 31
+        4, 6, 9, 11 -> 30
+        2 -> if ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0) 29 else 28
+        else -> 0 // 1..12 밖이면 0 → 어떤 일자도 유효 범위(1..0)에 안 들어와 거부된다.
+    }
+
+    /**
+     * 생년월일 인라인 검증 문구(#298 A). 연·월·일이 **모두 입력됐는데** 유효하지 않을 때만 문구를 준다
+     *  (입력 도중엔 null 로 조용). "다음"까지 미루지 않고 그 자리에서 안내하기 위한 파생 상태.
+     */
+    val birthDateError: String?
+        get() {
+            if (birthYear.isBlank() || birthMonth.isBlank() || birthDay.isBlank()) return null
+            if (composeBirthDate() == null) return "생년월일을 정확히 입력해 주세요"
+            // 최소 가입 연령 하한(리뷰 #313): 만 14세 미만은 개인정보보호법상 법정대리인 동의가 필요하므로 가입을
+            //   막는다. #298 의 50-64 허용(예측만 준비 중)은 그대로 두고 하한만 추가한다.
+            val age = ageYears() ?: return null
+            return if (age < MIN_SIGNUP_AGE) "만 ${MIN_SIGNUP_AGE}세 이상만 가입할 수 있어요" else null
+        }
+
+    /**
+     * 만 65세 미만 안내(#298 C). 생년월일이 유효하고 예측 대상 미만일 때만 노출 — **막지 않고** 희망적 톤으로 안내.
+     *  가입/온보딩은 계속 진행할 수 있고, 예측만 "준비 중"임을 알린다.
+     */
+    val underAgeNotice: String?
+        get() {
+            if (composeBirthDate() == null) return null
+            val age = ageYears() ?: return null
+            // 만 14~64세에게만 노출한다(리뷰 #313). 14세 미만은 birthDateError 가 '가입 불가'를 안내하므로,
+            //   여기서 '예측 제외 기능 자유롭게 이용' 문구까지 뜨면 서로 충돌한다 → 하한(MIN_SIGNUP_AGE) 미만은 제외.
+            return if (age in MIN_SIGNUP_AGE until MIN_SUPPORTED_AGE) {
+                "지금은 만 65세 이상 어르신에게 근감소증 예측을 제공하고 있어요. 50~64세 예측도 준비 중이니, " +
+                    "그전까지는 예측을 제외한 기능을 자유롭게 이용하실 수 있어요."
+            } else {
+                null
+            }
+        }
 
     companion object {
         const val TAG = "Onboarding"
 
-        /** 지원 최소 연령(만). 추정표·위험도 모델 모두 65세 이상 대상(리뷰 #75-4). */
+        /**
+         * 근감소증 **예측** 대상 최소 연령(만). #298 이후로는 **가입 차단 게이트가 아니다** — 65세 미만도 가입·온보딩을
+         * 완료할 수 있고, 예측만 "준비 중"으로 안내한다. 위험도 모델이 65세 이상 기준이라 이 값으로 예측 안내를 가른다(리뷰 #75-4).
+         */
         const val MIN_SUPPORTED_AGE = 65
+
+        /**
+         * 최소 **가입** 연령(만, 리뷰 #313). 만 14세 미만은 개인정보보호법상 법정대리인 동의가 필요하므로 가입 자체를
+         * 막는다(예측 대상 연령 [MIN_SUPPORTED_AGE] 와는 별개 — 14~64세는 가입 가능, 예측만 "준비 중"). 값은 제품 결정.
+         */
+        const val MIN_SIGNUP_AGE = 14
+
+        /** '모름' 추정치를 제공하는 최소 연령(만). 50~64 추정표 확장(#298 C)에 맞춰 65 → 50 으로 낮춘다. */
+        const val MIN_ESTIMATE_AGE = 50
+
+        // 키·몸무게 현실 범위(#298 A-2). 인라인 1차 검증값. 서버 DTO le= 는 더 넓은 근본 방어(별도 PR).
+        const val HEIGHT_MIN_CM = 90.0
+        const val HEIGHT_MAX_CM = 220.0
+        const val WEIGHT_MIN_KG = 20.0
+        const val WEIGHT_MAX_KG = 200.0
     }
 }
