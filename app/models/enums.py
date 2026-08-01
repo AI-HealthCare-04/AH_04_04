@@ -129,6 +129,9 @@ class MissionType(StrEnum):
     EXERCISE = "exercise"
     WALKING = "walking"
     GAME = "game"
+    # 사용자가 직접 수행하는 미션이 아니라, 그날 미션을 다 채웠을 때 서버가 얹어 주는 보너스.
+    #   GET /missions 목록에는 나오지 않고(get_active_templates 에서 제외) 포인트 적립 이력에만 남는다.
+    BONUS = "bonus"
 
 
 class ActivityType(StrEnum):
