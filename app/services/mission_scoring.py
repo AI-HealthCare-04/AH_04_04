@@ -30,6 +30,22 @@ def compute_earned_points(success: bool, reward_points: int) -> int:
 # 모든 미션을 채운 날 얹어 주는 보너스 포인트. 걷기·운동 한 개와 같은 무게(하루 최대 30 → 40).
 BONUS_POINTS = 10
 
+# 보너스 조건에서 제외하는 미션 종류 (#378).
+#   게임은 v1 에서 **완료 처리(포인트 적립·counted_for_daily) 자체가 구현되지 않았다** — 시청 로그는
+#   counted_for_daily=0 으로만 남아 counted 집합에 영원히 들어가지 못한다. 그런데 게임 템플릿은
+#   활성이라 required 에는 들어가므로, 제외하지 않으면 **어떤 사용자도 보너스를 받을 수 없다**
+#   (미션 탭 하단 카드의 '모든 미션 완료 시 보너스' 약속이 이행 불가).
+#   ⚠️ 게임 완료 처리가 구현되면(#349 today_done·포인트 정책과 함께) 이 집합을 비워 원복할 것.
+BONUS_EXCLUDED_TYPES: frozenset[MissionType] = frozenset({MissionType.GAME})
+
+
+def bonus_required_types(active_types: set[MissionType]) -> set[MissionType]:
+    """활성 템플릿 종류에서 보너스 판정 대상만 추린다(#378).
+
+    완료 경로가 없는 종류([BONUS_EXCLUDED_TYPES])를 빼, 달성 불가능한 조건이 되지 않게 한다.
+    """
+    return active_types - BONUS_EXCLUDED_TYPES
+
 
 def is_all_missions_complete(
     required_types: set[MissionType],

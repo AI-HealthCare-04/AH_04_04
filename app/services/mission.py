@@ -44,6 +44,7 @@ from app.models.users import User
 from app.repositories.health_profile_repository import HealthProfileRepository
 from app.repositories.mission_repository import MissionRepository
 from app.services.mission_scoring import (
+    bonus_required_types,
     compute_daily_result,
     compute_earned_points,
     is_all_missions_complete,
@@ -676,7 +677,8 @@ class MissionService:
             level=level,
             exclude_kidney_check=self._should_hide_kidney_missions(profile),
         )
-        required = {template.mission_type for template in templates}
+        # 완료 경로가 없는 종류(v1 게임)는 조건에서 뺀다 — 안 그러면 보너스가 영원히 지급 불가(#378).
+        required = bonus_required_types({template.mission_type for template in templates})
         if not is_all_missions_complete(required, completed):
             return
         if await self.repo.has_bonus_today(user_id):

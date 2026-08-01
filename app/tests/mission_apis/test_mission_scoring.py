@@ -6,6 +6,7 @@ from app.models.enums import DailyResult, MissionType
 from app.services.mission_scoring import (
     DAILY_GREAT_SUCCESS_THRESHOLD,
     DAILY_SUCCESS_THRESHOLD,
+    bonus_required_types,
     compute_daily_result,
     compute_earned_points,
     is_all_missions_complete,
@@ -62,3 +63,28 @@ def test_no_bonus_when_nothing_is_visible() -> None:
 def test_extra_completed_types_do_not_break_the_check() -> None:
     # 숨겨진 식사 미션을 어떻게든 완료한 경우처럼 '보이는 것보다 더' 채운 날도 보너스는 준다.
     assert is_all_missions_complete(_KIDNEY_RESTRICTED, _ALL_FOUR) is True
+
+
+# ---------------- 완료 경로 없는 종류 제외(#378) ----------------
+
+
+def test_game_is_excluded_from_bonus_condition() -> None:
+    # 게임은 v1 에서 완료 처리가 없어 counted 에 못 들어간다 — required 에 남기면 보너스가 영원히 불가.
+    assert bonus_required_types(_ALL_FOUR) == {MissionType.WALKING, MissionType.EXERCISE, MissionType.MEAL}
+
+
+def test_bonus_reachable_without_game_after_exclusion() -> None:
+    # RC 에서 지급 0건이던 조합(#378): 게임 활성 + 게임 미완료 → 나머지만 채워도 보너스가 나와야 한다.
+    completed_without_game = _ALL_FOUR - {MissionType.GAME}
+    assert is_all_missions_complete(bonus_required_types(_ALL_FOUR), completed_without_game) is True
+
+
+def test_exclusion_does_not_touch_other_types() -> None:
+    # 게임이 없는 구성은 그대로 — 제외 규칙이 다른 종류를 건드리면 안 된다.
+    without_game = {MissionType.WALKING, MissionType.MEAL}
+    assert bonus_required_types(without_game) == without_game
+
+
+def test_game_only_visible_set_never_awards_bonus() -> None:
+    # 게임만 보이는(=완료 경로가 하나도 없는) 구성이면 required 가 비어 보너스는 나오지 않는다.
+    assert is_all_missions_complete(bonus_required_types({MissionType.GAME}), {MissionType.GAME}) is False
