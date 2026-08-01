@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from scripts.bench.async_bench import MIN_P99_SAMPLES, percentile, summarize_health, validate_run_id
+from scripts.bench.async_bench import (
+    MIN_P99_SAMPLES,
+    ensure_archive_available,
+    percentile,
+    result_paths,
+    summarize_health,
+    validate_run_id,
+)
 
 
 def test_percentile_uses_linear_interpolation() -> None:
@@ -34,3 +43,12 @@ def test_validate_run_id_accepts_safe_names(run_id: str) -> None:
 def test_validate_run_id_rejects_unsafe_names(run_id: str) -> None:
     with pytest.raises(ValueError):
         validate_run_id(run_id)
+
+
+def test_duplicate_run_id_fails_before_measurement(tmp_path: Path) -> None:
+    _, archive = result_paths(tmp_path, "review-run")
+    archive.parent.mkdir(parents=True)
+    archive.write_text("existing", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="run-id archive already exists"):
+        ensure_archive_available(tmp_path, "review-run")

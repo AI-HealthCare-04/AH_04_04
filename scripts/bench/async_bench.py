@@ -361,6 +361,20 @@ def validate_run_id(run_id: str) -> str:
     return run_id
 
 
+def result_paths(output_dir: Path, run_id: str) -> tuple[Path, Path]:
+    """최신 결과와 회차 보존 파일의 경로를 반환한다."""
+    latest = output_dir / "async_bench_result.json"
+    archive = output_dir / "results" / f"async_bench_{run_id}.json"
+    return latest, archive
+
+
+def ensure_archive_available(output_dir: Path, run_id: str) -> None:
+    """중복 run-id를 긴 측정 전에 거부한다. 최종 쓰기의 exclusive create도 그대로 유지한다."""
+    _, archive = result_paths(output_dir, run_id)
+    if archive.exists():
+        raise FileExistsError(f"run-id archive already exists: {archive}")
+
+
 async def main_async(concurrency: int, seconds: float, run_id: str, output_dir: Path) -> None:
     results = []
     for name, path in (
@@ -416,10 +430,9 @@ async def main_async(concurrency: int, seconds: float, run_id: str, output_dir: 
     payload = {"meta": meta, "results": results, "diagnostics": diag}
     serialized = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     output_dir.mkdir(parents=True, exist_ok=True)
-    latest = output_dir / "async_bench_result.json"
-    archive_dir = output_dir / "results"
+    latest, archive = result_paths(output_dir, run_id)
+    archive_dir = archive.parent
     archive_dir.mkdir(parents=True, exist_ok=True)
-    archive = archive_dir / f"async_bench_{run_id}.json"
     with archive.open("x", encoding="utf-8") as archive_file:
         archive_file.write(serialized)
     latest.write_text(serialized, encoding="utf-8")
@@ -432,7 +445,7 @@ def main() -> None:
     ap.add_argument("--serve", action="store_true", help="내부용: 서버 프로세스로 기동")
     ap.add_argument("--load-client", metavar="PATH", help="내부용: 별도 프로세스 부하 생성기")
     ap.add_argument("--concurrency", type=int, default=64)
-    ap.add_argument("--seconds", type=float, default=6.0)
+    ap.add_argument("--seconds", type=float, default=60.0)
     ap.add_argument("--run-id", help="결과 파일 식별자(기본: UTC 시각)")
     ap.add_argument(
         "--output-dir",
@@ -451,6 +464,8 @@ def main() -> None:
         return
 
     run_id = validate_run_id(args.run_id or datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ"))
+    output_dir = args.output_dir.resolve()
+    ensure_archive_available(output_dir, run_id)
 
     server = subprocess.Popen(
         [sys.executable, __file__, "--serve"],
@@ -471,7 +486,7 @@ def main() -> None:
             raise SystemExit("서버 기동 실패")
 
         print(f"서버 준비됨 (동시성 {args.concurrency}, 조건당 {args.seconds}s)\n")
-        asyncio.run(main_async(args.concurrency, args.seconds, run_id, args.output_dir.resolve()))
+        asyncio.run(main_async(args.concurrency, args.seconds, run_id, output_dir))
     finally:
         server.terminate()
         server.wait(timeout=10)
