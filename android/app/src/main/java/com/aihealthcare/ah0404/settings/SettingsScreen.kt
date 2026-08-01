@@ -78,6 +78,7 @@ private val SUnselBorder = Color(0xFFD3D8CE) // 선택 안 한 알약도 테두�
 fun SettingsScreen(
     onBack: (() -> Unit)? = null,
     onOpenSupport: () -> Unit,
+    onOpenFaq: () -> Unit,
     onOpenProfile: () -> Unit,
     onLogout: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -169,7 +170,8 @@ fun SettingsScreen(
         Spacer(Modifier.height(14.dp))
 
         SettingsCard(contentPadding = 0.dp) {
-            SettingsLinkRow(Icons.AutoMirrored.Filled.HelpOutline, "자주 묻는 질문", onOpenSupport)
+            // 시안 확정: 두 행은 각각 '다른' 화면으로 간다(예전엔 둘 다 합쳐진 고객센터 한 화면으로 갔음).
+            SettingsLinkRow(Icons.AutoMirrored.Filled.HelpOutline, "자주 묻는 질문", onOpenFaq)
             SettingsDivider()
             SettingsLinkRow(Icons.Filled.HeadsetMic, "고객센터", onOpenSupport)
             SettingsDivider()
