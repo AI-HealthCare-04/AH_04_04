@@ -133,6 +133,7 @@ fun RecordScreen(
                         year = vm.calYear,
                         month1 = vm.calMonth,
                         resultByDate = vm.stampsByDate,
+                        recordedOnlyDates = mealRecordedOnlyDates(vm.monthLogs), // #343 문제 2
                         onPrevMonth = vm::showPreviousMonth,
                         onNextMonth = vm::showNextMonth,
                         onDaySelected = { selectedDay = it },
@@ -178,7 +179,8 @@ fun RecordScreen(
                 )
                 Spacer(Modifier.height(Dimens.Space12))
                 val missions = completedMissionsOn(vm.monthLogs, day)
-                if (missions.isEmpty()) {
+                val mealRecordedOnly = mealRecordedOnlyOn(vm.monthLogs, day) // #343 문제 2
+                if (missions.isEmpty() && mealRecordedOnly.isEmpty()) {
                     Text(
                         "이날은 완료한 미션이 없어요",
                         style = MaterialTheme.typography.bodyLarge,
@@ -189,6 +191,15 @@ fun RecordScreen(
                         Text(
                             "${m.title} · ${koreanTime(m.completedAt)}",
                             style = MaterialTheme.typography.bodyLarge,
+                        )
+                        Spacer(Modifier.height(Dimens.Space8))
+                    }
+                    // '안 먹었어요' 기록(#343 문제 2): 완료(적립)와 구분되는 보조 톤으로 흔적을 남긴다.
+                    mealRecordedOnly.forEach { m ->
+                        Text(
+                            "단백질: 안 드신 것으로 기록 · ${koreanTime(m.completedAt)}",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(Modifier.height(Dimens.Space8))
                     }

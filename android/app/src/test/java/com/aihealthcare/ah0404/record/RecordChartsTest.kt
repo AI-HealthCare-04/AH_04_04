@@ -77,4 +77,29 @@ class RecordChartsTest {
         assertEquals("", stampEmoji("none"))
         assertEquals("", stampEmoji(null))
     }
+
+    // ── #343 문제 2: '안 먹었어요' 기록 흔적(달력 점·팝업 항목) ─────────────
+
+    @Test
+    fun mealRecordedOnlyDates_includes_uncounted_meal_only() {
+        val logs = listOf(
+            log(day = "2026-07-30", success = false, type = "meal", counted = false),  // 안 먹었어요 → 흔적
+            log(day = "2026-07-29", success = true, type = "meal", counted = true),   // 달성(스탬프 소관) → 제외
+            log(day = "2026-07-28", success = true, type = "walking", counted = false), // 비식사 미적립 → 제외
+        )
+        assertEquals(setOf("2026-07-30"), mealRecordedOnlyDates(logs))
+    }
+
+    @Test
+    fun mealRecordedOnlyOn_filters_day_and_type() {
+        val logs = listOf(
+            log(day = "2026-07-30", success = false, type = "meal", counted = false),
+            log(day = "2026-07-29", success = false, type = "meal", counted = false),
+            log(day = "2026-07-30", success = true, type = "meal", counted = true),
+        )
+        val on30 = mealRecordedOnlyOn(logs, "2026-07-30")
+        assertEquals(1, on30.size)
+        assertEquals(false, on30[0].countedForDaily)
+        assertEquals(0, mealRecordedOnlyOn(logs, "2026-07-27").size)
+    }
 }
