@@ -23,7 +23,9 @@ _DEPRECATED_WALK_6M_KEYS = (
 class PhysicalAssessmentCreateRequest(BaseModel):
     session_id: int | None = None
     assessment_type: AssessmentType = AssessmentType.INITIAL
-    chair_stand_5_time_sec: Decimal | None = Field(default=None, gt=0)
+    # le=600(약 10분): 근본 방어(#298 A-2). 5STS 는 임상적으로 수 초~수십 초지만 측정 방치 시 값이 무한 증가할 수
+    #   있어, DB Numeric(5,2)=999.99 초과 DataError 500 이전에 422 로 거른다. 정상 측정은 막지 않는다.
+    chair_stand_5_time_sec: Decimal | None = Field(default=None, gt=0, le=600)
     chair_stand_skipped: bool = False
     pain_reported: bool = False
     dizziness_reported: bool = False
