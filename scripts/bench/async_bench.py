@@ -159,7 +159,7 @@ async def run_condition(name: str, path: str | None, concurrency: int, seconds: 
         # 그 안에 안 끝나면 취소한다 — 높은 동시성에서 백로그 때문에 teardown 이 막히는 것을 막는다.
         try:
             await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=10.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             for t in tasks:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
