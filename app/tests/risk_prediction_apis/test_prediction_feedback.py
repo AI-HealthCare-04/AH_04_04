@@ -6,12 +6,14 @@
 # =====================================================================================
 from decimal import Decimal
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette import status
 
-from app.models.enums import ModelVariant, RiskLevel
+from app.models.enums import FeedbackReason, FeedbackResponse, ModelVariant, RiskLevel
 from app.models.predictions import PredictionFeedback, RiskPrediction
 from app.models.users import User
 
@@ -167,6 +169,39 @@ async def test_put_feedback_rejects_unknown_response_value(db_client: AsyncClien
         "/api/v1/risk-predictions/1/feedback", json={"response": "great"}, headers=auth
     )
     assert resp.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+async def test_put_feedback_rejects_reason_without_different(db_client: AsyncClient) -> None:
+    # reason(too_high/too_low/other)은 'different'의 불일치 사유다(리뷰 반영) — 다른 응답에 붙으면
+    # 사유 분포 집계가 오염되므로 422. different + reason 은 기존대로 허용된다.
+    auth = await _guest_auth(db_client)
+    for response in ("similar", "unsure"):
+        resp = await db_client.put(
+            "/api/v1/risk-predictions/1/feedback",
+            json={"response": response, "reason": "too_high"},
+            headers=auth,
+        )
+        assert resp.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT, response
+
+
+async def test_db_check_rejects_reason_for_non_different_response(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    """API 검증을 우회하는 경로(운영 SQL·후속 코드)도 DB CHECK 가 막는다(리뷰 반영)."""
+    auth = await _guest_auth(db_client)
+    prediction_id = await _onboard_and_create_prediction(db_client, auth, db_sessionmaker)
+
+    async with db_sessionmaker() as session:
+        session.add(
+            PredictionFeedback(
+                prediction_id=prediction_id,
+                response=FeedbackResponse.SIMILAR,
+                reason=FeedbackReason.TOO_HIGH,
+            )
+        )
+        # MySQL 은 CHECK 위반(3819)을 IntegrityError 가 아니라 OperationalError 로 돌려준다.
+        with pytest.raises((IntegrityError, OperationalError)):
+            await session.commit()
 
 
 def test_feedback_stores_no_model_snapshot_duplicates() -> None:

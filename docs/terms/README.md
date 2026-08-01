@@ -7,10 +7,11 @@
 |---|---|---|---|---|
 | `service-1.0.md` | `service` | 1.0 | 필수 | `TERMS_SERVICE_URL` |
 | `privacy-1.0.md` | `privacy` | 1.0 | 필수 | `TERMS_PRIVACY_URL` |
-| `sensitive-health-1.0.md` | `sensitive_health` | 1.0 | 필수 | `TERMS_SENSITIVE_HEALTH_URL` |
+| `sensitive-health-1.1.md` | `sensitive_health` | 1.1 | 필수 | `TERMS_SENSITIVE_HEALTH_URL` |
 | `marketing-1.0.md` | `marketing` | 1.0 | 선택 | `TERMS_MARKETING_URL` |
 
 - `terms_type`/`version`/필수 여부는 `app/core/terms_catalog.py`(정적 카탈로그)와 일치해야 하며, `GET /api/v1/terms` 응답의 출처입니다.
+- 이 디렉터리에는 **현행 버전만** 둡니다(테스트가 카탈로그와 대조). 구버전 문안은 git 이력에 보존되고, 서버에 업로드된 구버전 HTML 은 기존 동의자의 열람을 위해 삭제하지 않습니다(예: sensitive-health-1.0 — 1.1 로 개정, #357).
 
 ## 백엔드와의 관계
 - 백엔드는 약관 **전문(내용)을 저장·서빙하지 않습니다.** `GET /terms`는 `{terms_type, version, title, url}`만 응답합니다.
@@ -24,7 +25,7 @@
    (`infra/nginx/default.conf` 의 `/terms/` location — 반영 절차는 그 파일 상단 주석).
    업로드 후 **4개 버전 URL 이 전부 200 + UTF-8 로 열리는지** 확인하고 기록한다(#268 리뷰):
    ```bash
-   for t in service-1.0 privacy-1.0 sensitive-health-1.0 marketing-1.0; do
+   for t in service-1.0 privacy-1.0 sensitive-health-1.1 marketing-1.0; do
      curl -fsSI https://aigo-health.duckdns.org/terms/$t | grep -iE '^(HTTP|content-type)'
    done   # 기대: 각각 200 / content-type: text/html; charset=utf-8
    ```

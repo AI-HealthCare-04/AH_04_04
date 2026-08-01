@@ -37,6 +37,11 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("feedback_id"),
         # '예측 1건당 응답 1회'를 DB 차원에서 보장한다(지영 리뷰 — UI 정책만으로는 부족).
         sa.UniqueConstraint("prediction_id", name="uq_prediction_feedbacks_prediction_id"),
+        # reason 은 'different'의 불일치 사유 — API 를 우회하는 경로에서도 의미 규칙을 지킨다(리뷰).
+        sa.CheckConstraint(
+            "reason IS NULL OR response = 'different'",
+            name="ck_prediction_feedbacks_reason_scope",
+        ),
     )
 
 

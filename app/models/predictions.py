@@ -6,6 +6,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
@@ -65,6 +66,14 @@ class PredictionFeedback(Base):
     """
 
     __tablename__ = "prediction_feedbacks"
+    __table_args__ = (
+        # reason 은 'different'의 불일치 사유(리뷰 반영) — API 검증을 우회하는 운영 SQL·후속 코드
+        #   경로에서도 similar/unsure 에 사유가 붙지 않게 DB 가 직접 막는다(MySQL 8.0.16+ CHECK 강제).
+        CheckConstraint(
+            "reason IS NULL OR response = 'different'",
+            name="ck_prediction_feedbacks_reason_scope",
+        ),
+    )
 
     feedback_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     prediction_id: Mapped[int] = mapped_column(
