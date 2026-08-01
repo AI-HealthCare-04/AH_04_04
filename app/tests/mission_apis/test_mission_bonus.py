@@ -180,7 +180,41 @@ async def test_bonus_does_not_count_toward_daily_result(
 
 
 # -------------------------------------------------------------------------------------
-# 4. 보너스 템플릿은 미션 목록에 나오지 않는다
+# 4. 보너스는 일반 생성 API 로 직접 적립할 수 없다 (서버 내부 지급 전용)
+# -------------------------------------------------------------------------------------
+async def test_bonus_cannot_be_claimed_through_the_public_api(
+    db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    """보너스 템플릿 id 로 completed 를 직접 보내면 거부되고, 로그도 포인트도 생기지 않아야 한다.
+
+    막지 않으면 인증된 사용자가 10점을 임의 적립할 수 있고, 자연 키(created_on_device_at)만
+    바꿔 반복 지급까지 가능하다. 종류별 status 검증은 BONUS 를 어느 집합에도 넣지 않아 걸러내지 못한다.
+    """
+    auth, user_id = await _guest(db_client)
+    bonus_template_id = await _seed_bonus_template(db_sessionmaker)
+
+    body = {
+        "mission_template_id": bonus_template_id,
+        "mission_type": "bonus",
+        "status": "completed",
+        "success": True,
+    }
+    resp = await db_client.post(f"{API}/mission-logs", json=body, headers=auth)
+    assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
+    assert await _bonus_logs(db_sessionmaker, user_id) == 0
+    assert (await db_client.get(f"{API}/users/me/points", headers=auth)).json()["current_points"] == 0
+
+    # 자연 키를 바꿔 다시 보내도 마찬가지 — 재전송 조회로 우회되지 않는다.
+    retry = await db_client.post(
+        f"{API}/mission-logs", json={**body, "created_on_device_at": "2026-08-01T10:11:12.123456+09:00"}, headers=auth
+    )
+    assert retry.status_code == status.HTTP_400_BAD_REQUEST
+    assert await _bonus_logs(db_sessionmaker, user_id) == 0
+
+
+# -------------------------------------------------------------------------------------
+# 5. 보너스 템플릿은 미션 목록에 나오지 않는다
 # -------------------------------------------------------------------------------------
 async def test_bonus_template_is_hidden_from_mission_list(
     db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]

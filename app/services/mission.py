@@ -140,6 +140,17 @@ class MissionService:
                 detail="미션 종류가 템플릿과 일치하지 않습니다.",
             )
 
+        # ★ 보너스는 서버가 조건을 판정해 스스로 적립하는 종류다(_maybe_award_bonus). 일반 생성 API 로는
+        #   절대 만들 수 없어야 한다 — 막지 않으면 인증된 사용자가 보너스 템플릿 id 로 completed 를 보내
+        #   10점을 임의 적립할 수 있고, 자연 키(created_on_device_at)만 바꾸면 반복도 가능하다.
+        #   종류별 status 검증(_ensure_can_create)은 BONUS 를 어느 허용 집합에도 넣지 않아 걸러내지 못하므로
+        #   여기서 명시적으로 거부한다. 재전송 조회보다 앞에 둬서 기존 보너스 로그를 돌려주지도 않는다.
+        if template.mission_type == MissionType.BONUS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="보너스는 직접 기록할 수 없습니다.",
+            )
+
         # 오프라인 재전송 방어(#91, #105) — 여기서 먼저 걸러 아래 검증·삽입을 아예 타지 않는다.
         #   응답을 못 받은 앱이 outbox 로 같은 수행을 다시 보내면, 새 행을 만들지 않고 기존 것을 돌려준다.
         #   기록이 이미 남아 있으므로 그 사이 프로필이 바뀌어(신장 제한 등) 지금은 거부될 수행이라도
