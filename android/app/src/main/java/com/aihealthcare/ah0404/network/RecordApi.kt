@@ -3,6 +3,8 @@ package com.aihealthcare.ah0404.network
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
+import retrofit2.http.PUT
+import retrofit2.http.Path
 import retrofit2.http.Query
 
 /** `_13 나의 기록` 화면의 예측 추이와 활동 기록 API. */
@@ -62,4 +64,14 @@ interface RecordApi {
      */
     @POST("risk-predictions/reassess")
     suspend fun reassessRiskPrediction(@Body body: RiskReassessRequest = RiskReassessRequest()): RiskReassessResponse
+
+    /**
+     * 예측 결과 체감 피드백(#357). 멱등 PUT — 예측당 1회는 서버 UNIQUE + 로컬 노출 기록이 보장한다.
+     * 실패해도 화면 흐름을 막지 않는다(fire-and-forget, sts-overlay 이벤트와 동일 정책).
+     */
+    @PUT("risk-predictions/{predictionId}/feedback")
+    suspend fun submitPredictionFeedback(
+        @Path("predictionId") predictionId: Int,
+        @Body body: PredictionFeedbackRequest,
+    )
 }

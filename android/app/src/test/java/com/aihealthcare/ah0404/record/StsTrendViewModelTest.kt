@@ -54,6 +54,10 @@ class StsTrendViewModelTest {
         override suspend fun getScoreSimulation() = TODO()
         override suspend fun getCohortDistribution() = TODO()
         override suspend fun reassessRiskPrediction(body: com.aihealthcare.ah0404.network.RiskReassessRequest) = TODO()
+        override suspend fun submitPredictionFeedback(
+            predictionId: Int,
+            body: com.aihealthcare.ah0404.network.PredictionFeedbackRequest,
+        ) = TODO()
     }
 
     private class FakeAssessmentApi(private val fail: Boolean = false) : OnboardingApi {

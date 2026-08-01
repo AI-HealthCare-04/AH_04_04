@@ -89,6 +89,8 @@ internal data class MuscleScoreUi(
     val age: Int?,          // §3.3 분기용(prediction-inputs 파생)
     val score: Int?,        // 0~100. null = 65+ 이지만 백엔드 점수 미도착 → "준비 중"
     val band: String?,      // good | maintain | caution
+    // 체감 피드백(#357) 노출 키. null = 최신 예측 없음/구버전 서버 → 피드백 카드 미표시.
+    val predictionId: Int? = null,
     val trend: List<ScorePoint>,
     val walkSim: List<ScoreSimPoint>,
     val muscSim: List<ScoreSimPoint>,
@@ -122,7 +124,12 @@ private fun bandColor(band: String?): Color = when (band) {
  * 점수가 없으면 연령별 안내 카드(점수 자리의 빈 상태이므로 이 섹션이 데리고 있는다).
  */
 @Composable
-internal fun MuscleDashboardCards(ui: MuscleScoreUi, onGoToMissions: () -> Unit) {
+internal fun MuscleDashboardCards(
+    ui: MuscleScoreUi,
+    onGoToMissions: () -> Unit,
+    // 체감 피드백 전송(#357). 기본 no-op — 피드백을 안 쓰는 호출부·기존 테스트에 영향 없음.
+    onFeedback: (Int, String) -> Unit = { _, _ -> },
+) {
     val age = ui.age
     val score = ui.score
     when {
@@ -130,6 +137,8 @@ internal fun MuscleDashboardCards(ui: MuscleScoreUi, onGoToMissions: () -> Unit)
         //   조회만 실패해도 유효한 점수가 "준비 중"에 가려지지 않게 score 우선(#273 게이트).
         score != null -> {
             ScoreHeadlineCard(score, ui.band)       // ① 지금 내 점수
+            // 체감 피드백(#357) — 점수 카드 바로 아래, 새 예측당 1회. 응답·건너뛰기 후엔 사라진다.
+            ui.predictionId?.let { PredictionFeedbackCard(it, onFeedback) }
             ScoreTrendCard(ui.trend)                // ② 변화 추이(위험도 순화 표현)
             CohortDistributionCard(ui.cohort)       // 또래 중 내 위치(#193, 데이터 있을 때만)
         }

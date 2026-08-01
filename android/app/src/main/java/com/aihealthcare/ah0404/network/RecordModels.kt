@@ -41,9 +41,20 @@ data class RiskHistoryResponse(
 /** GET /risk-predictions/me/latest — 근육 건강 점수 최신값(#기록탭 §3). 필요한 필드만(ignoreUnknownKeys). */
 @Serializable
 data class RiskLatestResponse(
+    // 피드백(#357)의 노출 정책 키 — 새 예측(prediction_id)당 1회만 묻는다.
+    @SerialName("prediction_id") val predictionId: Int = 0,
     @SerialName("muscle_score") val muscleScore: Int? = null,
     @SerialName("score_band") val scoreBand: String? = null,
     @SerialName("cohort_version") val cohortVersion: String? = null,
+)
+
+/**
+ * PUT /risk-predictions/{prediction_id}/feedback (#357). 예측 결과 체감 피드백 —
+ * response 는 similar / unsure / different. 서버 계약이 멱등이라 재시도에 안전하다.
+ */
+@Serializable
+data class PredictionFeedbackRequest(
+    val response: String,
 )
 
 /**
