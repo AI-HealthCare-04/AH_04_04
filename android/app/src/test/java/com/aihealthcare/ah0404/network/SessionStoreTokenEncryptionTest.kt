@@ -25,13 +25,17 @@ import org.robolectric.RuntimeEnvironment
 @RunWith(RobolectricTestRunner::class)
 class SessionStoreTokenEncryptionTest {
 
-    /** base64 대신 접두어만 붙이는 가역 fake — 봉투 포맷은 실제 TokenEnvelope 를 그대로 쓴다. */
+    /**
+     * 가역 fake — 봉투 포맷은 실제 TokenEnvelope 를 그대로 쓰되, 본문은 문자열 반전 + 마커.
+     * 평문이 부분 문자열로도 남지 않아야 '디스크에 평문 없음' 단언이 유효하다.
+     */
     private class FakeCipher : TokenCipher {
-        override fun encrypt(plain: String): String = TokenEnvelope.build("iv", "fake-$plain")
+        override fun encrypt(plain: String): String = TokenEnvelope.build("iv", "fk." + plain.reversed())
 
         override fun decrypt(stored: String): String? {
             val (_, cipher) = TokenEnvelope.parse(stored) ?: return null
-            return cipher.removePrefix("fake-").takeIf { cipher.startsWith("fake-") }
+            if (!cipher.startsWith("fk.")) return null
+            return cipher.removePrefix("fk.").reversed()
         }
     }
 
