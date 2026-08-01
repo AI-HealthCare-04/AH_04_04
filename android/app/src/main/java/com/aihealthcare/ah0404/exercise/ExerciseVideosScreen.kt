@@ -249,9 +249,12 @@ fun ExerciseVideosScreen(
 
 /** 상단 진행 히어로 카드(시안): 오늘 운동 N분 / 목표 10분 + 진행바 + 할머니 이미지(측정화면 자산 재사용). */
 @Composable
-private fun ExerciseProgressCard(minutes: Float, goalReached: Boolean) {
+internal fun ExerciseProgressCard(minutes: Float, goalReached: Boolean) {
     val goal = 10
-    val minLabel = if (minutes == minutes.toLong().toFloat()) minutes.toLong().toString() else String.format("%.1f", minutes)
+    // 표시 문자열은 반드시 [formatExerciseMinutes] 를 거친다(#280). 여기서 %.1f 로 직접 반올림하면
+    //   목표 미달인 9.95분이 "10.0분"으로 보여, 바로 아래 "조금만 더 하면" 안내와 모순된다.
+    //   그 함수가 미달값을 버림 처리해 이 모순을 막는다.
+    val minLabel = formatExerciseMinutes(minutes, goalReached)
     val frac = (minutes / goal).coerceIn(0f, 1f)
     val green = androidx.compose.ui.graphics.Color(0xFF1F5D3A)
     val muted = androidx.compose.ui.graphics.Color(0xFF6B726D)

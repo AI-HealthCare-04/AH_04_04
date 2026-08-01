@@ -1,6 +1,5 @@
 package com.aihealthcare.ah0404.record
 
-import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -90,6 +89,8 @@ internal data class MuscleScoreUi(
     val age: Int?,          // §3.3 분기용(prediction-inputs 파생)
     val score: Int?,        // 0~100. null = 65+ 이지만 백엔드 점수 미도착 → "준비 중"
     val band: String?,      // good | maintain | caution
+    // 체감 피드백(#357) 노출 키. null = 최신 예측 없음/구버전 서버 → 피드백 카드 미표시.
+    val predictionId: Int? = null,
     val trend: List<ScorePoint>,
     val walkSim: List<ScoreSimPoint>,
     val muscSim: List<ScoreSimPoint>,
@@ -123,7 +124,12 @@ private fun bandColor(band: String?): Color = when (band) {
  * 점수가 없으면 연령별 안내 카드(점수 자리의 빈 상태이므로 이 섹션이 데리고 있는다).
  */
 @Composable
-internal fun MuscleDashboardCards(ui: MuscleScoreUi, onGoToMissions: () -> Unit) {
+internal fun MuscleDashboardCards(
+    ui: MuscleScoreUi,
+    onGoToMissions: () -> Unit,
+    // 체감 피드백 전송(#357). 기본 no-op — 피드백을 안 쓰는 호출부·기존 테스트에 영향 없음.
+    onFeedback: (Int, String) -> Unit = { _, _ -> },
+) {
     val age = ui.age
     val score = ui.score
     when {
@@ -131,6 +137,8 @@ internal fun MuscleDashboardCards(ui: MuscleScoreUi, onGoToMissions: () -> Unit)
         //   조회만 실패해도 유효한 점수가 "준비 중"에 가려지지 않게 score 우선(#273 게이트).
         score != null -> {
             ScoreHeadlineCard(score, ui.band)       // ① 지금 내 점수
+            // 체감 피드백(#357) — 점수 카드 바로 아래, 새 예측당 1회. 응답·건너뛰기 후엔 사라진다.
+            ui.predictionId?.let { PredictionFeedbackCard(it, onFeedback) }
             ScoreTrendCard(ui.trend)                // ② 변화 추이(위험도 순화 표현)
             CohortDistributionCard(ui.cohort)       // 또래 중 내 위치(#193, 데이터 있을 때만)
         }
@@ -140,6 +148,9 @@ internal fun MuscleDashboardCards(ui: MuscleScoreUi, onGoToMissions: () -> Unit)
         age < 65 -> PreparingCard(onGoToMissions)
         else -> ScorePendingCard()
     }
+    // 5STS 재측정·추이(#353): 점수 추이 아래 보조 지표. 직접 수행 지표라 점수(예측) 유무와 무관하게
+    //   항상 표시한다 — 스킵·65세 미만 사용자도 여기서 측정을 시작할 수 있다.
+    StsTrendCard()
 }
 
 /**
@@ -360,9 +371,11 @@ private fun StsSafetyCard(ui: MuscleScoreUi, onGoToMissions: () -> Unit) {
     val strong = ui.bmi != null && ui.bmi >= 25.0 // 강한 티어(아시아 비만 기준)
     val tier = if (strong) "strong" else "basic"
 
-    // 발화율 관측(§3.4, 필수): 카드 노출 시 이벤트 로깅. (서버 수집 엔드포인트는 백엔드 필요 목록.)
-    LaunchedEffect(tier, sts, ui.bmi, ui.band) {
-        Log.i("sts_overlay_shown", "tier=$tier, sts_sec=$sts, bmi=${ui.bmi}, score_band=${ui.band}")
+    // 발화율 관측(§3.4, 필수): 카드 노출 시 서버 수집(POST /events/sts-overlay-shown, #366).
+    //   키를 Unit 으로 고정 — 컴포지션 진입(화면 진입) 1회만 전송해, 리컴포지션·값 갱신으로
+    //   같은 노출이 여러 건 집계되는 것을 막는다. 실패해도 카드 표시를 막지 않는다(fire-and-forget).
+    LaunchedEffect(Unit) {
+        StsOverlayReporter.report(tier = tier, stsSec = sts, bmi = ui.bmi, scoreBand = ui.band)
     }
 
     AigoCard {

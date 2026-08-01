@@ -3,6 +3,8 @@ package com.aihealthcare.ah0404.network
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
+import retrofit2.http.PUT
+import retrofit2.http.Path
 import retrofit2.http.Query
 
 /** `_13 나의 기록` 화면의 예측 추이와 활동 기록 API. */
@@ -50,6 +52,10 @@ interface RecordApi {
     @GET("risk-predictions/me/cohort-distribution")
     suspend fun getCohortDistribution(): CohortDistributionResponse
 
+    /** 5STS 측정 이력(#353, 최신순·측정 기록만). 스킵만 있으면 빈 목록. */
+    @GET("physical-assessments/me/history")
+    suspend fun getStsHistory(@Query("limit") limit: Int = 20): StsHistoryResponse
+
     /**
      * 근육 건강 점수 재평가 — 최신 프로필 + 최근 활동으로 **새 예측을 생성**한다.
      *  '내 정보' 저장 후 이걸 불러야 편집이 점수에 실제 반영된다: GET latest 는 저장된 마지막
@@ -58,4 +64,14 @@ interface RecordApi {
      */
     @POST("risk-predictions/reassess")
     suspend fun reassessRiskPrediction(@Body body: RiskReassessRequest = RiskReassessRequest()): RiskReassessResponse
+
+    /**
+     * 예측 결과 체감 피드백(#357). 멱등 PUT — 예측당 1회는 서버 UNIQUE + 로컬 노출 기록이 보장한다.
+     * 실패해도 화면 흐름을 막지 않는다(fire-and-forget, sts-overlay 이벤트와 동일 정책).
+     */
+    @PUT("risk-predictions/{predictionId}/feedback")
+    suspend fun submitPredictionFeedback(
+        @Path("predictionId") predictionId: Int,
+        @Body body: PredictionFeedbackRequest,
+    )
 }

@@ -3,6 +3,7 @@ package com.aihealthcare.ah0404.profile
 import com.aihealthcare.ah0404.network.UserApi
 import com.aihealthcare.ah0404.network.UserInfoResponse
 import com.aihealthcare.ah0404.network.UserUpdateRequest
+import com.aihealthcare.ah0404.network.UserWithdrawRequest
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -39,6 +40,7 @@ class ProfileViewModelTest {
         var meCalls = 0
         var lastPatch: UserUpdateRequest? = null
         override suspend fun getMe(): UserInfoResponse { meCalls++; return me() }
+        override suspend fun withdraw(body: UserWithdrawRequest) = TODO()
         override suspend fun updateMe(body: UserUpdateRequest): UserInfoResponse {
             lastPatch = body; return patch(body)
         }
@@ -128,6 +130,7 @@ class ProfileViewModelTest {
             if (meCalls >= 2) gate.await() // 두 번째 조회는 gate 가 풀릴 때까지 대기(느린 GET)
             return old
         }
+        override suspend fun withdraw(body: UserWithdrawRequest) = TODO()
         override suspend fun updateMe(body: UserUpdateRequest): UserInfoResponse =
             old.copy(nickname = body.nickname)
     }

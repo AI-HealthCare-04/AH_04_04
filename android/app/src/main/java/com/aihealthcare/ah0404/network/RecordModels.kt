@@ -41,9 +41,20 @@ data class RiskHistoryResponse(
 /** GET /risk-predictions/me/latest — 근육 건강 점수 최신값(#기록탭 §3). 필요한 필드만(ignoreUnknownKeys). */
 @Serializable
 data class RiskLatestResponse(
+    // 피드백(#357)의 노출 정책 키 — 새 예측(prediction_id)당 1회만 묻는다.
+    @SerialName("prediction_id") val predictionId: Int = 0,
     @SerialName("muscle_score") val muscleScore: Int? = null,
     @SerialName("score_band") val scoreBand: String? = null,
     @SerialName("cohort_version") val cohortVersion: String? = null,
+)
+
+/**
+ * PUT /risk-predictions/{prediction_id}/feedback (#357). 예측 결과 체감 피드백 —
+ * response 는 similar / unsure / different. 서버 계약이 멱등이라 재시도에 안전하다.
+ */
+@Serializable
+data class PredictionFeedbackRequest(
+    val response: String,
 )
 
 /**
@@ -130,4 +141,21 @@ data class StampDay(
 data class StampsResponse(
     val month: String,
     val days: List<StampDay> = emptyList(),
+)
+
+// ── 5STS 측정 이력(#353, GET /physical-assessments/me/history) ────────────────
+//   측정 기록(시간 존재)만 내려온다 — 스킵 기록은 추이에 안 쓰므로 서버가 제외.
+//   비의료(#57): 시간·유형·시각 사실만. 판정 필드 없음.
+
+@Serializable
+data class StsAssessmentItem(
+    @SerialName("physical_assessment_id") val physicalAssessmentId: Int,
+    @SerialName("assessment_type") val assessmentType: String = "initial",
+    @SerialName("chair_stand_5_time_sec") val chairStand5TimeSec: Double,
+    @SerialName("created_at") val createdAt: String,
+)
+
+@Serializable
+data class StsHistoryResponse(
+    val assessments: List<StsAssessmentItem> = emptyList(),
 )
