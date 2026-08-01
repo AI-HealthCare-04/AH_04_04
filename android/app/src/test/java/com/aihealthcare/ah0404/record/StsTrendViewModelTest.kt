@@ -167,4 +167,19 @@ class StsTrendViewModelTest {
         assertTrue(vm.loadError) // 화면은 '기록 없음'이 아니라 '불러오지 못함 + 다시 불러오기'를 그린다
         assertEquals(0, vm.history.size)
     }
+
+    @Test
+    fun `미해결 제출 중 새 측정값은 받지 않고 보관 값을 재시도한다`() = runTest(dispatcher) {
+        val failing = FakeAssessmentApi(fail = true)
+        val vm = StsTrendViewModel(FakeRecordApi(), failing)
+
+        vm.submit(12.5) // 실패 → pending(12.5, 세션 42) 보관
+        advanceUntilIdle()
+        assertTrue(vm.saveError)
+
+        vm.submit(9.9) // UI 방어를 뚫고 들어와도(리뷰 #355 3차) 새 값을 받지 않는다
+        advanceUntilIdle()
+        assertEquals(12.5, failing.requests.last().chairStand5TimeSec) // 보관 값 재시도
+        assertEquals(1, failing.sessionCalls) // 세션도 그대로 — 완료 불명확 세션에 새 payload 금지
+    }
 }

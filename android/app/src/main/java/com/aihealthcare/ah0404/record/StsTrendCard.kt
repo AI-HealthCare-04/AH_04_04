@@ -102,12 +102,14 @@ internal fun StsTrendCard(vm: StsTrendViewModel = viewModel()) {
         AigoSecondaryButton(
             text = if (latest == null) "체력 검사 해보기" else "체력 검사 다시 하기",
             onClick = { measuring = true },
-            enabled = !vm.saving,
+            // 저장 미해결(saveError) 동안 재측정 금지(리뷰 #355 3차): 새 측정값이 완료 여부 불명확한
+            //   세션에 붙어 영구 409 가 되는 경로 차단 — 아래 '저장 다시 시도'로 먼저 해소해야 한다.
+            enabled = !vm.saving && !vm.saveError,
         )
         if (vm.saveError) {
             Spacer(Modifier.height(Dimens.Space8))
             Text(
-                "측정 결과를 저장하지 못했어요. 네트워크 확인 후 다시 시도해 주세요.",
+                "측정 결과를 저장하지 못했어요. 아래 '저장 다시 시도'로 먼저 저장을 마쳐 주세요.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.error,
             )

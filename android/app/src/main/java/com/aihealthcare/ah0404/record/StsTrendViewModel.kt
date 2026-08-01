@@ -57,6 +57,14 @@ class StsTrendViewModel(
 
     /** 측정 완료값 저장. 성공 시 이력 재조회로 추이·변화 문구가 갱신된다. */
     fun submit(seconds: Double) {
+        // 미해결 제출 방어(리뷰 #355 3차): 완료 여부가 불명확한 세션이 남아 있으면 새 측정값을 받지 않고
+        //   보관된 값의 재시도로 돌린다 — 다른 payload 가 완료된 세션에 붙어 영구 409 가 되는 경로 차단.
+        //   (UI 도 saveError 동안 재측정 버튼을 비활성화하지만, 상태 전이 틈을 이중 방어한다.)
+        val unresolved = pendingSeconds
+        if (pendingSessionId != null && unresolved != null) {
+            doSubmit(unresolved)
+            return
+        }
         pendingSeconds = seconds
         doSubmit(seconds)
     }
