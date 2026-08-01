@@ -19,10 +19,11 @@
 //   WARMUP    워밍업 시간 (기본 1m) — 커넥션 풀·캐시 초기화 구간. 임계값 판정에서 제외됨.
 //   WRITES    1이면 미션 기록 쓰기(POST/PATCH mission-logs) 포함 (기본 0 — 실DB에 행이 쌓이므로
 //             실측 시점에만 켠다)
-//   TOKENS    쉼표로 구분한 실계정 액세스 토큰 목록 (선택). 본 측정이 **실계정 시나리오
-//             (main_real, VU 수 = 토큰 수)와 게스트 시나리오(main_guest, VU 수 = VUS - 토큰 수)로
-//             명시 분리**되어 혼합 비율이 실행 전체에서 보장된다(리뷰 반영 — 전역 __VU 번호로
-//             역할을 추론하지 않는다). 전 VU 실계정을 원하면 VUS 만큼 넘길 것. 미지정 시 전 VU 게스트.
+//   TOKENS    쉼표로 구분한 실계정 액세스 토큰 목록 (선택). 본 측정이 **게스트 시나리오
+//             (main_guest, VU 수 = VUS - 토큰 수)와 토큰마다 vus:1 인 main_real_N 시나리오**로
+//             명시 분리되어 혼합 비율이 실행 전체에서 보장된다(리뷰 반영). 각 main_real_N 은
+//             시나리오 env.TOKEN_INDEX 로 토큰이 1:1 고정된다 — 전역 __VU 번호·존재하지 않는
+//             VU 속성에 의존하지 않는다. 전 VU 실계정을 원하면 VUS 만큼 넘길 것. 미지정 시 전 VU 게스트.
 //             ⚠️ 게스트 계정은 기록이 비어 있어 목록 조회가 비현실적으로 빠르게 나온다.
 //                기록(미션 로그·예측 이력)이 쌓인 계정 토큰을 섞는 편이 정확하다.
 // =====================================================================================
@@ -65,8 +66,7 @@ if (WRITES) NAMES.push("POST /mission-logs", "PATCH /mission-logs/{id}");
 // 실계정/게스트 VU 수 — 본 측정을 **별도 시나리오로 명시 분리**해 혼합 비율을 보장한다(리뷰 반영).
 //   __VU 는 테스트 전역 식별자라 시나리오 간 재사용·번호 범위를 보장할 수 없어, 전역 번호로
 //   역할을 추론하면 본 측정이 전부 게스트가 되는 등 비율이 깨질 수 있다. 대신 시나리오별 VU 수를
-//   고정하고, 실계정 시나리오 안에서는 시나리오-로컬 ID(exec.vu.idInScenario, 항상 1부터)로
-//   토큰을 1:1 배정한다.
+//   고정하고, 실계정은 토큰마다 vus:1 시나리오의 env.TOKEN_INDEX 로 1:1 배정한다(아래).
 const REAL_VUS = Math.min(TOKENS.length, VUS);
 const GUEST_VUS = Math.max(0, VUS - REAL_VUS);
 
@@ -98,14 +98,19 @@ if (GUEST_VUS > 0) {
     tags: { phase: "main" },
   };
 }
-if (REAL_VUS > 0) {
-  scenarios.main_real = {
+// 실계정은 **토큰마다 vus:1 시나리오**를 만들고 시나리오 env 로 토큰 인덱스를 전달한다(리뷰 반영).
+//   k6 의 exec.vu 에는 idInScenario 가 없어(idInTest·idInInstance 뿐) VU 번호 기반 배정은 신뢰할 수
+//   없다 — 시나리오 env 는 공식 지원 API 라 1:1 배정이 구조적으로 고정된다. 문서 권장 토큰 수가
+//   1-2개라 시나리오 수 부담도 없다.
+for (let i = 0; i < REAL_VUS; i++) {
+  scenarios[`main_real_${i + 1}`] = {
     executor: "constant-vus",
     exec: "realFlow",
-    vus: REAL_VUS,
+    vus: 1,
     duration: DURATION,
     startTime: WARMUP,
     tags: { phase: "main" },
+    env: { TOKEN_INDEX: String(i) },
   };
 }
 
@@ -114,7 +119,7 @@ export const options = { scenarios, thresholds };
 // VU마다 토큰 1개를 유지한다(모듈 스코프 = VU 스코프). 게스트 로그인은 VU당 1회만 —
 // 매 이터레이션 새 게스트를 만들면 계정 생성만 난타하는 비현실적 부하가 된다.
 // (한 VU 가 warmup 후 main 에 재사용되어도 게스트 토큰 재사용은 무해하다. 실계정 시나리오는
-//  시나리오-로컬 ID 로 매번 결정적으로 배정하므로 재사용과 무관하다.)
+//  시나리오 env 의 TOKEN_INDEX 로 매 이터레이션 결정적으로 배정하므로 재사용과 무관하다.)
 let vuToken = null;
 
 function authHeaders() {
@@ -129,8 +134,15 @@ function ensureGuestLogin() {
 }
 
 function ensureRealLogin() {
-  // main_real 시나리오 전용 — idInScenario 는 이 시나리오 안에서 항상 1..REAL_VUS 라 배정이 보장된다.
-  vuToken = TOKENS[(exec.vu.idInScenario - 1) % TOKENS.length];
+  // main_real_N 시나리오 전용 — 시나리오 정의의 env.TOKEN_INDEX 가 토큰을 1:1 로 고정한다.
+  //   (k6 는 시나리오 env 를 해당 시나리오의 __ENV 에 주입한다 — 공식 지원 API)
+  const token = TOKENS[Number(__ENV.TOKEN_INDEX)];
+  if (!token) {
+    // 배정 회귀 방어: 잘못된 인덱스로 Bearer undefined 가 나가면 측정 전체가 조용히 게스트도
+    // 실계정도 아닌 401 부하가 된다 — 즉시 테스트를 중단해 원인을 드러낸다.
+    exec.test.abort(`TOKEN_INDEX=${__ENV.TOKEN_INDEX} 에 해당하는 토큰이 없습니다`);
+  }
+  vuToken = token;
 }
 
 // 요청별 파라미터: tags + 인증 헤더 + **요청별 기대 상태코드**(responseCallback).
