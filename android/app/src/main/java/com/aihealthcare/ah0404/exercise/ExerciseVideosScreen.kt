@@ -50,6 +50,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.width
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -189,6 +191,11 @@ fun ExerciseVideosScreen(
             PendingSyncBanner(count = vm.pendingResends.size, onRetry = vm::retryPending)
         }
 
+        // 상단 진행 히어로 카드(시안): 오늘 운동 N분 / 목표 10분 + 진행바 + 할머니 이미지.
+        vm.todayExerciseMin?.let { minutes ->
+            ExerciseProgressCard(minutes = minutes, goalReached = vm.todayGoalReached)
+        }
+
         // 번들 루틴(몸풀기·마무리)은 네트워크와 무관하게 '즉시' 시작 가능해야 한다(오프라인/느린망 포함).
         //   서버 목록이 오면 탭으로, 아직이면(로딩/빈/에러) 폴백에서 번들 루틴 버튼들을 바로 보여준다.
         //   시작 동작은 guardedStart 로 감싸 안전 고지 확인(#234) 게이트를 먼저 거친다.
@@ -216,11 +223,68 @@ fun ExerciseVideosScreen(
         // 오늘 누적 운동시간(#235, A2): 영상 아래 '빈 공간'에서 확인하도록 화면 하단에 둔다(사용자 요청). 진입 시점부터
         //   목록 GET 의 today_progress 로 채워지고, 완료 후엔 서버 합산값으로 갱신 — 재생 전·중간에 끊었어도 볼 수 있다.
         //   서버 값이 없으면(운동 미션·필드 부재) 숨김. 위 콘텐츠 영역이 남은 높이를 가지므로 이 요약은 비가중으로 바닥에 안착.
-        vm.todayExerciseMin?.let { minutes ->
-            TodayExerciseSummary(minutes = minutes, goalReached = vm.todayGoalReached)
-        }
     }
 
+}
+
+/** 상단 진행 히어로 카드(시안): 오늘 운동 N분 / 목표 10분 + 진행바 + 할머니 이미지(측정화면 자산 재사용). */
+@Composable
+private fun ExerciseProgressCard(minutes: Float, goalReached: Boolean) {
+    val goal = 10
+    val minLabel = if (minutes == minutes.toLong().toFloat()) minutes.toLong().toString() else String.format("%.1f", minutes)
+    val frac = (minutes / goal).coerceIn(0f, 1f)
+    val green = androidx.compose.ui.graphics.Color(0xFF1F5D3A)
+    val muted = androidx.compose.ui.graphics.Color(0xFF6B726D)
+    val grandma = com.aihealthcare.ah0404.fitness.rememberAssetImageBitmap("fitness/sts_standing.jpg")
+    androidx.compose.material3.Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Dimens.ScreenPadding, vertical = Dimens.Space8),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+        color = androidx.compose.ui.graphics.Color(0xFFEAF3EC),
+        border = androidx.compose.foundation.BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFFCFE6D6)),
+    ) {
+        Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "오늘 운동 ${minLabel}분 했어요",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = green,
+                )
+                androidx.compose.foundation.layout.Spacer(Modifier.height(6.dp))
+                Text("목표 ${goal}분 중 ${minLabel}분", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = green)
+                androidx.compose.foundation.layout.Spacer(Modifier.height(10.dp))
+                androidx.compose.material3.LinearProgressIndicator(
+                    progress = { frac },
+                    color = green,
+                    trackColor = androidx.compose.ui.graphics.Color.White,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(10.dp)
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(5.dp)),
+                )
+                androidx.compose.foundation.layout.Spacer(Modifier.height(8.dp))
+                Text(
+                    if (goalReached) "오늘 목표를 채웠어요 🎉" else "조금만 더 하면 오늘 목표를 채울 수 있어요.",
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    color = muted,
+                )
+            }
+            if (grandma != null) {
+                androidx.compose.foundation.layout.Spacer(Modifier.width(10.dp))
+                Image(
+                    bitmap = grandma,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .width(96.dp)
+                        .aspectRatio(0.72f),
+                )
+            }
+        }
+    }
 }
 
 /**
@@ -356,12 +420,27 @@ private fun StageTabs(
                 Tab(
                     selected = index == safeSelected,
                     onClick = { onSelect(index) },
-                    text = { Text(v.label, style = MaterialTheme.typography.bodyLarge) },
+                    text = { Text(displayExerciseLabel(v.label), style = MaterialTheme.typography.bodyLarge) },
                 )
             }
         }
         VideoArea(current, onStartRoutine = onStartRoutine, onPlay = onPlay)
     }
+}
+
+/**
+ * 표시 라벨 방어 가드(#333 확정 "서서 운동"→"유산소 운동"). 라벨 값은 백엔드(GET /exercise-videos)에서 오는데
+ * android 브랜치 백엔드가 stale해서 옛 이름 "서서"를 돌려줄 수 있어, 화면 표시 직전에 치환한다.
+ * 내부 stage 키(standing 등)는 건드리지 않고 '보이는 글자'만 바꾼다. 음원명 등 '서서'가 없는 라벨은 그대로.
+ */
+internal fun displayExerciseLabel(label: String): String =
+    if (label.contains("서서")) label.replace("서서", "유산소") else label
+
+/** 플레이어 큰 제목 = 음원명(확정 매핑). 근력(seated)=우요일, 유산소(standing, 구 서서)=어느 봄날의 추억. 그 외 null. */
+internal fun exerciseSongTitle(stage: String): String? = when (stage) {
+    "seated" -> "우요일"
+    "standing" -> "어느 봄날의 추억"
+    else -> null
 }
 
 /** 번들 루틴(RoutinePlayer로 재생하는 조합형 가이드 운동). 스트리밍 목록과 무관하게 오프라인에서도 항상 재생 가능. */
@@ -429,7 +508,7 @@ private fun VideoArea(
                     //   16:9 포스터를 16:9 박스에 Fit — 잘림 없이 카드 전체가 보인다.
                     Image(
                         painter = painterResource(poster),
-                        contentDescription = "${item.label} 시작하기",
+                        contentDescription = "${displayExerciseLabel(item.label)} 시작하기",
                         contentScale = ContentScale.Fit,
                         // TalkBack에서 버튼 역할로 안내(지영 리뷰 #254 비차단). 포스터에 그려진 문구 외 역할을 명확히.
                         modifier = Modifier
@@ -449,7 +528,7 @@ private fun VideoArea(
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                     Text("🎬", style = MaterialTheme.typography.headlineLarge)
                     Text(
-                        "${item.label} 영상은 준비 중이에요.",
+                        "${displayExerciseLabel(item.label)} 영상은 준비 중이에요.",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -606,7 +685,8 @@ private fun PortraitPlay(
                 Text("✕  닫기", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
             }
             Text(
-                item.label,
+                // 플레이어 큰 제목은 음원명(확정), 없으면 유형 라벨(가드 적용).
+                exerciseSongTitle(item.stage) ?: displayExerciseLabel(item.label),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(start = Dimens.Space8),
