@@ -38,6 +38,8 @@ const DURATION = __ENV.DURATION || "5m";
 const WARMUP = __ENV.WARMUP || "1m";
 const WRITES = __ENV.WRITES === "1";
 const TOKENS = (__ENV.TOKENS || "").split(",").map((t) => t.trim()).filter(Boolean);
+// GET /dashboard/stamps 의 필수 파라미터. 기본값은 측정 시점의 당월(앱이 기록 탭에서 보내는 값과 같다).
+const STAMP_MONTH = __ENV.STAMP_MONTH || new Date().toISOString().slice(0, 7);
 
 // 측정 대상 요청 이름 목록 — 이슈 #364 의 1·2·3순위를 흐름 순서로 커버.
 // (auth/google·kakao 는 외부 IdP 실토큰이 필요해 부하 대상에서 제외 — 문서의 한계 절 참조.
@@ -220,7 +222,8 @@ function journey() {
   group("기록 탭", () => {
     get("/mission-logs", "GET /mission-logs");
     get("/dashboard/summary", "GET /dashboard/summary");
-    get("/dashboard/stamps", "GET /dashboard/stamps");
+    // month(YYYY-MM)는 필수 — 누락하면 400 이라 집계 쿼리가 아니라 검증 실패 경로를 재게 된다(#364 실측에서 발견).
+    get(`/dashboard/stamps?month=${STAMP_MONTH}`, "GET /dashboard/stamps");
   });
   sleep(1);
 
