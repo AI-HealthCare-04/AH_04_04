@@ -571,8 +571,11 @@ private fun TermsStep(vm: OnboardingViewModel) {
             ) {
                 Text("동의하고 계속", fontSize = 19.sp, fontWeight = FontWeight.Bold)
             }
-            Spacer(Modifier.height(8.dp))
-            Text("🔒 안전한 연결로 보호됩니다.", color = Color(0xFF9AA59D), fontSize = 13.sp)
+            // 여기 있던 "🔒 안전한 연결로 보호됩니다."는 제거했다. 바로 위 TermsSecurityNotice 의
+            //   "고객님의 정보는 안전하게 보호되며…"와 화면에서 맞붙어, 다른 이야기인데도(저장·처리 보안 vs
+            //   전송 구간 보안) 같은 말을 두 번 하는 것으로 읽혔다. 민감정보 동의를 받는 화면에서 안심 문구를
+            //   반복하면 안심시키기는커녕 경계심을 자극한다. 셋 중 정보량도 가장 적어(HTTPS는 기본) 이쪽을
+            //   지우고, "동의 내용은 언제든지 변경할 수 있습니다"가 함께 있는 방패 문구만 남긴다.
         }
     }
 
