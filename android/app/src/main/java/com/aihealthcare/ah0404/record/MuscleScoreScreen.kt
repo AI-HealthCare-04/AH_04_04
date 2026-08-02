@@ -127,8 +127,6 @@ private fun bandColor(band: String?): Color = when (band) {
 internal fun MuscleDashboardCards(
     ui: MuscleScoreUi,
     onGoToMissions: () -> Unit,
-    // 체감 피드백 전송(#357). 기본 no-op — 피드백을 안 쓰는 호출부·기존 테스트에 영향 없음.
-    onFeedback: (Int, String) -> Unit = { _, _ -> },
 ) {
     val age = ui.age
     val score = ui.score
@@ -137,8 +135,6 @@ internal fun MuscleDashboardCards(
         //   조회만 실패해도 유효한 점수가 "준비 중"에 가려지지 않게 score 우선(#273 게이트).
         score != null -> {
             ScoreHeadlineCard(score, ui.band)       // ① 지금 내 점수
-            // 체감 피드백(#357) — 점수 카드 바로 아래, 새 예측당 1회. 응답·건너뛰기 후엔 사라진다.
-            ui.predictionId?.let { PredictionFeedbackCard(it, onFeedback) }
             ScoreTrendCard(ui.trend)                // ② 변화 추이(위험도 순화 표현)
             CohortDistributionCard(ui.cohort)       // 또래 중 내 위치(#193, 데이터 있을 때만)
         }
