@@ -81,4 +81,13 @@ class RequestSerializationTest {
         println("POST /mission-logs(game)  →  $s")
         assertTrue(s.contains("\"success\":true"))
     }
+
+    @Test
+    fun riskReassess_serialization_includes_window_days() {
+        // 회귀(실기기 QA 발견): 기본값 7 이 encodeDefaults=false 에서 생략돼 빈 body {} 로 전송 →
+        //   서버 pydantic 필수 필드 검증 422 → 재평가 전멸. 반드시 명시 직렬화되어야 한다.
+        val s = json.encodeToString(RiskReassessRequest())
+        println("POST /risk-predictions/reassess  →  $s")
+        assertTrue(s.contains("\"activity_window_days\":7"))
+    }
 }
