@@ -52,28 +52,37 @@ internal class GuideGate(maxPending: Int = PendingGuides.MAX_PENDING) {
     private var languageAvailable = false
 
     /**
-     * 안내 요청. 반환값이 non-null 이면 **호출자가 지금 발화**하고, null 이면 보관됐거나
-     * (언어 미지원으로) 버려진 것이다. 발화는 락 밖에서 하도록 값만 돌려준다.
+     * 안내 요청. 준비 전이면 보관하고, 준비됐고 언어가 있으면 [speak] 로 **즉시 발화**한다.
+     *
+     * 발화를 락 안에서 호출하는 것이 핵심이다(#382 리뷰 2차): 목록만 돌려주고 락 밖에서 발화하면
+     * (1) flush 도중 들어온 요청이 보관분보다 **먼저 발화돼 순서가 깨지고**
+     * (2) [clearPending](stop/shutdown) 이후에 남은 목록이 발화될 수 있다.
+     * speak 는 TextToSpeech.speak 한 번(비동기 큐 적재)이라 락 보유 시간이 짧고,
+     * 엔진 호출이 이 게이트를 다시 부르지 않아 교착 경로도 없다.
      */
     @Synchronized
-    fun request(text: String): String? {
+    fun request(text: String, speak: (String) -> Unit) {
         if (!ready) {
             pending.hold(text)
-            return null
+            return
         }
-        return if (languageAvailable) text else null
+        if (languageAvailable) speak(text)
     }
 
-    /** 엔진 준비 완료. 보관분 중 지금 발화할 목록을 순서대로 돌려준다(언어 미지원이면 비운 뒤 빈 목록). */
+    /**
+     * 엔진 준비 완료 — 보관분을 **순서대로** 발화한다(언어 미지원이면 비우고 발화하지 않는다).
+     * 이 구간 전체가 임계 구역이라, 도중에 들어온 요청은 락을 기다렸다가 뒤이어 발화되고
+     * (순서 보존), 취소(clearPending)도 끼어들 수 없다.
+     */
     @Synchronized
-    fun markReady(languageAvailable: Boolean): List<String> {
+    fun markReady(languageAvailable: Boolean, speak: (String) -> Unit) {
         this.languageAvailable = languageAvailable
         ready = true
         val held = pending.drain()
-        return if (languageAvailable) held else emptyList()
+        if (languageAvailable) held.forEach(speak)
     }
 
-    /** 초기화 실패·화면 이탈·소멸 — 보관분 폐기. */
+    /** 초기화 실패·화면 이탈·소멸 — 보관분 폐기. 이후 flush 는 발화할 것이 없다. */
     @Synchronized
     fun clearPending() = pending.clear()
 
@@ -122,9 +131,10 @@ class StsAssessmentTts(context: Context) {
                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                         .build(),
                 )
-                // ready 전환과 보관분 회수가 한 임계 구역에서 일어난다 — 그 사이에 들어온 요청이
-                //   '보관됐지만 아무도 flush 하지 않는' 상태로 남지 않는다(#380 리뷰).
-                gate.markReady(available).forEach { speakGuideNow(it) }
+                // ready 전환·보관분 회수·발화가 한 임계 구역에서 일어난다 — 그 사이에 들어온 요청이
+                //   '보관됐지만 아무도 flush 하지 않는' 상태로 남지 않고(#380), 보관분보다 먼저
+                //   발화되거나 stop() 이후에 발화되지도 않는다(#382 리뷰 2차).
+                gate.markReady(available) { speakGuideNow(it) }
             } else {
                 // 초기화 실패 — 보관분을 버려 나중에 엉뚱한 시점에 발화되지 않게 한다(시각 안내로 폴백).
                 gate.clearPending()
@@ -141,11 +151,11 @@ class StsAssessmentTts(context: Context) {
     /**
      * 안내문 — 순서대로(QUEUE_ADD). 엔진이 아직 준비되지 않았으면 **버리지 않고 보관**했다가
      * onInit 성공 시 순서대로 발화한다(#380). 판정은 [GuideGate] 가 락 안에서 하고,
-     * 실제 발화(엔진 호출)는 락 밖에서 한다.
+     * 보관·발화 판정과 실제 발화가 [GuideGate] 의 한 임계 구역에서 일어난다.
      */
     fun speakGuide(text: String) {
         if (text.isBlank()) return
-        gate.request(text)?.let { speakGuideNow(it) }
+        gate.request(text) { speakGuideNow(it) }
     }
 
     private fun speakGuideNow(text: String) {
