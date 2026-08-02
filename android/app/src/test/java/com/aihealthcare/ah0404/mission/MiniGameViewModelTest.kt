@@ -16,6 +16,8 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -102,6 +104,47 @@ class MiniGameViewModelTest {
         advanceUntilIdle()
         assertEquals(4, api.requests.size)
         assertEquals(2, recorded)
+    }
+
+    @Test
+    fun `재시도는 같은 자연 키를 보낸다 - 응답 유실 시 포인트 중복 적립 방지`() = runTest(dispatcher) {
+        // #379 리뷰 P1: created_on_device_at 이 없거나 시도마다 달라지면, 첫 POST 가 저장되고 응답만
+        //   유실된 재시도가 서버에서 '다른 수행'으로 저장돼 성공 로그·포인트가 중복된다.
+        //   게임은 counted_for_daily = success 라 서버 상한이 따로 없어 그대로 이중 적립된다.
+        val api = FakeApi(fail = true)
+        val vm = MiniGameViewModel(api)
+
+        vm.recordCompletion(gameMission, onRecorded = {})
+        advanceUntilIdle()
+
+        assertEquals(3, api.requests.size)
+        val keys = api.requests.map { it.createdOnDeviceAt }
+        assertTrue("자연 키가 전송되어야 서버가 재전송을 판별한다", keys.all { !it.isNullOrBlank() })
+        assertEquals("재시도는 전부 같은 키여야 한다", 1, keys.toSet().size)
+
+        // 화면 재진입 복구도 **같은 키**를 되쏘아야 한다 — 새 키를 만들면 중복 적립된다.
+        api.fail = false
+        vm.retryPendingIfAny(onRecorded = {})
+        advanceUntilIdle()
+        assertEquals(4, api.requests.size)
+        assertEquals("pending 복구가 새 키를 만들면 안 된다", keys[0], api.requests[3].createdOnDeviceAt)
+    }
+
+    @Test
+    fun `서로 다른 완주는 서로 다른 자연 키를 갖는다`() = runTest(dispatcher) {
+        // 키를 고정하는 방향이 지나쳐 '같은 값 재사용'이 되면, 다음 날/다음 완주가 재전송으로 오인돼
+        //   정상 적립이 사라진다. 완주 1회당 새 키가 맞다.
+        val api = FakeApi()
+        val vm = MiniGameViewModel(api)
+
+        vm.recordCompletion(gameMission, onRecorded = {})
+        advanceUntilIdle()
+        Thread.sleep(2) // SimpleDateFormat 은 밀리초 단위 — 같은 ms 에 두 완주가 겹치지 않게 한다
+        vm.recordCompletion(gameMission, onRecorded = {})
+        advanceUntilIdle()
+
+        assertEquals(2, api.requests.size)
+        assertNotEquals(api.requests[0].createdOnDeviceAt, api.requests[1].createdOnDeviceAt)
     }
 
     @Test
