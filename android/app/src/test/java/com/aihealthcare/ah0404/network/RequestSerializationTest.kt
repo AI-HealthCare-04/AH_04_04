@@ -68,6 +68,21 @@ class RequestSerializationTest {
     }
 
     @Test
+    fun gameComplete_serialization_includes_success() {
+        // 회귀(최종 RC QA): 게임 즉시완료는 서버가 counted_for_daily = bool(success) 로 판정 —
+        //   success 누락 시 시청 완주가 영원히 비적립된다. 와이어 JSON 에 success:true 필수.
+        val body = MissionLogCreateRequest(
+            missionTemplateId = 6,
+            missionType = "game",
+            status = "completed",
+            success = true,
+        )
+        val s = json.encodeToString(body)
+        println("POST /mission-logs(game)  →  $s")
+        assertTrue(s.contains("\"success\":true"))
+    }
+
+    @Test
     fun riskReassess_serialization_includes_window_days() {
         // 회귀(실기기 QA 발견): 기본값 7 이 encodeDefaults=false 에서 생략돼 빈 body {} 로 전송 →
         //   서버 pydantic 필수 필드 검증 422 → 재평가 전멸. 반드시 명시 직렬화되어야 한다.
