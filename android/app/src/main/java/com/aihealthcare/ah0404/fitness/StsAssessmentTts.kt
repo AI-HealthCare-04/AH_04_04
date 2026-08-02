@@ -38,6 +38,53 @@ internal class PendingGuides(private val maxSize: Int = MAX_PENDING) {
 }
 
 /**
+ * 안내 발화 게이트 — 준비 상태 전환과 대기열 조작을 **하나의 임계 구역**에서 처리한다(#380 리뷰).
+ *
+ * 분리 이유: `if (!ready) hold(text)` 처럼 확인과 보관이 원자적이지 않으면, 그 사이에 onInit 이
+ * ready 로 바꾸고 **빈 큐를 drain** 해 버려 직후 보관된 안내가 flush 될 기회를 영영 잃는다.
+ * 여기서는 "요청"과 "준비 완료" 두 진입점이 같은 락을 잡으므로 그 교차가 불가능하다.
+ *
+ * 순수 클래스라 JVM 에서 동시성 테스트로 검증한다(TTS 엔진 없이).
+ */
+internal class GuideGate(maxPending: Int = PendingGuides.MAX_PENDING) {
+    private val pending = PendingGuides(maxPending)
+    private var ready = false
+    private var languageAvailable = false
+
+    /**
+     * 안내 요청. 반환값이 non-null 이면 **호출자가 지금 발화**하고, null 이면 보관됐거나
+     * (언어 미지원으로) 버려진 것이다. 발화는 락 밖에서 하도록 값만 돌려준다.
+     */
+    @Synchronized
+    fun request(text: String): String? {
+        if (!ready) {
+            pending.hold(text)
+            return null
+        }
+        return if (languageAvailable) text else null
+    }
+
+    /** 엔진 준비 완료. 보관분 중 지금 발화할 목록을 순서대로 돌려준다(언어 미지원이면 비운 뒤 빈 목록). */
+    @Synchronized
+    fun markReady(languageAvailable: Boolean): List<String> {
+        this.languageAvailable = languageAvailable
+        ready = true
+        val held = pending.drain()
+        return if (languageAvailable) held else emptyList()
+    }
+
+    /** 초기화 실패·화면 이탈·소멸 — 보관분 폐기. */
+    @Synchronized
+    fun clearPending() = pending.clear()
+
+    @Synchronized
+    fun pendingSize(): Int = pending.size
+
+    @Synchronized
+    fun isReady(): Boolean = ready
+}
+
+/**
  * 기초체력 평가용 음성 안내(TTS). **이 화면에서는 TTS가 영상보다 중요하다** — 측정 중 어르신은
  * 일어섰다 앉느라 화면을 못 본다. 걷기 챌린지와 동일하게 Android TextToSpeech 사용.
  *
@@ -54,22 +101,20 @@ internal class PendingGuides(private val maxSize: Int = MAX_PENDING) {
 class StsAssessmentTts(context: Context) {
     private var tts: TextToSpeech? = null
 
-    @Volatile
-    private var ready = false
+    private val gate = GuideGate()
 
     @Volatile
     var languageAvailable = false
         private set
-
-    private val pendingGuides = PendingGuides()
 
     init {
         tts = TextToSpeech(context.applicationContext) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 val engine = tts ?: return@TextToSpeech
                 val result = engine.setLanguage(Locale.KOREAN)
-                languageAvailable = result != TextToSpeech.LANG_MISSING_DATA &&
+                val available = result != TextToSpeech.LANG_MISSING_DATA &&
                     result != TextToSpeech.LANG_NOT_SUPPORTED
+                languageAvailable = available
                 engine.setSpeechRate(0.9f) // 시니어 대상: 기본(1.0)보다 느리게
                 engine.setAudioAttributes(
                     AudioAttributes.Builder()
@@ -77,49 +122,34 @@ class StsAssessmentTts(context: Context) {
                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                         .build(),
                 )
-                ready = true
-                flushPendingGuides()
+                // ready 전환과 보관분 회수가 한 임계 구역에서 일어난다 — 그 사이에 들어온 요청이
+                //   '보관됐지만 아무도 flush 하지 않는' 상태로 남지 않는다(#380 리뷰).
+                gate.markReady(available).forEach { speakGuideNow(it) }
             } else {
                 // 초기화 실패 — 보관분을 버려 나중에 엉뚱한 시점에 발화되지 않게 한다(시각 안내로 폴백).
-                clearPendingGuides()
+                gate.clearPending()
             }
         }
     }
 
     /** 카운트 — 항상 최신 것으로 교체(QUEUE_FLUSH). 빈 문자열은 발화하지 않는다. */
     fun speakCount(word: String) {
-        if (!ready || !languageAvailable || word.isBlank()) return
+        if (!gate.isReady() || !languageAvailable || word.isBlank()) return
         tts?.speak(word, TextToSpeech.QUEUE_FLUSH, volumeParams(), "sts_count")
     }
 
     /**
      * 안내문 — 순서대로(QUEUE_ADD). 엔진이 아직 준비되지 않았으면 **버리지 않고 보관**했다가
-     * onInit 성공 시 순서대로 발화한다(#380).
+     * onInit 성공 시 순서대로 발화한다(#380). 판정은 [GuideGate] 가 락 안에서 하고,
+     * 실제 발화(엔진 호출)는 락 밖에서 한다.
      */
     fun speakGuide(text: String) {
         if (text.isBlank()) return
-        if (!ready) {
-            holdPendingGuide(text)
-            return
-        }
-        if (!languageAvailable) return
-        tts?.speak(text, TextToSpeech.QUEUE_ADD, volumeParams(), "sts_guide")
+        gate.request(text)?.let { speakGuideNow(it) }
     }
 
-    // onInit 콜백 스레드와 화면(메인) 스레드가 대기열을 함께 만지므로 접근을 직렬화한다.
-    @Synchronized
-    private fun holdPendingGuide(text: String) = pendingGuides.hold(text)
-
-    @Synchronized
-    private fun clearPendingGuides() = pendingGuides.clear()
-
-    @Synchronized
-    private fun drainPendingGuides(): List<String> = pendingGuides.drain()
-
-    private fun flushPendingGuides() {
-        val held = drainPendingGuides()
-        if (!languageAvailable) return // 한국어 미설치 — 보관분은 버리고 시각 안내로만 진행
-        held.forEach { tts?.speak(it, TextToSpeech.QUEUE_ADD, volumeParams(), "sts_guide") }
+    private fun speakGuideNow(text: String) {
+        tts?.speak(text, TextToSpeech.QUEUE_ADD, volumeParams(), "sts_guide")
     }
 
     // 사용자 소리 크기 설정(sound_size)을 발화 음량에 반영(#237). STS는 자체 TTS 인스턴스라 공용 배선과 별개로
@@ -131,16 +161,15 @@ class StsAssessmentTts(context: Context) {
     /** 현재 발화 중단(화면 이탈·중단 버튼). 보관 중이던 안내도 함께 버린다 — 떠난 화면의 안내를
      *  나중에 발화하면 안 되기 때문(#380). */
     fun stop() {
-        clearPendingGuides()
+        gate.clearPending()
         tts?.stop()
     }
 
     /** 완전 해제(소멸 시). */
     fun shutdown() {
-        clearPendingGuides()
+        gate.clearPending()
         tts?.stop()
         tts?.shutdown()
         tts = null
-        ready = false
     }
 }
