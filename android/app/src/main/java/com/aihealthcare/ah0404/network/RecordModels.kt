@@ -1,5 +1,7 @@
 package com.aihealthcare.ah0404.network
 
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -61,8 +63,13 @@ data class PredictionFeedbackRequest(
  * POST /risk-predictions/reassess 요청. 서버가 최신 프로필 + 최근 [activityWindowDays]일의 실제
  * 활동 로그(걷기/근력 일수)로 새 스냅샷을 만들어 **새 예측을 생성·저장**한다(서버 계약: 7 또는 14만 허용).
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class RiskReassessRequest(
+    // ⚠️ 기본값 필드는 encodeDefaults=false(NetworkClient 기본)에서 JSON 에서 **생략**된다.
+    //   서버 pydantic 은 이 필드가 필수(Literal[7,14])라 생략 시 422 — 실기기 QA 에서 내 정보 저장 후
+    //   재평가가 전부 422 로 죽던 원인. ALWAYS 로 강제 직렬화한다(MissionLogUpdateRequest.status 와 동일 패턴).
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     @SerialName("activity_window_days") val activityWindowDays: Int = 7,
 )
 
