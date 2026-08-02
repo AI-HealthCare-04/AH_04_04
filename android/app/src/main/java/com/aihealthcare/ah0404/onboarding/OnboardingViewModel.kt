@@ -76,6 +76,9 @@ class OnboardingViewModel(
     var heightCm by mutableStateOf(""); private set
     var weightKg by mutableStateOf(""); private set
     var waistCm by mutableStateOf("")
+    // 허리둘레 '모름'을 눌렀는지. 값이 아니라 안내 문구 노출에만 쓴다 — 눌러도 화면이 안 바뀌어
+    //   버튼이 고장 난 것처럼 보이던 문제(선택 항목이라 대개 이미 비어 있다). 직접 입력하면 해제된다.
+    var waistSkipped by mutableStateOf(false)
     var heightEstimated by mutableStateOf(false); private set
     var weightEstimated by mutableStateOf(false); private set
 
@@ -152,8 +155,8 @@ class OnboardingViewModel(
     fun markHeightUnknown() { if (canEstimate) { heightEstimated = true; heightCm = "" } }
     fun markWeightUnknown() { if (canEstimate) { weightEstimated = true; weightKg = "" } }
 
-    /** 허리둘레 '모름' → 비워서 요청 body 에서 생략(백엔드 선택 처리). */
-    fun markWaistUnknown() { waistCm = "" }
+    /** 허리둘레 '모름' → 비워서 요청 body 에서 생략(백엔드 선택 처리) + 안내 문구 노출 플래그. */
+    fun markWaistUnknown() { waistCm = ""; waistSkipped = true }
 
     /** 만 나이(월/일 반영): 올해 생일이 아직 안 지났으면 -1(리뷰 #75-3 경계 오차 제거). */
     private fun ageYears(): Int? {
@@ -344,7 +347,7 @@ class OnboardingViewModel(
      *  #298 C: 만 65세 미만은 예측 대상이 아니라 서버가 422(sarcopenia_prediction_preparing)를 준다. 이 경우
      *  가입/온보딩은 정상 완료돼야 하므로 **예측 없이(result=null) 완주**로 넘긴다(예측은 대시보드에서 "준비 중" 안내). */
     private suspend fun predictAndFinish() {
-        val pid = profileId ?: throw IllegalStateException("프로필 정보가 없습니다. 프로필부터 다시 진행해 주세요.")
+        val pid = profileId ?: throw IllegalStateException("내 몸 정보가 없습니다. 처음부터 다시 진행해 주세요.")
         result = try {
             api.createRiskPrediction(RiskPredictionRequest(pid))
         } catch (e: HttpException) {

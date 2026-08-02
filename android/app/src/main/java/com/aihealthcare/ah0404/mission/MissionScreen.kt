@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -39,7 +40,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -322,7 +325,13 @@ private fun MissionCard(mission: Mission, onClick: () -> Unit) {
     }
 }
 
-/** 하단 보너스 안내 카드(시안): 선물 아이콘 + 문구 + 화살표. 정보성(현재 비인터랙티브). */
+/**
+ * 하단 보너스 안내 카드(시안): 선물 아이콘 + 문구. 정보성(비인터랙티브).
+ *
+ * ⚠️ 시안에 있던 오른쪽 '›' 는 넣지 않는다. 이 카드는 누를 수 없는데, 이 화면에서 화살표가 붙은
+ *   유일한 카드가 되어 "여기가 눌리는 곳"이라는 반대 신호를 준다(정작 눌리는 미션 카드에는 화살표가
+ *   없다). 연결할 보너스 상세 화면도 없다.
+ */
 @Composable
 private fun MissionBonusCard() {
     Surface(
@@ -342,7 +351,6 @@ private fun MissionBonusCard() {
                 Spacer(Modifier.height(2.dp))
                 Text("추가 보너스 포인트를 드려요!", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MInk)
             }
-            Text("›", fontSize = 26.sp, color = MMuted)
         }
     }
 }
@@ -355,7 +363,28 @@ private fun PointsBadge(points: Int) {
             Modifier.size(20.dp).clip(CircleShape).background(MPointBg),
             contentAlignment = Alignment.Center,
         ) {
-            Text("P", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            // 'P' 를 원 중앙에 맞추려면 줄 상자(line box)를 손봐야 한다. Box 의 가운데 정렬은 글자 모양이
+            //   아니라 줄 상자를 기준으로 하는데, 여기엔 두 가지가 겹쳐 상자가 위로 크게 치우친다.
+            //   ① Noto Sans KR 은 한글·한자를 담느라 ascent(1.160em)가 descent(0.288em)보다 훨씬 크다.
+            //   ② 이 Text 는 테마의 bodyLarge 를 상속하는데 fontSize 만 12.sp 로 덮어, lineHeight 27.sp 가
+            //      그대로 남는다. 남는 여백 9.6sp 가 ascent:descent 비율(약 8:2)로 나뉘어 위쪽에 쏠린다.
+            //   그대로 두면 'P' 가 원 중심보다 약 3.7sp 아래에 놓이고(20dp 원의 19%), 시스템 글꼴 확대
+            //   130% 에서는 baseline 이 원 밖으로 나가 clip(CircleShape) 에 아랫부분이 잘린다.
+            //   lineHeight 상속을 끊고 Alignment.Center 로 여백을 균등 배분하면 어긋남이 1sp 미만이 된다.
+            Text(
+                "P",
+                color = Color.White,
+                fontSize = 12.sp,
+                lineHeight = 12.sp,
+                fontWeight = FontWeight.Bold,
+                style = LocalTextStyle.current.copy(
+                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                    lineHeightStyle = LineHeightStyle(
+                        alignment = LineHeightStyle.Alignment.Center,
+                        trim = LineHeightStyle.Trim.Both,
+                    ),
+                ),
+            )
         }
         Spacer(Modifier.width(5.dp))
         Text("$points", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MInk)

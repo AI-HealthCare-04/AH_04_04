@@ -816,9 +816,16 @@ private fun openTermsUrl(context: Context, url: String): Boolean {
 }
 
 /**
- * 숫자 입력 + 오른쪽 '모름' 버튼. '모름' 누르면 추정치로 채워지고, 채워졌으면 안내 문구를 보여준다.
+ * 숫자 입력 + 오른쪽 '모름' 버튼.
  *  - [error]: 값이 현실 범위를 벗어나면 그 자리에서 인라인 경고(#298 A-2).
  *  - [unknownReason]: '모름'이 비활성일 때 **왜 못 누르는지** 안내(#298 B).
+ *  - [unknownNote]: '모름'을 누른 뒤 무슨 일이 일어났는지 안내. null 이면 표시하지 않는다.
+ *
+ * ⚠️ [unknownNote] 는 원래 `estimated: Boolean` 이었고 "추정치로 입력했어요" 한 문구만 낼 수 있었다.
+ *   '모름'의 의미가 항목마다 다르기 때문에 문구를 호출부가 정하도록 바꿨다 —
+ *   키·몸무게는 '추정치를 채운다', 허리둘레는 '이 항목을 빼고 넘어간다' 로 동작이 정반대다.
+ *   허리둘레는 값이 비어 있는 게 보통이라, 안내가 없으면 눌러도 화면이 전혀 바뀌지 않아
+ *   버튼이 고장 난 것처럼 보였다.
  */
 @Composable
 private fun FieldWithUnknown(
@@ -826,8 +833,8 @@ private fun FieldWithUnknown(
     onValueChange: (String) -> Unit,
     label: String,
     onUnknown: () -> Unit,
-    estimated: Boolean,
     unknownEnabled: Boolean,
+    unknownNote: String? = null,
     error: String? = null,
     unknownReason: String? = null,
 ) {
@@ -853,12 +860,8 @@ private fun FieldWithUnknown(
     error?.let {
         Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
     }
-    if (estimated) {
-        Text(
-            "추정치로 입력했어요. 정확한 값을 아시면 직접 입력해 주세요.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+    unknownNote?.let {
+        Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     if (!unknownEnabled) {
         unknownReason?.let {
@@ -875,10 +878,12 @@ private fun ProfileStep(vm: OnboardingViewModel) {
     // 서브스텝 사이 뒤로가기는 이전 페이지로. 첫 페이지에선 비활성 → 부모 BackHandler(약관으로) 가 처리.
     BackHandler(enabled = subStep > 0) { subStep-- }
 
+    // 제목은 외래어 없이 우리말로 쓴다(시니어 대상). '프로필'은 설정에서 같은 데이터를 이미 '내 정보'로
+    //   부르고 있어 용어가 갈리기도 했다. 1·3단계가 모두 '건강'으로 시작해 구분이 약하던 것도 함께 정리.
     val (title, subtitle) = when (subStep) {
-        0 -> "건강 프로필" to "맞춤 미션을 위해 기본 정보를 알려주세요."
+        0 -> "내 몸 정보" to "맞춤 미션을 위해 기본 정보를 알려주세요."
         1 -> "활동 습관" to "평소 운동 습관을 알려주세요."
-        else -> "건강 확인" to "식사와 건강 상태를 확인할게요."
+        else -> "건강 상태" to "식사와 건강 상태를 확인할게요."
     }
     // 페이지별 '다음' 활성 조건(마지막은 submitProfile 이 전체 검증).
     val step0Valid = vm.birthDateError == null &&
@@ -1020,8 +1025,10 @@ private fun ProfileBasicInfo(vm: OnboardingViewModel) {
     }
 
     Spacer(Modifier.height(18.dp))
+    // 이 안내는 '모름'이 평균치를 채운다고 말한다 — 키·몸무게에만 해당한다. 허리둘레의 '모름'은
+    //   값을 채우지 않고 항목을 생략하므로, 대상을 문장 앞에 못박아 오해를 막는다.
     Text(
-        "'모름'을 누르면 평균치가 자동으로 입력돼요. 정확한 예측을 위해 가급적 키·몸무게를 직접 입력해 주세요.",
+        "키·몸무게는 '모름'을 누르면 평균치가 자동으로 입력돼요. 정확한 예측을 위해 가급적 직접 입력해 주세요.",
         fontSize = 13.sp,
         lineHeight = 19.sp,
         color = TermsMuted,
@@ -1032,8 +1039,8 @@ private fun ProfileBasicInfo(vm: OnboardingViewModel) {
         onValueChange = vm::setHeight,
         label = "키 (cm)",
         onUnknown = vm::markHeightUnknown,
-        estimated = vm.heightEstimatedValid,
         unknownEnabled = vm.canEstimate,
+        unknownNote = ESTIMATE_FILLED_NOTE.takeIf { vm.heightEstimatedValid },
         error = vm.heightError,
         unknownReason = vm.estimateUnavailableReason,
     )
@@ -1042,20 +1049,35 @@ private fun ProfileBasicInfo(vm: OnboardingViewModel) {
         onValueChange = vm::setWeight,
         label = "몸무게 (kg)",
         onUnknown = vm::markWeightUnknown,
-        estimated = vm.weightEstimatedValid,
         unknownEnabled = vm.canEstimate,
+        unknownNote = ESTIMATE_FILLED_NOTE.takeIf { vm.weightEstimatedValid },
         error = vm.weightError,
         unknownReason = vm.estimateUnavailableReason,
     )
     FieldWithUnknown(
         value = vm.waistCm,
-        onValueChange = { vm.waistCm = it },
+        onValueChange = { vm.waistCm = it; vm.waistSkipped = false },
         label = "허리둘레 (cm, 선택)",
         onUnknown = vm::markWaistUnknown,
-        estimated = false,
         unknownEnabled = true,
+        unknownNote = WAIST_SKIPPED_NOTE.takeIf { vm.waistSkipped },
     )
 }
+
+/** 키·몸무게 '모름' → 추정치를 채운 뒤의 안내. */
+private const val ESTIMATE_FILLED_NOTE = "추정치로 입력했어요. 정확한 값을 아시면 직접 입력해 주세요."
+
+/**
+ * 허리둘레 '모름' → 항목을 빼고 넘어간 뒤의 안내.
+ *
+ * 허리둘레는 예측 모델의 주요 입력이라(같은 BMI 라도 허리둘레로 근육/지방이 갈린다) 있고 없고에 따라
+ * 다른 모델을 쓴다. 다만 검증 결과의 신뢰구간이 겹치므로 "훨씬 정확해진다"고 말하지 않는다.
+ * 추정으로 채우는 선택지는 없다 — 대치한 허리값은 허리 제외 모델보다 나은 성능을 보이지 못했다
+ * (docs/ml/sarcopenia_validation_awgs2025_summary.md).
+ */
+private const val WAIST_SKIPPED_NOTE =
+    "나중에 입력해도 괜찮아요. 지금은 이대로 넘어갈게요. " +
+        "줄자로 재서 입력하시면 더 정확한 예측에 도움이 돼요(설정 → 내 정보에서 언제든 추가할 수 있어요)."
 
 /** 2단계: 걷기·근력 주당 일수(스텝퍼 카드). */
 @Composable

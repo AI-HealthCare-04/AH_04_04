@@ -95,6 +95,9 @@ internal data class MuscleScoreUi(
     val stsSeconds: Double?, // §3.4 5STS(초). null=미측정/스킵 → 안전망 카드 미표시
     val bmi: Double?,        // §3.4
     val cohort: CohortDistributionResponse? = null, // #193 또래 분포. null=미탑재/65세미만/실패 → 카드 미표시
+    // 허리둘레(cm). null = 미입력 → 점수·또래 비교 모두 '허리 제외' 모델로 계산된 것이라 그 사실을 안내한다.
+    //   (app/ml/predictor.py 가 허리 유무로 다른 번들·다른 코호트표를 쓴다)
+    val waistCm: Int? = null,
 )
 
 private const val DISPLAY_FLOOR = 5 // 표시 하한 5점(§3.1) — 계산·저장은 0~100, 화면 표시만 최저 5.
@@ -132,9 +135,9 @@ internal fun MuscleDashboardCards(
         // 점수가 있으면 연령 판별과 무관하게 점수를 보여준다(리뷰 #275-③) — 나이 출처인 prediction-inputs
         //   조회만 실패해도 유효한 점수가 "준비 중"에 가려지지 않게 score 우선(#273 게이트).
         score != null -> {
-            ScoreHeadlineCard(score, ui.band)       // ① 지금 내 점수
+            ScoreHeadlineCard(score, ui.band, waistMissing = ui.waistCm == null) // ① 지금 내 점수
             ScoreTrendCard(ui.trend)                // ② 변화 추이(위험도 순화 표현)
-            CohortDistributionCard(ui.cohort)       // 또래 중 내 위치(#193, 데이터 있을 때만)
+            CohortDistributionCard(ui.cohort, waistMissing = ui.waistCm == null) // 또래 중 내 위치(#193)
         }
         // §3.3 점수가 없을 때만 연령 분기: 65세 미만 카드. 나이 미상은 준비 중.
         age == null -> ScorePendingCard()
@@ -168,7 +171,7 @@ internal fun MuscleImprovementCards(ui: MuscleScoreUi, onGoToMissions: () -> Uni
 
 // ── §3.2 헤드라인 + 구간 배지 ─────────────────────────────────────────────────
 @Composable
-private fun ScoreHeadlineCard(score: Int, band: String?) {
+private fun ScoreHeadlineCard(score: Int, band: String?, waistMissing: Boolean) {
     AigoCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -186,8 +189,29 @@ private fun ScoreHeadlineCard(score: Int, band: String?) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        // 허리둘레 미입력 안내는 '변화' 카드가 아니라 여기에 둔다 — 부정확성은 점수 자체의 성질이고,
+        //   변화 카드는 점수가 2건 이상이어야 그려져 정작 처음 점수를 보는 사용자에게는 안 보인다.
+        if (waistMissing) {
+            Spacer(Modifier.height(Dimens.Space8))
+            Text(
+                WAIST_MISSING_SCORE_NOTE,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
+
+/**
+ * 허리둘레 미입력 안내(점수 카드). 허리둘레가 없으면 '허리 제외' 모델로 계산된다
+ * (app/ml/predictor.py:355). 같은 BMI 라도 허리둘레로 근육/지방이 갈리는 주요 입력이라
+ * 있고 없고가 결과에 영향을 준다. 다만 검증 신뢰구간이 겹치므로 "훨씬 정확해진다"고 말하지 않는다.
+ */
+private const val WAIST_MISSING_SCORE_NOTE =
+    "허리둘레를 입력하면 더 정확하게 계산할 수 있어요. 설정 → 내 정보에서 추가할 수 있어요."
+
+/** 허리둘레 미입력 안내(또래 카드). 코호트표도 허리 유무로 갈린다(app/ml/predictor.py:372). */
+private const val WAIST_MISSING_COHORT_NOTE = "허리둘레를 입력하면 또래 비교도 더 정확해져요."
 
 @Composable
 private fun BandBadge(band: String?) {
@@ -232,10 +256,18 @@ private fun ScoreTrendCard(trend: List<ScorePoint>) {
  *    새 예측이 안 생기므로(리뷰 #339-①) 실제 트리거인 '내 정보' 저장을 안내한다.
  *  - size=0: 점수는 있는데 추이만 비었다 = **추이(history) 조회 실패**(리뷰 #339-②). '첫 평가를 마치면'은 점수가
  *    이미 있는 것과 모순이므로, 조회 실패로 안내한다(첫 평가 미완료로 단정하지 않음).
+ *
+ * ⚠️ size=1 문구는 '무엇이 점수를 바꾸는가'와 '언제 다시 계산되는가'를 분리해서 말한다.
+ *   재평가는 최신 프로필뿐 아니라 **최근 7일 실제 걷기·근력 기록**을 모델 입력으로 쓰는데
+ *   (app/services/activity_metrics.py 의 derive_activity_day_counts), '내 정보 업데이트'만 안내하면
+ *   "키·몸무게를 고치는 것이 점수를 올리는 방법"으로 읽힌다. 같은 카드의 증감 문구가 걷기·근력을
+ *   가리키고 있어 서로 어긋나기도 했다.
+ *   재평가 트리거가 '내 정보' 저장 하나뿐인 구조 자체는 별건이다(#388).
  */
 internal fun trendEmptyCopy(size: Int): String =
     if (size == 1) {
-        "다음 재평가 때 변화를 보여드려요. '내 정보'에서 정보를 업데이트해 저장하면 새 점수가 쌓여요."
+        "아직 점수가 하나라 변화를 보여드릴 수 없어요. 걷기·근력 기록이 다음 점수에 반영돼요. " +
+            "'내 정보'를 저장하면 그때까지의 활동으로 점수를 다시 계산해요."
     } else {
         "변화 추이를 불러오지 못했어요. 잠시 후 다시 확인해 주세요."
     }
@@ -315,12 +347,21 @@ private fun ScoreTrendChart(segments: List<List<ScorePoint>>) {
 
 // ── §193 또래 분포 — '또래 중 내 위치'(확률% 미노출, 백분위·곡선·구간 띠) ──────────
 @Composable
-private fun CohortDistributionCard(cohort: CohortDistributionResponse?) {
+private fun CohortDistributionCard(cohort: CohortDistributionResponse?, waistMissing: Boolean) {
     if (cohort == null) return // 미탑재·65세 미만·조회 실패 → 카드 자체를 그리지 않는다(다른 섹션 무영향).
     AigoCard {
         Text("또래 중 내 위치", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(Dimens.Space8))
         RiskDistributionChart(data = cohort)
+        // 점수 카드의 안내와 겹치지 않게 한 줄로 짧게 — 여기서 달라지는 건 '비교 대상(코호트표)'이다.
+        if (waistMissing) {
+            Spacer(Modifier.height(Dimens.Space8))
+            Text(
+                WAIST_MISSING_COHORT_NOTE,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

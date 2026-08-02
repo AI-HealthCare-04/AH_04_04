@@ -67,17 +67,28 @@ fun RiskDistributionChart(data: CohortDistributionResponse, modifier: Modifier =
 
     Column(modifier = modifier.fillMaxWidth().semantics { contentDescription = chartDescription }) {
         // 헤드라인은 % 대신 백분위 순번. 또래 범위 문장과 항상 함께 둔다(꼬리 케이스에서도 유지, 리뷰 #302).
-        Text(
-            riskAgeSexLine(data.ageLabel, sexLabel),
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            riskRankLine(rank),
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            color = CurveColor,
-        )
+        //   단 위험 높은 꼬리에서는 순번을 숨기므로(아래) 이 도입부도 함께 문장으로 합친다 —
+        //   "100명 중"만 남고 순번이 없으면 문장이 끊긴다.
+        if (highTail) {
+            Text(
+                riskHighTailHeadline(data.ageLabel, sexLabel),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = CurveColor,
+            )
+        } else {
+            Text(
+                riskAgeSexLine(data.ageLabel, sexLabel),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                riskRankLine(rank),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = CurveColor,
+            )
+        }
         // §5.1 꼬리 프레임: 위험 높은 쪽이면 행동 유도 문구를 '추가', 낮은 쪽이면 유지 격려.
         when {
             highTail -> Text(
@@ -222,7 +233,19 @@ private fun chartTextPaint(color: Color, sizePx: Float, bold: Boolean = false): 
 
 // ==================== 순수 헬퍼(테스트 대상) ====================
 
-internal const val RISK_HEADLINE_TAIL = "지금 근력운동을 시작하면 가장 크게 낮아지는 구간이에요"
+/**
+ * 위험 높은 꼬리에 덧붙이는 행동 문구.
+ *
+ * ⚠️ 이전 문구("지금 근력운동을 시작하면 가장 크게 낮아지는 구간이에요")는 우리 데이터로 뒷받침할 수 없어
+ *   교체했다. 한 문장에 검증하지 않은 주장이 둘 있었다.
+ *   ① 인과 — 모델은 KNHANES 2022–2024 **단면 조사** 기반 로지스틱 회귀로, 같은 시점의 활동량과
+ *      근감소증 상태의 *연관*을 학습한다. 근력운동을 시작한 사람을 추적해 위험이 떨어지는지 본
+ *      개입·추적 연구가 없으므로 "시작하면 낮아진다"고 단정할 수 없다.
+ *   ② 최상급 — "가장 크게"는 구간별 개입 효과 비교를 전제하는데 그런 분석 자체가 없다.
+ *   같은 카드에 "진단이 아닙니다" 고지를 붙여두고 바로 위에서 효과를 단정하면 고지의 신뢰도도 깎인다.
+ *   근거: docs/ml/sarcopenia_validation_awgs2025_summary.md (내부 검증 전용, 외부·시간적 검증 없음)
+ */
+internal const val RISK_HEADLINE_TAIL = "근력운동은 근육 건강 관리에 도움이 될 수 있어요"
 internal const val RISK_LOW_TAIL_SUFFIX = "잘 유지하고 있어요"
 internal const val RISK_DISCLAIMER = "동일 모델로 예측한 국민건강영양조사 표본 내 위치이며 진단이 아닙니다"
 internal const val RISK_ZONE_LOW = "낮음"
@@ -247,7 +270,22 @@ internal fun isLowRiskTail(lowerCount: Int): Boolean = lowerCount <= 15
 internal fun riskAgeSexLine(ageLabel: String, sexLabel: String): String =
     "같은 연령대($ageLabel) $sexLabel 100명 중"
 
-internal fun riskRankLine(rank: Int): String = "위험이 낮은 쪽에서 ${rank}번째"
+/**
+ * 순번 문구(§4.1). 방향은 점수와 같은 '높을수록 좋음'으로 말한다 — 기록탭은 확률(%)을 지우고 긍정
+ * 점수만 쓰기로 했는데(RecordScreen §3·§4), 이 문장만 "위험" 프레임이 남아 바로 위 점수 카드와
+ * 반대 방향을 가리키고 있었다. 순서 자체는 그대로다(rank 1 = 가장 좋음).
+ */
+internal fun riskRankLine(rank: Int): String = "근육 건강이 좋은 쪽에서 ${rank}번째"
+
+/**
+ * 위험 높은 꼬리(lowerCount≥85)용 헤드라인 — 순번을 쓰지 않는다.
+ *
+ * 이 구간의 순번은 96~100번째라 "100명 중 꼴찌"로 읽힌다. 시니어 사용자에게 좌절만 남기고,
+ * 상태 자체는 위 점수 카드의 점수와 '주의' 배지가 이미 전달하므로 숫자가 더 주는 정보가 없다.
+ * 분포 차트의 "나보다 낮음/높음 N명"은 그대로 남아 원하면 확인할 수 있다.
+ */
+internal fun riskHighTailHeadline(ageLabel: String, sexLabel: String): String =
+    "같은 연령대($ageLabel) $sexLabel 중에서는 근육 건강을 더 챙기시면 좋은 편이에요"
 
 internal fun riskAreaLower(lowerCount: Int): String = "나보다 낮음 ${lowerCount}명"
 
@@ -255,9 +293,17 @@ internal fun riskAreaHigher(higherCount: Int): String = "나보다 높음 ${high
 
 internal fun riskCurveCaption(sexLabel: String): String = "또래 $sexLabel 분포 (국민건강영양조사 기반)"
 
-/** 차트 전체 contentDescription(§6). N=순번(lowerCount+1). 확률 % 는 읽지 않는다(확률 제거). */
+/**
+ * 차트 전체 contentDescription(§6). N=순번(lowerCount+1). 확률 % 는 읽지 않는다(확률 제거).
+ * 화면에서 순번을 숨기는 위험 높은 꼬리에서는 읽어주는 문장도 같이 숨긴다 — TalkBack 사용자에게만
+ * "100명 중 100번째"가 들리면 화면과 어긋난다.
+ */
 internal fun riskChartContentDescription(lowerCount: Int): String =
-    "또래 100명 중 위험이 낮은 쪽에서 ${rankFromLowerCount(lowerCount)}번째."
+    if (isHighRiskTail(lowerCount)) {
+        "또래 100명 중 근육 건강을 더 챙기시면 좋은 쪽에 있어요."
+    } else {
+        "또래 100명 중 근육 건강이 좋은 쪽에서 ${rankFromLowerCount(lowerCount)}번째."
+    }
 
 /** x 좌표 매핑의 분율(0~1). p 는 0.5 에서 클램프(스펙 §2 gpos). */
 internal fun probToPlotFraction(p: Float): Float = (min(p, 0.5f) / 0.5f).coerceIn(0f, 1f)
