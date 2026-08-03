@@ -70,13 +70,23 @@ class RecordViewModel(
     var calMonth by mutableStateOf(0); private set // 1~12
     var stampsByDate by mutableStateOf<Map<String, String>>(emptyMap()); private set
     var monthLogs by mutableStateOf<List<MissionLogItem>>(emptyList()); private set
+    // 표시 중인 달의 조회 상태(PR #413 리뷰 P2). 조회 전/실패를 '0일 참여'와 구분하기 위한 것 —
+    //   숫자 0 은 "그 달에 아무것도 안 했다"는 사실이고, 미조회는 "아직 모른다"라 뜻이 다르다.
+    var monthLoaded by mutableStateOf(false); private set
+    var monthLoadFailed by mutableStateOf(false); private set
 
     // ── 표시용 파생값(#387 리디자인) ────────────────────────────────────────
     //   서버 응답을 화면이 바로 그릴 형태로 정리만 한다 — API·DTO 는 그대로다(핸드오프 §0-2).
     //   순수 함수(RecordUiState.kt)에 로직을 두고 여기서는 현재 상태를 넘겨 호출만 한다.
 
-    /** 이번 달 요약(§7 M1) — 표시 중인 달의 스탬프에서 참여 일수·성공·대성공. */
+    /** 요약(§7 M1) — **표시 중인 달**의 스탬프에서 참여 일수·성공·대성공. */
     internal val monthSummary: MonthSummary get() = monthSummaryOf(stampsByDate)
+
+    /** 표시 중인 달이 실제 이번 달인가. 아니면 요약 카드 제목에 그 달을 밝힌다(리뷰 P2). */
+    internal fun isCurrentMonth(nowMillis: Long = System.currentTimeMillis()): Boolean {
+        val now = GregorianCalendar(kst).apply { timeInMillis = nowMillis }
+        return calYear == now.get(Calendar.YEAR) && calMonth == now.get(Calendar.MONTH) + 1
+    }
 
     /** 달력 칸(§7 M2) — 표시 중인 달의 1일~말일. */
     internal fun dayMarks(nowMillis: Long = System.currentTimeMillis()): List<DayMark> =
@@ -120,15 +130,21 @@ class RecordViewModel(
     }
 
     /** 달력 월 이동(#기록탭 §5.2). 그 달의 스탬프 + 완료 미션(팝업용)을 다시 불러온다. */
-    fun showPreviousMonth() {
-        val c = GregorianCalendar(kst).apply { clear(); set(calYear, calMonth - 1, 1); add(Calendar.MONTH, -1) }
-        calYear = c.get(Calendar.YEAR); calMonth = c.get(Calendar.MONTH) + 1
-        loadMonth(calYear, calMonth)
-    }
+    fun showPreviousMonth() = moveMonth(-1)
 
-    fun showNextMonth() {
-        val c = GregorianCalendar(kst).apply { clear(); set(calYear, calMonth - 1, 1); add(Calendar.MONTH, 1) }
+    fun showNextMonth() = moveMonth(1)
+
+    /**
+     * 달 이동. **이전 달 값을 즉시 비우고** 새 달을 조회한다(PR #413 리뷰 P2) —
+     * 그대로 두면 조회가 끝날 때까지(또는 실패하면 계속) 7월 숫자가 8월 제목 아래 표시된다.
+     */
+    private fun moveMonth(delta: Int) {
+        val c = GregorianCalendar(kst).apply { clear(); set(calYear, calMonth - 1, 1); add(Calendar.MONTH, delta) }
         calYear = c.get(Calendar.YEAR); calMonth = c.get(Calendar.MONTH) + 1
+        stampsByDate = emptyMap()
+        monthLogs = emptyList()
+        monthLoaded = false
+        monthLoadFailed = false
         loadMonth(calYear, calMonth)
     }
 
@@ -148,6 +164,9 @@ class RecordViewModel(
                 .onFailure { Log.w(TAG, "스탬프 조회 실패: ${it.message}") }
             logsResult.onSuccess { monthLogs = it }
                 .onFailure { Log.w(TAG, "달 미션 로그 조회 실패: ${it.message}") }
+            // 요약 카드가 '조회 실패'와 '정말 0일'을 구분해 말할 수 있게 결과를 남긴다(리뷰 P2).
+            monthLoadFailed = stampsResult.isFailure
+            monthLoaded = true
         }
     }
 

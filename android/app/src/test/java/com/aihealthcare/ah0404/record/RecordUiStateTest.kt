@@ -157,3 +157,26 @@ class RecordUiStateTest {
         assertEquals(null, measuredAtLabel(null))
     }
 }
+
+/**
+ * 점수 빈 상태에서 **어떤 카드까지 보여줄지** 고정한다 — PR #413 리뷰 P1.
+ *  연령 대상 밖(65세 미만)에 "검사하면 또래 위치를 확인할 수 있다"고 약속하면 지킬 수 없는 안내가 된다.
+ */
+class ScoreEmptyCardsTest {
+
+    @Test
+    fun cohort_empty_card_only_for_pending() {
+        assertTrue(showsCohortEmptyCard(ScoreEmptyState.PENDING))
+        assertFalse(showsCohortEmptyCard(ScoreEmptyState.UNDER_AGE))
+        assertFalse(showsCohortEmptyCard(ScoreEmptyState.PREPARING))
+    }
+
+    @Test
+    fun age_branches_map_to_expected_empty_state() {
+        // 대상 밖 두 구간은 또래 위치 카드를 얻지 못한다(위 규칙과 함께 봐야 계약이 완성된다).
+        assertFalse(showsCohortEmptyCard(scoreEmptyState(40)))  // 학습 데이터 없음
+        assertFalse(showsCohortEmptyCard(scoreEmptyState(60)))  // 새 모델 준비 중
+        assertTrue(showsCohortEmptyCard(scoreEmptyState(70)))   // 65세 이상 · 점수 미도착
+        assertTrue(showsCohortEmptyCard(scoreEmptyState(null))) // 나이 미상(조회 실패)
+    }
+}

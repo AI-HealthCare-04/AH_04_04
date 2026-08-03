@@ -159,6 +159,14 @@ internal const val UNDER_AGE_SCORE_BODY =
  */
 internal const val SCORE_PENDING_BODY = "조금 뒤에 다시 확인해 주세요."
 
+/**
+ * 또래 위치 빈 상태 카드를 그릴지(PR #413 리뷰 P1). **점수를 받을 수 있는 PENDING 에서만** true.
+ *
+ *  이 카드의 문구는 "체력 검사를 완료하면 위치를 확인할 수 있어요" — 검사만 하면 또래 위치가 생긴다는
+ *  약속이다. 65세 미만은 코호트표 자체가 없어 검사해도 받을 수 없으므로(#403 계약) 그 약속을 하면 안 된다.
+ */
+internal fun showsCohortEmptyCard(state: ScoreEmptyState): Boolean = state == ScoreEmptyState.PENDING
+
 internal fun shown(score: Int): Int = max(score, DISPLAY_FLOOR)
 
 private fun bandLabel(band: String?): String = when (band) {
@@ -205,15 +213,19 @@ internal fun MuscleDashboardCards(
         else -> when (scoreEmptyState(age)) {
             ScoreEmptyState.UNDER_AGE -> UnderAgeInfoCard(onGoToMissions)
             ScoreEmptyState.PREPARING -> PreparingCard(onGoToMissions)
-            ScoreEmptyState.PENDING -> ScoreEmptyCard()
+            ScoreEmptyState.PENDING -> {
+                ScoreEmptyCard()
+                // H3 빈 상태(§8 H3) — 그릴지 여부는 [showsCohortEmptyCard] 가 판단한다(리뷰 P1).
+                if (showsCohortEmptyCard(ScoreEmptyState.PENDING)) EmptyCohortCard()
+            }
         }
     }
-    // H3 빈 상태 — 점수가 없으면 또래 위치도 없다. 흐린 실루엣 + 안내만(§8 H3, §6).
-    if (score == null) EmptyCohortCard()
     // 5STS 재측정·추이(#353): 점수 추이 아래 보조 지표. 직접 수행 지표라 점수(예측) 유무와 무관하게
     //   항상 표시한다 — 스킵·65세 미만 사용자도 여기서 측정을 시작할 수 있다.
     StsTrendCard()
     // H5 생활습관 안내 — 점수가 없을 때만(§8 H5). 빈 화면이 안내로 끝나게 하는 마지막 카드다.
+    //   H3 와 달리 연령 전 구간에 그린다: 걷기·근력운동 권유는 점수 제공 여부와 무관하게 참이라
+    //   '검사하면 받을 수 있다'는 약속을 담지 않는다(PR #413 리뷰 P1 구분).
     if (score == null) LifestyleTipCard()
 }
 

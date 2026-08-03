@@ -1,6 +1,8 @@
 package com.aihealthcare.ah0404.ui.components
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +16,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -97,58 +100,74 @@ private fun <T> SegmentCell(
     compact: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    // 알약 자체는 minHeight 로 작아질 수 있지만, **터치 영역은 언제나 48dp 이상**(§10)이어야 한다.
-    //   그래서 compact 일 때만 바깥에 48dp 높이의 Box 를 두고 알약을 그 안에 세로 가운데로 놓는다.
-    //   (알약을 48dp 로 키우는 게 아니라, 작은 알약을 큰 터치 상자 안에 담는 방식)
-    val cell = @Composable {
+    val label = @Composable {
+        Text(
+            text = opt.label,
+            style = if (compact) {
+                MaterialTheme.typography.bodySmall
+            } else {
+                MaterialTheme.typography.bodyLarge
+            },
+            textAlign = TextAlign.Center,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+            color = if (isSelected) {
+                MaterialTheme.colorScheme.onSecondaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
+        )
+    }
+    val fill = if (isSelected) {
+        MaterialTheme.colorScheme.secondaryContainer
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
+    val border = BorderStroke(
+        Dimens.HairlineBorder,
+        if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+    )
+
+    if (!compact) {
         Surface(
             onClick = onClick,
-            modifier = Modifier
-                .fillMaxWidth()
+            modifier = modifier
                 .heightIn(min = minHeight)
                 .semantics { selected = isSelected },
             shape = PillShape,
-            color = if (isSelected) {
-                MaterialTheme.colorScheme.secondaryContainer
-            } else {
-                MaterialTheme.colorScheme.surface
-            },
-            border = BorderStroke(
-                Dimens.HairlineBorder,
-                if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-            ),
+            color = fill,
+            border = border,
+        ) {
+            Box(
+                modifier = Modifier.fillMaxWidth().padding(Dimens.Space12),
+                contentAlignment = Alignment.Center,
+            ) { label() }
+        }
+        return
+    }
+
+    // compact: 알약은 작게 보이되 **누를 수 있는 영역 자체가 48dp 이상**이어야 한다(§10).
+    //   이전 구현은 48dp Box 안에 32dp Surface(onClick) 를 넣어, 위아래 여백이 클릭되지 않았다(PR #413 리뷰 P1).
+    //   클릭·선택 semantics 를 바깥 Surface 가 갖고, 안쪽 Box 는 시각적 알약만 그린다.
+    Surface(
+        onClick = onClick,
+        modifier = modifier
+            .heightIn(min = Dimens.MinTouchTarget)
+            .semantics { selected = isSelected },
+        color = Color.Transparent,
+    ) {
+        Box(
+            modifier = Modifier.fillMaxWidth(),
+            contentAlignment = Alignment.Center,
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = Dimens.Space12, vertical = if (compact) Dimens.Space4 else Dimens.Space12),
+                    .heightIn(min = minHeight)
+                    .background(fill, PillShape)
+                    .border(border, PillShape)
+                    .padding(horizontal = Dimens.Space12, vertical = Dimens.Space4),
                 contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = opt.label,
-                    style = if (compact) {
-                        MaterialTheme.typography.bodySmall
-                    } else {
-                        MaterialTheme.typography.bodyLarge
-                    },
-                    textAlign = TextAlign.Center,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                    color = if (isSelected) {
-                        MaterialTheme.colorScheme.onSecondaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    },
-                )
-            }
+            ) { label() }
         }
-    }
-
-    if (compact) {
-        Box(
-            modifier = modifier.heightIn(min = Dimens.MinTouchTarget),
-            contentAlignment = Alignment.Center,
-        ) { cell() }
-    } else {
-        Box(modifier = modifier) { cell() }
     }
 }

@@ -59,7 +59,16 @@ import com.aihealthcare.ah0404.ui.theme.MissionWalkFg
  *  빈 상태에서도 카드를 숨기지 않는다 — 0 이라는 사실 자체가 정보다.
  */
 @Composable
-internal fun MonthSummaryCard(summary: MonthSummary, modifier: Modifier = Modifier) {
+internal fun MonthSummaryCard(
+    summary: MonthSummary,
+    modifier: Modifier = Modifier,
+    // 아래 셋은 '표시 중인 달' 상태(PR #413 리뷰 P2). 기본값은 이번 달·조회 완료라 Preview 가 단순해진다.
+    isCurrentMonth: Boolean = true,
+    year: Int = 0,
+    month1: Int = 0,
+    loaded: Boolean = true,
+    loadFailed: Boolean = false,
+) {
     AigoCard(modifier = modifier, contentSpacing = Dimens.Space12) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
@@ -70,11 +79,22 @@ internal fun MonthSummaryCard(summary: MonthSummary, modifier: Modifier = Modifi
             )
             Spacer(Modifier.width(Dimens.Space4))
             Text(
-                "이번 달 요약",
+                // 달력에서 다른 달로 이동하면 이 카드도 그 달을 집계한다 — 그런데 제목이 "이번 달"이면
+                //   7월 숫자를 이번 달이라고 말하는 셈이 된다(리뷰 P2). 이번 달이 아닐 때는 달을 밝힌다.
+                if (isCurrentMonth) "이번 달 요약" else "${year}년 ${month1}월 요약",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+        // 조회 전/실패를 '0일 참여'로 위장하지 않는다(리뷰 P2) — 숫자 0 은 사실이고 미조회는 모름이다.
+        if (!loaded || loadFailed) {
+            Text(
+                if (loadFailed) "기록을 불러오지 못했어요." else "불러오는 중이에요…",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            return@AigoCard
         }
         Row(
             Modifier.fillMaxWidth(),

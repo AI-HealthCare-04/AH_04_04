@@ -111,7 +111,16 @@ fun RecordScreen(
                 verticalArrangement = Arrangement.spacedBy(Dimens.ElementGapLarge),
             ) {
                 // ① 이번 달 요약 — 달력을 세지 않아도 결론이 먼저 보이게(§7 M1).
-                item { MonthSummaryCard(vm.monthSummary) }
+                item {
+                    MonthSummaryCard(
+                        summary = vm.monthSummary,
+                        isCurrentMonth = vm.isCurrentMonth(),
+                        year = vm.calYear,
+                        month1 = vm.calMonth,
+                        loaded = vm.monthLoaded,
+                        loadFailed = vm.monthLoadFailed,
+                    )
+                }
 
                 // ② 미션 달력(월 뷰) — 일자 탭 시 바텀시트.
                 item {
