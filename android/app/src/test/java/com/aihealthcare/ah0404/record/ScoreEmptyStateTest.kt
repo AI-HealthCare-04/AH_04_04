@@ -44,17 +44,11 @@ class ScoreEmptyStateTest {
     }
 
     @Test
-    fun both_sections_agree_for_every_age() {
-        // 두 섹션이 같은 함수를 쓰는지 — 이 계약이 깨지면 한 화면에서 상반된 안내가 다시 나간다.
-        (0..100).forEach { age ->
-            val state = scoreEmptyState(age)
-            assertEquals(
-                "같은 나이에 두 번 물으면 같은 답이어야 한다(age=$age)",
-                state,
-                scoreEmptyState(age),
-            )
-        }
-        assertEquals(ScoreEmptyState.UNDER_AGE, scoreEmptyState(30))
+    fun the_whole_age_range_maps_to_exactly_three_regions() {
+        // 경계만 찍으면 구간 한가운데의 실수를 놓친다. 전 구간을 훑어 경계가 정확히 세 덩어리인지 본다.
+        (0..49).forEach { assertEquals("age=$it", ScoreEmptyState.UNDER_AGE, scoreEmptyState(it)) }
+        (50..64).forEach { assertEquals("age=$it", ScoreEmptyState.PREPARING, scoreEmptyState(it)) }
+        (65..120).forEach { assertEquals("age=$it", ScoreEmptyState.PENDING, scoreEmptyState(it)) }
     }
 
     // ── 문구 회귀 방지 ────────────────────────────────────────────────────────
