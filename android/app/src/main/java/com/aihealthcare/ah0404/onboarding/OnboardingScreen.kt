@@ -399,17 +399,25 @@ private fun WelcomeStep(
         Spacer(Modifier.height(4.dp))
         // 밑줄+강조색은 '누를 수 있다'는 신호인데 실제로는 터치 대상이 아니었다(#387) — 로그인 실패 시
         //   유일한 출구가 막혀 있던 상태다. 눌러서 문의처를 볼 수 있게 하고, TalkBack 에도 버튼으로 읽히게 한다.
-        Text(
-            "회원가입/로그인 관련 문의",
-            color = titleGreen,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.SemiBold,
-            textDecoration = TextDecoration.Underline,
+        // 터치 영역은 컨테이너로 확보한다(리뷰 P2): 15sp 한 줄 + 세로 패딩 8dp 로는 실제 높이가 36dp 안팎이라
+        //   권장 최소 48dp 에 못 미쳤다. Dimens.MinTouchTarget 을 컨테이너 최소 높이로 주고 clickable 을
+        //   그 위에 올려, 글자 주변 여백까지 전부 눌리게 한다(앱의 다른 선택 항목 — Selections.kt 와 같은 방식).
+        Box(
             modifier = Modifier
                 .clickable { showSupportDialog = true }
                 .semantics { role = Role.Button }
-                .padding(vertical = 8.dp), // 터치 영역 확보(시니어 대상 — 얇은 텍스트는 누르기 어렵다)
-        )
+                .heightIn(min = Dimens.MinTouchTarget)
+                .padding(horizontal = Dimens.Space8),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                "회원가입/로그인 관련 문의",
+                color = titleGreen,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                textDecoration = TextDecoration.Underline,
+            )
+        }
         if (showSupportDialog) {
             AigoDialog(
                 title = "회원가입·로그인 문의",
