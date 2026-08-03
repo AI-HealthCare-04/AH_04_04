@@ -67,6 +67,8 @@ import kotlinx.serialization.json.Json
 import com.aihealthcare.ah0404.onboarding.OnboardingScreen
 import com.aihealthcare.ah0404.onboarding.OnboardingViewModel
 import com.aihealthcare.ah0404.profile.ProfileScreen
+import com.aihealthcare.ah0404.reminder.InactivityReminder
+import com.aihealthcare.ah0404.reminder.ReminderWorker
 import com.aihealthcare.ah0404.record.RecordScreen
 import com.aihealthcare.ah0404.feedback.AppFeedback
 import com.aihealthcare.ah0404.settings.AppSettings
@@ -86,6 +88,16 @@ private object WalkingOverlay {
 }
 
 class MainActivity : ComponentActivity() {
+
+    /**
+     * 앱을 열었다 = 이탈이 아니다. 리마인드 기준일을 오늘로 갱신하고 연속 발송 횟수를 되돌린다.
+     * onCreate 가 아니라 onResume 에 두어 **백그라운드에서 돌아온 경우도** 접속으로 센다.
+     */
+    override fun onResume() {
+        super.onResume()
+        InactivityReminder.recordAccess(this, InactivityReminder.todayEpochDay())
+    }
+
     @androidx.media3.common.util.UnstableApi
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -93,6 +105,8 @@ class MainActivity : ComponentActivity() {
         SessionStore.restore(this)
         // 마지막으로 고른 글자·소리 크기를 시작 즉시 전역 적용(묶음 C-2).
         com.aihealthcare.ah0404.settings.AppSettings.load(this)
+        // 미접속 리마인드 주기 검사 예약(1차 검토 피드백 — 이탈 방어). KEEP 이라 매 실행 호출해도 안전하다.
+        if (InactivityReminder.isEnabled(this)) ReminderWorker.schedule(this)
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {
