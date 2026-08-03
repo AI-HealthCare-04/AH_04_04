@@ -78,6 +78,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -249,6 +250,20 @@ private fun StepScaffold(
     }
 }
 
+/**
+ * 로그인 전 문의처(#387 A안). 로그인 화면에서는 고객센터 API(`GET /support`)가 401 이라 쓸 수 없어
+ * 앱 상수로 안내한다. 로그인 후 설정 → 고객센터는 기존대로 서버값(SUPPORT_EMAIL)을 쓴다.
+ *
+ * ⚠️ 값을 바꿀 때는 서버 환경변수 `SUPPORT_EMAIL` 과 **함께** 갱신할 것 — 두 경로가 다른 주소를 안내하면
+ *   사용자가 어디로 보내야 할지 알 수 없다. (#387: 스테이징이 placeholder 를 내려주던 문제와 같은 뿌리)
+ */
+internal const val LOGIN_SUPPORT_EMAIL = "aigo.support.team@gmail.com"
+
+internal val LOGIN_SUPPORT_DIALOG_MESSAGE =
+    "로그인이 안 되시면 아래 주소로 문의해 주세요.\n\n" +
+        "$LOGIN_SUPPORT_EMAIL\n\n" +
+        "메일 앱이 열리지 않으면 주소를 직접 적어 보내주셔도 돼요."
+
 @Composable
 private fun WelcomeStep(
     vm: OnboardingViewModel,
@@ -257,6 +272,9 @@ private fun WelcomeStep(
     onKakaoLogin: () -> Unit,
     onSkipToDemo: () -> Unit,
 ) {
+    val welcomeContext = LocalContext.current
+    // 로그인 전에는 고객센터 API(GET /support)가 401 이라 쓸 수 없어, 문의처를 앱 상수로 안내한다(#387 A안).
+    var showSupportDialog by rememberSaveable { mutableStateOf(false) }
     // 로그인 화면 디자인 고도화: 브랜드 헤더 + 강아지 히어로 카드 + 버튼 + 문의(시안 반영). 기능 배선은 그대로 유지.
     val bg = Color(0xFFF5F6F2)
     val titleGreen = Color(0xFF2E6B45)
@@ -379,13 +397,39 @@ private fun WelcomeStep(
         Spacer(Modifier.height(16.dp))
         Text("처음이신가요?", color = titleGreen, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(4.dp))
+        // 밑줄+강조색은 '누를 수 있다'는 신호인데 실제로는 터치 대상이 아니었다(#387) — 로그인 실패 시
+        //   유일한 출구가 막혀 있던 상태다. 눌러서 문의처를 볼 수 있게 하고, TalkBack 에도 버튼으로 읽히게 한다.
         Text(
             "회원가입/로그인 관련 문의",
             color = titleGreen,
             fontSize = 15.sp,
             fontWeight = FontWeight.SemiBold,
             textDecoration = TextDecoration.Underline,
+            modifier = Modifier
+                .clickable { showSupportDialog = true }
+                .semantics { role = Role.Button }
+                .padding(vertical = 8.dp), // 터치 영역 확보(시니어 대상 — 얇은 텍스트는 누르기 어렵다)
         )
+        if (showSupportDialog) {
+            AigoDialog(
+                title = "회원가입·로그인 문의",
+                message = LOGIN_SUPPORT_DIALOG_MESSAGE,
+                confirmText = "메일 보내기",
+                onConfirm = {
+                    showSupportDialog = false
+                    // 메일 앱이 없는 기기에서도 죽지 않게 — 주소는 다이얼로그 본문에 이미 보였다(SupportScreen 과 동일 처리).
+                    runCatching {
+                        welcomeContext.startActivity(
+                            Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:$LOGIN_SUPPORT_EMAIL")),
+                        )
+                    }
+                },
+                dismissText = "닫기",
+                onDismiss = { showSupportDialog = false },
+                onDismissRequest = { showSupportDialog = false },
+            )
+        }
+
         // 개발/데모 전용: debug 빌드에서만 노출(리뷰 #63 P1-1 — 목업/우회 진입은 debug 로 제한).
         if (BuildConfig.DEBUG) {
             Spacer(Modifier.height(12.dp))
