@@ -213,14 +213,77 @@ class OnboardingCompletionTest {
     }
 
     @Test
-    fun welcome_is_never_stale_even_when_the_subject_changed() = runTest {
-        // 남은 진행이 없으면(WELCOME) 주체가 달라도 되돌릴 게 없다 — 불필요한 리셋 방지.
+    fun a_never_started_onboarding_is_never_stale() = runTest {
+        // 시작점을 안 거쳤으면 주인이 없어 되돌릴 진행도 없다 — 불필요한 리셋 방지.
         var auth = 1
         val vm = OnboardingViewModel(FakeApi(), todayYear = 2026, todayMonth = 7, todayDay = 15, authKey = { auth })
         auth = 2
 
         assertEquals(OnbStep.WELCOME, vm.step)
         assertFalse(vm.isProgressFromAnotherAuth())
+    }
+
+    // ── #398 실기기 QA — 두 번째 사고: 주인을 먼저 찍으면 stale 을 못 알아본다 ──────────────
+    // 탈퇴 후 재로그인에서 약관 화면까지는 갔는데 **이전 계정의 동의 체크와 입력값이 그대로 남았다.**
+    //   continueAuthenticated 가 claimProgress 로 주인을 새로 찍어버려, 뒤이어 도는 화면 진입 가드가
+    //   더 이상 남은 진행을 stale 로 보지 못했다. 데이터가 새 주인에게 그대로 '입양'된 것이다.
+
+    @Test
+    fun going_back_to_welcome_does_not_make_stale_progress_look_clean() = runTest {
+        // 약관에서 '이전'을 누르면 step 만 WELCOME 으로 가고 agreed·입력은 남는다.
+        //   "WELCOME 이면 남은 진행이 없다"는 가정이 여기서 깨진다.
+        TokenHolder.token = "qa-token"
+        var auth = 1
+        val vm = OnboardingViewModel(FakeApi(), todayYear = 2026, todayMonth = 7, todayDay = 15, authKey = { auth })
+        vm.continueAuthenticated(); advanceUntilIdle()
+        vm.agreeAll(); vm.submitAgreements(); advanceUntilIdle()
+        vm.birthYear = "1958"
+        vm.goBack() // PROFILE → TERMS
+        vm.goBack() // TERMS → WELCOME
+
+        assertEquals(OnbStep.WELCOME, vm.step)
+        assertEquals("이전으로 돌아가도 입력은 남아 있다", "1958", vm.birthYear)
+
+        auth = 2 // 탈퇴 → 재로그인
+
+        assertTrue(
+            "step 이 WELCOME 이어도 주인이 다르면 stale 이다",
+            vm.isProgressFromAnotherAuth(),
+        )
+    }
+
+    @Test
+    fun continue_authenticated_clears_another_subjects_progress() = runTest {
+        TokenHolder.token = "qa-token"
+        var auth = 1
+        val api = FakeApi()
+        val vm = completedOnboardingVm(api) { auth }
+        vm.consumeFinished()
+        assertTrue("완주 계정의 입력이 남아 있는 상태", vm.birthYear.isNotBlank())
+
+        auth = 2 // 탈퇴 → 같은 소셜 계정 재로그인 = 미완료 신규 계정
+        vm.continueAuthenticated(); advanceUntilIdle()
+
+        assertEquals(OnbStep.TERMS, vm.step)
+        assertEquals("이전 계정의 생년월일이 남으면 안 된다", "", vm.birthYear)
+        assertEquals("키도 비어야 한다", "", vm.heightInput)
+        assertTrue("이전 계정의 약관 동의 체크가 남으면 안 된다", vm.agreed.isEmpty())
+        assertFalse(vm.allRequiredAgreed)
+    }
+
+    @Test
+    fun continue_authenticated_keeps_progress_for_the_same_subject() = runTest {
+        // 같은 주체가 이어가는 로그인(게스트 → 소셜 승격)에서는 방금 넣은 값을 날리면 안 된다.
+        TokenHolder.token = "qa-token"
+        val vm = OnboardingViewModel(FakeApi(), todayYear = 2026, todayMonth = 7, todayDay = 15, authKey = { 5 })
+        vm.continueAuthenticated(); advanceUntilIdle()
+        vm.agreeAll(); vm.submitAgreements(); advanceUntilIdle()
+        vm.birthYear = "1958"
+
+        vm.continueAuthenticated(); advanceUntilIdle() // 주체 변화 없음
+
+        assertEquals("같은 주체면 입력을 유지한다", "1958", vm.birthYear)
+        assertTrue(vm.allRequiredAgreed)
     }
 
     @Test
