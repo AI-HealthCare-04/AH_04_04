@@ -398,7 +398,7 @@ class OnboardingViewModel(
      *  #298 C: 만 65세 미만은 예측 대상이 아니라 서버가 422(sarcopenia_prediction_preparing)를 준다. 이 경우
      *  가입/온보딩은 정상 완료돼야 하므로 **예측 없이(result=null) 완주**로 넘긴다(예측은 대시보드에서 "준비 중" 안내). */
     private suspend fun predictAndFinish() {
-        val pid = profileId ?: throw IllegalStateException("내 몸 정보가 없습니다. 처음부터 다시 진행해 주세요.")
+        val pid = profileId ?: throw IllegalStateException("기본 정보가 없습니다. 처음부터 다시 진행해 주세요.")
         result = try {
             api.createRiskPrediction(RiskPredictionRequest(pid))
         } catch (e: HttpException) {
