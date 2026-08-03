@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -31,9 +32,11 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.aihealthcare.ah0404.network.ChallengeTotalsResponse
 import com.aihealthcare.ah0404.network.MissionLogItem
 import com.aihealthcare.ah0404.network.WalkingDayPoint
+import com.aihealthcare.ah0404.ui.theme.ChartBarGreen
 import com.aihealthcare.ah0404.ui.theme.Dimens
 import java.util.Calendar
 import java.util.GregorianCalendar
@@ -162,53 +165,71 @@ internal fun CompletionLineChart(dateKeys: List<String>, counts: List<Int>, modi
 // ── §5.3 걷기 막대그래프(시간/걸음 탭 전환) ────────────────────────────────────
 enum class WalkingMetric { MINUTES, STEPS }
 
+/** 막대 플롯 높이(§7 M3) — 값·요일 라벨 자리를 포함한 카드 안 높이. */
+private val WalkChartHeight = 130.dp
+
+/**
+ * 최근 7일 걷기 막대(§7 M3). 시안 대비 바뀐 점: 축선·격자 제거(하단 구분선 하나만), **모든 막대에 값 라벨**,
+ * 막대 아래 요일 라벨, 막대 상단 라운드.
+ *
+ *  값 라벨을 최대값·오늘에만 붙이던 기존 방식은 시니어에게 "왜 어떤 날만 숫자가 있지?"로 읽혔다.
+ *  일곱 개뿐이라 전부 적어도 빽빽하지 않다.
+ *
+ *  **기록이 없는 날(value = null)과 0 인 날을 구분**한다 — 없는 날은 막대를 그리지 않고 라벨도 비운다.
+ *  값이 전부 없거나 0 이면 이 차트를 그리지 않고 호출부가 안내 카드로 교체한다(§6 M3).
+ */
 @Composable
 internal fun WalkingBarChart(
-    days: List<WalkingDayPoint>,
-    metric: WalkingMetric,
+    points: List<WalkPoint>,
+    unitLabel: String,
     modifier: Modifier = Modifier,
 ) {
-    val bar = MaterialTheme.colorScheme.primary // 전환해도 색 동일(§5.3)
-    val grid = MaterialTheme.colorScheme.outlineVariant
+    val bar = ChartBarGreen
+    val divider = MaterialTheme.colorScheme.outlineVariant
     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
-    val values = days.map { if (metric == WalkingMetric.MINUTES) it.minutes else it.steps.toDouble() }
-    val maxV = max(values.maxOrNull() ?: 0.0, 1.0)
-    val maxIdx = values.indexOf(values.maxOrNull())
-    val todayIdx = values.lastIndex
-    val unit = if (metric == WalkingMetric.MINUTES) "분" else "걸음"
+    val valueColor = MaterialTheme.colorScheme.onSurface
+    val maxV = max(points.mapNotNull { it.value }.maxOrNull()?.toDouble() ?: 0.0, 1.0)
+    val description = walkChartDescription(points, unitLabel)
     Canvas(
         modifier
             .fillMaxWidth()
-            .height(160.dp)
-            .semantics { contentDescription = "최근 ${days.size}일 걷기 $unit 막대그래프." },
+            .height(WalkChartHeight)
+            .semantics { contentDescription = description },
     ) {
-        val left = 8.dp.toPx(); val right = size.width - 8.dp.toPx()
-        val top = 16.dp.toPx(); val bottom = size.height - 8.dp.toPx()
-        val w = right - left; val h = bottom - top
-        drawLine(grid, Offset(left, bottom), Offset(right, bottom), strokeWidth = 1.dp.toPx())
-        if (days.isEmpty()) return@Canvas
-        val slot = w / days.size
-        val barW = slot * 0.55f
-        days.indices.forEach { i ->
-            val v = values[i]
-            val barH = (h * (v / maxV)).toFloat()
-            val x = left + slot * i + (slot - barW) / 2f
-            drawRect(bar, topLeft = Offset(x, bottom - barH), size = Size(barW, barH))
-            // 라벨은 최대값·오늘만
-            if ((i == maxIdx || i == todayIdx) && v > 0) {
-                val label = if (metric == WalkingMetric.MINUTES) "${v.roundToInt()}" else "${v.roundToInt()}"
-                drawContext.canvas.nativeCanvas.apply {
-                    val paint = android.graphics.Paint().apply {
-                        color = labelColor.toArgb()
-                        textSize = 11.dp.toPx()
-                        textAlign = android.graphics.Paint.Align.CENTER
-                        isAntiAlias = true
-                    }
-                    drawText(label, x + barW / 2f, bottom - barH - 4.dp.toPx(), paint)
-                }
-            }
+        val topPad = 16.dp.toPx()      // 값 라벨 자리
+        val bottomPad = 18.dp.toPx()   // 요일 라벨 자리
+        val baseline = size.height - bottomPad
+        val plotTop = topPad
+        val h = baseline - plotTop
+        drawLine(divider, Offset(0f, baseline), Offset(size.width, baseline), strokeWidth = 1.dp.toPx())
+        if (points.isEmpty()) return@Canvas
+        val slot = size.width / points.size
+        val barW = 14.dp.toPx()
+        val radius = CornerRadius(7.dp.toPx(), 7.dp.toPx())
+        points.forEachIndexed { i, p ->
+            val centerX = slot * i + slot / 2f
+            drawChartText(p.dayLabel, centerX, size.height - 4.dp.toPx(), labelColor, 12.sp.toPx())
+            val v = p.value ?: return@forEachIndexed
+            if (v <= 0) return@forEachIndexed
+            // 최소 4dp — 0 이 아닌 값이 안 보이는 일이 없게(§7 M3).
+            val barH = max((h * (v / maxV)).toFloat().toDouble(), 4.dp.toPx().toDouble()).toFloat()
+            drawRoundRect(
+                bar,
+                topLeft = Offset(centerX - barW / 2f, baseline - barH),
+                size = Size(barW, barH),
+                cornerRadius = radius,
+            )
+            drawChartText("$v", centerX, baseline - barH - 4.dp.toPx(), valueColor, 12.sp.toPx(), bold = true)
         }
     }
+}
+
+/** 접근성 문구(§10) — 그래프를 못 보는 사용자도 요일별 값을 그대로 듣게 한다. */
+internal fun walkChartDescription(points: List<WalkPoint>, unitLabel: String): String {
+    val body = points.joinToString(", ") { p ->
+        if (p.value == null) "${p.dayLabel}요일 기록 없음" else "${p.dayLabel}요일 ${p.value}$unitLabel"
+    }
+    return "최근 ${points.size}일 걷기, $body"
 }
 
 // ── §5.4 챌린지 비율 도넛 ─────────────────────────────────────────────────────

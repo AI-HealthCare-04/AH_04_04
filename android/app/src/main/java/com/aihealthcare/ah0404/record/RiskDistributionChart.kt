@@ -77,14 +77,15 @@ fun RiskDistributionChart(data: CohortDistributionResponse, modifier: Modifier =
                 color = CurveColor,
             )
         } else {
+            // §8 H3 타이포: 도입부는 보조 설명(14sp), 순번 줄이 카드에서 가장 눈에 띄어야 한다.
             Text(
                 riskAgeSexLine(data.ageLabel, sexLabel),
-                style = MaterialTheme.typography.bodyLarge,
+                style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
                 riskRankLine(rank),
-                style = MaterialTheme.typography.titleLarge,
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = CurveColor,
             )
@@ -219,11 +220,12 @@ private fun DrawScope.drawDistribution(
     drawChartText(RISK_ZONE_HIGH, (px(0.30f) + px(0.50f)) / 2f, zoneLabelY, ZoneHighLabel, 11.sp.toPx())
 }
 
-private fun DrawScope.drawChartText(text: String, centerX: Float, baselineY: Float, color: Color, sizePx: Float, bold: Boolean = false) {
+// 같은 record 패키지의 다른 차트(점수 변화 등)도 쓰도록 internal (중복 구현 방지).
+internal fun DrawScope.drawChartText(text: String, centerX: Float, baselineY: Float, color: Color, sizePx: Float, bold: Boolean = false) {
     drawContext.canvas.nativeCanvas.drawText(text, centerX, baselineY, chartTextPaint(color, sizePx, bold))
 }
 
-private fun chartTextPaint(color: Color, sizePx: Float, bold: Boolean = false): Paint = Paint().apply {
+internal fun chartTextPaint(color: Color, sizePx: Float, bold: Boolean = false): Paint = Paint().apply {
     this.color = color.toArgb()
     textSize = sizePx
     textAlign = Paint.Align.CENTER

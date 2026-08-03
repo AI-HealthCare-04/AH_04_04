@@ -5,7 +5,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
@@ -17,6 +17,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.style.TextAlign
 import com.aihealthcare.ah0404.ui.theme.Dimens
 import com.aihealthcare.ah0404.ui.theme.PillShape
 
@@ -53,7 +54,7 @@ fun AigoPrimaryButton(
         },
         modifier = modifier
             .fillMaxWidth()
-            .height(Dimens.ButtonHeight)
+            .heightIn(min = Dimens.ButtonHeight)
             .graphicsLayer { scaleX = scale; scaleY = scale },
         enabled = enabled,
         shape = PillShape,
@@ -63,7 +64,8 @@ fun AigoPrimaryButton(
             contentColor = MaterialTheme.colorScheme.onPrimary,
         ),
     ) {
-        Text(text, style = MaterialTheme.typography.labelLarge)
+        // 두 줄이 되어도 가운데 정렬로 읽히게(길이가 긴 라벨은 잘리지 않고 줄바꿈된다).
+        Text(text, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
     }
 }
 
@@ -85,7 +87,7 @@ fun AigoSecondaryButton(
         },
         modifier = modifier
             .fillMaxWidth()
-            .height(Dimens.ButtonHeight)
+            .heightIn(min = Dimens.ButtonHeight)
             .graphicsLayer { scaleX = scale; scaleY = scale },
         enabled = enabled,
         shape = PillShape,
@@ -95,7 +97,8 @@ fun AigoSecondaryButton(
             contentColor = MaterialTheme.colorScheme.primary,
         ),
     ) {
-        Text(text, style = MaterialTheme.typography.labelLarge)
+        // 두 줄이 되어도 가운데 정렬로 읽히게(길이가 긴 라벨은 잘리지 않고 줄바꿈된다).
+        Text(text, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
     }
 }
 
@@ -117,7 +120,7 @@ fun AigoTonalButton(
         },
         modifier = modifier
             .fillMaxWidth()
-            .height(Dimens.ButtonHeight)
+            .heightIn(min = Dimens.ButtonHeight)
             .graphicsLayer { scaleX = scale; scaleY = scale },
         enabled = enabled,
         shape = PillShape,
@@ -127,6 +130,7 @@ fun AigoTonalButton(
             contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
         ),
     ) {
-        Text(text, style = MaterialTheme.typography.labelLarge)
+        // 두 줄이 되어도 가운데 정렬로 읽히게(길이가 긴 라벨은 잘리지 않고 줄바꿈된다).
+        Text(text, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
     }
 }
