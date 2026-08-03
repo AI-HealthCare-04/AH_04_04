@@ -31,8 +31,6 @@ import com.aihealthcare.ah0404.network.CohortDistributionResponse
 import com.aihealthcare.ah0404.network.RiskHistoryItem
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
-import com.aihealthcare.ah0404.ui.components.MEDICAL_DISCLAIMER_DEFAULT
-import com.aihealthcare.ah0404.ui.components.MedicalDisclaimer
 import com.aihealthcare.ah0404.ui.theme.Dimens
 import kotlin.math.max
 
@@ -127,8 +125,6 @@ private fun bandColor(band: String?): Color = when (band) {
 internal fun MuscleDashboardCards(
     ui: MuscleScoreUi,
     onGoToMissions: () -> Unit,
-    // 체감 피드백 전송(#357). 기본 no-op — 피드백을 안 쓰는 호출부·기존 테스트에 영향 없음.
-    onFeedback: (Int, String) -> Unit = { _, _ -> },
 ) {
     val age = ui.age
     val score = ui.score
@@ -137,8 +133,6 @@ internal fun MuscleDashboardCards(
         //   조회만 실패해도 유효한 점수가 "준비 중"에 가려지지 않게 score 우선(#273 게이트).
         score != null -> {
             ScoreHeadlineCard(score, ui.band)       // ① 지금 내 점수
-            // 체감 피드백(#357) — 점수 카드 바로 아래, 새 예측당 1회. 응답·건너뛰기 후엔 사라진다.
-            ui.predictionId?.let { PredictionFeedbackCard(it, onFeedback) }
             ScoreTrendCard(ui.trend)                // ② 변화 추이(위험도 순화 표현)
             CohortDistributionCard(ui.cohort)       // 또래 중 내 위치(#193, 데이터 있을 때만)
         }
@@ -156,6 +150,9 @@ internal fun MuscleDashboardCards(
 /**
  * '근육 건강 정보' 섹션(#334 질문 ③, 전망): 운동하면 얼마나 좋아지는지 — what-if 시뮬레이션 + 근력 기능 안전망.
  * 점수가 없으면 준비 중 안내(시뮬레이션은 점수 기반이라 표시 불가).
+ *
+ * ⚠️ 의료 고지는 여기서 그리지 않는다 — 화면(RecordScreen)이 탭 맨 아래에 한 번만 배치한다(#385).
+ *   이 섹션과 대시보드 섹션이 같은 탭에 모이면서, 여기서 그리면 고지가 두 번 나온다.
  */
 @Composable
 internal fun MuscleImprovementCards(ui: MuscleScoreUi, onGoToMissions: () -> Unit) {
@@ -163,7 +160,6 @@ internal fun MuscleImprovementCards(ui: MuscleScoreUi, onGoToMissions: () -> Uni
     if (score != null) {
         StsSafetyCard(ui, onGoToMissions) // §3.4 (조건 충족 시에만)
         ScoreSimulationCard(ui.muscSim, ui.walkSim, score)
-        MedicalDisclaimer(text = MEDICAL_DISCLAIMER_DEFAULT)
         Spacer(Modifier.height(Dimens.Space8))
     } else {
         ImprovementPendingCard(onGoToMissions)

@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aihealthcare.ah0404.settings.TopBar
 import com.aihealthcare.ah0404.ui.components.AigoCard
+import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
 import com.aihealthcare.ah0404.ui.components.AigoSegmentedSelector
 import com.aihealthcare.ah0404.ui.components.MEDICAL_DISCLAIMER_DEFAULT
 import com.aihealthcare.ah0404.ui.components.MedicalDisclaimer
@@ -33,8 +34,12 @@ import com.aihealthcare.ah0404.ui.theme.Dimens
 
 /**
  * `_13 기록` 화면(#기록탭 개편).
- *  - 나의 기록: 챌린지 수행 통계(일별 완료 추이·달력·걷기·챌린지 비율)만 표시(§5).
- *  - 근육 건강 정보: 긍정 점수(높을수록 좋음) + 시뮬레이션(§3·§4). 확률(%)·관리 필요도 표기는 없다.
+ *  - 근육 건강(기본 탭): 점수 → 변화 추이 → 또래 위치 → 5STS 추이 → 시뮬레이션 → 근력 안내 → 체감 피드백.
+ *    긍정 점수(높을수록 좋음)만 쓰며 확률(%)·관리 필요도 표기는 없다(§3·§4).
+ *  - 미션 기록: 미션 달력 → 최근 7일 걷기 → 챌린지 비율(§5).
+ *
+ *  ⚠️ 탭 배치 원칙(#385): "결론"(점수·추이)이 첫 화면에 오고, 그 근거가 되는 수행 원자료는 두 번째 탭에 둔다.
+ *  결론을 두 번째 탭에 숨기면 대시보드로 기능하지 않는다.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,8 +50,9 @@ fun RecordScreen(
     vm: RecordViewModel = viewModel(),
 ) {
     LaunchedEffect(Unit) { vm.load() }
-    // 상단 세그먼트: 나의 기록(챌린지 통계) ↔ 근육 건강 정보(점수/시뮬레이션). (§1 명칭 변경)
-    var tab by remember { mutableStateOf(RecordTab.RECORDS) }
+    // 상단 세그먼트: 근육 건강(점수·추이·시뮬) ↔ 미션 기록(달력·걷기·챌린지).
+    //   기본값은 근육 건강 — 화면을 열었을 때 결론이 먼저 보여야 한다(#385).
+    var tab by remember { mutableStateOf(RecordTab.DASHBOARD) }
     // §5.2 달력 일자 탭 → 바텀시트로 그날 완료 미션 목록.
     var selectedDay by remember { mutableStateOf<String?>(null) }
     // §5.3 걷기 막대 축 전환(시간/걸음).
@@ -61,8 +67,9 @@ fun RecordScreen(
 
         AigoSegmentedSelector(
             options = listOf(
-                SegmentOption(RecordTab.RECORDS, "나의 기록"),
-                SegmentOption(RecordTab.DASHBOARD, "근육 건강 정보"),
+                // 상단바가 이미 "나의 기록"이라 세그먼트도 같은 이름이면 두 겹이 된다 → "미션 기록"으로 구분(#385).
+                SegmentOption(RecordTab.DASHBOARD, "근육 건강"),
+                SegmentOption(RecordTab.RECORDS, "미션 기록"),
             ),
             selected = tab,
             onSelect = { tab = it },
@@ -81,19 +88,22 @@ fun RecordScreen(
                     .padding(Dimens.ScreenPadding),
                 verticalArrangement = Arrangement.spacedBy(Dimens.ElementGap),
             ) {
-                // #334 대시보드 순서: ① 지금 내 점수 → ② 변화 추이 → 또래 위치(점수 섹션) → 활동 근거(걷기·챌린지)
-                //   → 원자료(달력). §5.1 "최근 2주 미션 완료" 선그래프는 아래 달력과 정보가 중복돼 제거했다.
-                val ui = vm.muscleScore
-                if (ui != null) {
-                    MuscleDashboardCards(ui, onGoToMissions, onFeedback = vm::submitPredictionFeedback)
-                } else {
-                    AigoCard {
-                        Text(
-                            "불러오는 중이에요…",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                // 미션 기록 = 수행 원자료만(#385). 점수·추이·5STS 는 '근육 건강' 탭이 담당한다.
+                //   §5.1 "최근 2주 미션 완료" 선그래프는 아래 달력과 정보가 중복돼 제거했다.
+
+                // §5.2 미션 달력(월 뷰) — 일자 탭 시 바텀시트.
+                AigoCard {
+                    SectionTitle("미션 달력")
+                    Spacer(Modifier.height(Dimens.Space8))
+                    MissionCalendar(
+                        year = vm.calYear,
+                        month1 = vm.calMonth,
+                        resultByDate = vm.stampsByDate,
+                        recordedOnlyDates = mealRecordedOnlyDates(vm.monthLogs), // #343 문제 2
+                        onPrevMonth = vm::showPreviousMonth,
+                        onNextMonth = vm::showNextMonth,
+                        onDaySelected = { selectedDay = it },
+                    )
                 }
 
                 // §5.3 걷기 막대(시간/걸음 탭 전환) — 점수의 근거(활동 기록)
@@ -125,27 +135,14 @@ fun RecordScreen(
                     }
                 }
 
-                // §5.2 미션 달력(월 뷰) — 원자료는 맨 아래(파고들 사람만). 일자 탭 시 바텀시트.
-                AigoCard {
-                    SectionTitle("미션 달력")
-                    Spacer(Modifier.height(Dimens.Space8))
-                    MissionCalendar(
-                        year = vm.calYear,
-                        month1 = vm.calMonth,
-                        resultByDate = vm.stampsByDate,
-                        recordedOnlyDates = mealRecordedOnlyDates(vm.monthLogs), // #343 문제 2
-                        onPrevMonth = vm::showPreviousMonth,
-                        onNextMonth = vm::showNextMonth,
-                        onDaySelected = { selectedDay = it },
-                    )
-                }
-
-                MedicalDisclaimer(text = MEDICAL_DISCLAIMER_DEFAULT)
+                // 의료 고지는 위험도(점수)를 보여주는 '근육 건강' 탭으로 옮겼다(#385).
+                //   이 탭에는 예측 결과가 없어 고지 대상이 아니다.
                 Spacer(Modifier.height(Dimens.Space8))
             }
 
-            // 근육 건강 정보(#334 = 개선 잠재력): 운동하면 얼마나 좋아지는지(시뮬레이션·근력 안내)만. 점수·추이는
-            //   '나의 기록'으로 이관했다. 점수 미도착이면 준비 중 안내.
+            // 근육 건강(기본 탭) — 결론과 그 해석을 한곳에 모은다(#385).
+            //   점수·추이·또래·5STS(MuscleDashboardCards) + 시뮬·근력안내(MuscleImprovementCards)
+            //   + 피드백 + 고지 + 미션 기록으로 가는 링크. 점수 미도착이면 준비 중 안내.
             RecordTab.DASHBOARD -> Column(
                 Modifier
                     .weight(1f)
@@ -162,8 +159,30 @@ fun RecordScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
-                    MuscleImprovementCards(ui = ui, onGoToMissions = onGoToMissions)
+                    // ① 점수 → ② 변화 추이 → ③ 또래 위치 → ④ 5STS 추이
+                    MuscleDashboardCards(ui, onGoToMissions)
+                    // 점수가 없으면 위 섹션의 연령·예측 상태별 준비 카드 하나만 보여준다. 개선 섹션의
+                    // ImprovementPendingCard까지 이어 붙이면 같은 안내와 미션 버튼이 중복된다(리뷰 #386).
+                    // 피드백·의료 고지·"이 점수" 링크도 실제 점수가 있을 때만 의미가 있다.
+                    if (ui.score != null) {
+                        // ⑤ 시뮬레이션 → ⑥ 근력 안전망
+                        MuscleImprovementCards(ui = ui, onGoToMissions = onGoToMissions)
+                        // ⑦ 체감 피드백(#357) — 결과를 다 본 뒤에 묻는다. 점수와 추이 사이에 두면
+                        //    대시보드의 핵심 흐름(지금 어때? → 나아지고 있나?)이 끊기고, 사용자도
+                        //    추이를 보기 전이라 답할 근거가 없다(#385).
+                        ui.predictionId?.let { id ->
+                            PredictionFeedbackCard(id, vm::submitPredictionFeedback)
+                        }
+                        // 점수를 보여주는 탭이므로 의료 고지는 여기에 둔다.
+                        MedicalDisclaimer(text = MEDICAL_DISCLAIMER_DEFAULT)
+                        // 결론 → 근거로 이어지는 경로(#385). 두 탭이 끊기지 않게 한다.
+                        AigoSecondaryButton(
+                            text = "무엇이 이 점수를 만들었나요? · 미션 기록 보기",
+                            onClick = { tab = RecordTab.RECORDS },
+                        )
+                    }
                 }
+                Spacer(Modifier.height(Dimens.Space8))
             }
         }
     }
