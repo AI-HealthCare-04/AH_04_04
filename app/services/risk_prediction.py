@@ -76,6 +76,10 @@ class RiskPredictionService:
         user: User,
         data: RiskPredictionReassessRequest,
     ) -> RiskPredictionReassessResponse:
+        # 사용자 단위 직렬화(리뷰 P1) — **이 트랜잭션의 첫 읽기여야 한다.** 아래 '오늘 재평가 있나' 확인은
+        #   check-then-insert 라, 잠금 없이는 동시 요청 둘이 모두 '없음'을 읽고 각각 저장해 하루 1회
+        #   정책이 깨진다. 잠금을 먼저 잡으면 뒤 요청은 앞 요청 커밋 후에야 읽어 기존 예측을 보게 된다.
+        await self.prediction_repo.lock_user_for_reassess(user.user_id)
         profile = await self.profile_repo.get_latest_profile(user.user_id)
         if profile is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Health profile not found.")

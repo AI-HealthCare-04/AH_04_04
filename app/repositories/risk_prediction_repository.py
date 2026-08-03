@@ -7,11 +7,28 @@ from app.core.utils.clock import today_kst
 from app.models.enums import InputMethod
 from app.models.health import HealthProfile
 from app.models.predictions import PredictionFeedback, RiskPrediction
+from app.models.users import User
 
 
 class RiskPredictionRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
+
+    async def lock_user_for_reassess(self, user_id: int) -> None:
+        """재평가 트랜잭션을 사용자 단위로 직렬화한다(리뷰 P1 — 하루 1회 정책의 실제 보장).
+
+        하루 1회 판정은 '오늘 재평가가 있나 확인 → 없으면 저장'이라 그 자체로는 check-then-insert
+        경쟁에 열려 있다. 연타·재시도로 두 요청이 거의 동시에 오면 둘 다 '없음'을 읽고 각각
+        프로필·예측을 저장해 정책이 깨진다.
+
+        users 행을 FOR UPDATE 로 잠그고 이걸 **트랜잭션의 첫 읽기**로 두면
+          ① 같은 사용자의 동시 재평가가 직렬화되고,
+          ② locking read 이후의 consistent read 가 선행 트랜잭션 커밋 이후 스냅샷을 잡아
+             뒤 요청의 [get_today_reassessment] 가 앞 요청이 저장한 예측을 반드시 본다
+             (READ COMMITTED. 미션 완료 동시성과 같은 패턴 — mission_repository.lock_user_for_completion).
+        별도 컬럼·마이그레이션 없이 정책을 DB 수준에서 강제할 수 있어 이 방식을 택했다.
+        """
+        await self.session.execute(select(User.user_id).where(User.user_id == user_id).with_for_update())
 
     async def create_risk_prediction(self, prediction: RiskPrediction) -> RiskPrediction:
         self.session.add(prediction)

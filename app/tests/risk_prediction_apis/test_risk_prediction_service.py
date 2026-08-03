@@ -337,6 +337,10 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
         def __init__(self, today_reassessment: RiskPrediction | None = None) -> None:
             self.created_prediction: RiskPrediction | None = None
             self.today_reassessment = today_reassessment
+            self.lock_order: list[str] = []
+
+        async def lock_user_for_reassess(self, user_id: int) -> None:
+            self.lock_order.append("lock")
 
         async def create_risk_prediction(self, prediction: RiskPrediction) -> RiskPrediction:
             prediction.prediction_id = 90
@@ -344,6 +348,7 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
             return prediction
 
         async def get_today_reassessment(self, user_id: int) -> RiskPrediction | None:
+            self.lock_order.append("check")
             return self.today_reassessment
 
     class _DashboardRepo:
@@ -485,6 +490,10 @@ async def test_reassess_returns_existing_prediction_when_already_done_today() ->
     class _PredictionRepo:
         def __init__(self) -> None:
             self.create_calls = 0
+            self.locked_user: int | None = None
+
+        async def lock_user_for_reassess(self, user_id: int) -> None:
+            self.locked_user = user_id
 
         async def get_today_reassessment(self, user_id: int) -> RiskPrediction:
             return existing
@@ -509,3 +518,4 @@ async def test_reassess_returns_existing_prediction_when_already_done_today() ->
     assert response.next_available_at is not None
     assert prediction_repo.create_calls == 0  # 예측 행이 늘지 않는다
     assert profile_repo.create_calls == 0  # 프로필 이력도 늘지 않는다(#388 결정 4)
+    assert prediction_repo.locked_user == 1  # 판정 전에 사용자 행을 잠근다(리뷰 P1)
