@@ -1096,7 +1096,10 @@ private fun ProfileBasicInfo(vm: OnboardingViewModel) {
         Spacer(Modifier.height(6.dp))
         Text(it, fontSize = 14.sp, color = MaterialTheme.colorScheme.error)
     }
-    vm.underAgeNotice?.let {
+    // 추정이 무효화된 순간(#395)엔 그 사실을 먼저 알린다 — 값이 사라진 입력칸을 설명하고 생년월일 재확인을
+    //   유도하는 더 구체적인 안내라, 일반 연령 안내(underAgeNotice)보다 우선한다(하나만 띄워 시니어 화면을
+    //   어수선하게 하지 않는다). 값을 직접 채우면 이 안내는 사라지고 다시 연령 안내로 돌아간다.
+    (vm.estimateInvalidatedNotice ?: vm.underAgeNotice)?.let {
         Spacer(Modifier.height(10.dp))
         NoticeCallout(it)
     }

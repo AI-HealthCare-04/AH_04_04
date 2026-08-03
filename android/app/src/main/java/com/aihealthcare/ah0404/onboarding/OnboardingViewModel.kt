@@ -117,11 +117,44 @@ class OnboardingViewModel(
     val estimateUnavailableReason: String?
         get() {
             if (canEstimate) return null
-            val ageValid = composeBirthDate() != null && ageYears() != null
-            return if (sex == null || !ageValid) {
+            return if (estimateBlockedByIncompleteDemographics) {
                 "성별·생년월일을 먼저 입력하면 사용할 수 있어요"
             } else {
                 "키·몸무게 추정은 만 50세 이상부터 제공해요. 정확한 값을 직접 입력해 주세요."
+            }
+        }
+
+    /**
+     * 추정 불가가 '성별·생년월일 미완성/무효' 때문인가(true) '유효 생년월일 + 실제 만 50세 미만' 때문인가(false)
+     *  (#395 리뷰 P1). [estimateUnavailableReason] 과 [estimateInvalidatedNotice] 가 이 하나를 공유해 두 안내가
+     *  어긋나지 않게 한다. canEstimate == true(추정 가능)면 의미 없음 — 호출부가 canEstimate/estimateInvalidated 를
+     *  먼저 확인한다. (예: 56세 사용자가 생년월일 수정 중 월을 잠깐 비우면 age 는 계산 불가지만 만 50세 미만은 아니다.)
+     */
+    private val estimateBlockedByIncompleteDemographics: Boolean
+        get() = sex == null || composeBirthDate() == null || ageYears() == null
+
+    /**
+     * '모름'으로 추정 플래그가 섰는데 그 뒤 생년월일을 만 50세 미만(또는 무효)으로 바꿔 **추정이 무효화된** 상태(#395).
+     *  이때 값은 비어 있고(heightCm="") heightEstimatedValid 도 false 라, 예전엔 아무 신호 없이 입력칸만 비고
+     *  '다음'이 죽어 "고장 난 것처럼" 보였다. 이 상태를 밖으로 노출해 강조 안내([estimateInvalidatedNotice])와
+     *  입력칸 인라인 오류([heightError]/[weightError])로 신호를 준다. 데이터 규칙(#313)은 유지 — '다음'은 여전히
+     *  직접 입력해야 활성화된다(선택지 A: 막힌 '느낌'만 없애고 규칙은 그대로).
+     */
+    val estimateInvalidated: Boolean get() = (heightEstimated || weightEstimated) && !canEstimate
+
+    /**
+     * 무효화된 추정을 알리는 강조 안내(#395 선택지 A). 일반 연령 안내([underAgeNotice])보다 구체적이라 화면에서 우선한다.
+     *  값을 직접 채우면 사라진다. **막힌 이유를 나눠 안내한다**(리뷰 #409 P1):
+     *   - 성별 미선택·생년월일 미완성/무효(입력 중간·1958-02-30·미래) → "만 50세 미만"으로 단정하지 않는다(실제로 50세+일 수 있다).
+     *   - 유효 생년월일 + 실제 만 50세 미만 → 추정 근거가 없음을 알리고, 오타 되돌리기를 위해 생년월일 확인을 함께 유도.
+     */
+    val estimateInvalidatedNotice: String?
+        get() {
+            if (!estimateInvalidated) return null
+            return if (estimateBlockedByIncompleteDemographics) {
+                "생년월일을 바꾸셔서 추정치를 지웠어요. 성별·생년월일을 다시 확인하면 추정치를 쓸 수 있어요. 직접 입력하셔도 돼요."
+            } else {
+                "생년월일을 바꾸셔서 추정치를 지웠어요. 만 50세 미만은 추정을 제공하지 않으니 키·몸무게를 직접 입력해 주세요. 생년월일이 맞는지도 한 번 확인해 주세요."
             }
         }
 
@@ -132,6 +165,9 @@ class OnboardingViewModel(
     /** 키 인라인 검증 문구(#298 A-2). 직접 입력값이 현실 범위 밖이면 그 자리에서 안내(추정치·빈칸은 조용). */
     val heightError: String?
         get() {
+            // '모름' 후 연령을 만 50세 미만으로 바꿔 추정이 무효화된 자리(#395): 값이 비어(heightCm="") 조용히
+            //   null 이 되던 것을, 사라진 입력칸 자체가 신호를 내도록 오류로 잡는다(강조 안내와 함께).
+            if (heightEstimated && !canEstimate) return "키를 직접 입력해 주세요"
             if (heightEstimatedValid || heightCm.isBlank()) return null
             val h = heightCm.toDoubleOrNull() ?: return "키를 숫자로 입력해 주세요"
             return if (h < HEIGHT_MIN_CM || h > HEIGHT_MAX_CM) {
@@ -144,6 +180,8 @@ class OnboardingViewModel(
     /** 몸무게 인라인 검증 문구(#298 A-2). */
     val weightError: String?
         get() {
+            // '모름' 후 추정 무효화 시 빈 입력칸이 신호를 내도록 오류로 잡는다(#395, heightError 와 동일).
+            if (weightEstimated && !canEstimate) return "몸무게를 직접 입력해 주세요"
             if (weightEstimatedValid || weightKg.isBlank()) return null
             val w = weightKg.toDoubleOrNull() ?: return "몸무게를 숫자로 입력해 주세요"
             return if (w < WEIGHT_MIN_KG || w > WEIGHT_MAX_KG) {

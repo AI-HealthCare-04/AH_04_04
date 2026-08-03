@@ -218,6 +218,93 @@ class OnboardingProfileEstimateTest {
         assertEquals("", vm.waistCm)
     }
 
+    // ── #395: '모름' 후 50세 미만 전환 시 '막힌 느낌' 제거(선택지 A) — 강조 안내 + 입력칸 오류로 신호 ──────
+    @Test
+    fun invalidated_estimate_surfaces_notice_and_field_errors() {
+        val vm = vm(2026, 7, 15).apply { sex = "male"; birthYear = "1970"; birthMonth = "1"; birthDay = "1" } // 56세
+        vm.markHeightUnknown(); vm.markWeightUnknown()
+        assertFalse("추정 활성 시엔 무효화 아님", vm.estimateInvalidated)
+
+        vm.birthYear = "2000" // 26세(유효 생년월일) → 추정 무효
+        assertTrue("무효화 감지", vm.estimateInvalidated)
+        assertFalse("유효 추정 아님", vm.heightEstimatedValid)
+        assertFalse("has_estimated_value 로도 안 샌다", vm.hasEstimatedValue)
+        // 유효 생년월일 + 실제 만 50세 미만 → 연령 원인으로 단정해도 맞다.
+        assertTrue(vm.estimateInvalidatedNotice?.contains("만 50세 미만") == true)
+        assertTrue(vm.estimateInvalidatedNotice?.contains("직접 입력") == true)
+        assertTrue(vm.estimateInvalidatedNotice?.contains("생년월일") == true)
+        // 사라진 입력칸 자체가 오류 신호를 낸다
+        assertTrue(vm.heightError?.contains("직접 입력") == true)
+        assertTrue(vm.weightError?.contains("직접 입력") == true)
+    }
+
+    // 리뷰 #409 P1: 생년월일 입력 중간(월 비움) — 아직 만 나이를 알 수 없으므로 "만 50세 미만"으로 단정하면 안 된다.
+    @Test
+    fun invalidation_when_birthdate_incomplete_does_not_claim_under_50() {
+        val vm = vm(2026, 7, 15).apply { sex = "male"; birthYear = "1970"; birthMonth = "1"; birthDay = "1" } // 56세
+        vm.markHeightUnknown(); vm.markWeightUnknown()
+        vm.birthMonth = "" // 수정 중 월을 잠깐 비움 → composeBirthDate null → canEstimate false
+        assertTrue("무효화 상태", vm.estimateInvalidated)
+        val notice = vm.estimateInvalidatedNotice
+        assertFalse("나이를 모르는데 '만 50세 미만'으로 단정하면 안 됨", notice?.contains("만 50세 미만") == true)
+        assertTrue("성별·생년월일 재확인 안내", notice?.contains("성별·생년월일") == true)
+    }
+
+    // 리뷰 #409 P1: 무효 날짜(1970-02-30) — 역시 연령 미상이라 "만 50세 미만" 단정 금지.
+    @Test
+    fun invalidation_when_birthdate_invalid_does_not_claim_under_50() {
+        val vm = vm(2026, 7, 15).apply { sex = "male"; birthYear = "1970"; birthMonth = "1"; birthDay = "1" }
+        vm.markHeightUnknown()
+        vm.birthMonth = "2"; vm.birthDay = "30" // 1970-02-30 = 무효
+        assertTrue(vm.estimateInvalidated)
+        assertFalse(vm.estimateInvalidatedNotice?.contains("만 50세 미만") == true)
+        assertTrue(vm.estimateInvalidatedNotice?.contains("성별·생년월일") == true)
+    }
+
+    // 두 안내(무효화 / '모름' 버튼 비활성 사유)가 같은 판별을 공유해 어긋나지 않는다(리뷰 #409 P1).
+    @Test
+    fun invalidation_notice_and_unavailable_reason_agree_on_cause() {
+        // 연령 미달(유효 생년월일 + 만 50세 미만): 둘 다 '만 50세' 문맥
+        val underAge = vm(2026, 7, 15).apply { sex = "male"; birthYear = "1970"; birthMonth = "1"; birthDay = "1" }
+        underAge.markHeightUnknown(); underAge.birthYear = "2000"
+        assertTrue(underAge.estimateInvalidatedNotice?.contains("만 50세") == true)
+        assertTrue(underAge.estimateUnavailableReason?.contains("만 50세") == true)
+        // 미완성 생년월일: 둘 다 '성별·생년월일' 문맥
+        val incomplete = vm(2026, 7, 15).apply { sex = "male"; birthYear = "1970"; birthMonth = "1"; birthDay = "1" }
+        incomplete.markHeightUnknown(); incomplete.birthMonth = ""
+        assertTrue(incomplete.estimateInvalidatedNotice?.contains("성별·생년월일") == true)
+        assertTrue(incomplete.estimateUnavailableReason?.contains("성별·생년월일") == true)
+    }
+
+    // 화면은 무효화 안내를 일반 연령 안내보다 우선(?: )해 하나만 띄운다 — 둘 다 값이 있어야 우선 규칙이 의미가 있다.
+    @Test
+    fun invalidation_notice_takes_precedence_over_underage_notice() {
+        val vm = vm(2026, 7, 15).apply { sex = "male"; birthYear = "1970"; birthMonth = "1"; birthDay = "1" }
+        vm.markHeightUnknown()
+        vm.birthYear = "2000" // 26세: 무효화 + 만 65세 미만 안내 둘 다 대상
+        assertTrue(vm.estimateInvalidatedNotice != null)
+        assertTrue(vm.underAgeNotice != null)
+    }
+
+    // 직접 입력으로 값을 채우면 무효화 신호가 사라진다(플래그 해제 → estimateInvalidated=false).
+    @Test
+    fun typing_values_clears_invalidation_signals() {
+        val vm = vm(2026, 7, 15).apply { sex = "male"; birthYear = "1970"; birthMonth = "1"; birthDay = "1" }
+        vm.markHeightUnknown(); vm.markWeightUnknown()
+        vm.birthYear = "2000"
+        assertTrue(vm.estimateInvalidated)
+
+        vm.setHeight("170")
+        assertTrue("한 칸만 채우면 아직 무효화 상태", vm.estimateInvalidated)
+        assertNull("채운 칸은 오류 해제", vm.heightError)
+        assertTrue("안 채운 칸은 여전히 오류", vm.weightError?.contains("직접 입력") == true)
+
+        vm.setWeight("65")
+        assertFalse("둘 다 채우면 무효화 해제", vm.estimateInvalidated)
+        assertNull(vm.estimateInvalidatedNotice)
+        assertNull(vm.weightError)
+    }
+
     // ── #298 A-2: 키·몸무게 현실 범위 밖(0·음수·극단값)은 백엔드 이전에 앱에서 차단 ──────────
     @Test
     fun submit_rejects_out_of_range_height() = runTest {
