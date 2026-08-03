@@ -282,14 +282,17 @@ internal fun riskRankLine(rank: Int): String = "근육 건강이 좋은 쪽에�
  *
  * 이 구간의 순번은 96~100번째라 "100명 중 꼴찌"로 읽힌다. 시니어 사용자에게 좌절만 남기고,
  * 상태 자체는 위 점수 카드의 점수와 '주의' 배지가 이미 전달하므로 숫자가 더 주는 정보가 없다.
- * 분포 차트의 "나보다 낮음/높음 N명"은 그대로 남아 원하면 확인할 수 있다.
+ * 같은 이유로 분포 차트의 면적 인원 라벨도 숨긴다(showAreaLabels=false). 즉 이 구간에서는 수치 위치를
+ * 제시하지 않고 질적 안내만 남기는 것이 의도된 동작이다.
  */
 internal fun riskHighTailHeadline(ageLabel: String, sexLabel: String): String =
     "같은 연령대($ageLabel) $sexLabel 중에서는 근육 건강을 더 챙기시면 좋은 편이에요"
 
-internal fun riskAreaLower(lowerCount: Int): String = "나보다 낮음 ${lowerCount}명"
+/** 나보다 위험이 낮은 사람 수 = 근육 건강이 더 좋은 사람 수. 화면의 긍정 프레임에 맞춰 말한다. */
+internal fun riskAreaLower(lowerCount: Int): String = "나보다 좋음 ${lowerCount}명"
 
-internal fun riskAreaHigher(higherCount: Int): String = "나보다 높음 ${higherCount}명"
+/** 나보다 위험이 높은 사람 수 = 근육 건강이 더 낮은 사람 수. */
+internal fun riskAreaHigher(higherCount: Int): String = "나보다 낮음 ${higherCount}명"
 
 internal fun riskCurveCaption(sexLabel: String): String = "또래 $sexLabel 분포 (국민건강영양조사 기반)"
 

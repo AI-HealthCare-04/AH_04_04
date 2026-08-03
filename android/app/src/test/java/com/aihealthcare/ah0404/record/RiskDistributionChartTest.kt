@@ -43,8 +43,9 @@ class RiskDistributionChartTest {
         assertEquals("같은 연령대(75–79세) 남성 100명 중", riskAgeSexLine("75–79세", "남성"))
         // 순번 방향은 점수와 같은 '높을수록 좋음'. 확률 제거 원칙과 함께 '위험' 프레임도 쓰지 않는다.
         assertEquals("근육 건강이 좋은 쪽에서 73번째", riskRankLine(73))
-        assertEquals("나보다 낮음 72명", riskAreaLower(72))
-        assertEquals("나보다 높음 27명", riskAreaHigher(27))
+        // lowerCount는 위험이 낮은(= 근육 건강이 더 좋은) 사람 수다. 헤드라인과 같은 긍정 프레임으로 읽는다.
+        assertEquals("나보다 좋음 72명", riskAreaLower(72))
+        assertEquals("나보다 낮음 27명", riskAreaHigher(27))
         assertEquals("나", RISK_MARKER_LABEL) // 마커 라벨은 % 없이 "나"만
         assertEquals("또래 여성 분포 (국민건강영양조사 기반)", riskCurveCaption("여성"))
     }
