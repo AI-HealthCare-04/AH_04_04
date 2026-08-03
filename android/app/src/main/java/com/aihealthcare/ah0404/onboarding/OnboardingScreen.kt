@@ -134,18 +134,34 @@ fun OnboardingScreen(
 ) {
     val activity = LocalContext.current as Activity
     val authState by authVm.state.collectAsState()
-    // 화면 진입 시 stale 상태 복구(#153 후속): 토큰이 없는데(로그아웃·세션리셋) 이 Activity-수명 VM 에
-    //   이전 온보딩 step(예: ASSESSMENT)이나 완주 신호가 남아 있으면 WELCOME 으로 되돌린다. 안 그러면 토큰 없는
-    //   완료로 처리돼 LOGIN_REQUIRED ↔ 리셋 사이를 도는 무한루프가 생긴다.
+    // 화면 진입 시 stale 상태 복구(#153 후속, #383 확장): 이 VM 은 Activity 수명이라 이전 온보딩의
+    //   step·입력값·완주 신호가 남은 채 재진입할 수 있다. 둘 중 하나면 WELCOME 으로 되돌린다.
+    //   ① 토큰 없음 + step≠WELCOME (로그아웃·세션리셋) — 토큰 없는 완료로 처리돼 LOGIN_REQUIRED ↔ 리셋
+    //      무한루프가 나던 경로(#153).
+    //   ② 완주 신호(finished)가 선 채로 진입 — **이 화면에 도달했다는 것 자체가 미완료 계정**이라는 뜻이므로
+    //      (완료 계정은 MAIN 으로 라우팅된다) 남아 있는 신호는 반드시 stale 이다. 탈퇴 → 같은 소셜 계정
+    //      재로그인(= 미완료 신규 계정)에서 약관·프로필을 건너뛰고 홈으로 직행하던 회귀(#383).
+    //   ③ 남은 진행의 **주인이 지금 인증 주체와 다름** — ①②가 모두 빗나가는 구멍을 막는다(#383 실기기 QA).
+    //      완주 → 홈에서 finished 는 소비되고(①의 조건 소멸), 재로그인으로 토큰은 있어(②의 조건 소멸)
+    //      step=ASSESSMENT 가 그대로 그려졌다. 실기기에서 새 계정이 약관을 건너뛰고 체력검사부터 시작했고,
+    //      이전 사용자의 입력값과 죽은 sessionId 가 남아 건너뛰기 요청까지 실패해 사용자가 갇혔다.
+    //   리셋은 이전 사용자의 입력(PII 포함)까지 함께 비운다 — 한 폰 다인 시연 대비.
     LaunchedEffect(Unit) {
-        if (TokenHolder.token.isBlank() && vm.step != OnbStep.WELCOME) {
+        val staleFinished = vm.finished
+        val staleStepWithoutToken = TokenHolder.token.isBlank() && vm.step != OnbStep.WELCOME
+        val staleForAnotherAuth = vm.isProgressFromAnotherAuth()
+        if (staleFinished || staleStepWithoutToken || staleForAnotherAuth) {
             vm.resetToWelcome()
         }
     }
     // 온보딩 완주(#299): 체력검사 제출/스킵 → 예측 생성이 끝나면 별도 결과화면 없이 곧장 홈으로. 완료는 step 이
-    //   아니라 finished 플래그로 알린다. false→true 전이에 한 번만 홈 라우팅(onComplete).
+    //   아니라 finished 신호로 알린다. false→true 전이에 한 번만 홈 라우팅(onComplete).
+    //   처리 후 신호를 **소비**해 다음 진입에 재발화하지 않게 한다(#383) — 위 진입 가드와 이중 방어.
     LaunchedEffect(vm.finished) {
-        if (vm.finished) onComplete(vm.isGuest)
+        if (vm.finished) {
+            onComplete(vm.isGuest)
+            vm.consumeFinished()
+        }
     }
     var showExitConfirmation by remember { mutableStateOf(false) }
     // 소셜 로그인 결과 분기(#153): 완료 계정은 약관을 건너뛰고 홈으로, 미완료 계정은 온보딩(약관)을 이어감.
