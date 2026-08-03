@@ -123,20 +123,31 @@ object InactivityReminder {
      * 기회조차 없다. 그래서 세 상태를 구분해 [RowState.NEEDS_PERMISSION] 을 화면에 드러낸다.
      */
     enum class RowState {
-        /** 사용자가 껐다. 안내할 것 없음. */
+        /** 사용자가 껐다. 안내할 것 없음 — 끈 선택을 되묻지 않는다. */
         OFF,
 
         /** 켜져 있고 실제로 알림이 갈 수 있다. */
         ACTIVE,
 
-        /** 켜져 있지만 권한이 없어 알림이 가지 않는다 - 화면이 이 사실을 말해야 한다. */
+        /** 켜져 있지만 런타임 권한·앱 알림 스위치가 막고 있다. */
         NEEDS_PERMISSION,
+
+        /** 켜져 있고 권한도 있지만 **'다시 알림' 채널만** 시스템에서 꺼졌다. */
+        CHANNEL_BLOCKED,
     }
 
-    fun rowState(enabled: Boolean, notificationsAllowed: Boolean): RowState = when {
+    /**
+     * '원하는 상태'(앱 토글)와 '실제 전달 가능 상태'(권한·채널)를 함께 본다(리뷰 - 지영).
+     *
+     * 채널이 꺼졌다고 앱 토글을 자동으로 끄지 않는다 — 시스템에서 채널을 다시 켜도 앱 토글은 꺼진 채
+     * 남아 **또 다른 불일치**가 생기고, 시스템 설정 변경이 앱 내부 선호를 조용히 바꾸면 사용자가
+     * 원인을 이해할 수 없다. 대신 두 상태를 각각 드러낸다.
+     */
+    fun rowState(enabled: Boolean, appNotificationsAllowed: Boolean, channelEnabled: Boolean): RowState = when {
         !enabled -> RowState.OFF
-        notificationsAllowed -> RowState.ACTIVE
-        else -> RowState.NEEDS_PERMISSION
+        !appNotificationsAllowed -> RowState.NEEDS_PERMISSION
+        !channelEnabled -> RowState.CHANNEL_BLOCKED
+        else -> RowState.ACTIVE
     }
 
     /** 권한을 아직 물어볼 수 있을 때. 눌러서 바로 허용할 수 있다. */
@@ -144,6 +155,12 @@ object InactivityReminder {
 
     /** 요청이 더 이상 뜨지 않는 상태(영구 거부·앱 알림 전체 끔). 시스템 설정으로 보내야 한다. */
     const val PERMISSION_NOTICE_SETTINGS = "알림 권한이 꺼져 있어 알림이 가지 않아요. 눌러서 설정에서 켜 주세요."
+
+    /**
+     * 채널만 꺼진 경우. 권한 문제가 아니므로 **원인을 정확히** 말하고, 사용자가 직접 끈 선택을
+     * 되묻는 느낌이 되지 않게 오류가 아니라 상태 안내 톤으로 쓴다(리뷰 - 지영).
+     */
+    const val CHANNEL_NOTICE = "시스템에서 '다시 알림'이 꺼져 있어요. 눌러서 켤 수 있어요."
 
     private const val KEY_PERMISSION_ASKED = "permission_asked"
 
@@ -168,7 +185,18 @@ object InactivityReminder {
         !hasAsked || shouldShowRationale
 
     /** 안내를 눌렀을 때 무엇을 해야 복구되는가. */
-    enum class RecoveryAction { REQUEST_PERMISSION, OPEN_SETTINGS }
+    enum class RecoveryAction {
+        REQUEST_PERMISSION,
+
+        /** 앱 알림 설정. 런타임 권한을 요청으로 되살릴 수 없을 때. */
+        OPEN_APP_SETTINGS,
+
+        /**
+         * **채널 설정으로 바로** 보낸다(리뷰 - 지영). 앱 알림 설정으로 보내고 목록에서 채널을 찾게 하면
+         * 시니어 사용자에게는 사실상 막힌 길이다.
+         */
+        OPEN_CHANNEL_SETTINGS,
+    }
 
     /**
      * 막힌 상태를 **무엇으로 풀 수 있는지** 고른다(리뷰 P1 2차).
@@ -179,24 +207,31 @@ object InactivityReminder {
      * 그래서 '권한이 없는가'가 아니라 **'런타임 요청으로 복구되는가'** 를 기준으로 나눈다.
      */
     fun recoveryAction(
+        rowState: RowState,
         supportsRuntimePermission: Boolean,
         permissionGranted: Boolean,
         hasAsked: Boolean,
         shouldShowRationale: Boolean,
-    ): RecoveryAction = when {
-        // Android 12 이하: 런타임 권한이 없다 → 막혔다면 앱 알림 스위치가 꺼진 것뿐이다.
-        !supportsRuntimePermission -> RecoveryAction.OPEN_SETTINGS
-        // 권한은 있는데 막혔다 → 앱 알림 스위치가 꺼졌다. 요청해봤자 즉시 "이미 허용됨"으로 끝난다.
-        permissionGranted -> RecoveryAction.OPEN_SETTINGS
-        canRequestPermission(hasAsked, shouldShowRationale) -> RecoveryAction.REQUEST_PERMISSION
-        // 영구 거부 — launch() 가 팝업 없이 조용히 끝난다.
-        else -> RecoveryAction.OPEN_SETTINGS
+    ): RecoveryAction? = when (rowState) {
+        // 끈 사람에게도, 잘 되는 사람에게도 할 말이 없다.
+        RowState.OFF, RowState.ACTIVE -> null
+        RowState.CHANNEL_BLOCKED -> RecoveryAction.OPEN_CHANNEL_SETTINGS
+        RowState.NEEDS_PERMISSION -> when {
+            // Android 12 이하: 런타임 권한이 없다 → 막혔다면 앱 알림 스위치가 꺼진 것뿐이다.
+            !supportsRuntimePermission -> RecoveryAction.OPEN_APP_SETTINGS
+            // 권한은 있는데 막혔다 → 요청해봤자 즉시 "이미 허용됨"으로 끝난다.
+            permissionGranted -> RecoveryAction.OPEN_APP_SETTINGS
+            canRequestPermission(hasAsked, shouldShowRationale) -> RecoveryAction.REQUEST_PERMISSION
+            // 영구 거부 — launch() 가 팝업 없이 조용히 끝난다.
+            else -> RecoveryAction.OPEN_APP_SETTINGS
+        }
     }
 
     /** 복구 방법에 맞는 안내 문구. 문구와 동작이 어긋나면 눌러도 기대한 화면이 안 뜬다. */
     fun permissionNotice(action: RecoveryAction): String = when (action) {
         RecoveryAction.REQUEST_PERMISSION -> PERMISSION_NOTICE_ASKABLE
-        RecoveryAction.OPEN_SETTINGS -> PERMISSION_NOTICE_SETTINGS
+        RecoveryAction.OPEN_APP_SETTINGS -> PERMISSION_NOTICE_SETTINGS
+        RecoveryAction.OPEN_CHANNEL_SETTINGS -> CHANNEL_NOTICE
     }
 
     /**

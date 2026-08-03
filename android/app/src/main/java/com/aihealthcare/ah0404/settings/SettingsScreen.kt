@@ -64,6 +64,7 @@ import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
 import androidx.activity.result.ActivityResultLauncher
 import com.aihealthcare.ah0404.reminder.InactivityReminder
+import com.aihealthcare.ah0404.reminder.CHANNEL_ID
 import com.aihealthcare.ah0404.reminder.ReminderWorker
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -116,7 +117,7 @@ fun SettingsScreen(
     var notificationsAllowed by remember { mutableStateOf(notificationsAllowed(context)) }
     // 막힌 상태를 무엇으로 푸는가. 런타임 권한 거부·앱 알림 스위치 꺼짐·Android 12 이하가 모두 다르다
     //   (리뷰 P1 2차·정인). 화면은 이 판단만 따르고 조건을 다시 세지 않는다.
-    var recoveryAction by remember { mutableStateOf(notificationRecoveryAction(context)) }
+    var recoveryAction by remember { mutableStateOf(notificationRecoveryAction(context, remindersEnabled)) }
     // 권한을 거절해도 토글은 켜진 채로 둔다: 나중에 시스템 설정에서 허용하면 그대로 동작한다.
     //   여기서 토글을 되돌리면 사용자가 "껐다"고 오해한다. 대신 아래 안내로 상태를 드러낸다.
     val notificationPermission = rememberLauncherForActivityResult(
@@ -124,14 +125,14 @@ fun SettingsScreen(
     ) { granted ->
         InactivityReminder.markPermissionAsked(context)
         notificationsAllowed = granted && notificationsAllowed(context)
-        recoveryAction = notificationRecoveryAction(context)
+        recoveryAction = notificationRecoveryAction(context, remindersEnabled)
     }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 notificationsAllowed = notificationsAllowed(context)
-                recoveryAction = notificationRecoveryAction(context)
+                recoveryAction = notificationRecoveryAction(context, remindersEnabled)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -237,28 +238,32 @@ fun SettingsScreen(
                 description = "며칠 동안 앱을 열지 않으면 알려드려요",
             )
             // ⚠️ 기본값이 켜짐이라 **토글을 건드릴 일이 없는 사용자는 권한을 물을 기회조차 없다**(리뷰 P1).
-            //   그러면 켜져 있다고 믿는 채로 알림은 영영 오지 않는다. 그 어긋남을 여기서 드러내고
-            //   바로 고칠 수 있게 한다. 토글을 되돌리지는 않는다 — 사용자가 끈 것으로 오해하면 안 된다.
-            if (InactivityReminder.rowState(remindersEnabled, notificationsAllowed) ==
-                InactivityReminder.RowState.NEEDS_PERMISSION
-            ) {
+            //   그러면 켜져 있다고 믿는 채로 알림은 영영 오지 않는다. '원하는 상태'(토글)와 '실제 전달
+            //   가능 상태'(권한·채널)를 함께 드러내되, 토글을 자동으로 바꾸지는 않는다(리뷰 - 지영).
+            recoveryAction?.let { action ->
                 Spacer(Modifier.height(8.dp))
-                val notice = InactivityReminder.permissionNotice(recoveryAction)
                 Text(
-                    notice,
+                    InactivityReminder.permissionNotice(action),
                     fontSize = 15.sp,
                     lineHeight = 21.sp,
-                    color = MaterialTheme.colorScheme.error,
+                    // 채널을 끈 것은 사용자의 선택일 수 있어 오류색으로 되묻지 않는다 — 상태 안내 톤.
+                    color = if (action == InactivityReminder.RecoveryAction.OPEN_CHANNEL_SETTINGS) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.error
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
                         // 시니어 대상 — 얇은 텍스트는 누르기 어려우므로 최소 높이를 확보한다.
                         .heightIn(min = 44.dp)
                         .clickable {
-                            when (recoveryAction) {
+                            when (action) {
                                 InactivityReminder.RecoveryAction.REQUEST_PERMISSION ->
                                     notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                InactivityReminder.RecoveryAction.OPEN_SETTINGS ->
+                                InactivityReminder.RecoveryAction.OPEN_APP_SETTINGS ->
                                     openAppNotificationSettings(context)
+                                InactivityReminder.RecoveryAction.OPEN_CHANNEL_SETTINGS ->
+                                    openReminderChannelSettings(context)
                             }
                         },
                 )
@@ -609,13 +614,21 @@ private fun notificationsAllowed(context: Context): Boolean {
 }
 
 /** 프레임워크에서 사실만 읽어 순수 함수([InactivityReminder.recoveryAction])에 넘긴다. */
-private fun notificationRecoveryAction(context: Context): InactivityReminder.RecoveryAction {
+private fun notificationRecoveryAction(
+    context: Context,
+    remindersEnabled: Boolean,
+): InactivityReminder.RecoveryAction? {
     val supportsRuntime = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
     val granted = !supportsRuntime ||
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
         PackageManager.PERMISSION_GRANTED
     val activity = context as? Activity
     return InactivityReminder.recoveryAction(
+        rowState = InactivityReminder.rowState(
+            enabled = remindersEnabled,
+            appNotificationsAllowed = granted && NotificationManagerCompat.from(context).areNotificationsEnabled(),
+            channelEnabled = ReminderWorker.channelEnabled(context),
+        ),
         supportsRuntimePermission = supportsRuntime,
         permissionGranted = granted,
         hasAsked = InactivityReminder.hasAskedPermission(context),
@@ -636,6 +649,23 @@ private fun askNotificationPermission(context: Context, launcher: ActivityResult
         return
     }
     launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+}
+
+/**
+ * '다시 알림' **채널 설정으로 바로** 보낸다(리뷰 - 지영). 앱 알림 설정으로 보내고 목록에서 채널을
+ * 찾게 하면 시니어 사용자에게는 사실상 막힌 길이다. 채널 설정은 API 26+ 이므로 그 아래는 앱 설정으로.
+ */
+private fun openReminderChannelSettings(context: Context) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+        openAppNotificationSettings(context)
+        return
+    }
+    val intent = Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+        .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+        .putExtra(Settings.EXTRA_CHANNEL_ID, CHANNEL_ID)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    // 일부 기기는 이 인텐트를 처리하지 못한다 — 그때는 앱 알림 설정으로 떨어뜨린다.
+    runCatching { context.startActivity(intent) }.onFailure { openAppNotificationSettings(context) }
 }
 
 /** 요청 팝업이 더 이상 뜨지 않을 때의 마지막 수단 — 앱 알림 설정 화면으로 보낸다. */

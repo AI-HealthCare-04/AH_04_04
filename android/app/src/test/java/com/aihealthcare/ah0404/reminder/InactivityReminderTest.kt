@@ -2,6 +2,7 @@ package com.aihealthcare.ah0404.reminder
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -81,48 +82,57 @@ class InactivityReminderTest {
     //   그러면 켜져 있다고 믿는 채로 알림은 영영 오지 않는다. 토글 표시와 권한 상태가 어긋나면
     //   화면이 그 사실을 말해야 한다.
 
+    private fun row(enabled: Boolean = true, app: Boolean = true, channel: Boolean = true) =
+        InactivityReminder.rowState(enabled, app, channel)
+
     @Test
-    fun enabled_without_permission_is_surfaced_as_blocked() {
+    fun enabled_without_permission_is_surfaced() {
         assertEquals(
             "켜져 있는데 알림이 못 가는 상태를 숨기면 안 된다",
             InactivityReminder.RowState.NEEDS_PERMISSION,
-            InactivityReminder.rowState(enabled = true, notificationsAllowed = false),
+            row(app = false),
         )
     }
 
     @Test
-    fun enabled_with_permission_is_active() {
-        assertEquals(
-            InactivityReminder.RowState.ACTIVE,
-            InactivityReminder.rowState(enabled = true, notificationsAllowed = true),
-        )
+    fun channel_off_is_its_own_state_not_a_permission_problem() {
+        // 권한은 멀쩡한데 채널만 꺼진 경우 — 원인이 다르므로 문구·이동 지점도 달라야 한다.
+        assertEquals(InactivityReminder.RowState.CHANNEL_BLOCKED, row(channel = false))
     }
 
     @Test
-    fun turned_off_never_shows_a_permission_notice() {
-        // 사용자가 끈 상태에서 권한 안내를 띄우면 끈 선택을 되묻는 잔소리가 된다.
-        assertEquals(
-            InactivityReminder.RowState.OFF,
-            InactivityReminder.rowState(enabled = false, notificationsAllowed = false),
-        )
-        assertEquals(
-            InactivityReminder.RowState.OFF,
-            InactivityReminder.rowState(enabled = false, notificationsAllowed = true),
-        )
+    fun everything_allowed_is_active() {
+        assertEquals(InactivityReminder.RowState.ACTIVE, row())
     }
 
     @Test
-    fun the_toggle_and_the_notice_never_contradict_each_other() {
-        // 안내가 뜨는 경우는 '켜짐 + 권한 없음' 하나뿐이어야 한다.
-        listOf(true, false).forEach { enabled ->
-            listOf(true, false).forEach { allowed ->
-                val state = InactivityReminder.rowState(enabled, allowed)
-                val showsNotice = state == InactivityReminder.RowState.NEEDS_PERMISSION
+    fun turned_off_never_shows_any_notice() {
+        // 사용자가 끈 상태에서 안내를 띄우면 끈 선택을 되묻는 잔소리가 된다.
+        listOf(true, false).forEach { app ->
+            listOf(true, false).forEach { channel ->
                 assertEquals(
-                    "enabled=$enabled allowed=$allowed",
-                    enabled && !allowed,
-                    showsNotice,
+                    "app=$app channel=$channel",
+                    InactivityReminder.RowState.OFF,
+                    row(enabled = false, app = app, channel = channel),
                 )
+            }
+        }
+    }
+
+    @Test
+    fun a_notice_appears_only_when_the_toggle_is_on_but_delivery_is_blocked() {
+        listOf(true, false).forEach { enabled ->
+            listOf(true, false).forEach { app ->
+                listOf(true, false).forEach { channel ->
+                    val state = row(enabled, app, channel)
+                    val showsNotice = state == InactivityReminder.RowState.NEEDS_PERMISSION ||
+                        state == InactivityReminder.RowState.CHANNEL_BLOCKED
+                    assertEquals(
+                        "enabled=$enabled app=$app channel=$channel",
+                        enabled && !(app && channel),
+                        showsNotice,
+                    )
+                }
             }
         }
     }
@@ -160,11 +170,12 @@ class InactivityReminderTest {
     //   일어나지 않는다.** 그래서 '런타임 요청으로 복구되는가'로 나눈다.
 
     private fun action(
+        rowState: InactivityReminder.RowState = InactivityReminder.RowState.NEEDS_PERMISSION,
         supportsRuntime: Boolean = true,
         granted: Boolean = false,
         hasAsked: Boolean = false,
         rationale: Boolean = false,
-    ) = InactivityReminder.recoveryAction(supportsRuntime, granted, hasAsked, rationale)
+    ) = InactivityReminder.recoveryAction(rowState, supportsRuntime, granted, hasAsked, rationale)
 
     @Test
     fun a_denied_runtime_permission_is_recovered_by_requesting() {
@@ -184,7 +195,7 @@ class InactivityReminderTest {
         // 권한은 있는데 막혔다면 앱 알림 스위치가 꺼진 것이다. 요청은 즉시 "이미 허용됨"으로 끝나
         //   사용자가 눌러도 아무 화면이 안 뜬다.
         assertEquals(
-            InactivityReminder.RecoveryAction.OPEN_SETTINGS,
+            InactivityReminder.RecoveryAction.OPEN_APP_SETTINGS,
             action(granted = true),
         )
     }
@@ -193,11 +204,11 @@ class InactivityReminderTest {
     fun below_android_13_always_opens_settings() {
         // 런타임 권한이 없는 버전이라 요청할 것이 없다 — 막혔다면 앱 알림 스위치뿐이다.
         assertEquals(
-            InactivityReminder.RecoveryAction.OPEN_SETTINGS,
+            InactivityReminder.RecoveryAction.OPEN_APP_SETTINGS,
             action(supportsRuntime = false, granted = true),
         )
         assertEquals(
-            InactivityReminder.RecoveryAction.OPEN_SETTINGS,
+            InactivityReminder.RecoveryAction.OPEN_APP_SETTINGS,
             action(supportsRuntime = false, granted = false),
         )
     }
@@ -205,9 +216,34 @@ class InactivityReminderTest {
     @Test
     fun a_permanent_denial_opens_settings() {
         assertEquals(
-            InactivityReminder.RecoveryAction.OPEN_SETTINGS,
+            InactivityReminder.RecoveryAction.OPEN_APP_SETTINGS,
             action(granted = false, hasAsked = true, rationale = false),
         )
+    }
+
+    @Test
+    fun a_blocked_channel_goes_straight_to_the_channel_settings() {
+        // 앱 알림 설정으로 보내고 목록에서 채널을 찾게 하면 시니어에게는 사실상 막힌 길이다.
+        assertEquals(
+            InactivityReminder.RecoveryAction.OPEN_CHANNEL_SETTINGS,
+            action(rowState = InactivityReminder.RowState.CHANNEL_BLOCKED, granted = true),
+        )
+    }
+
+    @Test
+    fun no_action_when_there_is_nothing_to_fix() {
+        assertNull(action(rowState = InactivityReminder.RowState.OFF))
+        assertNull(action(rowState = InactivityReminder.RowState.ACTIVE, granted = true))
+    }
+
+    @Test
+    fun the_channel_notice_names_the_real_cause() {
+        // '알림 권한이 꺼져 있어요' 로 뭉뚱그리면 사용자가 엉뚱한 곳을 고치러 간다.
+        val notice = InactivityReminder.permissionNotice(
+            InactivityReminder.RecoveryAction.OPEN_CHANNEL_SETTINGS,
+        )
+        assertTrue("원인을 정확히 말해야 한다", notice.contains("다시 알림"))
+        assertFalse("권한 문제가 아니다", notice.contains("권한"))
     }
 
     @Test
@@ -219,7 +255,7 @@ class InactivityReminderTest {
         )
         assertEquals(
             InactivityReminder.PERMISSION_NOTICE_SETTINGS,
-            InactivityReminder.permissionNotice(InactivityReminder.RecoveryAction.OPEN_SETTINGS),
+            InactivityReminder.permissionNotice(InactivityReminder.RecoveryAction.OPEN_APP_SETTINGS),
         )
     }
 

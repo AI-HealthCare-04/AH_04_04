@@ -21,7 +21,7 @@ import com.aihealthcare.ah0404.R
 import java.util.concurrent.TimeUnit
 
 private const val TAG = "ReminderWorker"
-private const val CHANNEL_ID = "aigo_reminder"
+internal const val CHANNEL_ID = "aigo_reminder"
 private const val NOTIF_ID = 4041
 internal const val REMINDER_WORK_NAME = "aigo_inactivity_reminder"
 
