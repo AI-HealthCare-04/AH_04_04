@@ -51,6 +51,17 @@ object SessionStore {
         private set
 
     /**
+     * 지금 메모리에 있는 토큰이 **소셜(비게스트) 인증**인가(#398).
+     *
+     * 온보딩 시작 화면의 '체험으로 시작하기'([OnboardingViewModel.start])는 토큰이 이미 있으면 게스트 로그인을
+     * 건너뛰면서 `isGuest = true` 만 세운다. 소셜 토큰을 든 채 그 화면에 서는 경우가 실제로 있어서 —
+     * 탈퇴 후 재로그인하면 진입 가드가 WELCOME 으로 되돌린다(#383) — 소셜 계정이 게스트로 취급돼
+     * 완주해도 영속화되지 않았다. '체험'인지 아닌지는 토큰 유무가 아니라 이 값으로 판단한다.
+     */
+    var socialAuthenticated: Boolean = false
+        private set
+
+    /**
      * 사용자별 경량 로컬 상태(#145)의 키로 쓸 **완료된 소셜 계정의 서버 user_id**.
      * 게스트·미완료 세션·로그아웃 상태에서는 null이라 로컬 상태를 영속화하지 않는다.
      */
@@ -129,6 +140,7 @@ object SessionStore {
         sessionOnboarded = onboarded
         currentUserId = restoredUserId
         persistentUserId = restoredUserId
+        socialAuthenticated = token.isNotBlank() // 디스크에 남는 토큰은 소셜 완료 계정뿐이다(#153) → 복원됐다면 소셜(#398)
         authRevision++ // 앱 시작 시 인증 주체 확정 — 이후 로그인/로그아웃과 함께 계정 전환 판별에 쓰인다(#291)
         if (restoredUserId != null && storedUserId == null) {
             p.edit().putInt(KEY_USER_ID, restoredUserId).apply()
@@ -160,6 +172,7 @@ object SessionStore {
             editor.remove(KEY_TOKEN).remove(KEY_USER_ID).putBoolean(KEY_ONBOARDED, false)
         }
         editor.apply()
+        socialAuthenticated = !session.isGuest // 완료 여부와 무관하게 '소셜인가'만 본다 — 미완료 소셜도 게스트가 아니다(#398)
         authRevision++ // 로그인 = 인증 주체 변경(게스트·소셜 공통) → 계정 전환 감지 트리거(#291)
         AuthFailureCoordinator.onAuthenticated()
     }
@@ -193,6 +206,7 @@ object SessionStore {
         TokenHolder.token = ""
         currentUserId = null
         persistentUserId = null
+        socialAuthenticated = false
         authRevision++ // 로그아웃 = 인증 주체 해제 → 다음 로그인과 함께 이전 사용자 파생 상태를 확실히 분리(#291)
     }
 
@@ -206,6 +220,7 @@ object SessionStore {
         sessionOnboarded = false
         currentUserId = null
         persistentUserId = null
+        socialAuthenticated = false
         authRevision++ // 세션 전체 초기화도 주체 변경으로 취급(#291)
         AuthFailureCoordinator.onAuthenticated()
     }

@@ -54,6 +54,8 @@ class OnboardingViewModel(
     // 현재 인증 주체 키(#383). SessionStore.authRevision 은 private set 이라 테스트에서 못 바꾸므로
     //   ExerciseVideosViewModel 과 같은 방식으로 주입 가능하게 둔다.
     private val authKey: () -> Int = { SessionStore.authRevision },
+    // 현재 세션이 소셜(비게스트)인가(#398). authKey 와 같은 이유로 주입 가능하게 둔다.
+    private val socialAuth: () -> Boolean = { SessionStore.socialAuthenticated },
 ) : ViewModel() {
 
     var step by mutableStateOf(OnbStep.WELCOME); private set
@@ -234,13 +236,35 @@ class OnboardingViewModel(
 
     /**
      * 남아 있는 진행 상태가 **다른 인증 주체**의 것인지(#383). 화면 진입 가드가 쓴다.
-     * WELCOME 이면 애초에 남은 진행이 없으므로 false.
+     * 아직 시작점을 거치지 않았으면(주인 없음) 되돌릴 진행도 없으므로 false.
+     *
+     * ⚠️ 예전엔 `step != WELCOME` 을 함께 봤는데 **틀린 가정이었다**(#398 실기기 QA).
+     *   약관 화면에서 '이전'을 누르면 step 만 WELCOME 으로 가고 `agreed`·프로필 입력·sessionId 는 그대로
+     *   남는다 — "WELCOME = 남은 진행 없음"이 성립하지 않는다. 주인이 다른지만 본다.
      */
-    fun isProgressFromAnotherAuth(): Boolean =
-        step != OnbStep.WELCOME && progressOwner != authKey()
+    fun isProgressFromAnotherAuth(): Boolean {
+        val owner = progressOwner ?: return false
+        return owner != authKey()
+    }
 
-    /** S0 → 체험 사용자의 게스트 로그인 후 약관 목록 로드. 기존 소셜 토큰은 덮어쓰지 않는다. */
-    fun start() = launchStep("시작") {
+    /**
+     * S0 → 체험 사용자의 게스트 로그인 후 약관 목록 로드. 기존 소셜 토큰은 덮어쓰지 않는다.
+     *
+     * ⚠️ 소셜 세션이 살아 있으면 이건 '체험'이 아니다(#398). 토큰이 있으면 게스트 로그인만 건너뛰고
+     *   `isGuest = true` 는 그대로 세우던 탓에, 소셜 계정이 게스트로 취급돼 완주해도 영속화되지 않았다.
+     *   소셜 토큰을 든 채 이 화면에 서는 경우가 실제로 있다 — 탈퇴 후 재로그인하면 진입 가드가
+     *   WELCOME 으로 되돌린다(#383). 그때는 게스트로 시작하지 말고 인증된 흐름을 이어간다.
+     */
+    fun start() {
+        if (socialAuth()) {
+            continueAuthenticated()
+            return
+        }
+        startAsGuest()
+    }
+
+    private fun startAsGuest() = launchStep("시작") {
+        clearProgressIfAnotherAuth() // 다른 주체가 남긴 입력을 체험 온보딩이 물려받지 않게(#398)
         finished = false // 온보딩 시작점에서 완주 신호를 깐다 — stale finished 로 즉시 홈 라우팅되는 경로 원천 차단(리뷰 #311).
         isGuest = true // 게스트 온보딩 — 완료해도 디스크에 안 남긴다(#153).
         if (TokenHolder.token.isBlank()) {
@@ -252,10 +276,24 @@ class OnboardingViewModel(
 
     /** 소셜 로그인(미완료 계정) 성공 후 같은 온보딩 흐름을 이어간다. 완료 시 영속화 대상(#153). */
     fun continueAuthenticated() = launchStep("로그인") {
+        // ⚠️ 주인이 바뀐 진행은 **여기서 먼저 비운다**(#398 실기기 QA). 화면 진입 가드(#383)에 맡길 수 없다 —
+        //   아래 claimProgress() 가 주인을 새로 찍는 순간 가드는 더 이상 stale 을 알아보지 못하고,
+        //   그 뒤로는 이전 계정의 데이터가 **새 주인의 것으로 입양된다.**
+        //   실제 증상: 탈퇴 후 재로그인하면 약관 화면까지는 갔는데 이전 계정의 동의 체크와 프로필 입력이
+        //   그대로 남았다. loadTerms() 는 terms 만 갈아끼우고 agreed·sessionId·profileId·입력은 안 건드린다.
+        clearProgressIfAnotherAuth()
         finished = false // 시작점에서 완주 신호 초기화(리뷰 #311) — resetToWelcome 을 안 거친 재진입도 방어.
         isGuest = false
         claimProgress() // applyLogin 으로 올라간 새 authRevision 을 주인으로 — 이어가는 로그인은 stale 이 아니다.
         loadTerms()
+    }
+
+    /**
+     * 시작점 공통 전처리: 남은 진행의 주인이 지금 인증 주체와 다르면 비운다.
+     * 주인을 찍기 **전에** 불러야 한다 — 찍고 나면 판별 근거가 사라진다.
+     */
+    private fun clearProgressIfAnotherAuth() {
+        if (isProgressFromAnotherAuth()) resetToWelcome()
     }
 
     /**
