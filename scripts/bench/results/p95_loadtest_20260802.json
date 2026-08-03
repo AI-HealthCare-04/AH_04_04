@@ -1,0 +1,668 @@
+{
+  "root_group": {
+    "name": "",
+    "path": "",
+    "id": "d41d8cd98f00b204e9800998ecf8427e",
+    "groups": [
+      {
+        "name": "홈 진입",
+        "path": "::홈 진입",
+        "id": "2905eacfce7cd7dd33587ca2fcd43108",
+        "groups": [],
+        "checks": [
+            {
+              "name": "GET /home ok",
+              "path": "::홈 진입::GET /home ok",
+              "id": "63ff6d25f978185d1fa9bc4f3ff8d7db",
+              "passes": 2653,
+              "fails": 0
+            },
+            {
+              "name": "GET /users/me ok",
+              "path": "::홈 진입::GET /users/me ok",
+              "id": "7a6b3d43ae635787ab50006520ceb310",
+              "passes": 2653,
+              "fails": 0
+            },
+            {
+              "passes": 2653,
+              "fails": 0,
+              "name": "GET /users/me/settings ok",
+              "path": "::홈 진입::GET /users/me/settings ok",
+              "id": "f00bfc052aa0758ba6ccaf56c7f6ec69"
+            }
+          ]
+      },
+      {
+        "name": "미션",
+        "path": "::미션",
+        "id": "c3ab4ccac02faa101563bb19204163d3",
+        "groups": [],
+        "checks": [
+            {
+              "name": "GET /missions ok",
+              "path": "::미션::GET /missions ok",
+              "id": "b33a788ec3a76c5faa99915302dd1b3c",
+              "passes": 2653,
+              "fails": 0
+            },
+            {
+              "id": "913eea53555ce49f7b3740c1b5242d71",
+              "passes": 2653,
+              "fails": 0,
+              "name": "mission-log create 2xx",
+              "path": "::미션::mission-log create 2xx"
+            },
+            {
+              "passes": 2653,
+              "fails": 0,
+              "name": "mission-log patch 2xx",
+              "path": "::미션::mission-log patch 2xx",
+              "id": "92c57950db92f275a1989ea2893c61d5"
+            }
+          ]
+      },
+      {
+        "id": "0ecb2bf10f7d4a02d50425936c3e8480",
+        "groups": [],
+        "checks": [
+            {
+              "id": "61bc9c42f45eb6bdedb55a1317795dbd",
+              "passes": 2653,
+              "fails": 0,
+              "name": "GET /mission-logs ok",
+              "path": "::기록 탭::GET /mission-logs ok"
+            },
+            {
+              "name": "GET /dashboard/summary ok",
+              "path": "::기록 탭::GET /dashboard/summary ok",
+              "id": "03ae0bbdf34cece06226d2a0d00394ef",
+              "passes": 2653,
+              "fails": 0
+            },
+            {
+              "name": "GET /dashboard/stamps ok",
+              "path": "::기록 탭::GET /dashboard/stamps ok",
+              "id": "b820ebc3b15b38083894a37a9aa7a986",
+              "passes": 2653,
+              "fails": 0
+            }
+          ],
+        "name": "기록 탭",
+        "path": "::기록 탭"
+      },
+      {
+        "name": "예측",
+        "path": "::예측",
+        "id": "111a8f6415077e7e435ce84c9226cd16",
+        "groups": [],
+        "checks": [
+            {
+              "fails": 0,
+              "name": "GET /risk-predictions/me/latest ok",
+              "path": "::예측::GET /risk-predictions/me/latest ok",
+              "id": "29318e85b00b3d9f06bc1f2ebea852a9",
+              "passes": 2653
+            },
+            {
+              "name": "GET /risk-predictions/me/history ok",
+              "path": "::예측::GET /risk-predictions/me/history ok",
+              "id": "81977c92efb7bdc99c72540cd902acfb",
+              "passes": 2653,
+              "fails": 0
+            },
+            {
+              "fails": 0,
+              "name": "GET /risk-predictions/me/cohort-distribution ok",
+              "path": "::예측::GET /risk-predictions/me/cohort-distribution ok",
+              "id": "4ccc68e2295537ee10450a33960b177d",
+              "passes": 2653
+            },
+            {
+              "id": "973e8e5f06684aa234608ed70ff14e76",
+              "passes": 2653,
+              "fails": 0,
+              "name": "GET /health-profiles/me/latest ok",
+              "path": "::예측::GET /health-profiles/me/latest ok"
+            },
+            {
+              "id": "189d36c07256b654617e1178d58ceb3b",
+              "passes": 2653,
+              "fails": 0,
+              "name": "GET /physical-assessments/me/history ok",
+              "path": "::예측::GET /physical-assessments/me/history ok"
+            }
+          ]
+      },
+      {
+        "path": "::정적",
+        "id": "10a7400425bb35d1f20bdba9ece3cbe4",
+        "groups": [],
+        "checks": [
+            {
+              "fails": 0,
+              "name": "GET /exercise-videos ok",
+              "path": "::정적::GET /exercise-videos ok",
+              "id": "117aebe04e15ed7c928eb3c654bbb619",
+              "passes": 2653
+            },
+            {
+              "name": "GET /terms ok",
+              "path": "::정적::GET /terms ok",
+              "id": "05b7e1cef263f6d8bdd122bfeea57e74",
+              "passes": 2653,
+              "fails": 0
+            },
+            {
+              "id": "3959ef08ff9dd8b7f88f92c6465110a4",
+              "passes": 2653,
+              "fails": 0,
+              "name": "GET /daily-tips ok",
+              "path": "::정적::GET /daily-tips ok"
+            },
+            {
+              "name": "GET /support/faqs ok",
+              "path": "::정적::GET /support/faqs ok",
+              "id": "55a78fe3df4e79d4606673273829c4b9",
+              "passes": 2653,
+              "fails": 0
+            }
+          ],
+        "name": "정적"
+      }
+    ],
+    "checks": [
+      {
+        "name": "guest login 200",
+        "path": "::guest login 200",
+        "id": "98e79a1850bb6b03b2d2a3c7839f406d",
+        "passes": 60,
+        "fails": 0
+      }
+    ]
+  },
+  "options": {
+    "summaryTrendStats": [
+      "p(50)",
+      "p(95)",
+      "p(99)",
+      "max"
+    ],
+    "summaryTimeUnit": "",
+    "noColor": false
+  },
+  "state": {
+    "isStdOutTTY": false,
+    "isStdErrTTY": false,
+    "testRunDurationMs": 365264.771
+  },
+  "metrics": {
+    "http_req_duration{phase:main,name:POST /auth/guest}": {
+      "thresholds": {
+        "p(95)<3000": {
+          "ok": true
+        }
+      },
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(50)": 233.495,
+        "p(95)": 969.9481499999999,
+        "p(99)": 1109.60071,
+        "max": 1142.98
+      }
+    },
+    "http_req_duration{expected_response:true}": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(95)": 174.06724999999997,
+        "p(99)": 273.1139699999998,
+        "max": 1142.98,
+        "p(50)": 28.848
+      }
+    },
+    "http_req_duration{phase:main,name:GET /users/me}": {
+      "values": {
+        "p(50)": 37.006,
+        "p(95)": 138.81429999999995,
+        "p(99)": 258.0327,
+        "max": 991.337
+      },
+      "thresholds": {
+        "p(95)<3000": {
+          "ok": true
+        }
+      },
+      "type": "trend",
+      "contains": "time"
+    },
+    "http_req_waiting": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(50)": 28.549,
+        "p(95)": 173.69129999999993,
+        "p(99)": 272.66329,
+        "max": 1142.908
+      }
+    },
+    "http_req_duration{phase:main,name:POST /mission-logs}": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(50)": 100.443,
+        "p(95)": 229.44079999999994,
+        "p(99)": 337.15081999999995,
+        "max": 831.611
+      },
+      "thresholds": {
+        "p(95)<3000": {
+          "ok": true
+        }
+      }
+    },
+    "http_req_failed": {
+      "type": "rate",
+      "contains": "default",
+      "values": {
+        "rate": 0,
+        "passes": 0,
+        "fails": 47814
+      }
+    },
+    "http_req_blocked": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(50)": 0.001,
+        "p(95)": 0.002,
+        "p(99)": 0.003,
+        "max": 268.728
+      }
+    },
+    "http_reqs": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 47814,
+        "rate": 130.90230374283755
+      }
+    },
+    "http_req_tls_handshaking": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(99)": 0,
+        "max": 122.647,
+        "p(50)": 0,
+        "p(95)": 0
+      }
+    },
+    "http_req_sending": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(95)": 0.636,
+        "p(99)": 2.6357399999999993,
+        "max": 18.362,
+        "p(50)": 0.079
+      }
+    },
+    "http_req_duration{phase:main,name:GET /exercise-videos}": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(50)": 17.206,
+        "p(95)": 76.781,
+        "p(99)": 139.27327999999997,
+        "max": 333
+      },
+      "thresholds": {
+        "p(95)<3000": {
+          "ok": true
+        }
+      }
+    },
+    "http_req_duration{phase:main,name:GET /physical-assessments/me/history}": {
+      "values": {
+        "p(99)": 120.28316,
+        "max": 261.581,
+        "p(50)": 19.026,
+        "p(95)": 64.7971999999999
+      },
+      "thresholds": {
+        "p(95)<3000": {
+          "ok": true
+        }
+      },
+      "type": "trend",
+      "contains": "time"
+    },
+    "http_req_duration{phase:main,name:GET /risk-predictions/me/history}": {
+      "values": {
+        "p(50)": 20.027,
+        "p(95)": 75.39359999999996,
+        "p(99)": 127.02,
+        "max": 351.698
+      },
+      "thresholds": {
+        "p(95)<3000": {
+          "ok": true
+        }
+      },
+      "type": "trend",
+      "contains": "time"
+    },
+    "http_req_duration{phase:main,name:GET /dashboard/stamps}": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(50)": 23.8,
+        "p(95)": 90.42269999999999,
+        "p(99)": 162.43392,
+        "max": 332.994
+      },
+      "thresholds": {
+        "p(95)<3000": {
+          "ok": true
+        }
+      }
+    },
+    "http_req_duration{phase:main,name:GET /risk-predictions/me/cohort-distribution}": {
+      "contains": "time",
+      "values": {
+        "max": 307.298,
+        "p(50)": 26.058,
+        "p(95)": 104.13279999999995,
+        "p(99)": 160.72015999999996
+      },
+      "thresholds": {
+        "p(95)<3000": {
+          "ok": true
+        }
+      },
+      "type": "trend"
+    },
+    "http_req_duration{phase:main,name:GET /risk-predictions/me/latest}": {
+      "thresholds": {
+        "p(95)<3000": {
+          "ok": true
+        }
+      },
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(95)": 112.74589999999999,
+        "p(99)": 164.35504,
+        "max": 330.509,
+        "p(50)": 26.045
+      }
+    },
+    "data_sent": {
+      "contains": "data",
+      "values": {
+        "count": 2803620,
+        "rate": 7675.582817155942
+      },
+      "type": "counter"
+    },
+    "http_req_duration{phase:main,name:GET /users/me/settings}": {
+      "contains": "time",
+      "values": {
+        "p(95)": 112.29179999999998,
+        "p(99)": 211.75435999999996,
+        "max": 659.591,
+        "p(50)": 26.738
+      },
+      "thresholds": {
+        "p(95)<3000": {
+          "ok": true
+        }
+      },
+      "type": "trend"
+    },
+    "http_req_duration{phase:main,name:GET /missions}": {
+      "values": {
+        "p(50)": 76.621,
+        "p(95)": 200.86159999999995,
+        "p(99)": 309.70017999999993,
+        "max": 861.706
+      },
+      "thresholds": {
+        "p(95)<3000": {
+          "ok": true
+        }
+      },
+      "type": "trend",
+      "contains": "time"
+    },
+    "http_req_connecting": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "max": 17.329,
+        "p(50)": 0,
+        "p(95)": 0,
+        "p(99)": 0
+      }
+    },
+    "iteration_duration": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(95)": 6423.7884582,
+        "p(99)": 7130.653899999999,
+        "max": 8076.2255,
+        "p(50)": 5908.016
+      }
+    },
+    "http_req_duration": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(50)": 28.848,
+        "p(95)": 174.06724999999997,
+        "p(99)": 273.1139699999998,
+        "max": 1142.98
+      }
+    },
+    "data_received": {
+      "contains": "data",
+      "values": {
+        "count": 36862921,
+        "rate": 100921.09594658938
+      },
+      "type": "counter"
+    },
+    "http_req_duration{phase:main,name:PATCH /mission-logs/{id}}": {
+      "contains": "time",
+      "values": {
+        "p(50)": 130.12,
+        "p(95)": 291.70519999999993,
+        "p(99)": 448.64766,
+        "max": 871.653
+      },
+      "thresholds": {
+        "p(95)<3000": {
+          "ok": true
+        }
+      },
+      "type": "trend"
+    },
+    "http_req_duration{phase:main,name:GET /home}": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(50)": 82.104,
+        "p(95)": 247.96069999999995,
+        "p(99)": 395.4568599999995,
+        "max": 910.221
+      },
+      "thresholds": {
+        "p(95)<3000": {
+          "ok": true
+        }
+      }
+    },
+    "http_req_receiving": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(50)": 0.047,
+        "p(95)": 0.254,
+        "p(99)": 1.436349999999998,
+        "max": 15.827
+      }
+    },
+    "http_req_duration{phase:main,name:GET /mission-logs}": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "max": 587.21,
+        "p(50)": 27.724,
+        "p(95)": 110.30109999999996,
+        "p(99)": 224.61941999999985
+      },
+      "thresholds": {
+        "p(95)<3000": {
+          "ok": true
+        }
+      }
+    },
+    "http_req_failed{phase:main}": {
+      "type": "rate",
+      "contains": "default",
+      "values": {
+        "passes": 0,
+        "fails": 45752,
+        "rate": 0
+      },
+      "thresholds": {
+        "rate<0.05": {
+          "ok": true
+        }
+      }
+    },
+    "http_req_duration{phase:main,name:GET /health-profiles/me/latest}": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(99)": 155.53338,
+        "max": 377.668,
+        "p(50)": 26.015,
+        "p(95)": 98.88439999999999
+      },
+      "thresholds": {
+        "p(95)<3000": {
+          "ok": true
+        }
+      }
+    },
+    "http_req_duration{phase:main,name:GET /support/faqs}": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(50)": 16.55,
+        "p(95)": 60.91309999999999,
+        "p(99)": 110.25763999999998,
+        "max": 275.25
+      },
+      "thresholds": {
+        "p(95)<3000": {
+          "ok": true
+        }
+      }
+    },
+    "group_duration": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(99)": 701.4142013599999,
+        "max": 1402.899667,
+        "p(50)": 126.17825,
+        "p(95)": 521.6524085999998
+      }
+    },
+    "iterations": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 2653,
+        "rate": 7.263224407699586
+      }
+    },
+    "http_req_duration{phase:main,name:GET /daily-tips}": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "max": 394.119,
+        "p(50)": 16.971,
+        "p(95)": 63.52769999999995,
+        "p(99)": 116.41021999999998
+      },
+      "thresholds": {
+        "p(95)<3000": {
+          "ok": true
+        }
+      }
+    },
+    "http_req_duration{phase:main,name:GET /dashboard/summary}": {
+      "contains": "time",
+      "values": {
+        "max": 363.55,
+        "p(50)": 34.252,
+        "p(95)": 118.82129999999992,
+        "p(99)": 212.15031999999997
+      },
+      "thresholds": {
+        "p(95)<3000": {
+          "ok": true
+        }
+      },
+      "type": "trend"
+    },
+    "http_req_duration{phase:main,name:GET /terms}": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(50)": 17.128,
+        "p(95)": 71.76969999999987,
+        "p(99)": 126.2179,
+        "max": 428.609
+      },
+      "thresholds": {
+        "p(95)<3000": {
+          "ok": true
+        }
+      }
+    },
+    "checks": {
+      "type": "rate",
+      "contains": "default",
+      "values": {
+        "rate": 1,
+        "passes": 47814,
+        "fails": 0
+      }
+    },
+    "vus": {
+      "values": {
+        "value": 5,
+        "min": 5,
+        "max": 54
+      },
+      "type": "gauge",
+      "contains": "default"
+    },
+    "vus_max": {
+      "contains": "default",
+      "values": {
+        "value": 60,
+        "min": 60,
+        "max": 60
+      },
+      "type": "gauge"
+    }
+  }
+}

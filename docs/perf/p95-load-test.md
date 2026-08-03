@@ -1,8 +1,8 @@
 # 심사 5-1 — 전체 API P95 부하 테스트 (#364)
 
-> **상태: 스크립트 준비 완료 · 실측 미수행.**
-> 실측은 실서버(EC2 dev)에 부하를 거는 작업이라 **팀 시점 합의 후** 진행한다.
-> 실측이 끝나면 아래 "측정 조건"과 "결과" 절의 빈칸을 채워 이 문서를 갱신한다.
+> **상태: 실측 완료 (2026-08-02) · 측정 대상 19개 엔드포인트 전부 P95 3초 이내, 에러율 0.00%.**
+> 최대값은 `POST /auth/guest` 의 **P95 970ms** 로, 기준 3초 대비 약 3배의 여유가 있다.
+> 원본 결과: [`scripts/bench/results/p95_loadtest_20260802.json`](../../scripts/bench/results/p95_loadtest_20260802.json)
 
 ## 목적
 
@@ -12,8 +12,8 @@
 
 | 점수 | 기준 |
 |---|---|
-| 5 | P95 3초 이내 성능 테스트 결과를 제시 |
-| 1 | 성능 테스트를 수행하지 않았다 ← 실측 전 현재 위치 |
+| 5 | P95 3초 이내 성능 테스트 결과를 제시 ← **실측 후 현재 위치** |
+| 1 | 성능 테스트를 수행하지 않았다 (실측 전 위치) |
 
 ## 도구와 시나리오
 
@@ -83,46 +83,63 @@ k6 run -e BASE_URL=https://aigo-health.duckdns.org/api/v1 \
   -e VUS=2 -e DURATION=20s -e WARMUP=5s -e WRITES=1 scripts/bench/loadtest_k6.js
 ```
 
-## 측정 조건 (실측 후 기입)
+## 측정 조건
 
 | 항목 | 값 |
 |---|---|
-| 측정 일시 | _(미실측)_ |
+| 측정 일시 | **2026-08-02 21:02:28 ~ 21:08:33 KST** (총 6분 5초) |
 | 대상 환경 | EC2 dev (`https://aigo-health.duckdns.org`) |
-| 동시 사용자(VU) / 지속 시간 | _(예: 50 VU, 5분)_ |
-| 워밍업 | _(예: 10 VU, 1분 — 판정 제외)_ |
-| 계정·데이터 상태 | _(게스트 N + 실계정 M, 미션 로그·예측 이력 유무)_ |
+| 동시 사용자(VU) / 지속 시간 | **50 VU, 5분** (본 측정) |
+| 워밍업 | **10 VU, 1분** — 별도 시나리오로 분리되어 임계값 판정에서 제외 |
+| 계정·데이터 상태 | 게스트 50 VU 전량(`TOKENS` 미지정). 게스트 계정이라 미션 로그·예측 이력이 비어 있다 — 목록·집계 조회의 **한계**로 아래에 별도 기술 |
+| 총 요청 수 / 처리량 (본 측정) | **45,752건 / 152.5 req/s** — `phase:main` 만. 아래 P95·에러율 판정과 같은 범위다 |
+| 〃 (워밍업 포함 전체 실행) | 47,814건 / 130.9 req/s, 완료 이터레이션 2,653회 (워밍업 2,062건) — **판정 범위 아님**. k6 summary 는 이터레이션에 phase 태그를 달지 않아 본 측정만의 이터레이션 수는 직접 집계되지 않는다(요청 수 ÷ 이터레이션당 18.0건 환산 시 약 2,539회) |
 | uvicorn 워커 수 | **1** (현재 `app/Dockerfile` CMD 에 `--workers` 없음 — 단일 프로세스. #363 에서 확인했듯 GIL은 프로세스 단위라 이 값이 처리량에 직접 영향) |
-| WRITES 포함 여부 | _( )_ |
+| WRITES 포함 여부 | **포함(`WRITES=1`)** — 걷기 미션 시작·완료 쓰기 2개 엔드포인트를 측정에 넣었다. 실행 결과 게스트 계정 앞으로 미션 로그 약 2,650행이 생성됐다(워밍업 포함 전체 실행 기준. 서비스 사용자 데이터와 분리) |
+| 실행 명령 | `k6 run --summary-trend-stats "p(50),p(95),p(99),max" -e BASE_URL=… -e VUS=50 -e DURATION=5m -e WARMUP=1m -e WRITES=1 scripts/bench/loadtest_k6.js` |
 
-## 결과 (실측 후 기입)
+## 결과
+
+측정 대상 **19개 전부 P95 3초 이내**, 본 측정 에러율 **0.00%**(`phase:main` 45,752건 중 실패 0건),
+k6 임계값(`p(95)<3000` per endpoint, 에러율 <5%) 전 항목 통과. 워밍업을 포함한 전체 실행에서도
+실패는 0건이다(47,814건 중 0건).
 
 | 엔드포인트 | P50 | P95 | P99 | 최대 | 에러율 | 판정(P95<3s) |
 |---|---|---|---|---|---|---|
-| POST /auth/guest | | | | | | |
-| GET /home | | | | | | |
-| GET /users/me | | | | | | |
-| GET /users/me/settings | | | | | | |
-| GET /missions | | | | | | |
-| POST /mission-logs | | | | | | |
-| PATCH /mission-logs/{id} | | | | | | |
-| GET /mission-logs | | | | | | |
-| GET /dashboard/summary | | | | | | |
-| GET /dashboard/stamps | | | | | | |
-| GET /risk-predictions/me/latest | | | | | | |
-| GET /risk-predictions/me/history | | | | | | |
-| GET /risk-predictions/me/cohort-distribution | | | | | | |
-| GET /health-profiles/me/latest | | | | | | |
-| GET /physical-assessments/me/history | | | | | | |
-| GET /exercise-videos | | | | | | |
-| GET /terms | | | | | | |
-| GET /daily-tips | | | | | | |
-| GET /support/faqs | | | | | | |
+| `POST /auth/guest` | 233ms | **970ms** | 1.11s | 1.14s | 0.00% | ✅ |
+| `GET /home` | 82ms | **248ms** | 395ms | 910ms | 0.00% | ✅ |
+| `GET /users/me` | 37ms | **139ms** | 258ms | 991ms | 0.00% | ✅ |
+| `GET /users/me/settings` | 27ms | **112ms** | 212ms | 660ms | 0.00% | ✅ |
+| `GET /missions` | 77ms | **201ms** | 310ms | 862ms | 0.00% | ✅ |
+| `POST /mission-logs` | 100ms | **229ms** | 337ms | 832ms | 0.00% | ✅ |
+| `PATCH /mission-logs/{id}` | 130ms | **292ms** | 449ms | 872ms | 0.00% | ✅ |
+| `GET /mission-logs` | 28ms | **110ms** | 225ms | 587ms | 0.00% | ✅ |
+| `GET /dashboard/summary` | 34ms | **119ms** | 212ms | 364ms | 0.00% | ✅ |
+| `GET /dashboard/stamps` | 24ms | **90ms** | 162ms | 333ms | 0.00% | ✅ |
+| `GET /risk-predictions/me/latest` | 26ms | **113ms** | 164ms | 331ms | 0.00% | ✅ |
+| `GET /risk-predictions/me/history` | 20ms | **75ms** | 127ms | 352ms | 0.00% | ✅ |
+| `GET /risk-predictions/me/cohort-distribution` | 26ms | **104ms** | 161ms | 307ms | 0.00% | ✅ |
+| `GET /health-profiles/me/latest` | 26ms | **99ms** | 156ms | 378ms | 0.00% | ✅ |
+| `GET /physical-assessments/me/history` | 19ms | **65ms** | 120ms | 262ms | 0.00% | ✅ |
+| `GET /exercise-videos` | 17ms | **77ms** | 139ms | 333ms | 0.00% | ✅ |
+| `GET /terms` | 17ms | **72ms** | 126ms | 429ms | 0.00% | ✅ |
+| `GET /daily-tips` | 17ms | **64ms** | 116ms | 394ms | 0.00% | ✅ |
+| `GET /support/faqs` | 17ms | **61ms** | 110ms | 275ms | 0.00% | ✅ |
 
-### 3초 초과 항목과 조치 (해당 시)
+### 3초 초과 항목과 조치
 
-_(원인 분석과 조치 내용, 또는 미조치 사유를 기록. 집계 엔드포인트가 초과할 경우 가장 흔한
-원인은 N+1 쿼리 — `GET /home` 등에서 SQL 로그로 확인.)_
+**없음.** 가장 느린 `POST /auth/guest` 의 P95 가 970ms 로 기준의 1/3 수준이다. 이 항목만 유독
+느린 것은 계정 생성(INSERT)과 JWT 서명이 포함된 쓰기 경로이기 때문이며, 실제 사용자는 앱 실행당
+1회만 호출한다. 조회 계열은 모두 250ms 이하다.
+
+### 실측 중 발견한 스크립트 결함 (이 PR 에서 수정)
+
+스모크 단계에서 `GET /dashboard/stamps` 가 매 이터레이션 실패해 에러율이 5.47% 로 임계값을
+넘겼다. 원인은 스크립트가 필수 파라미터 `month=YYYY-MM` 를 붙이지 않아 **400(검증 실패) 응답의
+지연을 재고 있었던 것**이다. 집계 쿼리를 전혀 타지 않으므로 그대로 뒀다면 이 항목의 수치가
+무의미했다. 측정 시점의 당월(**KST 기준** — 리뷰 P2 반영. `toISOString()` 은 UTC 라 매월 1일
+09시 이전 KST 실행에서 전월이 선택된다)을 붙이도록 고쳤고(`STAMP_MONTH` 로 override 가능), 재실행 후
+에러율 0.00% 를 확인한 뒤 본 측정을 진행했다.
 
 ## 한계
 
@@ -134,6 +151,11 @@ _(원인 분석과 조치 내용, 또는 미조치 사유를 기록. 집계 엔�
   추론 경계만 격리 측정한 것으로, 전체 스택 P95 와는 다른 값이다.
 - `POST /risk-predictions` · `/reassess` 는 온보딩·건강 프로필 입력이 선행돼야 해 흐름에
   넣지 않았다. 실계정 토큰으로 단건 측정해 보완한다(ML 추론 자체는 2.5ms — #363).
+- **이번 실측은 전 VU 게스트로 돌렸다(`TOKENS` 미지정).** 게스트는 미션 로그·예측 이력이 비어
+  있어, 목록·집계 조회(`GET /mission-logs`, `/dashboard/*`, `/risk-predictions/me/*`)가 데이터가
+  쌓인 계정보다 유리하게 나왔을 수 있다. 다만 측정된 P95 가 기준의 3~30배 여유를 보이므로
+  데이터가 붙어도 3초를 넘길 여지는 크지 않다. 더 보수적인 근거가 필요하면 기록이 쌓인 실계정
+  토큰을 `-e TOKENS=…` 로 1-2개 섞어 재측정하면 된다(스크립트가 시나리오 분리로 지원).
 
 ## 관련
 
