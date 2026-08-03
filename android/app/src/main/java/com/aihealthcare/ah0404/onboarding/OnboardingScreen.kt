@@ -986,12 +986,21 @@ private fun ProfileStep(vm: OnboardingViewModel) {
                 .padding(horizontal = 20.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (subStep > 0) {
-                IconButton(onClick = { subStep-- }, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "이전 단계", tint = TermsGreen)
-                }
-                Spacer(Modifier.width(8.dp))
+            // 첫 페이지에서도 이전을 그린다(#399). 예전엔 `subStep > 0` 일 때만 그려서, 기본 정보 첫 화면에
+            //   오면 화면상 약관으로 돌아갈 방법이 없었다 — 약관 동의·체력검사 화면은 이전을 주는데 여기만 없어
+            //   일관성도 깨졌다. 단계 이동 자체는 준비돼 있다(previousOnboardingStep: PROFILE → TERMS).
+            //   서브스텝이 남아 있으면 그 안에서 물러나고, 첫 페이지면 약관으로 나간다.
+            IconButton(
+                onClick = { if (subStep > 0) subStep-- else vm.goBack() },
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = if (subStep > 0) "이전 단계" else "약관 동의로 돌아가기",
+                    tint = TermsGreen,
+                )
             }
+            Spacer(Modifier.width(8.dp))
             ProfileProgress(current = subStep, modifier = Modifier.weight(1f))
         }
         Column(
