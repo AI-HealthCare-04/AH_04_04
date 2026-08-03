@@ -236,11 +236,98 @@ def check_walk_6m_skipped_only_drops() -> None:
         asyncio.run(_exec(f"DROP DATABASE IF EXISTS `{MIG_DB}`"))
 
 
+def _seed_prediction_at_0020(snapshot_sql: str, *, score_cohort_age: str = "NULL") -> None:
+    """0021 직전 리비전까지 올린 뒤, 주어진 스냅샷을 가진 예측 1건을 심는다(#408 가드 검증용)."""
+    asyncio.run(_exec(f"DROP DATABASE IF EXISTS `{MIG_DB}`"))
+    asyncio.run(_exec(f"CREATE DATABASE `{MIG_DB}` CHARACTER SET utf8mb4"))
+    _alembic("upgrade", "0020_mission_bonus")
+    asyncio.run(
+        _exec_many_on_mig(
+            [
+                "SET FOREIGN_KEY_CHECKS=0",
+                "INSERT INTO risk_predictions "
+                "(user_id,profile_id,model_version,model_variant,internal_risk_score,internal_risk_level,"
+                "score_cohort_age,input_snapshot) VALUES "
+                f"(1,1,'v1','minimal',0.12,'medium',{score_cohort_age},{snapshot_sql})",
+                "SET FOREIGN_KEY_CHECKS=1",
+            ]
+        )
+    )
+
+
+def check_prediction_snapshot_guard() -> None:
+    """0021이 '백필 실패를 삼키고 원본을 지우는' 경로를 막는지 검증한다(#408 리뷰 P1).
+
+    삭제는 되돌릴 수 없다 — 조회 키를 복원하지 못한 행이 있으면 중단하고 원본을 보존해야 한다.
+    누락·타입 불일치·모델 인코딩 아닌 성별을 각각 심어 확인한다.
+    """
+    cases = {
+        "성별 키 누락": "JSON_OBJECT('age',72.0,'bmi',22.5)",
+        "성별 타입 불일치": "JSON_OBJECT('age',72.0,'sex','male')",
+        "모델 인코딩 아닌 성별(0)": "JSON_OBJECT('age',72.0,'sex',0)",
+        "나이 키 누락": "JSON_OBJECT('sex',1,'bmi',22.5)",
+    }
+    for label, snapshot_sql in cases.items():
+        print(f"\n임시 DB 재생성(예측 스냅샷 가드 검증 — {label}): {MIG_DB}", flush=True)
+        try:
+            _seed_prediction_at_0020(snapshot_sql)
+            result = _alembic_capture("upgrade", "head")
+            if result.returncode == 0:
+                sys.exit(f"가드 검증 실패({label}): 백필이 불완전한데 마이그레이션이 성공했다(원본 삭제 경로!)")
+            guard_marker = "0021_drop_input_snapshot 중단"
+            combined = (result.stderr or "") + (result.stdout or "")
+            if guard_marker not in combined:
+                sys.exit(
+                    f"가드 검증 실패({label}): 마이그레이션이 실패했으나 preflight 가드가 아닌 다른 원인일 수 "
+                    f"있음 (가드 메시지 '{guard_marker}' 미검출). 마지막 출력:\n{combined[-2000:]}"
+                )
+            # 중단됐으면 원본이 그대로 남아 있어야 한다 — 이게 가드의 목적이다.
+            remaining = asyncio.run(
+                _scalar_on_mig("SELECT COUNT(*) FROM risk_predictions WHERE input_snapshot IS NOT NULL")
+            )
+            if remaining != 1:
+                sys.exit(f"가드 검증 실패({label}): 중단됐는데 원본이 사라졌다(remaining={remaining})")
+            print(f"== OK: {label} 시 0021이 중단되고 원본이 보존됨 ==")
+        finally:
+            asyncio.run(_exec(f"DROP DATABASE IF EXISTS `{MIG_DB}`"))
+
+
+def check_prediction_snapshot_backfill() -> None:
+    """정상 행은 가드에 걸리지 않고 파생값 보존 후 원본이 폐기되는지 검증한다(#408).
+
+    가드만 있으면 '항상 중단'으로도 통과하므로 반대 방향(정상 경로)도 함께 못박는다.
+    나이 키 백필 규칙(80 이상 → '80+')도 여기서 확인한다.
+    """
+    print(f"\n임시 DB 재생성(예측 스냅샷 백필 검증): {MIG_DB}", flush=True)
+    try:
+        # 나이 키가 비어 있는 구행 + 80 top-coding 대상(85세) + female(2).
+        _seed_prediction_at_0020("JSON_OBJECT('age',85.0,'sex',2,'bmi',22.5,'waist_cm',82.0)")
+        result = _alembic_capture("upgrade", "head")
+        if result.returncode != 0:
+            sys.exit(
+                "백필 검증 실패: 정상 스냅샷인데 마이그레이션이 중단됐다. "
+                f"마지막 출력:\n{((result.stderr or '') + (result.stdout or ''))[-2000:]}"
+            )
+        preserved = asyncio.run(
+            _scalar_on_mig(
+                "SELECT COUNT(*) FROM risk_predictions "
+                "WHERE score_cohort_age='80+' AND score_cohort_sex=2 AND input_snapshot IS NULL"
+            )
+        )
+        if preserved != 1:
+            sys.exit(f"백필 검증 실패: 파생값 보존/원본 폐기가 기대와 다르다(matched={preserved})")
+        print("== OK: 정상 행은 파생값(80+, sex=2) 보존 후 원본이 폐기됨 ==")
+    finally:
+        asyncio.run(_exec(f"DROP DATABASE IF EXISTS `{MIG_DB}`"))
+
+
 def main() -> None:
     check_migration_roundtrip()
     check_voice_data_guard()
     check_walk_6m_data_guard()
     check_walk_6m_skipped_only_drops()
+    check_prediction_snapshot_guard()
+    check_prediction_snapshot_backfill()
     print("\n== ALL OK ==")
 
 

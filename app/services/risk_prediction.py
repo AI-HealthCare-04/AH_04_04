@@ -45,6 +45,9 @@ from app.services.activity_metrics import derive_activity_day_counts
 
 DENSITY_METHOD = "boundary_reflected_gaussian_kde_v1"
 DENSITY_PLOT_MAX_PROBABILITY = 0.5
+# 코호트표 조회 키의 성별 인코딩 — 모델(`_normalize_sex`)과 같아야 한다: male=1, female=2.
+#   0 같은 다른 값이 저장되면 표에 없는 키라 또래 분포가 실패한다(#408 리뷰 P1).
+COHORT_SEX_CODES = frozenset({1, 2})
 
 
 class RiskPredictionService:
@@ -441,17 +444,19 @@ def _snapshot_sex(snapshot: dict[str, object] | None) -> int | None:
     """예측 입력에서 코호트 조회용 성별만 뽑는다(#408).
 
     스냅샷 자체는 저장하지 않고 이 파생값만 컬럼에 남긴다 — 또래 분포가 예측 시점 성별로 고정된
-    코호트를 골라야 하기 때문이다(리뷰 #301). 값이 없거나 숫자가 아니면 None(=조회 불가 → 404).
+    코호트를 골라야 하기 때문이다(리뷰 #301).
+
+    **모델 인코딩(male=1, female=2)만 통과시킨다**(리뷰 P1). 임의의 숫자를 받아들이거나 `1.5 → 1`
+    처럼 절삭하면 코호트표에 없는 키가 저장돼, 원본을 지운 뒤에는 또래 분포가 영구히 실패한다.
+    계약에 맞지 않으면 None 을 남겨 조회 시 404 로 드러나게 한다(잘못된 값으로 조용히 채우지 않는다).
     """
     if not snapshot:
         return None
     value = snapshot.get("sex")
-    if isinstance(value, bool) or not isinstance(value, int | float | str):
+    # bool 은 int 의 하위형이라 먼저 배제한다(True → 1 로 새는 것을 막는다).
+    if isinstance(value, bool) or not isinstance(value, int):
         return None
-    try:
-        return int(value)
-    except ValueError:
-        return None
+    return value if value in COHORT_SEX_CODES else None
 
 
 def _format_cohort_age_label(age_key: str, window: str | None) -> str:
