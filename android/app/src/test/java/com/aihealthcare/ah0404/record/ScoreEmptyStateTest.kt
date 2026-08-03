@@ -65,8 +65,6 @@ class ScoreEmptyStateTest {
         listOf(
             UNDER_AGE_SCORE_TITLE,
             UNDER_AGE_SCORE_BODY,
-            UNDER_AGE_IMPROVEMENT_TITLE,
-            UNDER_AGE_IMPROVEMENT_BODY,
         ).forEach { copy ->
             listOf("준비", "아직", "곧 ", "예정").forEach { banned ->
                 assertFalse("50세 미만 안내에 '$banned' 가 들어가면 안 된다: $copy", copy.contains(banned))
@@ -79,6 +77,5 @@ class ScoreEmptyStateTest {
         // 왜 안 되는지(자료 없음)와 대신 무엇을 할 수 있는지가 함께 있어야 안내로 기능한다.
         assertEquals(true, UNDER_AGE_SCORE_BODY.contains("자료가 없어"))
         assertEquals(true, UNDER_AGE_SCORE_BODY.contains("챌린지"))
-        assertEquals(true, UNDER_AGE_IMPROVEMENT_BODY.contains("챌린지"))
     }
 }

@@ -132,11 +132,6 @@ internal const val UNDER_AGE_SCORE_BODY =
     "이 점수는 65세 이상 어르신의 건강 조사 자료로 만들어졌어요. " +
         "${MIN_SCORE_AGE}세 미만은 기준이 되는 자료가 없어 점수를 제공하지 않아요. " +
         "걷기·근력 챌린지와 운동 영상은 연령과 관계없이 그대로 이용하실 수 있어요."
-internal const val UNDER_AGE_IMPROVEMENT_TITLE = "개선 시뮬레이션도 65세 이상만 제공해요"
-internal const val UNDER_AGE_IMPROVEMENT_BODY =
-    "'이렇게 하면 이만큼 좋아져요'는 근육 건강 점수를 바탕으로 계산해요. " +
-        "점수를 제공하지 않는 연령대라 이 화면도 보여드리지 않아요. " +
-        "운동 자체는 챌린지와 운동 영상으로 그대로 하실 수 있어요."
 
 internal fun shown(score: Int): Int = max(score, DISPLAY_FLOOR)
 
@@ -200,18 +195,15 @@ internal fun MuscleDashboardCards(
 @Composable
 internal fun MuscleImprovementCards(ui: MuscleScoreUi, onGoToMissions: () -> Unit) {
     val score = ui.score
-    val age = ui.age
-    when {
-        score != null -> {
-            StsSafetyCard(ui, onGoToMissions) // §3.4 (조건 충족 시에만)
-            ScoreSimulationCard(ui.muscSim, ui.walkSim, score)
-            Spacer(Modifier.height(Dimens.Space8))
-        }
-        // 50세 미만은 '준비 중'이라고 말하면 안 된다 — 학습 데이터가 없어 **제공 계획 자체가 없다**.
-        //   #385 로 두 섹션이 한 탭에 모이면서, 위에서는 "제공하지 않는다"고 하고 여기서는 "준비되면
-        //   보여준다"고 해 한 화면에서 서로 반대되는 안내가 나갔다(1차 검토 피드백).
-        scoreEmptyState(age) == ScoreEmptyState.UNDER_AGE -> UnderAgeImprovementCard(onGoToMissions)
-        else -> ImprovementPendingCard(onGoToMissions)
+    if (score != null) {
+        StsSafetyCard(ui, onGoToMissions) // §3.4 (조건 충족 시에만)
+        ScoreSimulationCard(ui.muscSim, ui.walkSim, score)
+        Spacer(Modifier.height(Dimens.Space8))
+    } else {
+        // 도달하지 않는다 — 호출부(RecordScreen)가 `ui.score != null` 일 때만 이 섹션을 그린다(#385).
+        //   1차 제출본(09ec9bc)에는 그 게이트가 없어 50세 미만 사용자가 "점수가 준비되면 보여드려요"를
+        //   실제로 봤고, 그게 1차 검토에서 지적된 문구다. 지금은 위 섹션의 연령 안내 하나만 나간다.
+        ImprovementPendingCard(onGoToMissions)
     }
 }
 
@@ -511,17 +503,6 @@ private fun UnderAgeInfoCard(onGoToMissions: () -> Unit) {
     }
 }
 
-/** 50세 미만의 '근육 건강 정보' 섹션. 시뮬레이션은 점수 기반이라 같은 이유로 제공하지 않는다. */
-@Composable
-private fun UnderAgeImprovementCard(onGoToMissions: () -> Unit) {
-    AigoCard {
-        Text(UNDER_AGE_IMPROVEMENT_TITLE, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(Dimens.Space8))
-        Text(UNDER_AGE_IMPROVEMENT_BODY, style = MaterialTheme.typography.bodyLarge)
-        Spacer(Modifier.height(Dimens.Space12))
-        AigoPrimaryButton(text = "챌린지 보러 가기", onClick = onGoToMissions)
-    }
-}
 
 @Composable
 private fun ScorePendingCard() {
