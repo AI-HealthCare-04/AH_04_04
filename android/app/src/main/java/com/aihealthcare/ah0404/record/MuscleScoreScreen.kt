@@ -102,6 +102,42 @@ internal data class MuscleScoreUi(
 
 private const val DISPLAY_FLOOR = 5 // 표시 하한 5점(§3.1) — 계산·저장은 0~100, 화면 표시만 최저 5.
 
+/**
+ * 근육 건강 점수를 **언젠가라도** 제공할 수 있는 하한 나이. 이 미만은 학습 데이터(고령층 건강 조사)가 없어
+ * 제공 계획 자체가 없다 — '준비 중' 안내를 쓰면 안 되는 경계다(1차 검토 피드백).
+ * 50-64세는 이 위이므로 새 모델과 함께 준비 중으로 안내한다.
+ */
+internal const val MIN_SCORE_AGE = 50
+
+/** 점수 하한 연령 — 이 위(65세)부터 실제 점수를 제공한다. */
+private const val SCORE_AGE = 65
+
+/**
+ * 점수가 없을 때 어떤 안내를 보여줄지. **두 섹션(대시보드·근육 건강 정보)이 같은 판단을 쓰게** 한곳에 둔다 —
+ * 각자 분기하던 탓에 50세 미만 사용자가 한 화면에서 "제공하지 않는다"와 "준비되면 보여준다"를 동시에 봤다
+ * (1차 검토 피드백).
+ */
+internal enum class ScoreEmptyState { PENDING, UNDER_AGE, PREPARING }
+
+internal fun scoreEmptyState(age: Int?): ScoreEmptyState = when {
+    age == null -> ScoreEmptyState.PENDING          // 나이 미상(조회 실패) — 판단 불가라 잠시 후 재확인
+    age < MIN_SCORE_AGE -> ScoreEmptyState.UNDER_AGE // 학습 데이터 없음 → 제공 계획 없음
+    age < SCORE_AGE -> ScoreEmptyState.PREPARING     // 50-64세 — 새 모델과 함께 준비 중
+    else -> ScoreEmptyState.PENDING                  // 65세 이상인데 점수 미도착 — 준비 중
+}
+
+// 문구를 상수로 빼 테스트가 '준비 중' 표현의 재유입을 막는다(1차 검토 피드백).
+internal const val UNDER_AGE_SCORE_TITLE = "근육 건강 점수는 65세 이상만 제공해요"
+internal const val UNDER_AGE_SCORE_BODY =
+    "이 점수는 65세 이상 어르신의 건강 조사 자료로 만들어졌어요. " +
+        "${MIN_SCORE_AGE}세 미만은 기준이 되는 자료가 없어 점수를 제공하지 않아요. " +
+        "걷기·근력 챌린지와 운동 영상은 연령과 관계없이 그대로 이용하실 수 있어요."
+internal const val UNDER_AGE_IMPROVEMENT_TITLE = "개선 시뮬레이션도 65세 이상만 제공해요"
+internal const val UNDER_AGE_IMPROVEMENT_BODY =
+    "'이렇게 하면 이만큼 좋아져요'는 근육 건강 점수를 바탕으로 계산해요. " +
+        "점수를 제공하지 않는 연령대라 이 화면도 보여드리지 않아요. " +
+        "운동 자체는 챌린지와 운동 영상으로 그대로 하실 수 있어요."
+
 internal fun shown(score: Int): Int = max(score, DISPLAY_FLOOR)
 
 private fun bandLabel(band: String?): String = when (band) {
@@ -140,10 +176,14 @@ internal fun MuscleDashboardCards(
             CohortDistributionCard(ui.cohort, waistMissing = ui.waistCm == null) // 또래 중 내 위치(#193)
         }
         // §3.3 점수가 없을 때만 연령 분기: 65세 미만 카드. 나이 미상은 준비 중.
-        age == null -> ScorePendingCard()
-        age < 50 -> UnderAgeInfoCard(onGoToMissions)
-        age < 65 -> PreparingCard(onGoToMissions)
-        else -> ScorePendingCard()
+        //   ⚠️ 50세 미만과 50-64세는 **성격이 다르다**(1차 검토 피드백): 50-64세는 새 모델과 함께 준비 중이지만,
+        //      50세 미만은 학습 데이터가 없어 **제공 계획 자체가 없다**. 두 경우에 같은 '준비 중' 문구를 쓰면
+        //      50세 미만 사용자가 기다리면 되는 것으로 오해한다.
+        else -> when (scoreEmptyState(age)) {
+            ScoreEmptyState.UNDER_AGE -> UnderAgeInfoCard(onGoToMissions)
+            ScoreEmptyState.PREPARING -> PreparingCard(onGoToMissions)
+            ScoreEmptyState.PENDING -> ScorePendingCard()
+        }
     }
     // 5STS 재측정·추이(#353): 점수 추이 아래 보조 지표. 직접 수행 지표라 점수(예측) 유무와 무관하게
     //   항상 표시한다 — 스킵·65세 미만 사용자도 여기서 측정을 시작할 수 있다.
@@ -160,12 +200,18 @@ internal fun MuscleDashboardCards(
 @Composable
 internal fun MuscleImprovementCards(ui: MuscleScoreUi, onGoToMissions: () -> Unit) {
     val score = ui.score
-    if (score != null) {
-        StsSafetyCard(ui, onGoToMissions) // §3.4 (조건 충족 시에만)
-        ScoreSimulationCard(ui.muscSim, ui.walkSim, score)
-        Spacer(Modifier.height(Dimens.Space8))
-    } else {
-        ImprovementPendingCard(onGoToMissions)
+    val age = ui.age
+    when {
+        score != null -> {
+            StsSafetyCard(ui, onGoToMissions) // §3.4 (조건 충족 시에만)
+            ScoreSimulationCard(ui.muscSim, ui.walkSim, score)
+            Spacer(Modifier.height(Dimens.Space8))
+        }
+        // 50세 미만은 '준비 중'이라고 말하면 안 된다 — 학습 데이터가 없어 **제공 계획 자체가 없다**.
+        //   #385 로 두 섹션이 한 탭에 모이면서, 위에서는 "제공하지 않는다"고 하고 여기서는 "준비되면
+        //   보여준다"고 해 한 화면에서 서로 반대되는 안내가 나갔다(1차 검토 피드백).
+        scoreEmptyState(age) == ScoreEmptyState.UNDER_AGE -> UnderAgeImprovementCard(onGoToMissions)
+        else -> ImprovementPendingCard(onGoToMissions)
     }
 }
 
@@ -449,16 +495,29 @@ private fun PreparingCard(onGoToMissions: () -> Unit) {
     }
 }
 
+/**
+ * 50세 미만 안내(1차 검토 피드백). **'준비 중'이라고 하지 않는다** — 근육 건강 점수는 고령층 조사 자료로
+ * 만들어졌고 50세 미만은 학습 데이터가 없어 제공 계획이 없다. "지금은", "아직" 같은 말도 쓰지 않는다:
+ * 기다리면 열리는 것으로 읽히면 안 된다. 대신 **왜 안 되는지**를 말하고, 쓸 수 있는 것으로 안내한다.
+ */
 @Composable
 private fun UnderAgeInfoCard(onGoToMissions: () -> Unit) {
     AigoCard {
-        Text("근육 건강 점수 안내", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(UNDER_AGE_SCORE_TITLE, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(Dimens.Space8))
-        Text(
-            "근육 건강 점수는 65세 이상 기준으로 제공하고 있어요. 걷기·근력 챌린지는 " +
-                "연령과 관계없이 이용하실 수 있어요.",
-            style = MaterialTheme.typography.bodyLarge,
-        )
+        Text(UNDER_AGE_SCORE_BODY, style = MaterialTheme.typography.bodyLarge)
+        Spacer(Modifier.height(Dimens.Space12))
+        AigoPrimaryButton(text = "챌린지 보러 가기", onClick = onGoToMissions)
+    }
+}
+
+/** 50세 미만의 '근육 건강 정보' 섹션. 시뮬레이션은 점수 기반이라 같은 이유로 제공하지 않는다. */
+@Composable
+private fun UnderAgeImprovementCard(onGoToMissions: () -> Unit) {
+    AigoCard {
+        Text(UNDER_AGE_IMPROVEMENT_TITLE, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(Dimens.Space8))
+        Text(UNDER_AGE_IMPROVEMENT_BODY, style = MaterialTheme.typography.bodyLarge)
         Spacer(Modifier.height(Dimens.Space12))
         AigoPrimaryButton(text = "챌린지 보러 가기", onClick = onGoToMissions)
     }
