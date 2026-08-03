@@ -79,7 +79,7 @@ fun ProfileScreen(
                     ProfileContent(vm, info)
                 }
             }
-            // 신체 정보 편집(#기록탭 §2) — 키/몸무게/허리/신장건강정보.
+            // 기본 정보 편집(#기록탭 §2) — 키/몸무게/허리/신장건강정보.
             HealthInfoSection(healthVm)
         }
     }
@@ -113,7 +113,7 @@ fun ProfileScreen(
     }
 }
 
-/** 신체 정보 편집 카드(#기록탭 §2). 키·몸무게·허리둘레·신장건강정보 수정 → 새 스냅샷 저장. */
+/** 기본 정보 편집 카드(#기록탭 §2). 키·몸무게·허리둘레·신장건강정보 수정 → 새 스냅샷 저장. */
 @Composable
 private fun HealthInfoSection(healthVm: HealthInfoViewModel) {
     val profile = healthVm.profile
@@ -150,7 +150,10 @@ private fun HealthInfoEditor(healthVm: HealthInfoViewModel, profile: HealthProfi
     var protein by remember(profile) { mutableStateOf(profile.proteinRestrictionStatus) }
 
     AigoCard {
-        Text("신체 정보", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        // 제목은 온보딩 1단계와 같은 말로 맞춘다(#391). 온보딩에서 넣은 값을 여기서 고치게 되는데
+        //   두 화면이 다른 말을 쓰면 같은 것인 줄 모른다. 허리둘레 안내·미션 잠금 안내처럼 "설정 →
+        //   내 정보에서 바꿔 주세요"로 유도하는 문구가 여러 곳에 있어 도착 화면의 용어가 특히 중요하다.
+        Text("기본 정보", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(Dimens.Space12))
         AigoTextField(height, { height = it }, "키 (cm)", keyboardType = KeyboardType.Number)
         Spacer(Modifier.height(Dimens.Space8))
