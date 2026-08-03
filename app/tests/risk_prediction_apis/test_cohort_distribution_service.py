@@ -200,3 +200,35 @@ def test_format_age_label() -> None:
     assert _format_cohort_age_label("80+", "80+") == "80세 이상"
     assert _format_cohort_age_label("72", "69-75") == "69–75세"
     assert _format_cohort_age_label("72", None) == "72세"
+
+
+# ---------------- 저장값 계약 방어(#410 리뷰 P1) ----------------
+
+
+def test_invalid_stored_sex_returns_404_not_500() -> None:
+    """계약(male=1, female=2) 밖 성별이 저장돼 있으면 404 로 알린다 — 500 이나 조회 실패로 새지 않는다.
+
+    원본 스냅샷을 지운 뒤에는 값을 되살릴 수 없으므로(#408), 잘못된 값이 조용히 흘러가지 않게
+    조회 지점에서 명시적으로 막는다.
+    """
+    for bad_sex in (None, 0, 3):
+        prediction = _prediction("0.05")
+        prediction.score_cohort_sex = bad_sex
+        with pytest.raises(HTTPException) as exc:
+            _run(_service(_profile(72), prediction))
+        assert exc.value.status_code == 404
+        assert exc.value.detail == "Sex not available."
+
+
+def test_unproducible_age_key_is_rejected_as_out_of_scope() -> None:
+    """`_cohort_age_key` 가 만들 수 없는 키('80'·'999')는 지원 대상이 아니다(#410 리뷰).
+
+    80 이상은 항상 '80+' 로 접히므로 단일 나이 키의 최대는 79 다. 상한이 없으면 표에 없는 키가
+    '지원 연령'으로 통과해 404(조회 실패)로 뭉뚱그려진다.
+    """
+    for bad_key in ("80", "999", "64"):
+        prediction = _prediction("0.05")
+        prediction.score_cohort_age = bad_key
+        with pytest.raises(HTTPException) as exc:
+            _run(_service(_profile(72), prediction))
+        assert exc.value.status_code == 422

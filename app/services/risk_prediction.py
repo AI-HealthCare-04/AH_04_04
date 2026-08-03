@@ -26,6 +26,7 @@ from app.dtos.risk_prediction import (
 )
 from app.ml.predictor import (
     AGE_MIN,
+    AGE_TOPCODE,
     AgeNotSupportedError,
     RiskPredictor,
     features_from_health_profile,
@@ -230,7 +231,9 @@ class RiskPredictionService:
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Cohort distribution is provided for age >= {AGE_MIN} only.",
             )
-        if sex is None:
+        if sex not in COHORT_SEX_CODES:
+            # 저장값이 계약(male=1, female=2) 밖이면 표에 없는 키라 조회가 성립하지 않는다. None 뿐 아니라
+            #   0 같은 잘못된 값도 여기서 명시적으로 걸러, `int(sex)` 나 조회 실패로 흘려보내지 않는다.
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sex not available.")
         # 확률을 만든 모델과 같은 feature_set 코호트만 사용한다. 다른 feature_set 으로 폴백하면
         #   with_waist 확률을 minimal 분포에 대입하는 식의 잘못된 백분위가 나온다(리뷰 #301).
@@ -427,15 +430,18 @@ class RiskPredictionService:
 
 
 def _is_cohort_supported_age(age_key: str) -> bool:
-    """코호트 조회 키가 지원 연령(만 [AGE_MIN] 이상)인지. `'80+'` 는 상단 top-code 라 항상 지원.
+    """코호트 조회 키가 **실제로 존재하는 키**인지: 단일 나이 65..79 또는 상단 top-code `'80+'`.
 
     입력 원본을 보관하지 않게 되면서(#408) 나이 숫자 대신 키로 판정한다 — 예측 시점에 이미 걸러지지만,
     저장된 값이 어긋난 경우 표 조회 실패(404)로 뭉뚱그리지 않고 '대상 아님'을 그대로 알리기 위한 방어다.
+
+    상한을 두는 이유(#410 리뷰): `>= AGE_MIN` 만 보면 `'80'`·`'999'` 처럼 `_cohort_age_key` 가 절대
+    만들지 않는 키까지 통과한다. 80 이상은 항상 `'80+'` 로 접히므로 단일 나이는 79 가 최대다.
     """
-    if age_key.endswith("+"):
+    if age_key == f"{AGE_TOPCODE}+":
         return True
     try:
-        return int(age_key) >= AGE_MIN
+        return AGE_MIN <= int(age_key) < AGE_TOPCODE
     except ValueError:
         return False
 

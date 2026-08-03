@@ -292,6 +292,48 @@ def check_prediction_snapshot_guard() -> None:
             asyncio.run(_exec(f"DROP DATABASE IF EXISTS `{MIG_DB}`"))
 
 
+def check_prediction_snapshot_rerun_after_fix() -> None:
+    """가드 실패 후 **같은 DB 에서** 데이터를 고쳐 재실행하면 성공하는지 검증한다(#410 리뷰 P1).
+
+    MySQL 은 DDL 이 암시적 커밋이라, 컬럼을 추가한 뒤 실패하면 revision 은 0020 에 머문 채 컬럼만
+    남아 재실행이 duplicate column 으로 막힌다. 안내대로 데이터를 교정해도 복구가 안 되면 가드가
+    '중단'이 아니라 '막다른 길'이 된다 — 그래서 실제 복구 경로를 통째로 확인한다.
+    """
+    print(f"\n임시 DB 재생성(가드 실패 후 재실행 검증): {MIG_DB}", flush=True)
+    try:
+        # 성별이 모델 인코딩이 아닌 행(0) → 첫 실행은 가드로 중단돼야 한다.
+        _seed_prediction_at_0020("JSON_OBJECT('age',72.0,'sex',0,'bmi',22.5)")
+        first = _alembic_capture("upgrade", "head")
+        if first.returncode == 0:
+            sys.exit("재실행 검증 실패: 복원 불가 행이 있는데 첫 실행이 성공했다(원본 삭제 경로!)")
+
+        # 안내대로 데이터를 교정한다(스냅샷의 sex 를 male=1 로).
+        asyncio.run(
+            _exec_many_on_mig(
+                ["UPDATE risk_predictions SET input_snapshot = JSON_SET(input_snapshot, '$.sex', 1)"]
+            )
+        )
+
+        # 같은 DB 에 그대로 재실행 → 이번엔 성공해야 한다(컬럼 추가가 조건부·백필이 멱등).
+        second = _alembic_capture("upgrade", "head")
+        if second.returncode != 0:
+            sys.exit(
+                "재실행 검증 실패: 데이터를 교정했는데 재실행이 실패했다(가드가 막다른 길이 된다). "
+                f"마지막 출력:\n{((second.stderr or '') + (second.stdout or ''))[-2000:]}"
+            )
+        migrated = asyncio.run(
+            _scalar_on_mig(
+                "SELECT COUNT(*) FROM risk_predictions "
+                "WHERE score_cohort_age='72' AND score_cohort_sex=1 AND input_snapshot IS NULL"
+            )
+        )
+        if migrated != 1:
+            sys.exit(f"재실행 검증 실패: 재실행 후 파생값 보존/원본 폐기가 기대와 다르다(matched={migrated})")
+        print("== OK: 가드 중단 → 데이터 교정 → 같은 DB 재실행 성공 → 파생값 보존 후 원본 폐기 ==")
+    finally:
+        asyncio.run(_exec(f"DROP DATABASE IF EXISTS `{MIG_DB}`"))
+
+
 def check_prediction_snapshot_backfill() -> None:
     """정상 행은 가드에 걸리지 않고 파생값 보존 후 원본이 폐기되는지 검증한다(#408).
 
@@ -327,6 +369,7 @@ def main() -> None:
     check_walk_6m_data_guard()
     check_walk_6m_skipped_only_drops()
     check_prediction_snapshot_guard()
+    check_prediction_snapshot_rerun_after_fix()
     check_prediction_snapshot_backfill()
     print("\n== ALL OK ==")
 
