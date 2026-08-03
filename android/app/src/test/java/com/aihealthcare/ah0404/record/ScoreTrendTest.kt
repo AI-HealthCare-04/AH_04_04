@@ -2,6 +2,8 @@ package com.aihealthcare.ah0404.record
 
 import com.aihealthcare.ah0404.network.RiskHistoryItem
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -77,7 +79,9 @@ class ScoreTrendTest {
         assertEquals("지난 기록보다 4점 올랐어요. 지금처럼 이어가 봐요.", scoreChangeCopy(up))
 
         val down = buildScoreTrend(listOf(item("2026-07-01", 74), item("2026-07-08", 70)))
-        assertEquals("지난 기록보다 4점 낮아졌어요. 걷기·근력 챌린지로 다시 올려봐요.", scoreChangeCopy(down))
+        // 하락 원인 미단정(#389 문제 2): 신체 정보 갱신으로도 내려가므로 활동 탓으로 읽히면 안 된다.
+        assertEquals("지난 기록보다 4점 낮아졌어요.", scoreChangeCopy(down))
+        assertFalse(scoreChangeCopy(down).contains("걷기"))
 
         val flat = buildScoreTrend(listOf(item("2026-07-01", 70), item("2026-07-08", 70)))
         assertEquals("지난 기록과 비슷하게 유지되고 있어요.", scoreChangeCopy(flat))
@@ -131,5 +135,30 @@ class ScoreTrendTest {
         assertTrue(copy.contains("'내 정보'")) // 다시 계산되는 시점도 함께 말한다
         // size=0: 점수는 있는데 추이만 비었다 = 추이 조회 실패. '첫 평가를 마치면'은 점수 존재와 모순이므로 조회 실패 안내(리뷰 #339-②).
         assertEquals("변화 추이를 불러오지 못했어요. 잠시 후 다시 확인해 주세요.", trendEmptyCopy(0))
+    }
+
+    // ── #389 문제 1: 기준 경계 캡션 ──────────────────────────────────────
+
+    @Test
+    fun baseline_caption_only_when_boundary_exists() {
+        // 경계 없는 추이(같은 기준) → 캡션 없음(불필요한 설명을 띄우지 않는다).
+        val same = buildScoreTrend(
+            listOf(item("2026-07-01", 70), item("2026-07-08", 72)),
+        )
+        assertNull(trendBaselineCaption(splitByBaseline(same)))
+
+        // 모델이 바뀐 지점이 있으면 → 왜 끊겼는지 설명하는 캡션.
+        val boundary = buildScoreTrend(
+            listOf(
+                item("2026-07-01", 70),
+                item("2026-07-08", 62, status = "model_changed"),
+            ),
+        )
+        val caption = trendBaselineCaption(splitByBaseline(boundary))
+        assertNotNull(caption)
+        assertTrue(caption!!.contains("계산 기준"))
+        // 원인을 단정하지 않는다 — API 가 사유를 안 주므로(#389 B 후속) 활동·허리둘레 등을 지목하지 않는다.
+        assertFalse(caption.contains("걷기"))
+        assertFalse(caption.contains("허리"))
     }
 }
