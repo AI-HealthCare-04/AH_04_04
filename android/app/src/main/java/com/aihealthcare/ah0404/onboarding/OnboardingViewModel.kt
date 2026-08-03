@@ -13,6 +13,7 @@ import com.aihealthcare.ah0404.network.OnboardingApi
 import com.aihealthcare.ah0404.network.PhysicalAssessmentRequest
 import com.aihealthcare.ah0404.network.RiskPredictionRequest
 import com.aihealthcare.ah0404.network.RiskPredictionResponse
+import com.aihealthcare.ah0404.network.SessionStore
 import com.aihealthcare.ah0404.network.Term
 import com.aihealthcare.ah0404.network.TokenHolder
 import com.aihealthcare.ah0404.network.retrofit
@@ -50,6 +51,9 @@ class OnboardingViewModel(
     private val todayYear: Int = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR),
     private val todayMonth: Int = java.util.Calendar.getInstance().get(java.util.Calendar.MONTH) + 1,
     private val todayDay: Int = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_MONTH),
+    // 현재 인증 주체 키(#383). SessionStore.authRevision 은 private set 이라 테스트에서 못 바꾸므로
+    //   ExerciseVideosViewModel 과 같은 방식으로 주입 가능하게 둔다.
+    private val authKey: () -> Int = { SessionStore.authRevision },
 ) : ViewModel() {
 
     var step by mutableStateOf(OnbStep.WELCOME); private set
@@ -200,6 +204,38 @@ class OnboardingViewModel(
 
     private val requiredTerms = listOf("service", "privacy", "sensitive_health")
 
+    /**
+     * 이 VM 이 들고 있는 진행 상태(step·입력값·sessionId·profileId)의 **주인**([SessionStore.authRevision]).
+     * null = 아직 온보딩을 시작하지 않음.
+     *
+     * `finished` 만으로는 부족하다(#383 실기기 QA). 완주 신호는 홈 라우팅 직후 [consumeFinished] 로 소비되므로,
+     * 완주 후 탈퇴 → 재로그인 경로에서는 **이미 false** 다. 그런데 재로그인으로 토큰은 있으니 기존 두 조건이
+     * 모두 빗나가 리셋이 걸리지 않고, `step` 에 남은 ASSESSMENT 가 그대로 그려진다 — 새 계정이 약관·프로필을
+     * 건너뛴 채 체력검사부터 시작하고, 이전 사용자의 입력값(PII)과 죽은 sessionId 까지 함께 남는다.
+     *
+     * 그래서 "신호가 남아 있는가" 대신 **"이 진행 상태가 지금 로그인한 사람의 것인가"** 를 본다.
+     */
+    private var progressOwner: Int? = null
+
+    /**
+     * 진행 상태의 주인을 지금 인증 주체로 확정한다. 온보딩 **시작점**([start]·[continueAuthenticated])에서만 부른다.
+     *
+     * 온보딩 도중의 정상 로그인(게스트 → 소셜)도 `authRevision` 을 올리지만, 그 경로는 반드시
+     * [continueAuthenticated] 를 거치므로 여기서 주인이 갱신돼 stale 로 오판되지 않는다. 반대로 탈퇴 후
+     * `LoginRequiredScreen` 에서의 재로그인은 이 두 시작점을 거치지 않아 주인이 갱신되지 않는다 — 그 차이가
+     * '이어가는 로그인'과 '주체가 바뀐 재진입'을 가른다.
+     */
+    private fun claimProgress() {
+        progressOwner = authKey()
+    }
+
+    /**
+     * 남아 있는 진행 상태가 **다른 인증 주체**의 것인지(#383). 화면 진입 가드가 쓴다.
+     * WELCOME 이면 애초에 남은 진행이 없으므로 false.
+     */
+    fun isProgressFromAnotherAuth(): Boolean =
+        step != OnbStep.WELCOME && progressOwner != authKey()
+
     /** S0 → 체험 사용자의 게스트 로그인 후 약관 목록 로드. 기존 소셜 토큰은 덮어쓰지 않는다. */
     fun start() = launchStep("시작") {
         finished = false // 온보딩 시작점에서 완주 신호를 깐다 — stale finished 로 즉시 홈 라우팅되는 경로 원천 차단(리뷰 #311).
@@ -207,6 +243,7 @@ class OnboardingViewModel(
         if (TokenHolder.token.isBlank()) {
             TokenHolder.token = api.guestLogin().accessToken
         }
+        claimProgress() // 게스트 로그인은 SessionStore.applyLogin 을 타지 않아 authRevision 이 그대로다 — 현재 값을 주인으로.
         loadTerms()
     }
 
@@ -214,6 +251,7 @@ class OnboardingViewModel(
     fun continueAuthenticated() = launchStep("로그인") {
         finished = false // 시작점에서 완주 신호 초기화(리뷰 #311) — resetToWelcome 을 안 거친 재진입도 방어.
         isGuest = false
+        claimProgress() // applyLogin 으로 올라간 새 authRevision 을 주인으로 — 이어가는 로그인은 stale 이 아니다.
         loadTerms()
     }
 
@@ -244,6 +282,7 @@ class OnboardingViewModel(
         kidneyStatus = "unknown"; proteinStatus = "unknown"
         chairStandSec = ""
         lastSubmittedProfile = null
+        progressOwner = null // 진행이 비었으므로 주인도 없다 — 다음 시작점에서 다시 확정된다.
     }
 
     private suspend fun loadTerms() {

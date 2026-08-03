@@ -138,11 +138,16 @@ fun OnboardingScreen(
     //   ② 완주 신호(finished)가 선 채로 진입 — **이 화면에 도달했다는 것 자체가 미완료 계정**이라는 뜻이므로
     //      (완료 계정은 MAIN 으로 라우팅된다) 남아 있는 신호는 반드시 stale 이다. 탈퇴 → 같은 소셜 계정
     //      재로그인(= 미완료 신규 계정)에서 약관·프로필을 건너뛰고 홈으로 직행하던 회귀(#383).
+    //   ③ 남은 진행의 **주인이 지금 인증 주체와 다름** — ①②가 모두 빗나가는 구멍을 막는다(#383 실기기 QA).
+    //      완주 → 홈에서 finished 는 소비되고(①의 조건 소멸), 재로그인으로 토큰은 있어(②의 조건 소멸)
+    //      step=ASSESSMENT 가 그대로 그려졌다. 실기기에서 새 계정이 약관을 건너뛰고 체력검사부터 시작했고,
+    //      이전 사용자의 입력값과 죽은 sessionId 가 남아 건너뛰기 요청까지 실패해 사용자가 갇혔다.
     //   리셋은 이전 사용자의 입력(PII 포함)까지 함께 비운다 — 한 폰 다인 시연 대비.
     LaunchedEffect(Unit) {
         val staleFinished = vm.finished
         val staleStepWithoutToken = TokenHolder.token.isBlank() && vm.step != OnbStep.WELCOME
-        if (staleFinished || staleStepWithoutToken) {
+        val staleForAnotherAuth = vm.isProgressFromAnotherAuth()
+        if (staleFinished || staleStepWithoutToken || staleForAnotherAuth) {
             vm.resetToWelcome()
         }
     }
