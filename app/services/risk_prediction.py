@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Mapping
 from datetime import datetime, time, timedelta
 from decimal import Decimal
 
@@ -471,7 +472,7 @@ def _is_cohort_supported_age(age_key: str) -> bool:
         return False
 
 
-def _serialize_contributions(snapshot: dict[str, object] | None) -> list[dict[str, object]] | None:
+def _serialize_contributions(snapshot: Mapping[str, object] | None) -> list[dict[str, object]] | None:
     """예측 시점 입력으로 SHAP 기여도(#406)를 계산해 저장용 JSON 리스트로 만든다.
 
     원본 스냅샷은 저장하지 않고(#408) 여기서 뽑은 파생 3개(근력·걷기·허리)만 컬럼에 남긴다.
