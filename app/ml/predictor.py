@@ -332,6 +332,69 @@ def compute_muscle_score(
     return score, band, p_low, p_high, age_key
 
 
+# 화면에 노출할 SHAP 기여도 특징(#406): 사용자가 바꿀 수 있고 방향이 건강과 일치하는 것만 보여준다.
+#   나이·성별·키(비가역)와 체중·BMI(모델에서 '무거울수록 위험↓'로 작동 → '살 찌우세요' 오해)는 제외한다.
+CONTRIBUTION_FEATURES: tuple[str, ...] = ("musc_days", "walk_days", "waist_cm")
+
+
+@dataclass(frozen=True)
+class FeatureContribution:
+    """점수 방향 SHAP 기여(#406). effect_on_score = -(위험계수)×표준화값 (log-odds).
+
+    양수 = 점수를 올리는 방향, 음수 = 점수를 내리는(=개선 여지가 큰) 방향. |값|이 클수록 영향이 크다.
+    """
+
+    feature: str
+    effect_on_score: float
+
+
+def compute_score_contributions(input_snapshot: Mapping[str, Any]) -> list[FeatureContribution]:
+    """로지스틱 회귀의 닫힌형 SHAP(계수×표준화값)으로 점수 방향 기여도를 구한다(#406, 재학습·shap 라이브러리 불필요).
+
+    ⚠️ LR ``coef_`` 순서는 ``feature_columns`` 가 아니라 전처리(ColumnTransformer)의 **출력 순서**다
+       (범주형 ``sex`` 가 맨 뒤로 감). 반드시 ``get_feature_names_out()`` 로 원 특징명에 매핑해야 부호가
+       뒤집히지 않는다. 기여도는 부가 정보라 어떤 이유로든 계산 실패 시 빈 목록을 돌려 본 응답을 막지 않는다.
+
+    ⚠️ 예측 시점에 메모리의 ``result.input_snapshot`` 으로만 호출한다 — 서버는 원본 입력을 저장하지
+       않으므로(#408) 사후 재계산은 불가능하다. 서비스가 이 결과를 파생 컬럼에 고정 저장한다.
+    """
+    if not input_snapshot:
+        return []  # 입력이 없으면 기여도도 없다(임퓨트된 평균값으로 가짜 막대를 만들지 않는다).
+    try:
+        include_waist = has_waist_input(input_snapshot)
+        artifact_path = WITH_WAIST_ARTIFACT_PATH if include_waist else MINIMAL_ARTIFACT_PATH
+        bundle = load_model_bundle(artifact_path)
+        model = bundle["model"]
+        feature_columns = tuple(
+            bundle.get("feature_columns")
+            or (WITH_WAIST_FEATURE_COLUMNS if include_waist else MINIMAL_FEATURE_COLUMNS)
+        )
+        frame = pd.DataFrame(
+            [{column: input_snapshot.get(column) for column in feature_columns}],
+            columns=feature_columns,
+        )
+        pre = model.named_steps["pre"]
+        lr = model.named_steps["lr"]
+        standardized = pre.transform(frame).ravel()
+        out_names = list(pre.get_feature_names_out())
+        coef = lr.coef_.ravel()
+        # 전처리 접두사(num__/bin__)를 떼어 원 특징명 → (위험계수, 표준화값)으로 매핑.
+        name_to_coef = {name.split("__", 1)[-1]: float(c) for name, c in zip(out_names, coef, strict=True)}
+        name_to_z = {name.split("__", 1)[-1]: float(z) for name, z in zip(out_names, standardized, strict=True)}
+        contributions: list[FeatureContribution] = []
+        for feature in CONTRIBUTION_FEATURES:
+            if feature not in name_to_coef or feature not in name_to_z:
+                continue  # waist_cm 은 minimal 모델(허리 미입력)엔 없다.
+            effect_on_score = -name_to_coef[feature] * name_to_z[feature]
+            contributions.append(
+                FeatureContribution(feature=feature, effect_on_score=round(effect_on_score, 4))
+            )
+        return contributions
+    except Exception:
+        logger.warning("Failed to compute score contributions; returning empty.", exc_info=True)
+        return []
+
+
 class RiskPredictor:
     def __init__(
         self,

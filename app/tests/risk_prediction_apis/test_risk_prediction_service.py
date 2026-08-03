@@ -32,6 +32,7 @@ from app.models.users import User
 from app.services.risk_prediction import (
     COHORT_SEX_CODES,
     RiskPredictionService,
+    _serialize_contributions,
     _snapshot_sex,
     next_reassess_available_at,
 )
@@ -162,6 +163,8 @@ def test_reassess_response_uses_v73_contract_without_model_variant() -> None:
         "display_message": RiskPredictionService._display_message(CareStage.MAINTAIN),
         "disclaimer": "본 결과는 참고용이며 의학적 진단이 아닙니다.",
         "activity_input_source": ActivityInputSource.SERVICE_LOG.value,
+        # 기여도 없는 예측(구행·스냅샷 없음)은 빈 목록(#406) — 계약을 깨지 않는다.
+        "contributions": [],
         # 하루 1회 정책(#388): 기본은 '이번 호출로 새로 계산' + 다음 가능 시각(다음 KST 자정).
         "recalculated": True,
         "next_available_at": dumped["next_available_at"],
@@ -429,6 +432,12 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
     #   원본을 예측마다 복제하면 프로필 컬럼을 아무리 줄여도 노출면이 그대로다.
     assert prediction_repo.created_prediction.score_cohort_sex == 1
     assert prediction_repo.created_prediction.input_snapshot is None
+    # SHAP 기여도(#406)는 원본이 사라지기 전 예측 시점 입력으로 계산해 **파생값만** 컬럼에 남긴다.
+    #   원본(input_snapshot)은 None 이어도 기여도는 유지된다 — 이게 응답 시점 재계산과의 결정적 차이다.
+    stored_contribs = prediction_repo.created_prediction.score_contributions
+    assert stored_contribs, "신규 예측은 파생 SHAP 기여도를 저장해야 한다"
+    assert {c["feature"] for c in stored_contribs} <= {"musc_days", "walk_days", "waist_cm"}
+    assert {c.feature for c in response.contributions} == {c["feature"] for c in stored_contribs}
     assert response.profile_id == 72
     assert response.prediction_id == 90
     assert response.muscle_score == 81
@@ -559,3 +568,63 @@ def test_snapshot_sex_rejects_out_of_contract_values() -> None:
     assert _snapshot_sex({"sex": None}) is None
     assert _snapshot_sex({}) is None
     assert _snapshot_sex(None) is None
+
+
+# ---------------- SHAP 기여도 저장/조회 계약(#406, #408 병행) ----------------
+
+
+def test_serialize_contributions_writes_only_derived_whitelist() -> None:
+    """예측 시점 입력으로 파생 기여도만 만들어 저장 형태로 직렬화한다.
+
+    원본이 아니라 노출 3개(근력·걷기·허리)의 방향 기여만 남는다 — 최소화(#408)를 위반하지 않는다.
+    """
+    snapshot = {"age": 72.0, "sex": 1, "bmi": 27.6, "height_cm": 168.0, "weight_kg": 78.0,
+                "waist_cm": 98.0, "walk_days": 1.0, "musc_days": 0.0}
+    stored = _serialize_contributions(snapshot)
+    assert stored is not None
+    features = {row["feature"] for row in stored}
+    assert features == {"musc_days", "walk_days", "waist_cm"}
+    # 원본 식별 항목(나이·성별·키·체중·BMI)은 절대 저장되지 않는다.
+    assert features.isdisjoint({"age", "sex", "height_cm", "weight_kg", "bmi"})
+    assert all(isinstance(row["effect_on_score"], float) for row in stored)
+
+
+def test_serialize_contributions_empty_when_no_input() -> None:
+    # 입력이 없으면(구행 재계산 등) None 을 저장해 가짜 막대를 만들지 않는다.
+    assert _serialize_contributions(None) is None
+    assert _serialize_contributions({}) is None
+
+
+def test_contributions_reads_stored_derived_even_without_snapshot() -> None:
+    """응답은 저장된 파생값을 그대로 읽는다 — 원본(input_snapshot)이 없어도 유지된다.
+
+    이것이 #410(원본 폐기)과 충돌하지 않는 핵심이다. 응답 시점에 재계산하지 않는다.
+    """
+    prediction = RiskPrediction(
+        prediction_id=1, user_id=1, profile_id=1, model_version="v1",
+        model_variant=ModelVariant.WITH_WAIST, internal_risk_score=Decimal("0.12"),
+        internal_risk_level=RiskLevel.LOW, input_snapshot=None,
+        score_contributions=[{"feature": "waist_cm", "effect_on_score": -1.29},
+                             {"feature": "musc_days", "effect_on_score": -0.17}],
+    )
+    result = RiskPredictionService._contributions(prediction)
+    assert [(c.feature, c.effect_on_score) for c in result] == [
+        ("waist_cm", -1.29), ("musc_days", -0.17)
+    ]
+
+
+def test_contributions_empty_for_legacy_rows_and_bad_shapes() -> None:
+    # 0021 이전 구행(컬럼 NULL)·형태가 어긋난 항목은 빈 목록으로 안전하게 넘긴다(신규 건만 제공).
+    def _pred(contribs: object) -> RiskPrediction:
+        return RiskPrediction(
+            prediction_id=1, user_id=1, profile_id=1, model_version="v1",
+            model_variant=ModelVariant.MINIMAL, internal_risk_score=Decimal("0.12"),
+            internal_risk_level=RiskLevel.LOW, score_contributions=contribs,  # type: ignore[arg-type]
+        )
+
+    assert RiskPredictionService._contributions(_pred(None)) == []
+    assert RiskPredictionService._contributions(_pred([])) == []
+    # 잘못된 항목은 조용히 버리고, 유효한 항목만 남긴다.
+    mixed = [{"feature": "walk_days", "effect_on_score": 0.2}, {"feature": 3}, "nope", {"effect_on_score": 1}]
+    kept = RiskPredictionService._contributions(_pred(mixed))
+    assert [(c.feature, c.effect_on_score) for c in kept] == [("walk_days", 0.2)]

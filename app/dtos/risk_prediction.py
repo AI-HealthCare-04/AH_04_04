@@ -27,6 +27,17 @@ class RiskComparisonStatus(StrEnum):
     MODEL_CHANGED = "model_changed"
 
 
+class FeatureContributionResponse(BaseModel):
+    """근육 점수 SHAP 기여(#406). feature=musc_days|walk_days|waist_cm(바꿀 수 있는 3개만).
+
+    effect_on_score = 점수 방향 기여(log-odds). 양수=점수를 올리는 방향, 음수=점수를 내리는(개선 여지) 방향.
+    앱은 |값|으로 막대 길이를, 부호로 색을 정한다. (나이·성별·키·체중·BMI 는 노출하지 않는다.)
+    """
+
+    feature: str
+    effect_on_score: float
+
+
 class RiskPredictionResponse(BaseModel):
     prediction_id: int
     profile_id: int
@@ -38,6 +49,8 @@ class RiskPredictionResponse(BaseModel):
     care_stage: CareStage
     display_message: str
     disclaimer: str = "본 결과는 참고용이며 의학적 진단이 아닙니다."
+    # 근육 점수 기여도(#406): 바꿀 수 있는 3개(근력·걷기·허리)만. 예측 시점에 계산해 저장한 파생값.
+    contributions: list[FeatureContributionResponse] = Field(default_factory=list)
 
 
 class RiskPredictionCreateResponse(RiskPredictionResponse):
@@ -80,6 +93,8 @@ class RiskPredictionReassessResponse(BaseModel):
     care_stage: CareStage
     display_message: str
     disclaimer: str = "본 결과는 참고용이며 의학적 진단이 아닙니다."
+    # 근육 점수 기여도(#406): 재평가 후에도 최신 기여도를 함께 내려 대시보드 막대를 갱신한다.
+    contributions: list[FeatureContributionResponse] = Field(default_factory=list)
     activity_input_source: ActivityInputSource = ActivityInputSource.SERVICE_LOG
     # 하루 1회 정책(#388). True=이번 호출로 새로 계산, False=오늘 이미 계산해 기존 예측을 반환.
     recalculated: bool = True

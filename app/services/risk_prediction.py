@@ -13,6 +13,7 @@ from app.dtos.dashboard import ScoreSimPoint, ScoreSimulationResponse
 from app.dtos.risk_prediction import (
     CareStage,
     CohortDistributionResponse,
+    FeatureContributionResponse,
     PredictionFeedbackRequest,
     PredictionFeedbackResponse,
     RiskComparisonStatus,
@@ -29,6 +30,7 @@ from app.ml.predictor import (
     AGE_TOPCODE,
     AgeNotSupportedError,
     RiskPredictor,
+    compute_score_contributions,
     features_from_health_profile,
     load_cohort_distribution,
     load_cohort_version,
@@ -298,6 +300,8 @@ class RiskPredictionService:
             score_cohort_version=getattr(result, "score_cohort_version", None),
             # 입력 원본(input_snapshot)은 저장하지 않는다(#408 — 서버 보관 최소화). 화면·추이가 쓰는 값은
             #   위 파생 컬럼들로 충분하고, 원본을 예측마다 복제하면 프로필을 아무리 줄여도 의미가 없다.
+            # SHAP 기여도(#406)는 원본이 사라지기 전 **지금 메모리의 입력**으로 계산해 파생 3개만 고정 저장한다.
+            score_contributions=_serialize_contributions(result.input_snapshot),
         )
         await self.prediction_repo.create_risk_prediction(prediction)
         if complete_onboarding:
@@ -318,7 +322,27 @@ class RiskPredictionService:
             cohort_version=getattr(prediction, "score_cohort_version", None),
             care_stage=care_stage,
             display_message=self._display_message(care_stage),
+            contributions=self._contributions(prediction),
         )
+
+    @staticmethod
+    def _contributions(prediction: RiskPrediction) -> list[FeatureContributionResponse]:
+        """예측 행에 저장된 파생 SHAP 기여도를 응답 DTO 로 옮긴다(#406).
+
+        예측 시점에 계산·저장한 값을 그대로 읽을 뿐 여기서 재계산하지 않는다 — 원본 입력은 서버에
+        없다(#408). 저장된 값이 없거나(0021 이전 구행) 형태가 어긋나면 빈 목록으로 안전하게 넘긴다.
+        """
+        stored = getattr(prediction, "score_contributions", None) or []
+        items: list[FeatureContributionResponse] = []
+        for entry in stored:
+            if not isinstance(entry, dict):
+                continue
+            feature = entry.get("feature")
+            effect = entry.get("effect_on_score")
+            if not isinstance(feature, str) or not isinstance(effect, int | float):
+                continue
+            items.append(FeatureContributionResponse(feature=feature, effect_on_score=float(effect)))
+        return items
 
     def _to_reassess_response(
         self,
@@ -338,6 +362,7 @@ class RiskPredictionService:
             cohort_version=getattr(prediction, "score_cohort_version", None),
             care_stage=care_stage,
             display_message=self._display_message(care_stage),
+            contributions=self._contributions(prediction),
         )
 
     async def _create_reassessment_profile(
@@ -444,6 +469,18 @@ def _is_cohort_supported_age(age_key: str) -> bool:
         return AGE_MIN <= int(age_key) < AGE_TOPCODE
     except ValueError:
         return False
+
+
+def _serialize_contributions(snapshot: dict[str, object] | None) -> list[dict[str, object]] | None:
+    """예측 시점 입력으로 SHAP 기여도(#406)를 계산해 저장용 JSON 리스트로 만든다.
+
+    원본 스냅샷은 저장하지 않고(#408) 여기서 뽑은 파생 3개(근력·걷기·허리)만 컬럼에 남긴다.
+    기여도가 없으면(입력 없음·계산 실패·minimal 모델) None 을 돌려 컬럼을 비운다.
+    """
+    contributions = compute_score_contributions(snapshot or {})
+    if not contributions:
+        return None
+    return [{"feature": c.feature, "effect_on_score": c.effect_on_score} for c in contributions]
 
 
 def _snapshot_sex(snapshot: dict[str, object] | None) -> int | None:
