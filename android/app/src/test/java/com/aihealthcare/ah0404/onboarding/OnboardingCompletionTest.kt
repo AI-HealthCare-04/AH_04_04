@@ -17,6 +17,7 @@ import com.aihealthcare.ah0404.network.TermsListResponse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -127,6 +128,70 @@ class OnboardingCompletionTest {
         vm.continueAuthenticated(); advanceUntilIdle()
         assertFalse("재시작은 stale finished 를 초기화한다(리뷰 #311)", vm.finished)
         assertEquals(OnbStep.TERMS, vm.step)
+    }
+
+    // ── 완주 신호는 일회성 이벤트다(#383) ─────────────────────────────────────────
+    // 회귀 배경: 탈퇴 → 같은 소셜 계정 재로그인은 서버에서 **미완료 신규 계정**이 되는데, 이 경로는
+    //   온보딩 화면 안이 아니라 LoginRequiredScreen 에서 로그인하므로 start()/continueAuthenticated()
+    //   초기화(#311 방어)를 거치지 않는다. Activity 수명 VM 에 남은 finished=true 가 화면이 붙는 순간
+    //   재발화해 약관·프로필을 건너뛰고 홈으로 직행했다.
+
+    @Test
+    fun finished_is_consumed_after_the_host_routes_home() = runTest {
+        val api = FakeApi()
+        val vm = completedOnboardingVm(api)
+        assertTrue("완주 직후에는 신호가 서 있다", vm.finished)
+
+        // 화면 호스트가 홈 라우팅을 처리한 뒤 신호를 소비한다.
+        vm.consumeFinished()
+
+        assertFalse("소비 후에는 신호가 남지 않는다 — 다음 진입에서 재발화 금지(#383)", vm.finished)
+    }
+
+    @Test
+    fun consumed_finish_does_not_refire_for_a_new_unfinished_account() = runTest {
+        // #383 시나리오: 완주(게스트) → 홈 → 탈퇴 → 같은 소셜 계정 재로그인(= 미완료 신규 계정).
+        //   재로그인은 온보딩 VM 을 거치지 않으므로, 신호가 소비돼 있지 않으면 그대로 홈 직행한다.
+        val api = FakeApi()
+        val vm = completedOnboardingVm(api)
+        vm.consumeFinished() // 첫 완주를 호스트가 처리·소비
+
+        // 탈퇴 후 재로그인으로 온보딩 화면에 다시 진입한 상태 — VM 은 그대로 살아 있다.
+        assertFalse("stale 완주 신호가 남아 있으면 안 된다", vm.finished)
+
+        // 이 계정으로 온보딩을 이어가면 약관부터 시작한다(홈 직행 아님).
+        vm.continueAuthenticated(); advanceUntilIdle()
+        assertEquals(OnbStep.TERMS, vm.step)
+        assertFalse(vm.finished)
+    }
+
+    @Test
+    fun resetToWelcome_clears_finished_for_the_entry_guard() = runTest {
+        // 화면 진입 가드(#383)가 stale 완주를 발견하면 resetToWelcome 로 되돌린다 —
+        //   신호뿐 아니라 이전 사용자의 입력(PII)까지 함께 비워야 한 폰 다인 시연에서 새지 않는다.
+        val api = FakeApi()
+        val vm = completedOnboardingVm(api)
+        assertTrue(vm.finished)
+
+        vm.resetToWelcome()
+
+        assertFalse("진입 가드의 리셋은 완주 신호를 내린다", vm.finished)
+        assertEquals(OnbStep.WELCOME, vm.step)
+        assertEquals("이전 사용자의 입력도 남지 않는다", "", vm.birthYear)
+    }
+
+    /** 온보딩을 끝까지 진행해 완주 신호(finished=true)가 선 VM 을 만든다. */
+    private suspend fun TestScope.completedOnboardingVm(api: FakeApi): OnboardingViewModel {
+        val vm = OnboardingViewModel(api, todayYear = 2026, todayMonth = 7, todayDay = 15)
+        vm.start(); advanceUntilIdle()
+        vm.agreeAll(); vm.submitAgreements(); advanceUntilIdle()
+        vm.apply {
+            sex = "male"; birthYear = "1958"; birthMonth = "3"; birthDay = "1"
+            setHeight("168"); setWeight("63"); walkDays = 5; muscDays = 2
+        }
+        vm.submitProfile(); advanceUntilIdle()
+        vm.skipAssessment(); advanceUntilIdle()
+        return vm
     }
 
     // ── 예측 422 처리 범위(리뷰 #313): 준비 중 코드만 완주로, 그 외 422 는 실제 오류로 ──

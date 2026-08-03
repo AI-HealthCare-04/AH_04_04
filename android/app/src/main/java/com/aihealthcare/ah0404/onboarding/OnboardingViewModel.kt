@@ -183,8 +183,20 @@ class OnboardingViewModel(
     /**
      * 온보딩 완주 신호(#299). 체력검사 제출/스킵 → 예측 생성까지 끝나면 true. 화면 호스트가 이 값을 관찰해
      *  별도 결과화면 없이 곧장 홈(onComplete)으로 보낸다. RESULT 스텝을 없앴으므로 완료는 step 이 아니라 이 플래그로 알린다.
+     *
+     *  ⚠️ **일회성 이벤트**다(#383): 화면이 처리한 뒤 [consumeFinished] 로 즉시 내린다. 상태로 남겨 두면
+     *  Activity 수명인 이 VM 에 신호가 계속 살아 있어, 다른 인증 주체로 온보딩 화면에 다시 들어왔을 때
+     *  (탈퇴 → 같은 소셜 계정 재로그인 = 미완료 신규 계정) 약관·프로필을 건너뛰고 홈으로 직행한다.
      */
     var finished by mutableStateOf(false); private set
+
+    /**
+     * 완주 신호 소비(#383). 화면이 홈 라우팅을 처리한 직후 호출해 신호를 내린다 —
+     * 이 VM 은 Activity 수명이라 신호가 남으면 다음 온보딩 진입에서 그대로 재발화한다.
+     */
+    fun consumeFinished() {
+        finished = false
+    }
 
     private val requiredTerms = listOf("service", "privacy", "sensitive_health")
 
