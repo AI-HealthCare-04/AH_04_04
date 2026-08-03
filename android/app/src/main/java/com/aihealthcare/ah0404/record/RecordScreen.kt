@@ -161,21 +161,26 @@ fun RecordScreen(
                 } else {
                     // ① 점수 → ② 변화 추이 → ③ 또래 위치 → ④ 5STS 추이
                     MuscleDashboardCards(ui, onGoToMissions)
-                    // ⑤ 시뮬레이션 → ⑥ 근력 안전망
-                    MuscleImprovementCards(ui = ui, onGoToMissions = onGoToMissions)
-                    // ⑦ 체감 피드백(#357) — 결과를 다 본 뒤에 묻는다. 점수와 추이 사이에 두면
-                    //    대시보드의 핵심 흐름(지금 어때? → 나아지고 있나?)이 끊기고, 사용자도
-                    //    추이를 보기 전이라 답할 근거가 없다(#385).
-                    ui.predictionId?.let { id ->
-                        PredictionFeedbackCard(id, vm::submitPredictionFeedback)
+                    // 점수가 없으면 위 섹션의 연령·예측 상태별 준비 카드 하나만 보여준다. 개선 섹션의
+                    // ImprovementPendingCard까지 이어 붙이면 같은 안내와 미션 버튼이 중복된다(리뷰 #386).
+                    // 피드백·의료 고지·"이 점수" 링크도 실제 점수가 있을 때만 의미가 있다.
+                    if (ui.score != null) {
+                        // ⑤ 시뮬레이션 → ⑥ 근력 안전망
+                        MuscleImprovementCards(ui = ui, onGoToMissions = onGoToMissions)
+                        // ⑦ 체감 피드백(#357) — 결과를 다 본 뒤에 묻는다. 점수와 추이 사이에 두면
+                        //    대시보드의 핵심 흐름(지금 어때? → 나아지고 있나?)이 끊기고, 사용자도
+                        //    추이를 보기 전이라 답할 근거가 없다(#385).
+                        ui.predictionId?.let { id ->
+                            PredictionFeedbackCard(id, vm::submitPredictionFeedback)
+                        }
+                        // 점수를 보여주는 탭이므로 의료 고지는 여기에 둔다.
+                        MedicalDisclaimer(text = MEDICAL_DISCLAIMER_DEFAULT)
+                        // 결론 → 근거로 이어지는 경로(#385). 두 탭이 끊기지 않게 한다.
+                        AigoSecondaryButton(
+                            text = "무엇이 이 점수를 만들었나요? · 미션 기록 보기",
+                            onClick = { tab = RecordTab.RECORDS },
+                        )
                     }
-                    // 점수를 보여주는 탭이므로 의료 고지는 여기에 둔다.
-                    MedicalDisclaimer(text = MEDICAL_DISCLAIMER_DEFAULT)
-                    // 결론 → 근거로 이어지는 경로(#385). 두 탭이 끊기지 않게 한다.
-                    AigoSecondaryButton(
-                        text = "무엇이 이 점수를 만들었나요? · 미션 기록 보기",
-                        onClick = { tab = RecordTab.RECORDS },
-                    )
                 }
                 Spacer(Modifier.height(Dimens.Space8))
             }
