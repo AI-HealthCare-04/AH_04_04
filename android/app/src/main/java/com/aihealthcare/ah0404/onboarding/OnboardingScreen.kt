@@ -78,6 +78,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -265,6 +266,22 @@ private fun StepScaffold(
     }
 }
 
+/**
+ * 로그인 전 문의 안내(#387 A안 수정 — 리뷰 P1).
+ *
+ * 처음에는 문의 메일 주소를 안내하려 했으나 **주소를 두지 않기로 했다.** 이 앱은 심사·시연용이라
+ * 문의를 받을 메일함을 운영하지 않는데, 주소를 적어두면 "죽은 링크"가 "보내도 아무도 안 읽는 주소"로
+ * 바뀔 뿐이다(리뷰 P1 지적). 받지 못할 창구를 안내하지 않는 것이 정확하다.
+ *
+ * 대신 이 화면에서 **지금 할 수 있는 일**을 안내한다 — #387 의 원래 문제(밑줄·강조색이라 눌릴 것처럼
+ * 보이는데 아무 반응이 없어, 로그인 실패 시 출구가 없던 것)는 이것으로 해소된다.
+ * 로그인 후 설정 → 고객센터도 같은 방침으로 정리했다(SupportScreen).
+ */
+internal val LOGIN_SUPPORT_DIALOG_MESSAGE =
+    "이 앱은 심사·시연용이라 문의 접수는 운영하지 않아요.\n\n" +
+        "로그인이 안 되면 잠시 후 다시 시도하시거나, 다른 방법(구글·카카오)으로 로그인해 보세요.\n\n" +
+        "로그인 없이 둘러보시려면 아래 '체험으로 시작하기'를 눌러 주세요."
+
 @Composable
 private fun WelcomeStep(
     vm: OnboardingViewModel,
@@ -273,6 +290,9 @@ private fun WelcomeStep(
     onKakaoLogin: () -> Unit,
     onSkipToDemo: () -> Unit,
 ) {
+    // 로그인 전에는 고객센터 API(GET /support)가 401 이라 쓸 수 없고, 문의 접수도 운영하지 않는다 —
+    //   눌리는 안내만 띄운다(#387 A안 수정). 문구는 LOGIN_SUPPORT_DIALOG_MESSAGE 참조.
+    var showSupportDialog by rememberSaveable { mutableStateOf(false) }
     // 로그인 화면 디자인 고도화: 브랜드 헤더 + 강아지 히어로 카드 + 버튼 + 문의(시안 반영). 기능 배선은 그대로 유지.
     val bg = Color(0xFFF5F6F2)
     val titleGreen = Color(0xFF2E6B45)
@@ -395,13 +415,38 @@ private fun WelcomeStep(
         Spacer(Modifier.height(16.dp))
         Text("처음이신가요?", color = titleGreen, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(4.dp))
-        Text(
-            "회원가입/로그인 관련 문의",
-            color = titleGreen,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.SemiBold,
-            textDecoration = TextDecoration.Underline,
-        )
+        // 밑줄+강조색은 '누를 수 있다'는 신호인데 실제로는 터치 대상이 아니었다(#387) — 로그인 실패 시
+        //   유일한 출구가 막혀 있던 상태다. 눌러서 문의처를 볼 수 있게 하고, TalkBack 에도 버튼으로 읽히게 한다.
+        // 터치 영역은 컨테이너로 확보한다(리뷰 P2): 15sp 한 줄 + 세로 패딩 8dp 로는 실제 높이가 36dp 안팎이라
+        //   권장 최소 48dp 에 못 미쳤다. Dimens.MinTouchTarget 을 컨테이너 최소 높이로 주고 clickable 을
+        //   그 위에 올려, 글자 주변 여백까지 전부 눌리게 한다(앱의 다른 선택 항목 — Selections.kt 와 같은 방식).
+        Box(
+            modifier = Modifier
+                .clickable { showSupportDialog = true }
+                .semantics { role = Role.Button }
+                .heightIn(min = Dimens.MinTouchTarget)
+                .padding(horizontal = Dimens.Space8),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                // '문의'가 아니라 '도움말'이다 — 받을 메일함이 없는데 문의라고 하면 다시 어긋난다.
+                "회원가입·로그인 도움말",
+                color = titleGreen,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                textDecoration = TextDecoration.Underline,
+            )
+        }
+        if (showSupportDialog) {
+            AigoDialog(
+                title = "회원가입·로그인 안내",
+                message = LOGIN_SUPPORT_DIALOG_MESSAGE,
+                confirmText = "확인",
+                onConfirm = { showSupportDialog = false },
+                onDismissRequest = { showSupportDialog = false },
+            )
+        }
+
         // 개발/데모 전용: debug 빌드에서만 노출(리뷰 #63 P1-1 — 목업/우회 진입은 debug 로 제한).
         if (BuildConfig.DEBUG) {
             Spacer(Modifier.height(12.dp))
