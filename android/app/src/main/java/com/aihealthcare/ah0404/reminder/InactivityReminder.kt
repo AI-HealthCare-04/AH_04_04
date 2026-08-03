@@ -115,6 +115,37 @@ object InactivityReminder {
     }
 
     /**
+     * 설정 화면 '다시 알림' 행의 상태(리뷰 P1).
+     *
+     * 토글이 켜져 있다고 해서 알림이 오는 게 아니다 - Android 13+ 는 런타임 권한이 필요하고, 권한이 있어도
+     * 사용자가 앱 알림을 통째로 꺼둘 수 있다. 그 어긋남을 화면이 숨기면 **사용자는 켜져 있다고 믿는데
+     * 알림은 영영 오지 않는다.** 기본값이 켜짐이라 더 그렇다 - 토글을 건드릴 일이 없으니 권한을 물을
+     * 기회조차 없다. 그래서 세 상태를 구분해 [BLOCKED] 를 화면에 드러낸다.
+     */
+    enum class RowState {
+        /** 사용자가 껐다. 안내할 것 없음. */
+        OFF,
+
+        /** 켜져 있고 실제로 알림이 갈 수 있다. */
+        ACTIVE,
+
+        /** 켜져 있지만 권한이 없어 알림이 가지 않는다 - 화면이 이 사실을 말해야 한다. */
+        BLOCKED,
+    }
+
+    fun rowState(enabled: Boolean, notificationsAllowed: Boolean): RowState = when {
+        !enabled -> RowState.OFF
+        notificationsAllowed -> RowState.ACTIVE
+        else -> RowState.BLOCKED
+    }
+
+    /** 권한을 아직 물어볼 수 있을 때. 눌러서 바로 허용할 수 있다. */
+    const val PERMISSION_NOTICE_ASKABLE = "알림 권한이 꺼져 있어 알림이 가지 않아요. 눌러서 허용해 주세요."
+
+    /** 요청이 더 이상 뜨지 않는 상태(두 번 거절·앱 알림 전체 끔). 시스템 설정으로 보내야 한다. */
+    const val PERMISSION_NOTICE_SETTINGS = "알림 권한이 꺼져 있어 알림이 가지 않아요. 눌러서 설정에서 켜 주세요."
+
+    /**
      * 알림 문구. 며칠 비었는지에 따라 나눈다 - 오래 비었는데 "며칠 못 뵈었어요"는 어색하다.
      * 시니어 대상이라 **탓하지 않고**(빼먹었다/못 했다) 가볍게 다시 시작할 거리를 준다.
      */

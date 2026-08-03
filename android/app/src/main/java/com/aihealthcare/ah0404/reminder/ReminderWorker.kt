@@ -82,7 +82,7 @@ class ReminderWorker(
 
     @androidx.annotation.RequiresPermission(Manifest.permission.POST_NOTIFICATIONS)
     private fun notify(ctx: Context, title: String, body: String) {
-        createChannelIfNeeded(ctx)
+        createChannel(ctx)
         val notif = NotificationCompat.Builder(ctx, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(title)
@@ -106,26 +106,32 @@ class ReminderWorker(
         )
     }
 
-    private fun createChannelIfNeeded(ctx: Context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val mgr = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (mgr.getNotificationChannel(CHANNEL_ID) != null) return
-        // 걷기 측정 채널(IMPORTANCE_LOW, 진행 상태 전용)과 **분리한다** — 사용자가 리마인드만
-        //   따로 끌 수 있어야 하고, 측정 중 알림을 끄면 포그라운드 서비스 표시까지 사라진다.
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            "다시 알림",
-            NotificationManager.IMPORTANCE_DEFAULT,
-        ).apply { description = "며칠 동안 앱을 열지 않으면 알려드려요" }
-        mgr.createNotificationChannel(channel)
-    }
-
     companion object {
+        /**
+         * 알림 채널을 만든다. **예약 시점에도 부른다**(실기기 QA) — 첫 알림이 뜰 때 만들면 그전까지
+         * 시스템 알림 설정에 채널이 없어, 사용자가 리마인드만 따로 끄거나 미리 확인할 수 없다.
+         *
+         * 걷기 측정 채널(IMPORTANCE_LOW, 진행 상태 전용)과 **분리한다** — 리마인드만 따로 끌 수 있어야 하고,
+         * 측정 채널을 끄면 포그라운드 서비스 표시까지 사라진다.
+         */
+        fun createChannel(context: Context) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+            val mgr = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (mgr.getNotificationChannel(CHANNEL_ID) != null) return
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "다시 알림",
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply { description = "며칠 동안 앱을 열지 않으면 알려드려요" }
+            mgr.createNotificationChannel(channel)
+        }
+
         /**
          * 하루 한 번 검사를 예약한다. 앱이 열릴 때마다 불러도 안전하다(KEEP 이라 기존 예약을 덮지 않음).
          * 재부팅 후 재예약은 WorkManager 가 알아서 한다.
          */
         fun schedule(context: Context) {
+            createChannel(context) // 알림이 처음 뜨기 전에도 시스템 설정에 보이게 한다
             val request = PeriodicWorkRequestBuilder<ReminderWorker>(1, TimeUnit.DAYS)
                 // flex 구간을 주면 시스템이 다른 작업과 묶어 배터리를 덜 쓴다.
                 .setInitialDelay(1, TimeUnit.DAYS)

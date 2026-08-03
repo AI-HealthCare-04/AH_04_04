@@ -76,6 +76,64 @@ class InactivityReminderTest {
         assertFalse(shouldRemind(lastAccess = today + 5))
     }
 
+    // ── 설정 행 상태(리뷰 P1) ─────────────────────────────────────────────────
+    // 기본값이 켜짐이라 토글을 건드릴 일이 없는 사용자는 권한을 물을 기회조차 없다.
+    //   그러면 켜져 있다고 믿는 채로 알림은 영영 오지 않는다. 토글 표시와 권한 상태가 어긋나면
+    //   화면이 그 사실을 말해야 한다.
+
+    @Test
+    fun enabled_without_permission_is_surfaced_as_blocked() {
+        assertEquals(
+            "켜져 있는데 알림이 못 가는 상태를 숨기면 안 된다",
+            InactivityReminder.RowState.BLOCKED,
+            InactivityReminder.rowState(enabled = true, notificationsAllowed = false),
+        )
+    }
+
+    @Test
+    fun enabled_with_permission_is_active() {
+        assertEquals(
+            InactivityReminder.RowState.ACTIVE,
+            InactivityReminder.rowState(enabled = true, notificationsAllowed = true),
+        )
+    }
+
+    @Test
+    fun turned_off_never_shows_a_permission_notice() {
+        // 사용자가 끈 상태에서 권한 안내를 띄우면 끈 선택을 되묻는 잔소리가 된다.
+        assertEquals(
+            InactivityReminder.RowState.OFF,
+            InactivityReminder.rowState(enabled = false, notificationsAllowed = false),
+        )
+        assertEquals(
+            InactivityReminder.RowState.OFF,
+            InactivityReminder.rowState(enabled = false, notificationsAllowed = true),
+        )
+    }
+
+    @Test
+    fun the_toggle_and_the_notice_never_contradict_each_other() {
+        // 안내가 뜨는 경우는 '켜짐 + 권한 없음' 하나뿐이어야 한다.
+        listOf(true, false).forEach { enabled ->
+            listOf(true, false).forEach { allowed ->
+                val state = InactivityReminder.rowState(enabled, allowed)
+                val showsNotice = state == InactivityReminder.RowState.BLOCKED
+                assertEquals(
+                    "enabled=$enabled allowed=$allowed",
+                    enabled && !allowed,
+                    showsNotice,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun permission_notices_tell_the_user_what_to_do() {
+        // 상태만 알리고 끝내면 시니어 사용자는 무엇을 눌러야 할지 모른다.
+        assertTrue(InactivityReminder.PERMISSION_NOTICE_ASKABLE.contains("눌러서"))
+        assertTrue(InactivityReminder.PERMISSION_NOTICE_SETTINGS.contains("설정"))
+    }
+
     // ── 문구 ────────────────────────────────────────────────────────────────
     // 시니어 대상이라 탓하지 않는다. "빼먹었다/못 했다" 대신 다시 시작할 거리를 준다.
 

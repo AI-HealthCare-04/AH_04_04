@@ -47,11 +47,20 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import android.provider.Settings
+import androidx.core.app.NotificationManagerCompat
+import androidx.activity.result.ActivityResultLauncher
 import com.aihealthcare.ah0404.reminder.InactivityReminder
 import com.aihealthcare.ah0404.reminder.ReminderWorker
 import androidx.compose.ui.platform.LocalContext
@@ -100,11 +109,27 @@ fun SettingsScreen(
     val context = LocalContext.current
     // 미접속 리마인드는 기기 로컬 설정이라 서버(#73)와 동기화하지 않는다 — 여기서 직접 읽고 쓴다.
     var remindersEnabled by rememberSaveable { mutableStateOf(InactivityReminder.isEnabled(context)) }
+    // 알림이 실제로 갈 수 있는지. 권한을 시스템 설정에서 바꾸고 돌아올 수 있으므로 **화면이 다시 보일 때마다**
+    //   새로 읽는다 — 한 번만 읽으면 허용하고 돌아와도 계속 "꺼져 있다"고 남는다.
+    var notificationsAllowed by remember { mutableStateOf(notificationsAllowed(context)) }
+    // 요청 팝업이 더 이상 뜨지 않는 상태(두 번 거절). 그때는 시스템 설정으로 보내야 한다.
+    var permissionRequestExhausted by rememberSaveable { mutableStateOf(false) }
     // 권한을 거절해도 토글은 켜진 채로 둔다: 나중에 시스템 설정에서 허용하면 그대로 동작한다.
-    //   여기서 토글을 되돌리면 사용자가 "껐다"고 오해한다.
+    //   여기서 토글을 되돌리면 사용자가 "껐다"고 오해한다. 대신 아래 안내로 상태를 드러낸다.
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { /* 결과와 무관하게 설정값은 유지 */ }
+    ) { granted ->
+        notificationsAllowed = granted && notificationsAllowed(context)
+        if (!granted) permissionRequestExhausted = true
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) notificationsAllowed = notificationsAllowed(context)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     // 로그아웃 확인 다이얼로그(#154). 시니어 대상이라 실수 방지로 한 번 되묻는다.
     var showLogoutConfirm by rememberSaveable { mutableStateOf(false) }
     // 회원탈퇴 확인(#356). 되돌릴 수 없는 파괴적 액션이라 로그아웃과 별도로 강하게 안내한다.
@@ -197,20 +222,43 @@ fun SettingsScreen(
                     InactivityReminder.setEnabled(context, on)
                     if (on) {
                         ReminderWorker.schedule(context)
-                        // Android 13+ 는 알림에 런타임 권한이 필요하다. **켤 때** 물어야 이유가 분명하다 —
-                        //   첫 실행에 맥락 없이 물으면 거절률이 높고, 거절하면 다시 물을 수 없다.
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
-                            PackageManager.PERMISSION_GRANTED
-                        ) {
-                            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        }
+                        askNotificationPermission(context, notificationPermission)
                     } else {
                         ReminderWorker.cancel(context)
                     }
                 },
                 description = "며칠 동안 앱을 열지 않으면 알려드려요",
             )
+            // ⚠️ 기본값이 켜짐이라 **토글을 건드릴 일이 없는 사용자는 권한을 물을 기회조차 없다**(리뷰 P1).
+            //   그러면 켜져 있다고 믿는 채로 알림은 영영 오지 않는다. 그 어긋남을 여기서 드러내고
+            //   바로 고칠 수 있게 한다. 토글을 되돌리지는 않는다 — 사용자가 끈 것으로 오해하면 안 된다.
+            if (InactivityReminder.rowState(remindersEnabled, notificationsAllowed) ==
+                InactivityReminder.RowState.BLOCKED
+            ) {
+                Spacer(Modifier.height(8.dp))
+                val notice = if (permissionRequestExhausted) {
+                    InactivityReminder.PERMISSION_NOTICE_SETTINGS
+                } else {
+                    InactivityReminder.PERMISSION_NOTICE_ASKABLE
+                }
+                Text(
+                    notice,
+                    fontSize = 15.sp,
+                    lineHeight = 21.sp,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        // 시니어 대상 — 얇은 텍스트는 누르기 어려우므로 최소 높이를 확보한다.
+                        .heightIn(min = 44.dp)
+                        .clickable {
+                            if (permissionRequestExhausted) {
+                                openAppNotificationSettings(context)
+                            } else {
+                                askNotificationPermission(context, notificationPermission)
+                            }
+                        },
+                )
+            }
         }
         Spacer(Modifier.height(14.dp))
 
@@ -537,4 +585,32 @@ internal fun TopBar(title: String, onBack: (() -> Unit)? = null) {
         }
         Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
     }
+}
+
+
+/** 권한과 앱 알림 스위치를 모두 본다 — 권한이 있어도 앱 알림을 통째로 꺼두면 알림은 가지 않는다. */
+private fun notificationsAllowed(context: Context): Boolean {
+    val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+        PackageManager.PERMISSION_GRANTED
+    return granted && NotificationManagerCompat.from(context).areNotificationsEnabled()
+}
+
+/** Android 13+ 에서만 런타임 요청이 의미가 있다. 이미 허용됐으면 아무것도 하지 않는다. */
+private fun askNotificationPermission(context: Context, launcher: ActivityResultLauncher<String>) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+    if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+        PackageManager.PERMISSION_GRANTED
+    ) {
+        return
+    }
+    launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+}
+
+/** 요청 팝업이 더 이상 뜨지 않을 때의 마지막 수단 — 앱 알림 설정 화면으로 보낸다. */
+private fun openAppNotificationSettings(context: Context) {
+    val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+        .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { context.startActivity(intent) }
 }
