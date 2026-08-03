@@ -130,6 +130,22 @@ class OnboardingProfileValidationTest {
     @Test fun under_age_notice_shown_at_14_boundary() =
         assertNotNull(vm(2026, 7, 15).apply { birthYear = "2012"; birthMonth = "1"; birthDay = "1" }.underAgeNotice) // 14세(생일 지남)
 
+    // 안내 문구는 나이대로 갈린다. 50~64 는 '준비 중'이 자기 이야기지만, 50세 미만에게는 남의 계획이라
+    //   그냥 지나친다. 게다가 이 구간은 추정('모름')도 못 써서 직접 입력해야 하는데, 그 사실을 키·몸무게
+    //   입력칸에 가서야 알게 되면 '모름'을 눌렀다가 막힌다(#395).
+    @Test fun under_age_notice_50_to_64_mentions_upcoming_support() {
+        val notice = vm(2026, 7, 15).apply { birthYear = "1970"; birthMonth = "1"; birthDay = "1" }.underAgeNotice // 56
+        assertNotNull(notice)
+        assertTrue("50~64 에게는 확장 계획이 자기 이야기다", notice!!.contains("50~64세"))
+    }
+
+    @Test fun under_age_notice_below_50_guides_manual_input() {
+        val notice = vm(2026, 7, 15).apply { birthYear = "1990"; birthMonth = "1"; birthDay = "1" }.underAgeNotice // 36
+        assertNotNull(notice)
+        assertFalse("50세 미만에게 '50~64세 준비 중'은 남의 계획으로 읽힌다", notice!!.contains("50~64세"))
+        assertTrue("추정을 못 쓰므로 직접 입력을 미리 안내해야 한다", notice.contains("직접 입력"))
+    }
+
     @Test
     fun estimate_available_at_63_uses_knhanes_value() {
         val vm = vm(2026, 7, 15).apply { sex = "female"; birthYear = "1963"; birthMonth = "1"; birthDay = "1" } // 63

@@ -28,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.aihealthcare.ah0404.mission.PROTEIN_GATE_UNKNOWN_NOTICE
 import com.aihealthcare.ah0404.network.HealthProfileLatest
 import com.aihealthcare.ah0404.network.OnbEnums
 import com.aihealthcare.ah0404.network.UserInfoResponse
@@ -173,6 +174,16 @@ private fun HealthInfoEditor(healthVm: HealthInfoViewModel, profile: HealthProfi
             selected = protein,
             onSelect = { protein = it },
         )
+        // '잘 모르겠어요'도 고단백 식사 미션을 막는다. 온보딩과 같은 안내를 여기서도 고르는 시점에 보여준다.
+        //   두 항목을 한 카드에서 함께 고르므로 안내는 카드 아래에 한 번만 낸다.
+        if (kidney == "unknown" || protein == "unknown") {
+            Spacer(Modifier.height(Dimens.Space8))
+            Text(
+                PROTEIN_GATE_UNKNOWN_NOTICE,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         Spacer(Modifier.height(Dimens.Space16))
         AigoPrimaryButton(
             text = if (healthVm.saving) "저장 중…" else "저장",

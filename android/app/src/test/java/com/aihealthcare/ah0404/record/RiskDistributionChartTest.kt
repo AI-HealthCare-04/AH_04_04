@@ -41,19 +41,44 @@ class RiskDistributionChartTest {
     @Test
     fun `헤드라인 문장 - 스펙 문구 그대로(퍼센트 없음)`() {
         assertEquals("같은 연령대(75–79세) 남성 100명 중", riskAgeSexLine("75–79세", "남성"))
-        assertEquals("위험이 낮은 쪽에서 73번째", riskRankLine(73))
-        assertEquals("나보다 낮음 72명", riskAreaLower(72))
-        assertEquals("나보다 높음 27명", riskAreaHigher(27))
+        // 순번 방향은 점수와 같은 '높을수록 좋음'. 확률 제거 원칙과 함께 '위험' 프레임도 쓰지 않는다.
+        assertEquals("근육 건강이 좋은 쪽에서 73번째", riskRankLine(73))
+        // lowerCount는 위험이 낮은(= 근육 건강이 더 좋은) 사람 수다. 헤드라인과 같은 긍정 프레임으로 읽는다.
+        assertEquals("나보다 좋음 72명", riskAreaLower(72))
+        assertEquals("나보다 낮음 27명", riskAreaHigher(27))
         assertEquals("나", RISK_MARKER_LABEL) // 마커 라벨은 % 없이 "나"만
         assertEquals("또래 여성 분포 (국민건강영양조사 기반)", riskCurveCaption("여성"))
     }
 
     @Test
+    fun `위험 높은 꼬리 - 순번 대신 질적 표현`() {
+        // 96~100번째를 그대로 보여주면 "100명 중 꼴찌"로 읽힌다 → 순번 없는 문장.
+        val headline = riskHighTailHeadline("65–68세", "여성")
+        assertEquals("같은 연령대(65–68세) 여성 중에서는 근육 건강을 더 챙기시면 좋은 편이에요", headline)
+        assertFalse(headline.contains("번째"))
+    }
+
+    @Test
+    fun `행동 문구 - 인과·최상급 주장 없음`() {
+        // 단면 조사 기반 연관 모델이라 "시작하면 낮아진다"(인과)·"가장 크게"(최상급)를 말할 수 없다.
+        assertEquals("근력운동은 근육 건강 관리에 도움이 될 수 있어요", RISK_HEADLINE_TAIL)
+        assertFalse(RISK_HEADLINE_TAIL.contains("가장"))
+        assertFalse(RISK_HEADLINE_TAIL.contains("낮아지는"))
+    }
+
+    @Test
     fun `차트 접근성 설명 - 순번만, 확률 미노출`() {
         assertEquals(
-            "또래 100명 중 위험이 낮은 쪽에서 73번째.",
+            "또래 100명 중 근육 건강이 좋은 쪽에서 73번째.",
             riskChartContentDescription(72),
         )
+    }
+
+    @Test
+    fun `차트 접근성 설명 - 위험 높은 꼬리는 화면과 동일하게 순번 미노출`() {
+        val description = riskChartContentDescription(99) // 순번이라면 100번째
+        assertEquals("또래 100명 중 근육 건강을 더 챙기시면 좋은 쪽에 있어요.", description)
+        assertFalse(description.contains("번째"))
     }
 
     @Test

@@ -198,6 +198,8 @@ class RecordViewModel(
                 stsSeconds = null,
                 bmi = null,
                 cohort = cohortResult.getOrNull(),
+                // 허리둘레 미입력이면 점수·또래 비교가 '허리 제외' 모델로 계산된 것이라 그 사실을 안내한다.
+                waistCm = predictionPrefill?.waistCm,
             )
             loaded = true
         }

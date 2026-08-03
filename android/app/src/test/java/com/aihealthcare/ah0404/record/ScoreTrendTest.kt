@@ -3,6 +3,7 @@ package com.aihealthcare.ah0404.record
 import com.aihealthcare.ah0404.network.RiskHistoryItem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -119,10 +120,15 @@ class ScoreTrendTest {
         val one = buildScoreTrend(listOf(item("2026-07-01", 72)))
         assertEquals(1, one.size)
         // size=1: 두 번째 점은 '내 정보' 저장(재평가)에서 생김 — 챌린지 아님(리뷰 #339-①).
+        //   다만 점수를 바꾸는 것은 활동이므로(재평가가 최근 7일 걷기·근력을 입력으로 쓴다) 둘을 나눠 말한다.
+        val copy = trendEmptyCopy(one.size)
         assertEquals(
-            "다음 재평가 때 변화를 보여드려요. '내 정보'에서 정보를 업데이트해 저장하면 새 점수가 쌓여요.",
-            trendEmptyCopy(one.size),
+            "아직 점수가 하나라 변화를 보여드릴 수 없어요. 걷기·근력 기록이 다음 점수에 반영돼요. " +
+                "'내 정보'를 저장하면 그때까지의 활동으로 점수를 다시 계산해요.",
+            copy,
         )
+        assertTrue(copy.contains("걷기·근력")) // 활동이 점수를 바꾼다는 사실이 빠지면 안 된다
+        assertTrue(copy.contains("'내 정보'")) // 다시 계산되는 시점도 함께 말한다
         // size=0: 점수는 있는데 추이만 비었다 = 추이 조회 실패. '첫 평가를 마치면'은 점수 존재와 모순이므로 조회 실패 안내(리뷰 #339-②).
         assertEquals("변화 추이를 불러오지 못했어요. 잠시 후 다시 확인해 주세요.", trendEmptyCopy(0))
     }

@@ -71,7 +71,7 @@ private val SUnselBorder = Color(0xFFD3D8CE) // 선택 안 한 알약도 테두�
  *
  *  SettingsViewModel 로 서버 값 로드 + 변경 시 PATCH 영속화(낙관적 적용 → 실패 시 롤백).
  *  ⛔ 알림·자동로그인은 백엔드 결정상 '미구현'(자동로그인=구현 안 함 / 알림=불필요로 API 제외, 재란 확정)
- *     → 시안 최종구조에서 토글 자체를 노출하지 않는다(배경 음악만).
+ *     → 시안 최종구조에서 토글 자체를 노출하지 않는다(운동 음악만).
  *  앱 버전은 서버가 아니라 클라 BuildConfig.
  */
 @Composable
@@ -172,7 +172,15 @@ fun SettingsScreen(
         Spacer(Modifier.height(14.dp))
 
         SettingsCard {
-            SettingsToggleRow("배경 음악", vm.musicEnabled, vm::changeMusicEnabled)
+            // '배경 음악'은 앱 전체에 음악이 깔린다는 뜻으로 읽혀 헷갈린다는 피드백. 실제로 이 토글이
+            //   끄고 켜는 것은 운동 따라하기 화면의 루틴 BGM 하나뿐이라(RoutinePlayerScreen), 대상을
+            //   이름에 드러내고 한 줄 설명을 덧붙인다.
+            SettingsToggleRow(
+                label = "운동 음악",
+                checked = vm.musicEnabled,
+                onChange = vm::changeMusicEnabled,
+                description = "운동 따라하기 화면에서 나오는 음악이에요",
+            )
         }
         Spacer(Modifier.height(14.dp))
 
@@ -388,13 +396,25 @@ private fun PetSelector(selected: String, onSelectDog: () -> Unit) {
 }
 
 @Composable
-private fun SettingsToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun SettingsToggleRow(
+    label: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit,
+    description: String? = null,
+) {
     Row(
         Modifier.fillMaxWidth().heightIn(min = 44.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = SInk)
+        Column(Modifier.weight(1f)) {
+            Text(label, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = SInk)
+            description?.let {
+                Spacer(Modifier.height(2.dp))
+                Text(it, fontSize = 14.sp, lineHeight = 19.sp, color = SMuted)
+            }
+        }
+        Spacer(Modifier.width(12.dp))
         Switch(
             checked = checked,
             onCheckedChange = onChange,

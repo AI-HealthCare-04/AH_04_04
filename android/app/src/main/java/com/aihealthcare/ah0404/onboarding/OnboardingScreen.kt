@@ -49,7 +49,6 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.sp
@@ -68,6 +67,7 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -96,6 +96,7 @@ import com.aihealthcare.ah0404.auth.AuthLoginUiState
 import com.aihealthcare.ah0404.auth.AuthLoginViewModel
 import com.aihealthcare.ah0404.auth.SocialProvider
 import com.aihealthcare.ah0404.auth.SocialSignInClients
+import com.aihealthcare.ah0404.mission.PROTEIN_GATE_UNKNOWN_NOTICE
 import com.aihealthcare.ah0404.network.Term
 import com.aihealthcare.ah0404.network.TokenHolder
 import com.aihealthcare.ah0404.fitness.StsAssessmentScreen
@@ -109,6 +110,8 @@ import com.aihealthcare.ah0404.ui.components.AigoSegmentedSelector
 import com.aihealthcare.ah0404.ui.components.AigoTextField
 import com.aihealthcare.ah0404.ui.components.AigoTonalButton
 import com.aihealthcare.ah0404.ui.components.SegmentOption
+import com.aihealthcare.ah0404.ui.theme.AigoOnWarningContainer
+import com.aihealthcare.ah0404.ui.theme.AigoWarningContainer
 import com.aihealthcare.ah0404.ui.theme.Dimens
 
 /**
@@ -282,13 +285,19 @@ private fun WelcomeStep(
                 )
                 // '아이고'는 화면의 주인공 — 설명 문구(19sp)의 ~3.5배(66sp)로 크게 + 세로 그라데이션(고급감).
                 //   두께는 Black 웨이트만 사용(짙은 스트로크 테두리는 안 예뻐서 제거). 줄간격은 Trim.Both 로 촘촘히.
+                //
+                // ⚠️ style 은 반드시 LocalTextStyle.current.copy 로 만든다. 새 TextStyle(...) 을 넘기면
+                //   Compose 가 LocalTextStyle 을 아예 참조하지 않아 테마가 provide 한 Noto Sans KR
+                //   (Theme.kt)이 끊기고 fontFamily=null → **기기의 시스템 기본 글꼴**로 떨어진다.
+                //   앱 이름이 삼성 기기에서는 삼성 글꼴로, 에뮬레이터에서는 Roboto/Noto CJK 로 제각각
+                //   그려지던 원인이다(브랜드가 기기 설정에 좌우됨). 앱 전체에서 이 패턴은 여기 하나뿐이었다.
                 Text(
                     "아이고",
                     fontSize = 66.sp,
                     fontWeight = FontWeight.Black,
                     letterSpacing = 2.sp,
                     lineHeight = 66.sp,
-                    style = TextStyle(
+                    style = LocalTextStyle.current.copy(
                         brush = Brush.verticalGradient(listOf(Color(0xFF43976A), Color(0xFF1E5A38))),
                         lineHeightStyle = LineHeightStyle(
                             alignment = LineHeightStyle.Alignment.Center,
@@ -571,8 +580,11 @@ private fun TermsStep(vm: OnboardingViewModel) {
             ) {
                 Text("동의하고 계속", fontSize = 19.sp, fontWeight = FontWeight.Bold)
             }
-            Spacer(Modifier.height(8.dp))
-            Text("🔒 안전한 연결로 보호됩니다.", color = Color(0xFF9AA59D), fontSize = 13.sp)
+            // 여기 있던 "🔒 안전한 연결로 보호됩니다."는 제거했다. 바로 위 TermsSecurityNotice 의
+            //   "고객님의 정보는 안전하게 보호되며…"와 화면에서 맞붙어, 다른 이야기인데도(저장·처리 보안 vs
+            //   전송 구간 보안) 같은 말을 두 번 하는 것으로 읽혔다. 민감정보 동의를 받는 화면에서 안심 문구를
+            //   반복하면 안심시키기는커녕 경계심을 자극한다. 셋 중 정보량도 가장 적어(HTTPS는 기본) 이쪽을
+            //   지우고, "동의 내용은 언제든지 변경할 수 있습니다"가 함께 있는 방패 문구만 남긴다.
         }
     }
 
@@ -816,9 +828,16 @@ private fun openTermsUrl(context: Context, url: String): Boolean {
 }
 
 /**
- * 숫자 입력 + 오른쪽 '모름' 버튼. '모름' 누르면 추정치로 채워지고, 채워졌으면 안내 문구를 보여준다.
+ * 숫자 입력 + 오른쪽 '모름' 버튼.
  *  - [error]: 값이 현실 범위를 벗어나면 그 자리에서 인라인 경고(#298 A-2).
  *  - [unknownReason]: '모름'이 비활성일 때 **왜 못 누르는지** 안내(#298 B).
+ *  - [unknownNote]: '모름'을 누른 뒤 무슨 일이 일어났는지 안내. null 이면 표시하지 않는다.
+ *
+ * ⚠️ [unknownNote] 는 원래 `estimated: Boolean` 이었고 "추정치로 입력했어요" 한 문구만 낼 수 있었다.
+ *   '모름'의 의미가 항목마다 다르기 때문에 문구를 호출부가 정하도록 바꿨다 —
+ *   키·몸무게는 '추정치를 채운다', 허리둘레는 '이 항목을 빼고 넘어간다' 로 동작이 정반대다.
+ *   허리둘레는 값이 비어 있는 게 보통이라, 안내가 없으면 눌러도 화면이 전혀 바뀌지 않아
+ *   버튼이 고장 난 것처럼 보였다.
  */
 @Composable
 private fun FieldWithUnknown(
@@ -826,8 +845,8 @@ private fun FieldWithUnknown(
     onValueChange: (String) -> Unit,
     label: String,
     onUnknown: () -> Unit,
-    estimated: Boolean,
     unknownEnabled: Boolean,
+    unknownNote: String? = null,
     error: String? = null,
     unknownReason: String? = null,
 ) {
@@ -853,12 +872,8 @@ private fun FieldWithUnknown(
     error?.let {
         Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
     }
-    if (estimated) {
-        Text(
-            "추정치로 입력했어요. 정확한 값을 아시면 직접 입력해 주세요.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+    unknownNote?.let {
+        Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     if (!unknownEnabled) {
         unknownReason?.let {
@@ -875,10 +890,12 @@ private fun ProfileStep(vm: OnboardingViewModel) {
     // 서브스텝 사이 뒤로가기는 이전 페이지로. 첫 페이지에선 비활성 → 부모 BackHandler(약관으로) 가 처리.
     BackHandler(enabled = subStep > 0) { subStep-- }
 
+    // 제목은 외래어 없이 우리말로 쓴다(시니어 대상). '프로필'은 설정에서 같은 데이터를 이미 '내 정보'로
+    //   부르고 있어 용어가 갈리기도 했다. 1·3단계가 모두 '건강'으로 시작해 구분이 약하던 것도 함께 정리.
     val (title, subtitle) = when (subStep) {
-        0 -> "건강 프로필" to "맞춤 미션을 위해 기본 정보를 알려주세요."
+        0 -> "내 몸 정보" to "맞춤 미션을 위해 기본 정보를 알려주세요."
         1 -> "활동 습관" to "평소 운동 습관을 알려주세요."
-        else -> "건강 확인" to "식사와 건강 상태를 확인할게요."
+        else -> "건강 상태" to "식사와 건강 상태를 확인할게요."
     }
     // 페이지별 '다음' 활성 조건(마지막은 submitProfile 이 전체 검증).
     val step0Valid = vm.birthDateError == null &&
@@ -1007,8 +1024,8 @@ private fun ProfileBasicInfo(vm: OnboardingViewModel) {
         Text(it, fontSize = 14.sp, color = MaterialTheme.colorScheme.error)
     }
     vm.underAgeNotice?.let {
-        Spacer(Modifier.height(6.dp))
-        Text(it, fontSize = 14.sp, lineHeight = 20.sp, color = TermsMuted)
+        Spacer(Modifier.height(10.dp))
+        NoticeCallout(it)
     }
 
     Spacer(Modifier.height(22.dp))
@@ -1020,8 +1037,10 @@ private fun ProfileBasicInfo(vm: OnboardingViewModel) {
     }
 
     Spacer(Modifier.height(18.dp))
+    // 이 안내는 '모름'이 평균치를 채운다고 말한다 — 키·몸무게에만 해당한다. 허리둘레의 '모름'은
+    //   값을 채우지 않고 항목을 생략하므로, 대상을 문장 앞에 못박아 오해를 막는다.
     Text(
-        "'모름'을 누르면 평균치가 자동으로 입력돼요. 정확한 예측을 위해 가급적 키·몸무게를 직접 입력해 주세요.",
+        "키·몸무게는 '모름'을 누르면 평균치가 자동으로 입력돼요. 정확한 예측을 위해 가급적 직접 입력해 주세요.",
         fontSize = 13.sp,
         lineHeight = 19.sp,
         color = TermsMuted,
@@ -1032,8 +1051,8 @@ private fun ProfileBasicInfo(vm: OnboardingViewModel) {
         onValueChange = vm::setHeight,
         label = "키 (cm)",
         onUnknown = vm::markHeightUnknown,
-        estimated = vm.heightEstimatedValid,
         unknownEnabled = vm.canEstimate,
+        unknownNote = ESTIMATE_FILLED_NOTE.takeIf { vm.heightEstimatedValid },
         error = vm.heightError,
         unknownReason = vm.estimateUnavailableReason,
     )
@@ -1042,20 +1061,35 @@ private fun ProfileBasicInfo(vm: OnboardingViewModel) {
         onValueChange = vm::setWeight,
         label = "몸무게 (kg)",
         onUnknown = vm::markWeightUnknown,
-        estimated = vm.weightEstimatedValid,
         unknownEnabled = vm.canEstimate,
+        unknownNote = ESTIMATE_FILLED_NOTE.takeIf { vm.weightEstimatedValid },
         error = vm.weightError,
         unknownReason = vm.estimateUnavailableReason,
     )
     FieldWithUnknown(
         value = vm.waistCm,
-        onValueChange = { vm.waistCm = it },
+        onValueChange = { vm.waistCm = it; vm.waistSkipped = false },
         label = "허리둘레 (cm, 선택)",
         onUnknown = vm::markWaistUnknown,
-        estimated = false,
         unknownEnabled = true,
+        unknownNote = WAIST_SKIPPED_NOTE.takeIf { vm.waistSkipped },
     )
 }
+
+/** 키·몸무게 '모름' → 추정치를 채운 뒤의 안내. */
+private const val ESTIMATE_FILLED_NOTE = "추정치로 입력했어요. 정확한 값을 아시면 직접 입력해 주세요."
+
+/**
+ * 허리둘레 '모름' → 항목을 빼고 넘어간 뒤의 안내.
+ *
+ * 허리둘레는 예측 모델의 주요 입력이라(같은 BMI 라도 허리둘레로 근육/지방이 갈린다) 있고 없고에 따라
+ * 다른 모델을 쓴다. 다만 검증 결과의 신뢰구간이 겹치므로 "훨씬 정확해진다"고 말하지 않는다.
+ * 추정으로 채우는 선택지는 없다 — 대치한 허리값은 허리 제외 모델보다 나은 성능을 보이지 못했다
+ * (docs/ml/sarcopenia_validation_awgs2025_summary.md).
+ */
+private const val WAIST_SKIPPED_NOTE =
+    "나중에 입력해도 괜찮아요. 지금은 이대로 넘어갈게요. " +
+        "줄자로 재서 입력하시면 더 정확한 예측에 도움이 돼요(설정 → 내 정보에서 언제든 추가할 수 있어요)."
 
 /** 2단계: 걷기·근력 주당 일수(스텝퍼 카드). */
 @Composable
@@ -1091,6 +1125,9 @@ private fun ProfileHealthCheck(vm: OnboardingViewModel) {
         ),
         selected = vm.kidneyStatus,
         onSelect = { vm.kidneyStatus = it },
+        // '잘 모르겠어요'도 고단백 식사 미션을 막는다. 고르는 시점에 알려주지 않으면, 미션이 사라진 뒤
+        //   미션 화면에서야 이유를 알게 된다(#304 안내는 사후 안내다).
+        note = PROTEIN_GATE_UNKNOWN_NOTICE.takeIf { vm.kidneyStatus == "unknown" },
     )
     Spacer(Modifier.height(16.dp))
     ProfileRadioSection(
@@ -1102,6 +1139,10 @@ private fun ProfileHealthCheck(vm: OnboardingViewModel) {
         ),
         selected = vm.proteinStatus,
         onSelect = { vm.proteinStatus = it },
+        // 신장 쪽에서 이미 같은 안내가 떠 있으면 한 화면에 두 번 나오므로 생략한다.
+        note = PROTEIN_GATE_UNKNOWN_NOTICE.takeIf {
+            vm.proteinStatus == "unknown" && vm.kidneyStatus != "unknown"
+        },
     )
 }
 
@@ -1204,6 +1245,36 @@ private fun ActivityStepperCard(
     }
 }
 
+/**
+ * 놓치면 안 되는 안내(예: 예측 제공 연령). 회색 보조 문구로 두면 그냥 지나쳐서, 나중에
+ * "왜 예측이 안 나오나요?" 하고 되묻는 일이 생긴다 — 실제로 그런 제보가 있었다.
+ *
+ * 주변 입력 라벨·오류 문구와 확실히 구분되도록 면(앰버 배경)과 아이콘을 준다. 오류가 아니므로
+ * 빨강(colorScheme.error)은 쓰지 않는다 — 진행이 막힌 것으로 오해하면 안 된다.
+ * 색은 앱의 '주의' 의미색 토큰(AigoWarningContainer)을 그대로 쓴다(안전 확인 배지와 같은 톤).
+ */
+@Composable
+private fun NoticeCallout(text: String) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = AigoWarningContainer,
+        border = BorderStroke(1.dp, AigoOnWarningContainer.copy(alpha = 0.35f)),
+    ) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
+            Text("ℹ️", fontSize = 16.sp)
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text,
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+                fontWeight = FontWeight.Medium,
+                color = AigoOnWarningContainer,
+            )
+        }
+    }
+}
+
 /** 라디오 섹션(신장/단백질): 흰 카드 안에 제목 + 라디오 행들. 선택 행은 초록 강조. */
 @Composable
 private fun ProfileRadioSection(
@@ -1211,6 +1282,8 @@ private fun ProfileRadioSection(
     options: List<Pair<String, String>>,
     selected: String,
     onSelect: (String) -> Unit,
+    // 선택값에 따라 붙는 안내(예: '잘 모르겠어요' → 고단백 식사 미션이 숨겨진다). null 이면 표시 안 함.
+    note: String? = null,
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -1251,6 +1324,10 @@ private fun ProfileRadioSection(
                         )
                     }
                 }
+            }
+            note?.let {
+                Spacer(Modifier.height(10.dp))
+                Text(it, fontSize = 13.sp, lineHeight = 19.sp, color = TermsMuted)
             }
         }
     }

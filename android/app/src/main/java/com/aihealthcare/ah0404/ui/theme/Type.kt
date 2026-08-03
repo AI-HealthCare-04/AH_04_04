@@ -37,6 +37,13 @@ private val NotoSansKR = FontFamily(
         weight = FontWeight.Bold,
         variationSettings = FontVariation.Settings(FontVariation.weight(700)),
     ),
+    // 로그인 화면 워드마크('아이고')가 FontWeight.Black 을 쓴다. 등록이 없으면 Bold(700)에 합성 볼드가
+    //   얹혀 번진 글자가 되는데, 번들 폰트의 wght 축이 100~900 이라 실제 900 을 뽑을 수 있다.
+    Font(
+        R.font.noto_sans_kr,
+        weight = FontWeight.Black,
+        variationSettings = FontVariation.Settings(FontVariation.weight(900)),
+    ),
 )
 
 /** 앱 기본 글꼴(Noto Sans KR). Theme 에서 bare Text 의 기본 글꼴로 provide 한다. */
