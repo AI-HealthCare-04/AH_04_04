@@ -110,6 +110,8 @@ import com.aihealthcare.ah0404.ui.components.AigoSegmentedSelector
 import com.aihealthcare.ah0404.ui.components.AigoTextField
 import com.aihealthcare.ah0404.ui.components.AigoTonalButton
 import com.aihealthcare.ah0404.ui.components.SegmentOption
+import com.aihealthcare.ah0404.ui.theme.AigoOnWarningContainer
+import com.aihealthcare.ah0404.ui.theme.AigoWarningContainer
 import com.aihealthcare.ah0404.ui.theme.Dimens
 
 /**
@@ -1022,8 +1024,8 @@ private fun ProfileBasicInfo(vm: OnboardingViewModel) {
         Text(it, fontSize = 14.sp, color = MaterialTheme.colorScheme.error)
     }
     vm.underAgeNotice?.let {
-        Spacer(Modifier.height(6.dp))
-        Text(it, fontSize = 14.sp, lineHeight = 20.sp, color = TermsMuted)
+        Spacer(Modifier.height(10.dp))
+        NoticeCallout(it)
     }
 
     Spacer(Modifier.height(22.dp))
@@ -1239,6 +1241,36 @@ private fun ActivityStepperCard(
             AigoDayStepper(value = value, onValueChange = onValueChange, max = max, maxLabel = maxLabel)
             Spacer(Modifier.height(12.dp))
             Text(hint, fontSize = 13.sp, color = TermsMuted, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        }
+    }
+}
+
+/**
+ * 놓치면 안 되는 안내(예: 예측 제공 연령). 회색 보조 문구로 두면 그냥 지나쳐서, 나중에
+ * "왜 예측이 안 나오나요?" 하고 되묻는 일이 생긴다 — 실제로 그런 제보가 있었다.
+ *
+ * 주변 입력 라벨·오류 문구와 확실히 구분되도록 면(앰버 배경)과 아이콘을 준다. 오류가 아니므로
+ * 빨강(colorScheme.error)은 쓰지 않는다 — 진행이 막힌 것으로 오해하면 안 된다.
+ * 색은 앱의 '주의' 의미색 토큰(AigoWarningContainer)을 그대로 쓴다(안전 확인 배지와 같은 톤).
+ */
+@Composable
+private fun NoticeCallout(text: String) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = AigoWarningContainer,
+        border = BorderStroke(1.dp, AigoOnWarningContainer.copy(alpha = 0.35f)),
+    ) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
+            Text("ℹ️", fontSize = 16.sp)
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text,
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+                fontWeight = FontWeight.Medium,
+                color = AigoOnWarningContainer,
+            )
         }
     }
 }
