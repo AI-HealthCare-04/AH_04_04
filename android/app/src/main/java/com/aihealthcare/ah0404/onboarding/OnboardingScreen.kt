@@ -49,7 +49,6 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.sp
@@ -68,6 +67,7 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -96,6 +96,7 @@ import com.aihealthcare.ah0404.auth.AuthLoginUiState
 import com.aihealthcare.ah0404.auth.AuthLoginViewModel
 import com.aihealthcare.ah0404.auth.SocialProvider
 import com.aihealthcare.ah0404.auth.SocialSignInClients
+import com.aihealthcare.ah0404.mission.PROTEIN_GATE_UNKNOWN_NOTICE
 import com.aihealthcare.ah0404.network.Term
 import com.aihealthcare.ah0404.network.TokenHolder
 import com.aihealthcare.ah0404.fitness.StsAssessmentScreen
@@ -282,13 +283,19 @@ private fun WelcomeStep(
                 )
                 // '아이고'는 화면의 주인공 — 설명 문구(19sp)의 ~3.5배(66sp)로 크게 + 세로 그라데이션(고급감).
                 //   두께는 Black 웨이트만 사용(짙은 스트로크 테두리는 안 예뻐서 제거). 줄간격은 Trim.Both 로 촘촘히.
+                //
+                // ⚠️ style 은 반드시 LocalTextStyle.current.copy 로 만든다. 새 TextStyle(...) 을 넘기면
+                //   Compose 가 LocalTextStyle 을 아예 참조하지 않아 테마가 provide 한 Noto Sans KR
+                //   (Theme.kt)이 끊기고 fontFamily=null → **기기의 시스템 기본 글꼴**로 떨어진다.
+                //   앱 이름이 삼성 기기에서는 삼성 글꼴로, 에뮬레이터에서는 Roboto/Noto CJK 로 제각각
+                //   그려지던 원인이다(브랜드가 기기 설정에 좌우됨). 앱 전체에서 이 패턴은 여기 하나뿐이었다.
                 Text(
                     "아이고",
                     fontSize = 66.sp,
                     fontWeight = FontWeight.Black,
                     letterSpacing = 2.sp,
                     lineHeight = 66.sp,
-                    style = TextStyle(
+                    style = LocalTextStyle.current.copy(
                         brush = Brush.verticalGradient(listOf(Color(0xFF43976A), Color(0xFF1E5A38))),
                         lineHeightStyle = LineHeightStyle(
                             alignment = LineHeightStyle.Alignment.Center,
@@ -1116,6 +1123,9 @@ private fun ProfileHealthCheck(vm: OnboardingViewModel) {
         ),
         selected = vm.kidneyStatus,
         onSelect = { vm.kidneyStatus = it },
+        // '잘 모르겠어요'도 고단백 식사 미션을 막는다. 고르는 시점에 알려주지 않으면, 미션이 사라진 뒤
+        //   미션 화면에서야 이유를 알게 된다(#304 안내는 사후 안내다).
+        note = PROTEIN_GATE_UNKNOWN_NOTICE.takeIf { vm.kidneyStatus == "unknown" },
     )
     Spacer(Modifier.height(16.dp))
     ProfileRadioSection(
@@ -1127,6 +1137,10 @@ private fun ProfileHealthCheck(vm: OnboardingViewModel) {
         ),
         selected = vm.proteinStatus,
         onSelect = { vm.proteinStatus = it },
+        // 신장 쪽에서 이미 같은 안내가 떠 있으면 한 화면에 두 번 나오므로 생략한다.
+        note = PROTEIN_GATE_UNKNOWN_NOTICE.takeIf {
+            vm.proteinStatus == "unknown" && vm.kidneyStatus != "unknown"
+        },
     )
 }
 
@@ -1236,6 +1250,8 @@ private fun ProfileRadioSection(
     options: List<Pair<String, String>>,
     selected: String,
     onSelect: (String) -> Unit,
+    // 선택값에 따라 붙는 안내(예: '잘 모르겠어요' → 고단백 식사 미션이 숨겨진다). null 이면 표시 안 함.
+    note: String? = null,
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -1276,6 +1292,10 @@ private fun ProfileRadioSection(
                         )
                     }
                 }
+            }
+            note?.let {
+                Spacer(Modifier.height(10.dp))
+                Text(it, fontSize = 13.sp, lineHeight = 19.sp, color = TermsMuted)
             }
         }
     }
