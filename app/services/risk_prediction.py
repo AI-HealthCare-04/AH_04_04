@@ -1,11 +1,12 @@
 import asyncio
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 from decimal import Decimal
 
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import config
 from app.core.terms_catalog import CATALOG_BY_TYPE
 from app.core.utils.clock import today_kst
 from app.dtos.dashboard import ScoreSimPoint, ScoreSimulationResponse
@@ -75,9 +76,20 @@ class RiskPredictionService:
         user: User,
         data: RiskPredictionReassessRequest,
     ) -> RiskPredictionReassessResponse:
+        # 사용자 단위 직렬화(리뷰 P1) — **이 트랜잭션의 첫 읽기여야 한다.** 아래 '오늘 재평가 있나' 확인은
+        #   check-then-insert 라, 잠금 없이는 동시 요청 둘이 모두 '없음'을 읽고 각각 저장해 하루 1회
+        #   정책이 깨진다. 잠금을 먼저 잡으면 뒤 요청은 앞 요청 커밋 후에야 읽어 기존 예측을 보게 된다.
+        await self.prediction_repo.lock_user_for_reassess(user.user_id)
         profile = await self.profile_repo.get_latest_profile(user.user_id)
         if profile is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Health profile not found.")
+        # 하루 1회 정책(#388): 오늘 이미 재평가했다면 새로 계산·저장하지 않고 그 예측을 그대로 돌려준다.
+        #   429 가 아니라 200 + 멱등인 이유 — 앱이 오류 분기 없이 결과를 보여주면 되고, 연타·재설치·API
+        #   직접 호출 어느 경로로도 같은 날 예측 행이 늘지 않는다(추이 그래프가 오늘 점으로 덮이는 문제 차단).
+        #   프로필 행도 함께 안 늘어난다 — 재평가 프로필 생성이 이 분기 뒤에 있기 때문(#388 결정 4).
+        existing = await self.prediction_repo.get_today_reassessment(user.user_id)
+        if existing is not None:
+            return self._to_reassess_response(existing, recalculated=False)
         reassessment_profile = await self._create_reassessment_profile(
             user=user,
             source_profile=profile,
@@ -299,9 +311,16 @@ class RiskPredictionService:
             display_message=self._display_message(care_stage),
         )
 
-    def _to_reassess_response(self, prediction: RiskPrediction) -> RiskPredictionReassessResponse:
+    def _to_reassess_response(
+        self,
+        prediction: RiskPrediction,
+        *,
+        recalculated: bool = True,
+    ) -> RiskPredictionReassessResponse:
         care_stage = self._care_stage_from_risk_level(prediction.internal_risk_level)
         return RiskPredictionReassessResponse(
+            recalculated=recalculated,
+            next_available_at=next_reassess_available_at(),
             profile_id=prediction.profile_id,
             prediction_id=prediction.prediction_id,
             risk_score=self._public_risk_score(prediction),
@@ -409,3 +428,11 @@ def _format_cohort_age_label(age_key: str, window: str | None) -> str:
         lo, hi = window.split("-", 1)
         return f"{lo}–{hi}세"
     return f"{age_key}세"
+
+
+def next_reassess_available_at() -> datetime:
+    """다음 재평가 가능 시각 = 다음 KST 자정(#388 하루 1회 정책).
+
+    앱이 "내일 다시 계산할 수 있어요" 안내에 쓴다. 순수 계산이라 단위 테스트로 고정한다.
+    """
+    return datetime.combine(today_kst() + timedelta(days=1), time.min, tzinfo=config.TIMEZONE)

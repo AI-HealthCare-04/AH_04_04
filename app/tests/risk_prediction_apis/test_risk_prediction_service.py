@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import cast
@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from app.core.utils.clock import today_kst
 from app.dtos.risk_prediction import (
     CareStage,
     RiskComparisonStatus,
@@ -28,7 +29,7 @@ from app.models.enums import (
 from app.models.health import HealthProfile
 from app.models.predictions import RiskPrediction
 from app.models.users import User
-from app.services.risk_prediction import RiskPredictionService
+from app.services.risk_prediction import RiskPredictionService, next_reassess_available_at
 
 
 def _reassessment_activity_logs() -> list[object]:
@@ -156,8 +157,12 @@ def test_reassess_response_uses_v73_contract_without_model_variant() -> None:
         "display_message": RiskPredictionService._display_message(CareStage.MAINTAIN),
         "disclaimer": "본 결과는 참고용이며 의학적 진단이 아닙니다.",
         "activity_input_source": ActivityInputSource.SERVICE_LOG.value,
+        # 하루 1회 정책(#388): 기본은 '이번 호출로 새로 계산' + 다음 가능 시각(다음 KST 자정).
+        "recalculated": True,
+        "next_available_at": dumped["next_available_at"],
     }
     assert "model_variant" not in dumped
+    assert dumped["next_available_at"] is not None
 
 
 def test_history_item_exposes_continuous_score_without_internal_model_fields() -> None:
@@ -329,13 +334,22 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
             return profile
 
     class _PredictionRepo:
-        def __init__(self) -> None:
+        def __init__(self, today_reassessment: RiskPrediction | None = None) -> None:
             self.created_prediction: RiskPrediction | None = None
+            self.today_reassessment = today_reassessment
+            self.lock_order: list[str] = []
+
+        async def lock_user_for_reassess(self, user_id: int) -> None:
+            self.lock_order.append("lock")
 
         async def create_risk_prediction(self, prediction: RiskPrediction) -> RiskPrediction:
             prediction.prediction_id = 90
             self.created_prediction = prediction
             return prediction
+
+        async def get_today_reassessment(self, user_id: int) -> RiskPrediction | None:
+            self.lock_order.append("check")
+            return self.today_reassessment
 
     class _DashboardRepo:
         def __init__(self) -> None:
@@ -411,3 +425,97 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
     assert response.cohort_version == "knhanes2022_2024_v1"
     assert response.activity_input_source == ActivityInputSource.SERVICE_LOG
     assert session.committed is True
+
+
+# ---------------- 하루 1회 재평가 정책(#388) ----------------
+
+
+def test_next_reassess_available_at_is_next_kst_midnight() -> None:
+    # 앱이 "내일 다시 계산할 수 있어요" 안내에 쓰는 값 — 다음 KST 자정이어야 한다.
+    nxt = next_reassess_available_at()
+    assert nxt.date() == today_kst() + timedelta(days=1)
+    assert (nxt.hour, nxt.minute, nxt.second) == (0, 0, 0)
+    assert nxt.tzinfo is not None
+
+
+async def test_reassess_returns_existing_prediction_when_already_done_today() -> None:
+    """오늘 이미 재평가했으면 새로 계산·저장하지 않고 그 예측을 그대로 돌려준다(#388).
+
+    연타·재설치·API 직접 호출 어느 경로로도 같은 날 예측/프로필 행이 늘지 않아야 한다 —
+    추이 그래프가 오늘 찍은 점으로 덮이는 문제를 서버에서 원천 차단하는 것이 정책의 목적이다.
+    """
+    existing = RiskPrediction(
+        prediction_id=77,
+        user_id=1,
+        profile_id=72,
+        model_version="test",
+        model_variant=ModelVariant.WITH_WAIST,
+        internal_risk_score=Decimal("0.420"),
+        internal_risk_level=RiskLevel.MEDIUM,
+        muscle_score=81,
+        score_band="good",
+        score_cohort_version="knhanes2022_2024_v1",
+    )
+
+    class _ProfileRepo:
+        def __init__(self) -> None:
+            self.create_calls = 0
+
+        async def get_latest_profile(self, user_id: int) -> HealthProfile:
+            return HealthProfile(
+                profile_id=55,
+                user_id=1,
+                session_id=None,
+                birth_date=date(1958, 3, 1),
+                sex=Sex.MALE,
+                height_cm=Decimal("160.00"),
+                weight_kg=Decimal("58.00"),
+                bmi=Decimal("22.7"),
+                waist_cm=Decimal("82.00"),
+                walk_days=5,
+                musc_days=0,
+                activity_input_source=ActivityInputSource.SELF_REPORT,
+                activity_window_days=None,
+                kidney_status=KidneyStatus.NONE,
+                protein_restriction_status=ProteinRestrictionStatus.NONE,
+                protein_challenge_allowed=True,
+                input_method=InputMethod.FORM,
+                has_estimated_value=False,
+            )
+
+        async def create_profile(self, profile: HealthProfile) -> HealthProfile:
+            self.create_calls += 1
+            return profile
+
+    class _PredictionRepo:
+        def __init__(self) -> None:
+            self.create_calls = 0
+            self.locked_user: int | None = None
+
+        async def lock_user_for_reassess(self, user_id: int) -> None:
+            self.locked_user = user_id
+
+        async def get_today_reassessment(self, user_id: int) -> RiskPrediction:
+            return existing
+
+        async def create_risk_prediction(self, prediction: RiskPrediction) -> RiskPrediction:
+            self.create_calls += 1
+            return prediction
+
+    service = RiskPredictionService(session=None)  # type: ignore[arg-type]
+    profile_repo = _ProfileRepo()
+    prediction_repo = _PredictionRepo()
+    service.profile_repo = profile_repo  # type: ignore[assignment]
+    service.prediction_repo = prediction_repo  # type: ignore[assignment]
+
+    response = await service.reassess_latest_profile(
+        cast(User, SimpleNamespace(user_id=1)),
+        RiskPredictionReassessRequest(activity_window_days=7),
+    )
+
+    assert response.prediction_id == 77  # 기존 예측 그대로
+    assert response.recalculated is False  # 앱이 "오늘은 이미 계산했어요"를 안내할 수 있다
+    assert response.next_available_at is not None
+    assert prediction_repo.create_calls == 0  # 예측 행이 늘지 않는다
+    assert profile_repo.create_calls == 0  # 프로필 이력도 늘지 않는다(#388 결정 4)
+    assert prediction_repo.locked_user == 1  # 판정 전에 사용자 행을 잠근다(리뷰 P1)
