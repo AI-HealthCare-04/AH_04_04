@@ -125,6 +125,27 @@ class OnboardingViewModel(
             }
         }
 
+    /**
+     * '모름'으로 추정 플래그가 섰는데 그 뒤 생년월일을 만 50세 미만(또는 무효)으로 바꿔 **추정이 무효화된** 상태(#395).
+     *  이때 값은 비어 있고(heightCm="") heightEstimatedValid 도 false 라, 예전엔 아무 신호 없이 입력칸만 비고
+     *  '다음'이 죽어 "고장 난 것처럼" 보였다. 이 상태를 밖으로 노출해 강조 안내([estimateInvalidatedNotice])와
+     *  입력칸 인라인 오류([heightError]/[weightError])로 신호를 준다. 데이터 규칙(#313)은 유지 — '다음'은 여전히
+     *  직접 입력해야 활성화된다(선택지 A: 막힌 '느낌'만 없애고 규칙은 그대로).
+     */
+    val estimateInvalidated: Boolean get() = (heightEstimated || weightEstimated) && !canEstimate
+
+    /**
+     * 무효화된 추정을 알리는 강조 안내(#395 선택지 A). 실제 트리거는 대부분 생년월일 오타(1958→1998)라,
+     *  "직접 입력"뿐 아니라 **생년월일을 다시 확인**하도록 되돌아갈 길을 함께 준다(리뷰 보강). 일반 연령
+     *  안내([underAgeNotice])보다 구체적이라 화면에서 이 안내를 우선한다. 값을 직접 채우면 사라진다.
+     */
+    val estimateInvalidatedNotice: String?
+        get() = if (estimateInvalidated) {
+            "생년월일을 바꾸셔서 추정치를 지웠어요. 만 50세 미만은 추정을 제공하지 않으니 키·몸무게를 직접 입력해 주세요. 생년월일이 맞는지도 한 번 확인해 주세요."
+        } else {
+            null
+        }
+
     /** 화면 표시값: 추정이면 현재 성별·나이로 라이브 계산(성별/생일 바꾸면 즉시 갱신), 아니면 수동 입력값. */
     val heightInput: String get() = if (heightEstimatedValid) estimateBody(sex, ageYears()).first.toInputText() else heightCm
     val weightInput: String get() = if (weightEstimatedValid) estimateBody(sex, ageYears()).second.toInputText() else weightKg
@@ -132,6 +153,9 @@ class OnboardingViewModel(
     /** 키 인라인 검증 문구(#298 A-2). 직접 입력값이 현실 범위 밖이면 그 자리에서 안내(추정치·빈칸은 조용). */
     val heightError: String?
         get() {
+            // '모름' 후 연령을 만 50세 미만으로 바꿔 추정이 무효화된 자리(#395): 값이 비어(heightCm="") 조용히
+            //   null 이 되던 것을, 사라진 입력칸 자체가 신호를 내도록 오류로 잡는다(강조 안내와 함께).
+            if (heightEstimated && !canEstimate) return "키를 직접 입력해 주세요"
             if (heightEstimatedValid || heightCm.isBlank()) return null
             val h = heightCm.toDoubleOrNull() ?: return "키를 숫자로 입력해 주세요"
             return if (h < HEIGHT_MIN_CM || h > HEIGHT_MAX_CM) {
@@ -144,6 +168,8 @@ class OnboardingViewModel(
     /** 몸무게 인라인 검증 문구(#298 A-2). */
     val weightError: String?
         get() {
+            // '모름' 후 추정 무효화 시 빈 입력칸이 신호를 내도록 오류로 잡는다(#395, heightError 와 동일).
+            if (weightEstimated && !canEstimate) return "몸무게를 직접 입력해 주세요"
             if (weightEstimatedValid || weightKg.isBlank()) return null
             val w = weightKg.toDoubleOrNull() ?: return "몸무게를 숫자로 입력해 주세요"
             return if (w < WEIGHT_MIN_KG || w > WEIGHT_MAX_KG) {

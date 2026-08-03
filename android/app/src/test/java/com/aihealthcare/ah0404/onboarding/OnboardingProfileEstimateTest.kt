@@ -218,6 +218,54 @@ class OnboardingProfileEstimateTest {
         assertEquals("", vm.waistCm)
     }
 
+    // ── #395: '모름' 후 50세 미만 전환 시 '막힌 느낌' 제거(선택지 A) — 강조 안내 + 입력칸 오류로 신호 ──────
+    @Test
+    fun invalidated_estimate_surfaces_notice_and_field_errors() {
+        val vm = vm(2026, 7, 15).apply { sex = "male"; birthYear = "1970"; birthMonth = "1"; birthDay = "1" } // 56세
+        vm.markHeightUnknown(); vm.markWeightUnknown()
+        assertFalse("추정 활성 시엔 무효화 아님", vm.estimateInvalidated)
+
+        vm.birthYear = "2000" // 26세 → 추정 무효
+        assertTrue("무효화 감지", vm.estimateInvalidated)
+        assertFalse("유효 추정 아님", vm.heightEstimatedValid)
+        assertFalse("has_estimated_value 로도 안 샌다", vm.hasEstimatedValue)
+        // 강조 안내: 직접 입력 + 생년월일 재확인(오타 되돌리기)
+        assertTrue(vm.estimateInvalidatedNotice?.contains("직접 입력") == true)
+        assertTrue(vm.estimateInvalidatedNotice?.contains("생년월일") == true)
+        // 사라진 입력칸 자체가 오류 신호를 낸다
+        assertTrue(vm.heightError?.contains("직접 입력") == true)
+        assertTrue(vm.weightError?.contains("직접 입력") == true)
+    }
+
+    // 화면은 무효화 안내를 일반 연령 안내보다 우선(?: )해 하나만 띄운다 — 둘 다 값이 있어야 우선 규칙이 의미가 있다.
+    @Test
+    fun invalidation_notice_takes_precedence_over_underage_notice() {
+        val vm = vm(2026, 7, 15).apply { sex = "male"; birthYear = "1970"; birthMonth = "1"; birthDay = "1" }
+        vm.markHeightUnknown()
+        vm.birthYear = "2000" // 26세: 무효화 + 만 65세 미만 안내 둘 다 대상
+        assertTrue(vm.estimateInvalidatedNotice != null)
+        assertTrue(vm.underAgeNotice != null)
+    }
+
+    // 직접 입력으로 값을 채우면 무효화 신호가 사라진다(플래그 해제 → estimateInvalidated=false).
+    @Test
+    fun typing_values_clears_invalidation_signals() {
+        val vm = vm(2026, 7, 15).apply { sex = "male"; birthYear = "1970"; birthMonth = "1"; birthDay = "1" }
+        vm.markHeightUnknown(); vm.markWeightUnknown()
+        vm.birthYear = "2000"
+        assertTrue(vm.estimateInvalidated)
+
+        vm.setHeight("170")
+        assertTrue("한 칸만 채우면 아직 무효화 상태", vm.estimateInvalidated)
+        assertNull("채운 칸은 오류 해제", vm.heightError)
+        assertTrue("안 채운 칸은 여전히 오류", vm.weightError?.contains("직접 입력") == true)
+
+        vm.setWeight("65")
+        assertFalse("둘 다 채우면 무효화 해제", vm.estimateInvalidated)
+        assertNull(vm.estimateInvalidatedNotice)
+        assertNull(vm.weightError)
+    }
+
     // ── #298 A-2: 키·몸무게 현실 범위 밖(0·음수·극단값)은 백엔드 이전에 앱에서 차단 ──────────
     @Test
     fun submit_rejects_out_of_range_height() = runTest {
