@@ -1,6 +1,7 @@
 package com.aihealthcare.ah0404.record
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,6 +11,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -22,16 +25,22 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.aihealthcare.ah0404.R
 import com.aihealthcare.ah0404.network.CohortDistributionResponse
 import com.aihealthcare.ah0404.network.RiskHistoryItem
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
+import com.aihealthcare.ah0404.ui.theme.ChartLineGreen
 import com.aihealthcare.ah0404.ui.theme.Dimens
 import kotlin.math.max
 
@@ -99,7 +108,17 @@ internal data class MuscleScoreUi(
     // 허리둘레(cm). null = 미입력 → 점수·또래 비교 모두 '허리 제외' 모델로 계산된 것이라 그 사실을 안내한다.
     //   (app/ml/predictor.py 가 허리 유무로 다른 번들·다른 코호트표를 쓴다)
     val waistCm: Int? = null,
+    // 점수 기준일(ISO). latest 응답에 날짜가 없어 추이 최신 항목에서 가져온다(#387, 핸드오프 §13 B-2).
+    //   null = 추이 조회 실패 → H1 의 기준일 줄만 숨긴다.
+    val measuredAtIso: String? = null,
 )
+
+/** ISO(YYYY-MM-DD…) → "2026.08.02 기준". 형식이 짧으면 null(줄 자체를 숨긴다). */
+internal fun measuredAtLabel(iso: String?): String? =
+    iso?.takeIf { it.length >= 10 }?.let { "${it.substring(0, 10).replace('-', '.')} 기준" }
+
+/** 점수 변화 그래프 기준 높이(글꼴 확대 시 함께 늘어난다). */
+private val TrendChartBaseHeight = 120.dp
 
 private const val DISPLAY_FLOOR = 5 // 표시 하한 5점(§3.1) — 계산·저장은 0~100, 화면 표시만 최저 5.
 
@@ -134,6 +153,12 @@ internal const val UNDER_AGE_SCORE_BODY =
         "${MIN_SCORE_AGE}세 미만은 기준이 되는 자료가 없어 점수를 제공하지 않아요. " +
         "걷기·근력 챌린지와 운동 영상은 연령과 관계없이 그대로 이용하실 수 있어요."
 
+/**
+ * 점수 미도착(PENDING) 안내 문구. 기존 '점수를 준비하고 있어요' 카드의 본문을 그대로 옮긴 것으로,
+ * #387 리디자인에서 그 카드의 자리를 H1 빈 상태 카드([ScoreEmptyCard])가 대신하면서 상수로 뺐다.
+ */
+internal const val SCORE_PENDING_BODY = "조금 뒤에 다시 확인해 주세요."
+
 internal fun shown(score: Int): Int = max(score, DISPLAY_FLOOR)
 
 private fun bandLabel(band: String?): String = when (band) {
@@ -167,23 +192,29 @@ internal fun MuscleDashboardCards(
         // 점수가 있으면 연령 판별과 무관하게 점수를 보여준다(리뷰 #275-③) — 나이 출처인 prediction-inputs
         //   조회만 실패해도 유효한 점수가 "준비 중"에 가려지지 않게 score 우선(#273 게이트).
         score != null -> {
-            ScoreHeadlineCard(score, ui.band, waistMissing = ui.waistCm == null) // ① 지금 내 점수
-            ScoreTrendCard(ui.trend)                // ② 변화 추이(위험도 순화 표현)
-            CohortDistributionCard(ui.cohort, waistMissing = ui.waistCm == null) // 또래 중 내 위치(#193)
+            ScoreHeadlineCard(ui, score)            // H1 지금 내 점수
+            ScoreTrendCard(ui.trend)                // H2 점수 변화
+            CohortDistributionCard(ui.cohort, waistMissing = ui.waistCm == null) // H3 또래 중 내 위치(#193)
         }
         // §3.3 점수가 없을 때만 연령 분기: 65세 미만 카드. 나이 미상은 준비 중.
         //   ⚠️ 50세 미만과 50-64세는 **성격이 다르다**(1차 검토 피드백): 50-64세는 새 모델과 함께 준비 중이지만,
         //      50세 미만은 학습 데이터가 없어 **제공 계획 자체가 없다**. 두 경우에 같은 '준비 중' 문구를 쓰면
         //      50세 미만 사용자가 기다리면 되는 것으로 오해한다.
+        //   PENDING(나이 미상·65세 이상 미도착)만 리디자인의 H1 빈 상태 카드로 그린다 — 점수를 받을 수 있는
+        //      사용자라 '점수 자리'를 보여주는 게 맞고, 연령 대상 밖에는 그 자리 자체가 오해가 된다(#403 유지).
         else -> when (scoreEmptyState(age)) {
             ScoreEmptyState.UNDER_AGE -> UnderAgeInfoCard(onGoToMissions)
             ScoreEmptyState.PREPARING -> PreparingCard(onGoToMissions)
-            ScoreEmptyState.PENDING -> ScorePendingCard()
+            ScoreEmptyState.PENDING -> ScoreEmptyCard()
         }
     }
+    // H3 빈 상태 — 점수가 없으면 또래 위치도 없다. 흐린 실루엣 + 안내만(§8 H3, §6).
+    if (score == null) EmptyCohortCard()
     // 5STS 재측정·추이(#353): 점수 추이 아래 보조 지표. 직접 수행 지표라 점수(예측) 유무와 무관하게
     //   항상 표시한다 — 스킵·65세 미만 사용자도 여기서 측정을 시작할 수 있다.
     StsTrendCard()
+    // H5 생활습관 안내 — 점수가 없을 때만(§8 H5). 빈 화면이 안내로 끝나게 하는 마지막 카드다.
+    if (score == null) LifestyleTipCard()
 }
 
 /**
@@ -208,36 +239,140 @@ internal fun MuscleImprovementCards(ui: MuscleScoreUi, onGoToMissions: () -> Uni
     }
 }
 
-// ── §3.2 헤드라인 + 구간 배지 ─────────────────────────────────────────────────
+// ── H1 근육 건강 점수(§8 H1) ──────────────────────────────────────────────────
+/**
+ * 제목과 숫자를 분리한다(#387). 이전에는 `근육 건강 점수 73점`이 한 줄 제목이라 숫자가 제목에 묻혔다.
+ *  좌: 점수 + 구간 배지 + 변화 한 줄 + 기준일 / 우: 상태 표정 원.
+ *  변화 문구는 기존 확정 문구([scoreChangeCopy])를 그대로 쓴다(핸드오프 §0-1 다).
+ */
 @Composable
-private fun ScoreHeadlineCard(score: Int, band: String?, waistMissing: Boolean) {
-    AigoCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "근육 건강 점수 ${shown(score)}점",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-            )
-            Spacer(Modifier.height(0.dp))
+internal fun ScoreHeadlineCard(ui: MuscleScoreUi, score: Int) {
+    AigoCard(title = "근육 건강 점수", contentSpacing = Dimens.Space12) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Dimens.Space4)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "${shown(score)}",
+                        style = MaterialTheme.typography.displaySmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text("점", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.width(Dimens.Space8))
+                    BandBadge(ui.band)
+                }
+                // ⚠️ 변화 문구는 여기 두지 않는다(실기기 확인). 바로 아래 '점수 변화' 카드가 같은
+                //   [scoreChangeCopy] 를 요약 1줄로 쓰고 있어, 두 카드에 똑같은 문장이 연달아 나왔다.
+                //   핸드오프 §8 H1 은 H2 와 다른 문구를 전제했지만, 문구는 기존 확정본을 쓰기로 했으므로(§0-1 다)
+                //   중복을 피해 '변화'는 H2 가 갖고 H1 은 점수·구간·기준일만 맡는다.
+                measuredAtLabel(ui.measuredAtIso)?.let { label ->
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Spacer(Modifier.width(Dimens.Space12))
+            ScoreFaceIcon(band = ui.band)
         }
-        Spacer(Modifier.height(Dimens.Space8))
-        BandBadge(band)
-        Spacer(Modifier.height(Dimens.Space12))
-        Text(
-            "또래와 비교해 계산한 참고 점수예요",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
         // 허리둘레 미입력 안내는 '변화' 카드가 아니라 여기에 둔다 — 부정확성은 점수 자체의 성질이고,
         //   변화 카드는 점수가 2건 이상이어야 그려져 정작 처음 점수를 보는 사용자에게는 안 보인다.
-        if (waistMissing) {
-            Spacer(Modifier.height(Dimens.Space8))
+        if (ui.waistCm == null) {
             Text(
                 WAIST_MISSING_SCORE_NOTE,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+/** H1 빈 상태(§8 H1) — 점수를 받을 수 있는 사용자에게만 그린다(65세 미만은 연령 안내 카드가 대신한다). */
+@Composable
+internal fun ScoreEmptyCard() {
+    AigoCard(title = "근육 건강 점수", contentSpacing = Dimens.Space12) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Dimens.Space4)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("–", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.width(Dimens.Space8))
+                    // 배지도 기존 BandBadge 와 같은 모양, 색만 비활성 토큰(§3 확정 — 새 색을 만들지 않는다).
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .padding(horizontal = Dimens.Space12, vertical = Dimens.Space4),
+                    ) {
+                        Text(
+                            "기록 없음",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                // 문구는 기존 확정본을 그대로 쓴다(핸드오프 §0-1 다). 핸드오프의 "첫 기록을 만들어볼까요?"는
+                //   측정을 유도하는 말이라, '점수가 아직 도착하지 않았다'는 이 상태(#403 PENDING)와 뜻이 어긋난다.
+                Text(
+                    SCORE_PENDING_BODY,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.width(Dimens.Space12))
+            ScoreFaceIcon(band = null, empty = true)
+        }
+    }
+}
+
+/**
+ * 상태 표정 아이콘(§4-4·§8 H1) — **이미지가 아니라 Canvas 로 그린다.**
+ *  원 + 링 + 눈 2개 + 입 호가 전부라 벡터가 선명하고, 구간이 늘어도 색과 입 곡률만 바꾸면 된다.
+ *  색은 기존 [bandColor] 를 그대로 쓴다(새 색 추가 없음). 빈 상태는 비활성 토큰 + 무표정.
+ */
+@Composable
+private fun ScoreFaceIcon(band: String?, empty: Boolean = false) {
+    val ringColor = if (empty) MaterialTheme.colorScheme.surfaceVariant else bandColor(band)
+    val faceColor = if (empty) MaterialTheme.colorScheme.onSurfaceVariant else bandColor(band)
+    // 입 곡률: 좋음=많이 웃음, 유지=살짝 웃음, 주의=평평, 빈 상태=평평(무표정).
+    val smile = when {
+        empty -> 0f
+        band == "good" -> 1f
+        band == "caution" -> 0f
+        else -> 0.6f
+    }
+    val description = if (empty) "기록 없음" else "상태 ${bandLabel(band)}"
+    Canvas(
+        Modifier
+            .size(72.dp)
+            .semantics { contentDescription = description },
+    ) {
+        val r = size.minDimension / 2f
+        val center = Offset(r, r)
+        drawCircle(ringColor.copy(alpha = 0.25f), radius = r, center = center)
+        drawCircle(ringColor, radius = r, center = center, style = Stroke(3.dp.toPx()))
+        // 눈 2개
+        val eyeDx = r * 0.32f
+        val eyeDy = r * 0.22f
+        val eyeR = r * 0.09f
+        drawCircle(faceColor, radius = eyeR, center = Offset(center.x - eyeDx, center.y - eyeDy))
+        drawCircle(faceColor, radius = eyeR, center = Offset(center.x + eyeDx, center.y - eyeDy))
+        // 입: smile 이 0 이면 직선, 커질수록 아래로 볼록한 호.
+        val mouthHalf = r * 0.36f
+        val mouthY = center.y + r * 0.24f
+        val mouth = Path().apply {
+            moveTo(center.x - mouthHalf, mouthY)
+            quadraticTo(center.x, mouthY + mouthHalf * smile, center.x + mouthHalf, mouthY)
+        }
+        drawPath(mouth, faceColor, style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round))
     }
 }
 
@@ -261,39 +396,45 @@ private fun BandBadge(band: String?) {
             .background(color.copy(alpha = 0.15f))
             .padding(horizontal = Dimens.Space12, vertical = Dimens.Space4),
     ) {
-        Text(bandLabel(band), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = color)
+        // 구간색은 기존 그대로, 크기만 H1 에 맞춰 줄인다(§8 H1 — 점수 숫자가 주인공이라 배지가 커선 안 된다).
+        Text(bandLabel(band), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = color)
     }
 }
 
-// ── §3.2 추이(y=점수, 높을수록 좋음, 변화 문구 방향 반전) ──────────────────────
+// ── H2 점수 변화(§8 H2, y=점수·높을수록 좋음) ────────────────────────────────
+/**
+ * 요약 한 줄이 그래프보다 **위**에 온다(#387) — 시니어는 이 줄만 읽어도 결론이 전달돼야 한다.
+ *  문구는 기존 확정본([scoreChangeCopy]/[trendEmptyCopy])을 그대로 쓴다(핸드오프 §0-1 다).
+ *
+ *  ⚠️ 핸드오프 §6 은 추이 2건 미만이면 "카드 자체를 숨긴다"고 적었지만, 그 근거는 '빈 그래프 금지'다.
+ *   여기서는 **그래프만 그리지 않고 카드는 남긴다** — 이 안내 문구는 왜 비었는지·무엇을 하면 채워지는지
+ *   알리려고 #334/#339 에서 두 번 다듬은 확정 문구라, 카드를 통째로 지우면 그 안내가 사라진다.
+ *   빈 그래프가 렌더되지 않는다는 요구는 그대로 지킨다.
+ */
 @Composable
-private fun ScoreTrendCard(trend: List<ScorePoint>) {
-    AigoCard {
-        Text("근육 건강 변화", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(Dimens.Space8))
+internal fun ScoreTrendCard(trend: List<ScorePoint>) {
+    AigoCard(title = "점수 변화", contentSpacing = Dimens.Space12) {
         if (trend.size < 2) {
             // 예측 1건이면 변화(두 점 이상)는 아직 없지만 침묵하지 않는다(#334 문제3): 왜 비었는지·언제 채워지는지·
             //   무엇을 하면 되는지 안내한다(현재 점수 자체는 위 헤드라인 카드에 크게 표시됨).
             Text(trendEmptyCopy(trend.size), style = MaterialTheme.typography.bodyLarge)
             return@AigoCard
         }
-        Text(scoreChangeCopy(trend), style = MaterialTheme.typography.bodyLarge)
-        Spacer(Modifier.height(Dimens.Space12))
+        Text(
+            scoreChangeCopy(trend),
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Bold,
+        )
         val segments = splitByBaseline(trend)
         ScoreTrendChart(segments)
-        Spacer(Modifier.height(Dimens.Space4))
         // 경계가 있으면 왜 끊겼는지 한 줄로 설명한다(#389 문제 1) — 없으면 그리지 않는다.
+        //   x축 날짜는 차트가 직접 그리므로 아래 첫·마지막 라벨 Row 는 더 이상 두지 않는다.
         trendBaselineCaption(segments)?.let { caption ->
             Text(
                 caption,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(Dimens.Space4))
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(trend.first().label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(trend.last().label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -363,50 +504,83 @@ internal fun trendDescription(segments: List<List<ScorePoint>>): String =
         if (i == 0) pts else "새로운 기준으로 다시 시작. $pts"
     }.joinToString(". ")
 
+/**
+ * 점수 변화 꺾은선(§8 H2). 시안 대비 바뀐 점: 격자선 제거, y 눈금 3개(50/70/90)만, 각 점 위에 점수 값,
+ * x축에 날짜 라벨. 값 표시는 시니어가 그래프 모양이 아니라 **숫자**로 읽게 하려는 것이다.
+ *
+ *  y 범위는 눈금과 어긋나지 않게 50~90 으로 고정하되, 범위를 벗어난 점수(예: 45·95)도 잘리지 않도록
+ *  실제 값이 밖으로 나가면 그만큼 넓힌다. 기준 경계(#275-②)에서 선을 끊는 규칙은 그대로다.
+ */
 @Composable
 private fun ScoreTrendChart(segments: List<List<ScorePoint>>) {
-    val primary = MaterialTheme.colorScheme.primary
-    // 가로 격자선은 장식이라 옅게 둔다(데이터 선과 경쟁하면 안 된다).
-    val grid = MaterialTheme.colorScheme.outlineVariant
-    // 기준 경계 점선은 '의미를 전달하는 선'이라 대비를 따로 확보한다(리뷰 P2):
-    //   카드 배경(#F9FAF5) 기준 outlineVariant 는 1.62:1 로 저시력·고령 사용자가 구분하기 어렵다.
-    //   outline(#717971) 은 4.28:1 로 그래프 선 권장선(3:1)을 넉넉히 넘는다.
+    val lineColor = ChartLineGreen
+    val axisColor = MaterialTheme.colorScheme.outlineVariant
+    val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val valueColor = MaterialTheme.colorScheme.onSurface
+    // 기준 경계 점선은 '의미를 전달하는 선'이라 대비를 따로 확보한다(#394 리뷰 P2):
+    //   카드 배경 기준 outlineVariant 는 1.62:1 로 저시력·고령 사용자가 구분하기 어렵다.
+    //   outline 은 4.28:1 로 그래프 선 권장선(3:1)을 넉넉히 넘는다.
     val baselineDivider = MaterialTheme.colorScheme.outline
     val desc = "근육 건강 점수 변화 그래프. ${trendDescription(segments)}"
-    val total = segments.sumOf { it.size }
+    val flat = segments.flatten()
+    val total = flat.size
+    if (total == 0) return
+    val scores = flat.map { shown(it.score) }
+    val minY = minOf(50, scores.min())
+    val maxY = maxOf(90, scores.max())
+    val ticks = listOf(50, 70, 90).filter { it in minY..maxY }
+    // 글꼴을 키우면 라벨도 같이 커지므로 플롯 높이를 함께 늘린다 — 안 그러면 값 라벨이 선에 붙는다(실기기 확인).
+    val fontScale = LocalDensity.current.fontScale
+    val chartHeight = (TrendChartBaseHeight.value * (1f + (fontScale - 1f) * 0.6f)).dp
     Canvas(
         Modifier
             .fillMaxWidth()
-            .height(160.dp)
+            .height(chartHeight)
             .semantics { contentDescription = desc },
     ) {
-        val left = 8.dp.toPx(); val right = size.width - 8.dp.toPx()
-        val top = 8.dp.toPx(); val bottom = size.height - 8.dp.toPx()
-        val w = right - left; val h = bottom - top
-        listOf(0f, 0.5f, 1f).forEach { r ->
-            val y = bottom - h * r
-            drawLine(grid, Offset(left, y), Offset(right, y), strokeWidth = 1.dp.toPx())
+        val labelSize = 12.sp.toPx()
+        val labelPaint = chartTextPaint(labelColor, labelSize)
+        // y 라벨 폭을 실측해 축 위치를 정한다 — 고정 폭이면 글꼴 확대 시 축과 겹친다(실기기 지적).
+        val yLabelW = ticks.maxOfOrNull { labelPaint.measureText(it.toString()) } ?: 0f
+        val left = yLabelW + 12.dp.toPx()
+        val right = size.width - 4.dp.toPx()
+        val top = labelSize + 8.dp.toPx()                    // 점 위 값 라벨 자리
+        val bottom = size.height - (labelSize + 8.dp.toPx()) // x 날짜 라벨 자리
+        val h = bottom - top
+        fun yOf(score: Int): Float = bottom - h * ((score - minY).toFloat() / (maxY - minY).toFloat())
+
+        // 축선(실기기 지적): 격자선은 여전히 없지만, 축 경계가 없으면 그래프로 읽히지 않는다.
+        drawLine(axisColor, Offset(left, top), Offset(left, bottom), strokeWidth = 1.dp.toPx())
+        drawLine(axisColor, Offset(left, bottom), Offset(right, bottom), strokeWidth = 1.dp.toPx())
+
+        ticks.forEach { tick ->
+            drawChartText(
+                tick.toString(),
+                left - 4.dp.toPx() - yLabelW / 2f,
+                yOf(tick) + labelSize / 3f,
+                labelColor,
+                labelSize,
+            )
         }
-        if (total == 0) return@Canvas
-        fun pt(globalIndex: Int, score: Int): Offset {
-            val x = left + w * if (total == 1) 0.5f else (globalIndex.toFloat() / (total - 1))
-            val y = bottom - h * (score / 100f) // y=점수(0~100), 위로 갈수록 높은 점수
-            return Offset(x, y)
-        }
+
+        // 점을 '슬롯 가운데'에 놓아 첫·마지막 점이 축에 붙지 않게 한다(실기기 지적: 좌우 여백 없음).
+        val slot = (right - left) / total
+        fun xOf(index: Int): Float = left + slot * index + slot / 2f
+
         // 기준 경계에서 선을 끊는다(리뷰 #275-②): 구간 안에서만 잇고, 구간 사이는 빈 간격으로 남긴다.
         //   끊긴 이유를 육안으로 알 수 있게(#389 문제 1) ① 경계에 세로 점선 ② 이전 기준 구간은 옅은 톤으로
         //   그린다. 최신 기준 구간만 진한 색이라 '지금 기준은 이쪽'이 한눈에 보인다.
         var index = 0
         segments.forEachIndexed { segIndex, seg ->
             val isCurrent = segIndex == segments.lastIndex
-            // 이전 기준 구간은 옅게 그리되 식별은 가능해야 한다(리뷰 P2): alpha 0.35 는 1.93:1 이라
-            //   너무 흐렸다. 0.6 이면 3.44:1 로 3:1 을 넘기면서도 현재 기준(10.45:1)과 농도 차이는 유지된다.
-            val lineColor = if (isCurrent) primary else primary.copy(alpha = 0.6f)
+            // 이전 기준 구간은 옅게 그리되 식별은 가능해야 한다(#394 리뷰 P2): alpha 0.6 이면 3:1 을
+            //   넘기면서도 현재 기준과 농도 차이는 유지된다.
+            val segColor = if (isCurrent) lineColor else lineColor.copy(alpha = 0.6f)
             val startIndex = index
-            val pts = seg.map { p -> pt(index++, shown(p.score)) }
+            val pts = seg.map { p -> Offset(xOf(index++), yOf(shown(p.score))) }
             // 경계 세로 점선 — 첫 구간 앞에는 그리지 않는다(경계가 아니라 차트 시작이므로).
             if (segIndex > 0 && pts.isNotEmpty()) {
-                val boundaryX = (pt(startIndex - 1, 0).x + pts.first().x) / 2f
+                val boundaryX = (xOf(startIndex - 1) + pts.first().x) / 2f
                 drawLine(
                     baselineDivider,
                     Offset(boundaryX, top),
@@ -420,11 +594,22 @@ private fun ScoreTrendChart(segments: List<List<ScorePoint>>) {
                     moveTo(pts.first().x, pts.first().y)
                     pts.drop(1).forEach { lineTo(it.x, it.y) }
                 }
-                drawPath(path, lineColor, style = Stroke(3.dp.toPx()))
+                drawPath(path, segColor, style = Stroke(2.dp.toPx()))
             }
-            pts.forEachIndexed { i, c ->
-                val isLast = index == total && i == pts.lastIndex
-                drawCircle(lineColor, radius = if (isLast) 6.dp.toPx() else 5.dp.toPx(), center = c)
+            pts.forEach { drawCircle(segColor, radius = 3.dp.toPx(), center = it) }
+        }
+
+        // 날짜 라벨이 슬롯보다 넓으면 서로 겹치므로 처음·마지막만 남긴다(글꼴 200% 대응).
+        val widestDate = flat.maxOfOrNull { labelPaint.measureText(it.label) } ?: 0f
+        val showAllDates = widestDate <= slot * 0.95f
+        flat.forEachIndexed { i, p ->
+            val x = xOf(i)
+            drawChartText(shown(p.score).toString(), x, yOf(shown(p.score)) - 6.dp.toPx(), valueColor, labelSize, bold = true)
+            if (showAllDates || i == 0 || i == flat.lastIndex) {
+                // 양 끝 라벨이 캔버스 밖으로 나가지 않도록 안쪽으로 당긴다.
+                val halfW = labelPaint.measureText(p.label) / 2f
+                val clampedX = x.coerceIn(halfW, size.width - halfW)
+                drawChartText(p.label, clampedX, size.height - 2.dp.toPx(), labelColor, labelSize)
             }
         }
     }
@@ -551,19 +736,6 @@ private fun UnderAgeInfoCard(onGoToMissions: () -> Unit) {
 }
 
 
-@Composable
-private fun ScorePendingCard() {
-    AigoCard {
-        Text("점수를 준비하고 있어요", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(Dimens.Space8))
-        Text(
-            "조금 뒤에 다시 확인해 주세요.",
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
 // ── 근육 건강 정보(개선 잠재력) 빈 상태(#334) — 점수 없으면 시뮬레이션 대신 안내 ────────────
 @Composable
 private fun ImprovementPendingCard(onGoToMissions: () -> Unit) {
@@ -577,5 +749,78 @@ private fun ImprovementPendingCard(onGoToMissions: () -> Unit) {
         )
         Spacer(Modifier.height(Dimens.Space12))
         AigoPrimaryButton(text = "챌린지 보러 가기", onClick = onGoToMissions)
+    }
+}
+
+// ── H3 빈 상태 · H5 생활습관(§8) ──────────────────────────────────────────────
+
+/**
+ * 또래 중 내 위치 — 빈 상태(§8 H3). 점수가 없으면 내 위치도 없다.
+ *  **수치·마커·구간 띠를 전부 숨기고 흐린 실루엣만** 남긴다 — 값이 0 인 차트를 그리지 않는다는
+ *  이번 리디자인의 원칙(§0-2)을 지키면서도, 이 카드가 무엇을 보여줄 자리인지는 알리기 위한 것이다.
+ */
+@Composable
+internal fun EmptyCohortCard() {
+    AigoCard(title = "또래 중 내 위치", contentSpacing = Dimens.Space8) {
+        Text("아직 기록이 없어요", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+        Text(
+            "체력 검사를 완료하면 위치를 확인할 수 있어요.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        DistributionSilhouette()
+    }
+}
+
+/** 분포 실루엣(장식) — 종 모양 곡선만 옅게. 값이 없으므로 눈금·마커·라벨을 그리지 않는다. */
+@Composable
+private fun DistributionSilhouette() {
+    val tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.18f)
+    Canvas(
+        Modifier
+            .fillMaxWidth()
+            .height(80.dp)
+            .semantics { contentDescription = "또래 분포 예시 그림" },
+    ) {
+        val w = size.width
+        val h = size.height
+        val baseline = h - 4.dp.toPx()
+        // 왼쪽으로 치우친 종 모양 — 실제 코호트 분포와 같은 인상만 준다(수치 아님).
+        val path = Path().apply {
+            moveTo(0f, baseline)
+            cubicTo(w * 0.18f, baseline, w * 0.20f, 6.dp.toPx(), w * 0.34f, 6.dp.toPx())
+            cubicTo(w * 0.48f, 6.dp.toPx(), w * 0.52f, baseline * 0.72f, w * 0.72f, baseline * 0.88f)
+            cubicTo(w * 0.86f, baseline * 0.96f, w * 0.92f, baseline, w, baseline)
+            close()
+        }
+        drawPath(path, tint)
+    }
+}
+
+/**
+ * 생활습관으로 바꿔보세요(§8 H5) — **점수가 없을 때만** 표시한다.
+ *  빈 화면이 "아무것도 없다"로 끝나지 않게, 지금 할 수 있는 일을 마지막에 한 번 더 짚어 준다.
+ */
+@Composable
+internal fun LifestyleTipCard() {
+    AigoCard(title = "생활습관으로 바꿔보세요", contentSpacing = Dimens.Space12) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(Dimens.Space12),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "꾸준한 걷기와 근력운동이\n건강한 근육 유지에 도움을 줘요.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            Image(
+                painter = painterResource(R.drawable.img_record_habit_shoes),
+                contentDescription = null, // 장식용(§10)
+                modifier = Modifier.size(88.dp),
+                contentScale = ContentScale.Fit,
+            )
+        }
     }
 }

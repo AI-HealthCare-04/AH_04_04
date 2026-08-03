@@ -71,6 +71,31 @@ class RecordViewModel(
     var stampsByDate by mutableStateOf<Map<String, String>>(emptyMap()); private set
     var monthLogs by mutableStateOf<List<MissionLogItem>>(emptyList()); private set
 
+    // ── 표시용 파생값(#387 리디자인) ────────────────────────────────────────
+    //   서버 응답을 화면이 바로 그릴 형태로 정리만 한다 — API·DTO 는 그대로다(핸드오프 §0-2).
+    //   순수 함수(RecordUiState.kt)에 로직을 두고 여기서는 현재 상태를 넘겨 호출만 한다.
+
+    /** 이번 달 요약(§7 M1) — 표시 중인 달의 스탬프에서 참여 일수·성공·대성공. */
+    internal val monthSummary: MonthSummary get() = monthSummaryOf(stampsByDate)
+
+    /** 달력 칸(§7 M2) — 표시 중인 달의 1일~말일. */
+    internal fun dayMarks(nowMillis: Long = System.currentTimeMillis()): List<DayMark> =
+        dayMarksOf(calYear, calMonth, stampsByDate, nowMillis)
+
+    /** 달력 격자 앞쪽 빈 칸 수(일요일 시작). */
+    internal fun calendarLeadingBlanks(): Int = leadingBlankCount(calYear, calMonth)
+
+    /** 최근 7일 걷기(§7 M3) — 단위는 화면의 토글 상태라 인자로 받는다. 항상 7칸. */
+    internal fun walk7d(unit: WalkUnit, nowMillis: Long = System.currentTimeMillis()): List<WalkPoint> =
+        walk7dOf(walkingDays, unit, nowMillis)
+
+    /**
+     * 미션별 완료 현황(§7 M4) — 최근 7일 롤링의 유형별 완료 '일수'.
+     * 소스는 이미 받아 둔 최근 14일 미션 로그다(추가 조회 없음).
+     */
+    internal fun missionProgress(nowMillis: Long = System.currentTimeMillis()): List<MissionProgress> =
+        missionProgressOf(lineLogs, nowMillis)
+
     private val kst: TimeZone = TimeZone.getTimeZone("Asia/Seoul")
 
     init {
@@ -200,6 +225,10 @@ class RecordViewModel(
                 cohort = cohortResult.getOrNull(),
                 // 허리둘레 미입력이면 점수·또래 비교가 '허리 제외' 모델로 계산된 것이라 그 사실을 안내한다.
                 waistCm = predictionPrefill?.waistCm,
+                // 기준일(§8 H1). latest 응답에는 날짜 필드가 없어 추이의 최신 항목 날짜로 대신한다
+                //   (핸드오프 §13 B-2 승인). 추이 조회가 실패하면 null → 기준일 줄만 숨긴다.
+                //   정렬 가정을 두지 않으려고 ISO 문자열 최댓값으로 고른다(사전순 = 시간순).
+                measuredAtIso = history.maxByOrNull { it.createdAt }?.createdAt,
             )
             loaded = true
         }

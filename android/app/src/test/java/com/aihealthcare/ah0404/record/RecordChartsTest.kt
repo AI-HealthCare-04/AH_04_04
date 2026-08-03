@@ -72,8 +72,10 @@ class RecordChartsTest {
 
     @Test
     fun stampEmoji_maps_daily_result() {
+        // 성공(⭐)은 #387 리디자인에서 연녹색 원 채움으로 바뀌어 이모지를 쓰지 않는다.
+        //   대성공만 원 위에 트로피를 얹어 색+모양으로 구분한다.
         assertEquals("🏆", stampEmoji("great_success"))
-        assertEquals("⭐", stampEmoji("success"))
+        assertEquals("", stampEmoji("success"))
         assertEquals("", stampEmoji("none"))
         assertEquals("", stampEmoji(null))
     }
