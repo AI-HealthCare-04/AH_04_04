@@ -1,8 +1,5 @@
 package com.aihealthcare.ah0404.settings
 
-import android.content.ActivityNotFoundException
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -42,7 +39,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -58,13 +54,24 @@ import com.aihealthcare.ah0404.ui.theme.HdInk
 import com.aihealthcare.ah0404.ui.theme.HdMuted
 
 /**
- * 고객센터(_16) — GET /support(문의 이메일) 배선.
+ * 문의 접수를 운영하지 않는다는 안내(#387 리뷰 P1).
  *
- *  ★ 디자인 고도화에서 **FAQ 와 고객센터를 별도 화면으로 분리**했다(시안 확정). 이 화면은 '이메일로 문의하는 법'만
- *  짧게 보여주고, 질문 목록은 [FaqScreen] 으로 넘긴다 — 두 목적이 한 화면에 섞여 스크롤이 길던 문제 해소.
- *  분리했지만 여기서 FAQ 로 갈 수 있게 진입 행은 남긴다(시안 메모).
+ * 심사·시연용 앱이라 받을 메일함이 없다. 주소를 적어두면 "죽은 링크"가 "보내도 아무도 안 읽는 주소"로
+ * 바뀔 뿐이라, 주소 대신 사실을 적고 화면 안에서 할 수 있는 일(FAQ)로 보낸다.
+ */
+internal const val SUPPORT_DEMO_NOTICE =
+    "이 앱은 심사·시연용이라 문의 접수는 운영하지 않아요.\n" +
+        "아래 자주 묻는 질문에서 궁금한 점을 확인해 주세요."
+
+/**
+ * 고객센터(_16) — 문의 안내 + FAQ 진입.
  *
- *  FAQ 조회 실패와 무관하게 이메일은 항상 보여야 하므로 VM 이 둘을 독립 조회한다(기존 유지).
+ *  ★ 디자인 고도화에서 **FAQ 와 고객센터를 별도 화면으로 분리**했다(시안 확정). 질문 목록은 [FaqScreen] 이
+ *  담당하고, 여기서는 안내와 진입 행만 둔다 — 두 목적이 한 화면에 섞여 스크롤이 길던 문제 해소.
+ *
+ *  ⚠️ 이전에는 서버 `GET /support` 의 이메일을 크게 띄우고 메일 앱으로 연결했지만, 그 값이 배포에서도
+ *  placeholder 라 아무도 받지 못했다(#387 리뷰 P1). 문의 창구를 두지 않기로 하고 표시를 걷어냈다.
+ *  API 자체는 계약 변경 파장을 피하려 그대로 두었고, 이 화면이 값을 쓰지 않을 뿐이다.
  */
 @Composable
 fun SupportScreen(
@@ -74,7 +81,6 @@ fun SupportScreen(
     vm: SupportViewModel = viewModel(),
 ) {
     LaunchedEffect(Unit) { vm.load() }
-    val context = LocalContext.current
 
     Column(
         modifier = modifier
@@ -89,10 +95,14 @@ fun SupportScreen(
             Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // 문의 접수를 운영하지 않는다(#387 리뷰 P1). 이 앱은 심사·시연용이라 받을 메일함이 없는데,
+            //   여기서는 서버 SUPPORT_EMAIL 을 20sp 굵게 띄우고 "확인 후 답변드려요"까지 약속하고 있었다.
+            //   실제로는 그 값이 placeholder(support@aigo.example.com)라 아무도 받지 못한다 — 주소를 지우고
+            //   받지 못한다는 사실을 그대로 적는다. 로그인 전 안내(OnboardingScreen)와 같은 방침이다.
             HdCard {
                 Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        "문의하기",
+                        "문의 안내",
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
                         color = HdInk,
@@ -106,28 +116,8 @@ fun SupportScreen(
                         Icon(Icons.Filled.MailOutline, contentDescription = null, tint = HdGreen, modifier = Modifier.size(28.dp))
                     }
                     Spacer(Modifier.height(12.dp))
-                    // 주소를 누르면 메일 앱으로 바로 연결(시안 메모). 메일 앱이 없는 기기(에뮬 등)에서는
-                    //   앱이 죽지 않게 무시하고 주소 표시만 남긴다 — 어차피 눈으로 읽어 옮겨 적을 수 있다.
                     Text(
-                        vm.email,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = HdInk,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .clickable {
-                                val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:${vm.email}"))
-                                try {
-                                    context.startActivity(intent)
-                                } catch (_: ActivityNotFoundException) {
-                                    // 메일 앱 없음 — 주소는 화면에 그대로 남는다.
-                                }
-                            }
-                            .padding(vertical = 4.dp),
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "궁금한 점을 이메일로 보내주시면\n확인 후 답변드려요.",
+                        SUPPORT_DEMO_NOTICE,
                         fontSize = 15.sp,
                         lineHeight = 22.sp,
                         color = HdMuted,

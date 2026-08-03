@@ -251,18 +251,20 @@ private fun StepScaffold(
 }
 
 /**
- * 로그인 전 문의처(#387 A안). 로그인 화면에서는 고객센터 API(`GET /support`)가 401 이라 쓸 수 없어
- * 앱 상수로 안내한다. 로그인 후 설정 → 고객센터는 기존대로 서버값(SUPPORT_EMAIL)을 쓴다.
+ * 로그인 전 문의 안내(#387 A안 수정 — 리뷰 P1).
  *
- * ⚠️ 값을 바꿀 때는 서버 환경변수 `SUPPORT_EMAIL` 과 **함께** 갱신할 것 — 두 경로가 다른 주소를 안내하면
- *   사용자가 어디로 보내야 할지 알 수 없다. (#387: 스테이징이 placeholder 를 내려주던 문제와 같은 뿌리)
+ * 처음에는 문의 메일 주소를 안내하려 했으나 **주소를 두지 않기로 했다.** 이 앱은 심사·시연용이라
+ * 문의를 받을 메일함을 운영하지 않는데, 주소를 적어두면 "죽은 링크"가 "보내도 아무도 안 읽는 주소"로
+ * 바뀔 뿐이다(리뷰 P1 지적). 받지 못할 창구를 안내하지 않는 것이 정확하다.
+ *
+ * 대신 이 화면에서 **지금 할 수 있는 일**을 안내한다 — #387 의 원래 문제(밑줄·강조색이라 눌릴 것처럼
+ * 보이는데 아무 반응이 없어, 로그인 실패 시 출구가 없던 것)는 이것으로 해소된다.
+ * 로그인 후 설정 → 고객센터도 같은 방침으로 정리했다(SupportScreen).
  */
-internal const val LOGIN_SUPPORT_EMAIL = "aigo.support.team@gmail.com"
-
 internal val LOGIN_SUPPORT_DIALOG_MESSAGE =
-    "로그인이 안 되시면 아래 주소로 문의해 주세요.\n\n" +
-        "$LOGIN_SUPPORT_EMAIL\n\n" +
-        "메일 앱이 열리지 않으면 주소를 직접 적어 보내주셔도 돼요."
+    "이 앱은 심사·시연용이라 문의 접수는 운영하지 않아요.\n\n" +
+        "로그인이 안 되면 잠시 후 다시 시도하시거나, 다른 방법(구글·카카오)으로 로그인해 보세요.\n\n" +
+        "로그인 없이 둘러보시려면 아래 '체험으로 시작하기'를 눌러 주세요."
 
 @Composable
 private fun WelcomeStep(
@@ -272,8 +274,8 @@ private fun WelcomeStep(
     onKakaoLogin: () -> Unit,
     onSkipToDemo: () -> Unit,
 ) {
-    val welcomeContext = LocalContext.current
-    // 로그인 전에는 고객센터 API(GET /support)가 401 이라 쓸 수 없어, 문의처를 앱 상수로 안내한다(#387 A안).
+    // 로그인 전에는 고객센터 API(GET /support)가 401 이라 쓸 수 없고, 문의 접수도 운영하지 않는다 —
+    //   눌리는 안내만 띄운다(#387 A안 수정). 문구는 LOGIN_SUPPORT_DIALOG_MESSAGE 참조.
     var showSupportDialog by rememberSaveable { mutableStateOf(false) }
     // 로그인 화면 디자인 고도화: 브랜드 헤더 + 강아지 히어로 카드 + 버튼 + 문의(시안 반영). 기능 배선은 그대로 유지.
     val bg = Color(0xFFF5F6F2)
@@ -411,7 +413,8 @@ private fun WelcomeStep(
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                "회원가입/로그인 관련 문의",
+                // '문의'가 아니라 '도움말'이다 — 받을 메일함이 없는데 문의라고 하면 다시 어긋난다.
+                "회원가입·로그인 도움말",
                 color = titleGreen,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -420,20 +423,10 @@ private fun WelcomeStep(
         }
         if (showSupportDialog) {
             AigoDialog(
-                title = "회원가입·로그인 문의",
+                title = "회원가입·로그인 안내",
                 message = LOGIN_SUPPORT_DIALOG_MESSAGE,
-                confirmText = "메일 보내기",
-                onConfirm = {
-                    showSupportDialog = false
-                    // 메일 앱이 없는 기기에서도 죽지 않게 — 주소는 다이얼로그 본문에 이미 보였다(SupportScreen 과 동일 처리).
-                    runCatching {
-                        welcomeContext.startActivity(
-                            Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:$LOGIN_SUPPORT_EMAIL")),
-                        )
-                    }
-                },
-                dismissText = "닫기",
-                onDismiss = { showSupportDialog = false },
+                confirmText = "확인",
+                onConfirm = { showSupportDialog = false },
                 onDismissRequest = { showSupportDialog = false },
             )
         }
