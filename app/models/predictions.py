@@ -45,8 +45,18 @@ class RiskPrediction(Base):
     score_p_low: Mapped[Decimal | None] = mapped_column(Numeric(8, 5), nullable=True)
     score_p_high: Mapped[Decimal | None] = mapped_column(Numeric(8, 5), nullable=True)
     score_cohort_age: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    # 또래 분포 조회 키의 성별. **모델 인코딩과 같은 값만 넣는다 — male=1, female=2**
+    #   (app/ml/predictor.py `_normalize_sex`). 코호트표 키가 이 값이라, 0 같은 다른 숫자가 들어가면
+    #   조회가 영구히 실패한다. 예측 시점 값을 고정 저장한다 — 프로필을 고쳐도 확률을 만든 모델·입력과
+    #   코호트가 어긋나지 않아야 한다(리뷰 #301). 이전에는 input_snapshot 에서 읽었으나 원본 보관을
+    #   없애며(#408) 조회에 실제로 필요한 이 값만 컬럼으로 승격했다.
+    score_cohort_sex: Mapped[int | None] = mapped_column(Integer, nullable=True)
     score_cohort_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    input_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    # ⚠️ 원본 입력 스냅샷은 더 이상 저장하지 않는다(#408 — 1차 검토 피드백: 서버 보관 최소화).
+    #   예측 1건마다 키·몸무게·허리둘레·신장상태 등 건강 원본이 JSON 으로 복제 저장되고 있었고,
+    #   화면·추이가 실제로 쓰는 것은 결과 점수와 코호트 키뿐이었다(위 컬럼들).
+    #   신규 예측은 NULL 로 남기고 기존 행도 마이그레이션 0020 에서 비웠다.
+    input_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

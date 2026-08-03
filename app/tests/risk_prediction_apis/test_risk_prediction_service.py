@@ -29,7 +29,12 @@ from app.models.enums import (
 from app.models.health import HealthProfile
 from app.models.predictions import RiskPrediction
 from app.models.users import User
-from app.services.risk_prediction import RiskPredictionService, next_reassess_available_at
+from app.services.risk_prediction import (
+    COHORT_SEX_CODES,
+    RiskPredictionService,
+    _snapshot_sex,
+    next_reassess_available_at,
+)
 
 
 def _reassessment_activity_logs() -> list[object]:
@@ -372,7 +377,9 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
                 score_p_high=0.50,
                 score_cohort_age="72",
                 score_cohort_version="knhanes2022_2024_v1",
-                input_snapshot={},
+                # 예측기는 계산용으로 정규화 입력을 돌려주지만, 서비스는 여기서 성별만 뽑아 컬럼에
+                #   남기고 원본은 저장하지 않는다(#408).
+                input_snapshot={"age": 72.0, "sex": 1, "bmi": 22.7, "waist_cm": 82.0},
             )
 
     session = SimpleNamespace(committed=False, refreshed=None)
@@ -418,6 +425,10 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
     assert prediction_repo.created_prediction.score_p_high == Decimal("0.50000")
     assert prediction_repo.created_prediction.score_cohort_age == "72"
     assert prediction_repo.created_prediction.score_cohort_version == "knhanes2022_2024_v1"
+    # 서버 보관 최소화(#408): 조회에 필요한 성별만 컬럼으로 남기고 **입력 원본은 저장하지 않는다.**
+    #   원본을 예측마다 복제하면 프로필 컬럼을 아무리 줄여도 노출면이 그대로다.
+    assert prediction_repo.created_prediction.score_cohort_sex == 1
+    assert prediction_repo.created_prediction.input_snapshot is None
     assert response.profile_id == 72
     assert response.prediction_id == 90
     assert response.muscle_score == 81
@@ -519,3 +530,32 @@ async def test_reassess_returns_existing_prediction_when_already_done_today() ->
     assert prediction_repo.create_calls == 0  # 예측 행이 늘지 않는다
     assert profile_repo.create_calls == 0  # 프로필 이력도 늘지 않는다(#388 결정 4)
     assert prediction_repo.locked_user == 1  # 판정 전에 사용자 행을 잠근다(리뷰 P1)
+
+
+# ---------------- 코호트 성별 계약(#408 리뷰 P1) ----------------
+
+
+def test_snapshot_sex_accepts_only_model_encoding() -> None:
+    """저장하는 성별은 모델 인코딩(male=1, female=2)만 허용한다.
+
+    코호트표 키가 이 값이라, 다른 숫자가 저장되면 표에 없는 키가 되어 조회가 실패한다.
+    원본 스냅샷을 지운 뒤에는 되살릴 근거가 없으므로(#408) 애초에 넣지 않는다.
+    """
+    assert COHORT_SEX_CODES == {1, 2}
+    assert _snapshot_sex({"sex": 1}) == 1
+    assert _snapshot_sex({"sex": 2}) == 2
+
+
+def test_snapshot_sex_rejects_out_of_contract_values() -> None:
+    # 0 은 예전 수동 검증에서 정상처럼 쓰였지만 모델 인코딩이 아니다(리뷰 지적).
+    assert _snapshot_sex({"sex": 0}) is None
+    assert _snapshot_sex({"sex": 3}) is None
+    # 1.5 → 1 같은 절삭을 허용하면 잘못된 코호트를 조용히 고른다.
+    assert _snapshot_sex({"sex": 1.5}) is None
+    assert _snapshot_sex({"sex": 1.0}) is None
+    assert _snapshot_sex({"sex": "1"}) is None
+    # bool 은 int 하위형이라 True 가 1 로 새지 않는지 확인한다.
+    assert _snapshot_sex({"sex": True}) is None
+    assert _snapshot_sex({"sex": None}) is None
+    assert _snapshot_sex({}) is None
+    assert _snapshot_sex(None) is None

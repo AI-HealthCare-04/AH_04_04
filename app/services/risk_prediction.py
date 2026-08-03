@@ -26,9 +26,9 @@ from app.dtos.risk_prediction import (
 )
 from app.ml.predictor import (
     AGE_MIN,
+    AGE_TOPCODE,
     AgeNotSupportedError,
     RiskPredictor,
-    _cohort_age_key,
     features_from_health_profile,
     load_cohort_distribution,
     load_cohort_version,
@@ -46,6 +46,9 @@ from app.services.activity_metrics import derive_activity_day_counts
 
 DENSITY_METHOD = "boundary_reflected_gaussian_kde_v1"
 DENSITY_PLOT_MAX_PROBABILITY = 0.5
+# 코호트표 조회 키의 성별 인코딩 — 모델(`_normalize_sex`)과 같아야 한다: male=1, female=2.
+#   0 같은 다른 값이 저장되면 표에 없는 키라 또래 분포가 실패한다(#408 리뷰 P1).
+COHORT_SEX_CODES = frozenset({1, 2})
 
 
 class RiskPredictionService:
@@ -197,18 +200,19 @@ class RiskPredictionService:
         )
         walk = [ScoreSimPoint(days=d, score=score) for d, (score, _) in enumerate(walk_results)]
         musc = [ScoreSimPoint(days=d, score=score) for d, (score, _) in enumerate(musc_results)]
-        cohort_version = next(
-            (cv for score, cv in [*walk_results, *musc_results] if cv is not None), None
-        )
+        cohort_version = next((cv for score, cv in [*walk_results, *musc_results] if cv is not None), None)
         return ScoreSimulationResponse(walk=walk, musc=musc, cohort_version=cohort_version)
 
     async def get_cohort_distribution(self, user: User) -> CohortDistributionResponse:
         """또래 분포 병합 차트(#193): 사용자 코호트의 quantiles·density 와 내 위치(lower_count)를 낸다.
 
-        확률은 최신 예측(internal_risk_score)을 쓰므로 코호트도 **그 예측에 저장된 입력 스냅샷의
-        나이·성별과 model_variant 로부터 (feature_set × 성별 × 단일나이) 키**를 만들어 선택한다 —
-        예측 후 프로필이 수정되거나 생일이 지나도 확률·분포의 기준 모델과 입력이 항상 일치한다.
+        확률은 최신 예측(internal_risk_score)을 쓰므로 코호트도 **그 예측이 저장한 조회 키**
+        (score_cohort_age × score_cohort_sex × model_variant)로 선택한다 — 예측 후 프로필이
+        수정되거나 생일이 지나도 확률·분포의 기준 모델과 입력이 항상 일치한다(리뷰 #301).
         65세 미만은 코호트 미지원이라 422.
+
+        ⚠️ 이전에는 이 값들을 `input_snapshot`(예측 입력 원본 JSON)에서 읽었다. 서버 보관 최소화(#408)로
+        원본 저장을 없애면서, 조회에 실제로 필요한 두 값만 컬럼으로 승격해 같은 고정 효과를 유지한다.
         """
         prediction = await self.prediction_repo.get_latest_prediction(user.user_id)
         if prediction is None:
@@ -216,22 +220,24 @@ class RiskPredictionService:
         profile = await self.profile_repo.get_profile(prediction.profile_id, user.user_id)
         if profile is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Health profile not found.")
-        # 나이·성별은 프로필에서 재계산하지 않고 예측 당시 스냅샷으로 고정한다 — 같은 프로필 행이라도
+        # 조회 키는 프로필에서 재계산하지 않고 예측이 저장한 값을 그대로 쓴다 — 같은 프로필 행이라도
         #   오늘 기준 나이 재계산은 생일 경계에서 예측과 다른 코호트를 고른다(리뷰 #301).
-        snapshot = prediction.input_snapshot or {}
-        age = snapshot.get("age")
-        sex = snapshot.get("sex")
-        if age is None or float(age) < AGE_MIN:
+        age_key = prediction.score_cohort_age
+        sex = prediction.score_cohort_sex
+        if age_key is None or not _is_cohort_supported_age(age_key):
+            # 저장된 예측은 만 65세 이상만 있어야 하지만(예측 시점에 422), 키가 없거나 지원 연령이
+            #   아니면 코호트 대상이 아니라고 그대로 알린다 — 표 조회 실패(404)로 뭉뚱그리지 않는다.
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Cohort distribution is provided for age >= {AGE_MIN} only.",
             )
-        if sex is None:
+        if sex not in COHORT_SEX_CODES:
+            # 저장값이 계약(male=1, female=2) 밖이면 표에 없는 키라 조회가 성립하지 않는다. None 뿐 아니라
+            #   0 같은 잘못된 값도 여기서 명시적으로 걸러, `int(sex)` 나 조회 실패로 흘려보내지 않는다.
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sex not available.")
         # 확률을 만든 모델과 같은 feature_set 코호트만 사용한다. 다른 feature_set 으로 폴백하면
         #   with_waist 확률을 minimal 분포에 대입하는 식의 잘못된 백분위가 나온다(리뷰 #301).
         feature_set = prediction.model_variant.value
-        age_key = _cohort_age_key(float(age))
         table = load_cohort_distribution()
         dist = table.get((feature_set, int(sex), age_key))
         if dist is None:
@@ -287,8 +293,11 @@ class RiskPredictionService:
             score_p_low=Decimal(str(round(score_p_low, 5))) if score_p_low is not None else None,
             score_p_high=Decimal(str(round(score_p_high, 5))) if score_p_high is not None else None,
             score_cohort_age=getattr(result, "score_cohort_age", None),
+            # 또래 분포 조회에 필요한 성별만 예측 시점 값으로 고정 저장한다(#408).
+            score_cohort_sex=_snapshot_sex(result.input_snapshot),
             score_cohort_version=getattr(result, "score_cohort_version", None),
-            input_snapshot=result.input_snapshot,
+            # 입력 원본(input_snapshot)은 저장하지 않는다(#408 — 서버 보관 최소화). 화면·추이가 쓰는 값은
+            #   위 파생 컬럼들로 충분하고, 원본을 예측마다 복제하면 프로필을 아무리 줄여도 의미가 없다.
         )
         await self.prediction_repo.create_risk_prediction(prediction)
         if complete_onboarding:
@@ -418,6 +427,42 @@ class RiskPredictionService:
         if care_stage == CareStage.MAINTAIN:
             return "조금만 더 챙기면 좋은 단계예요. 걷기와 근력 운동을 꾸준히 이어가 봐요."
         return "지금 컨디션이 좋아요. 지금처럼 생활습관 미션을 이어가면 근력을 잘 지킬 수 있어요."
+
+
+def _is_cohort_supported_age(age_key: str) -> bool:
+    """코호트 조회 키가 **실제로 존재하는 키**인지: 단일 나이 65..79 또는 상단 top-code `'80+'`.
+
+    입력 원본을 보관하지 않게 되면서(#408) 나이 숫자 대신 키로 판정한다 — 예측 시점에 이미 걸러지지만,
+    저장된 값이 어긋난 경우 표 조회 실패(404)로 뭉뚱그리지 않고 '대상 아님'을 그대로 알리기 위한 방어다.
+
+    상한을 두는 이유(#410 리뷰): `>= AGE_MIN` 만 보면 `'80'`·`'999'` 처럼 `_cohort_age_key` 가 절대
+    만들지 않는 키까지 통과한다. 80 이상은 항상 `'80+'` 로 접히므로 단일 나이는 79 가 최대다.
+    """
+    if age_key == f"{AGE_TOPCODE}+":
+        return True
+    try:
+        return AGE_MIN <= int(age_key) < AGE_TOPCODE
+    except ValueError:
+        return False
+
+
+def _snapshot_sex(snapshot: dict[str, object] | None) -> int | None:
+    """예측 입력에서 코호트 조회용 성별만 뽑는다(#408).
+
+    스냅샷 자체는 저장하지 않고 이 파생값만 컬럼에 남긴다 — 또래 분포가 예측 시점 성별로 고정된
+    코호트를 골라야 하기 때문이다(리뷰 #301).
+
+    **모델 인코딩(male=1, female=2)만 통과시킨다**(리뷰 P1). 임의의 숫자를 받아들이거나 `1.5 → 1`
+    처럼 절삭하면 코호트표에 없는 키가 저장돼, 원본을 지운 뒤에는 또래 분포가 영구히 실패한다.
+    계약에 맞지 않으면 None 을 남겨 조회 시 404 로 드러나게 한다(잘못된 값으로 조용히 채우지 않는다).
+    """
+    if not snapshot:
+        return None
+    value = snapshot.get("sex")
+    # bool 은 int 의 하위형이라 먼저 배제한다(True → 1 로 새는 것을 막는다).
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if value in COHORT_SEX_CODES else None
 
 
 def _format_cohort_age_label(age_key: str, window: str | None) -> str:

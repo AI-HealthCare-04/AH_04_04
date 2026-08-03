@@ -1,8 +1,9 @@
 """또래 분포 차트(#193) 서비스: 코호트 선택(단일나이·80+·65 미만 422)·lower_count·density.
 
-코호트·확률 정합(리뷰 #301): 코호트 키는 최신 프로필이 아니라 **예측에 저장된 input_snapshot 의
-나이·성별과 prediction.model_variant** 로 만든다. 프로필 수정·생일 경계에도 백분위·model_version 이
-어긋나지 않는다.
+코호트·확률 정합(리뷰 #301): 코호트 키는 최신 프로필이 아니라 **예측이 저장한 조회 키**
+(score_cohort_age · score_cohort_sex · model_variant)로 만든다. 프로필 수정·생일 경계에도
+백분위·model_version 이 어긋나지 않는다.
+(#408 로 입력 원본 스냅샷 보관을 없애면서, 조회에 필요한 두 값만 컬럼으로 승격했다.)
 """
 
 from datetime import date
@@ -46,13 +47,15 @@ def _prediction(
     age: float = 72.0,
     sex: int = 1,
 ) -> SimpleNamespace:
-    # input_snapshot 은 normalize_features 산출물 — 나이는 80 top-coding 이후 값이 저장된다.
+    # 조회 키는 예측이 저장한 컬럼에서 온다(#408 — 입력 원본은 더 이상 보관하지 않는다).
+    #   나이 키는 normalize_features 의 80 top-coding 이후 값으로 만들어진다.
     return SimpleNamespace(
         internal_risk_score=Decimal(probability),
         model_variant=variant,
         model_version=model_version,
         profile_id=profile_id,
-        input_snapshot={"age": min(age, 80.0), "sex": sex, "bmi": 23.5, "walk_days": 3.0, "musc_days": 1.0},
+        score_cohort_age=_cohort_age_key(min(age, 80.0)),
+        score_cohort_sex=sex,
     )
 
 
@@ -197,3 +200,35 @@ def test_format_age_label() -> None:
     assert _format_cohort_age_label("80+", "80+") == "80세 이상"
     assert _format_cohort_age_label("72", "69-75") == "69–75세"
     assert _format_cohort_age_label("72", None) == "72세"
+
+
+# ---------------- 저장값 계약 방어(#410 리뷰 P1) ----------------
+
+
+def test_invalid_stored_sex_returns_404_not_500() -> None:
+    """계약(male=1, female=2) 밖 성별이 저장돼 있으면 404 로 알린다 — 500 이나 조회 실패로 새지 않는다.
+
+    원본 스냅샷을 지운 뒤에는 값을 되살릴 수 없으므로(#408), 잘못된 값이 조용히 흘러가지 않게
+    조회 지점에서 명시적으로 막는다.
+    """
+    for bad_sex in (None, 0, 3):
+        prediction = _prediction("0.05")
+        prediction.score_cohort_sex = bad_sex
+        with pytest.raises(HTTPException) as exc:
+            _run(_service(_profile(72), prediction))
+        assert exc.value.status_code == 404
+        assert exc.value.detail == "Sex not available."
+
+
+def test_unproducible_age_key_is_rejected_as_out_of_scope() -> None:
+    """`_cohort_age_key` 가 만들 수 없는 키('80'·'999')는 지원 대상이 아니다(#410 리뷰).
+
+    80 이상은 항상 '80+' 로 접히므로 단일 나이 키의 최대는 79 다. 상한이 없으면 표에 없는 키가
+    '지원 연령'으로 통과해 404(조회 실패)로 뭉뚱그려진다.
+    """
+    for bad_key in ("80", "999", "64"):
+        prediction = _prediction("0.05")
+        prediction.score_cohort_age = bad_key
+        with pytest.raises(HTTPException) as exc:
+            _run(_service(_profile(72), prediction))
+        assert exc.value.status_code == 422
