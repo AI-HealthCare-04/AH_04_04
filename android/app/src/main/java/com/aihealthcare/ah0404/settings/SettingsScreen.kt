@@ -592,12 +592,20 @@ internal fun TopBar(title: String, onBack: (() -> Unit)? = null) {
 }
 
 
-/** 권한과 앱 알림 스위치를 모두 본다 — 권한이 있어도 앱 알림을 통째로 꺼두면 알림은 가지 않는다. */
+/**
+ * 알림이 실제로 갈 수 있는가. 세 가지를 모두 본다.
+ *
+ * 실기기 QA 에서 확인된 것: **Android 13+ 에서 앱 알림 전체 스위치는 곧 POST_NOTIFICATIONS 권한 자체**라
+ * 그 둘은 사실상 같이 움직인다. 대신 사용자가 앱 알림은 켠 채 **'다시 알림' 채널만** 끌 수 있고, 그때는
+ * 권한도 앱 스위치도 통과하지만 알림은 뜨지 않는다 — 화면이 "켜짐"이라 말하는데 안 오는 상태다.
+ */
 private fun notificationsAllowed(context: Context): Boolean {
     val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
         PackageManager.PERMISSION_GRANTED
-    return granted && NotificationManagerCompat.from(context).areNotificationsEnabled()
+    return granted &&
+        NotificationManagerCompat.from(context).areNotificationsEnabled() &&
+        ReminderWorker.channelEnabled(context)
 }
 
 /** 프레임워크에서 사실만 읽어 순수 함수([InactivityReminder.recoveryAction])에 넘긴다. */

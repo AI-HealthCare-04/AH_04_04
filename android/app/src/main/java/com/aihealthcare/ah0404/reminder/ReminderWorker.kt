@@ -77,7 +77,7 @@ class ReminderWorker(
         val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
-        return granted && NotificationManagerCompat.from(ctx).areNotificationsEnabled()
+        return granted && NotificationManagerCompat.from(ctx).areNotificationsEnabled() && channelEnabled(ctx)
     }
 
     @androidx.annotation.RequiresPermission(Manifest.permission.POST_NOTIFICATIONS)
@@ -141,6 +141,22 @@ class ReminderWorker(
                 ExistingPeriodicWorkPolicy.KEEP,
                 request,
             )
+        }
+
+        /**
+         * 리마인드 **채널**이 꺼지지 않았는가(실기기 QA 2차).
+         *
+         * `areNotificationsEnabled()` 는 앱 단위만 본다. 사용자가 앱 알림은 켠 채 이 채널만 끌 수 있고,
+         * 그때 권한도 앱 스위치도 모두 통과하지만 알림은 뜨지 않는다 — 화면은 "켜짐"이라 말하는데
+         * 실제로는 안 오는, P1 이 막으려던 바로 그 어긋남이다.
+         *
+         * 채널이 아직 없으면 막힌 게 아니다(예약 시점에 만들지만 구버전 설치에서 넘어올 수 있다).
+         */
+        fun channelEnabled(context: Context): Boolean {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
+            val mgr = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val channel = mgr.getNotificationChannel(CHANNEL_ID) ?: return true
+            return channel.importance != NotificationManager.IMPORTANCE_NONE
         }
 
         fun cancel(context: Context) {
