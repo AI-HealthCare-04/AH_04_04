@@ -64,6 +64,13 @@ class CohortDistributionResponse(BaseModel):
 
 
 class RiskPredictionReassessResponse(BaseModel):
+    """재평가 응답. 하루 1회 정책(#388)의 결과를 앱이 안내할 수 있게 두 필드를 함께 내려준다.
+
+    `recalculated=False` 면 오늘 이미 재평가한 사용자라 **기존 예측을 그대로 돌려준 것**이다
+    (429 대신 200 + 멱등 — 앱이 오류 처리 없이 결과를 그대로 보여주면 된다).
+    `next_available_at` 은 다음 재평가가 가능해지는 시각(다음 KST 자정)이다.
+    """
+
     profile_id: int
     prediction_id: int
     risk_score: float = Field(ge=0, le=1)
@@ -74,6 +81,10 @@ class RiskPredictionReassessResponse(BaseModel):
     display_message: str
     disclaimer: str = "본 결과는 참고용이며 의학적 진단이 아닙니다."
     activity_input_source: ActivityInputSource = ActivityInputSource.SERVICE_LOG
+    # 하루 1회 정책(#388). True=이번 호출로 새로 계산, False=오늘 이미 계산해 기존 예측을 반환.
+    recalculated: bool = True
+    # 다음 재평가 가능 시각(KST 자정). 앱이 "내일 다시 계산할 수 있어요" 안내에 쓴다.
+    next_available_at: KstDatetime | None = None
 
 
 class RiskPredictionHistoryItem(BaseModel):
