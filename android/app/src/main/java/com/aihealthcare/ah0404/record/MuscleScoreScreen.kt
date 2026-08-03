@@ -21,6 +21,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -240,8 +241,18 @@ private fun ScoreTrendCard(trend: List<ScorePoint>) {
         }
         Text(scoreChangeCopy(trend), style = MaterialTheme.typography.bodyLarge)
         Spacer(Modifier.height(Dimens.Space12))
-        ScoreTrendChart(splitByBaseline(trend))
+        val segments = splitByBaseline(trend)
+        ScoreTrendChart(segments)
         Spacer(Modifier.height(Dimens.Space4))
+        // 경계가 있으면 왜 끊겼는지 한 줄로 설명한다(#389 문제 1) — 없으면 그리지 않는다.
+        trendBaselineCaption(segments)?.let { caption ->
+            Text(
+                caption,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(Dimens.Space4))
+        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(trend.first().label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(trend.last().label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -289,10 +300,23 @@ internal fun scoreChangeCopy(trend: List<ScorePoint>): String {
     val delta = shown(lastSegment.last().score) - shown(lastSegment[lastSegment.size - 2].score)
     return when {
         delta > 0 -> "지난 기록보다 ${delta}점 올랐어요. 지금처럼 이어가 봐요."
-        delta < 0 -> "지난 기록보다 ${-delta}점 낮아졌어요. 걷기·근력 챌린지로 다시 올려봐요."
+        // 하락 원인을 단정하지 않는다(#389 문제 2): 점수는 활동뿐 아니라 신체 정보 갱신(허리둘레 등)으로도
+        //   내려간다. 실측값을 정확히 고쳤을 뿐인데 "운동을 안 해서 떨어졌다"로 읽히면 원인도 틀리고
+        //   고령 사용자에게 불필요한 불안이 된다. API 가 원인을 내려주기 전까지는 사실만 말한다(#389 B·C 후속).
+        delta < 0 -> "지난 기록보다 ${-delta}점 낮아졌어요."
         else -> "지난 기록과 비슷하게 유지되고 있어요."
     }
 }
+
+/**
+ * 기준 경계가 있는 추이의 하단 캡션(#389 문제 1). 서로 다른 기준(모델 번들·코호트표)으로 계산된 점수를
+ * 한 선으로 잇지 않느라 선이 끊기는데, 화면에 아무 표시가 없어 사용자가 **데이터 누락·앱 오류로 읽는다.**
+ *
+ * 원인(허리둘레 추가/제거 vs 코호트표 갱신)은 API 가 알려주지 않으므로(#389 B 후속) 중립적으로만 안내한다.
+ * 경계가 없으면 null — 캡션을 그리지 않는다.
+ */
+internal fun trendBaselineCaption(segments: List<List<ScorePoint>>): String? =
+    if (segments.size > 1) "점선 구분 이후는 계산 기준이 달라진 구간이에요. 그 앞뒤 점수는 직접 비교하지 않아요." else null
 
 /** 접근성용 추이 설명 — 기준 경계도 음성으로 안내한다(리뷰 #275-②, 기존 확률 추이의 접근성 복원). */
 internal fun trendDescription(segments: List<List<ScorePoint>>): String =
@@ -304,7 +328,12 @@ internal fun trendDescription(segments: List<List<ScorePoint>>): String =
 @Composable
 private fun ScoreTrendChart(segments: List<List<ScorePoint>>) {
     val primary = MaterialTheme.colorScheme.primary
+    // 가로 격자선은 장식이라 옅게 둔다(데이터 선과 경쟁하면 안 된다).
     val grid = MaterialTheme.colorScheme.outlineVariant
+    // 기준 경계 점선은 '의미를 전달하는 선'이라 대비를 따로 확보한다(리뷰 P2):
+    //   카드 배경(#F9FAF5) 기준 outlineVariant 는 1.62:1 로 저시력·고령 사용자가 구분하기 어렵다.
+    //   outline(#717971) 은 4.28:1 로 그래프 선 권장선(3:1)을 넉넉히 넘는다.
+    val baselineDivider = MaterialTheme.colorScheme.outline
     val desc = "근육 건강 점수 변화 그래프. ${trendDescription(segments)}"
     val total = segments.sumOf { it.size }
     Canvas(
@@ -327,19 +356,37 @@ private fun ScoreTrendChart(segments: List<List<ScorePoint>>) {
             return Offset(x, y)
         }
         // 기준 경계에서 선을 끊는다(리뷰 #275-②): 구간 안에서만 잇고, 구간 사이는 빈 간격으로 남긴다.
+        //   끊긴 이유를 육안으로 알 수 있게(#389 문제 1) ① 경계에 세로 점선 ② 이전 기준 구간은 옅은 톤으로
+        //   그린다. 최신 기준 구간만 진한 색이라 '지금 기준은 이쪽'이 한눈에 보인다.
         var index = 0
-        segments.forEach { seg ->
+        segments.forEachIndexed { segIndex, seg ->
+            val isCurrent = segIndex == segments.lastIndex
+            // 이전 기준 구간은 옅게 그리되 식별은 가능해야 한다(리뷰 P2): alpha 0.35 는 1.93:1 이라
+            //   너무 흐렸다. 0.6 이면 3.44:1 로 3:1 을 넘기면서도 현재 기준(10.45:1)과 농도 차이는 유지된다.
+            val lineColor = if (isCurrent) primary else primary.copy(alpha = 0.6f)
+            val startIndex = index
             val pts = seg.map { p -> pt(index++, shown(p.score)) }
+            // 경계 세로 점선 — 첫 구간 앞에는 그리지 않는다(경계가 아니라 차트 시작이므로).
+            if (segIndex > 0 && pts.isNotEmpty()) {
+                val boundaryX = (pt(startIndex - 1, 0).x + pts.first().x) / 2f
+                drawLine(
+                    baselineDivider,
+                    Offset(boundaryX, top),
+                    Offset(boundaryX, bottom),
+                    strokeWidth = 1.dp.toPx(),
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 6.dp.toPx())),
+                )
+            }
             if (pts.size > 1) {
                 val path = Path().apply {
                     moveTo(pts.first().x, pts.first().y)
                     pts.drop(1).forEach { lineTo(it.x, it.y) }
                 }
-                drawPath(path, primary, style = Stroke(3.dp.toPx()))
+                drawPath(path, lineColor, style = Stroke(3.dp.toPx()))
             }
             pts.forEachIndexed { i, c ->
                 val isLast = index == total && i == pts.lastIndex
-                drawCircle(primary, radius = if (isLast) 6.dp.toPx() else 5.dp.toPx(), center = c)
+                drawCircle(lineColor, radius = if (isLast) 6.dp.toPx() else 5.dp.toPx(), center = c)
             }
         }
     }
