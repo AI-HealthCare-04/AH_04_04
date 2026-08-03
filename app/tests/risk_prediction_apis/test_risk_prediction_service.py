@@ -372,7 +372,9 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
                 score_p_high=0.50,
                 score_cohort_age="72",
                 score_cohort_version="knhanes2022_2024_v1",
-                input_snapshot={},
+                # 예측기는 계산용으로 정규화 입력을 돌려주지만, 서비스는 여기서 성별만 뽑아 컬럼에
+                #   남기고 원본은 저장하지 않는다(#408).
+                input_snapshot={"age": 72.0, "sex": 1, "bmi": 22.7, "waist_cm": 82.0},
             )
 
     session = SimpleNamespace(committed=False, refreshed=None)
@@ -418,6 +420,10 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
     assert prediction_repo.created_prediction.score_p_high == Decimal("0.50000")
     assert prediction_repo.created_prediction.score_cohort_age == "72"
     assert prediction_repo.created_prediction.score_cohort_version == "knhanes2022_2024_v1"
+    # 서버 보관 최소화(#408): 조회에 필요한 성별만 컬럼으로 남기고 **입력 원본은 저장하지 않는다.**
+    #   원본을 예측마다 복제하면 프로필 컬럼을 아무리 줄여도 노출면이 그대로다.
+    assert prediction_repo.created_prediction.score_cohort_sex == 1
+    assert prediction_repo.created_prediction.input_snapshot is None
     assert response.profile_id == 72
     assert response.prediction_id == 90
     assert response.muscle_score == 81

@@ -1,8 +1,9 @@
 """또래 분포 차트(#193) 서비스: 코호트 선택(단일나이·80+·65 미만 422)·lower_count·density.
 
-코호트·확률 정합(리뷰 #301): 코호트 키는 최신 프로필이 아니라 **예측에 저장된 input_snapshot 의
-나이·성별과 prediction.model_variant** 로 만든다. 프로필 수정·생일 경계에도 백분위·model_version 이
-어긋나지 않는다.
+코호트·확률 정합(리뷰 #301): 코호트 키는 최신 프로필이 아니라 **예측이 저장한 조회 키**
+(score_cohort_age · score_cohort_sex · model_variant)로 만든다. 프로필 수정·생일 경계에도
+백분위·model_version 이 어긋나지 않는다.
+(#408 로 입력 원본 스냅샷 보관을 없애면서, 조회에 필요한 두 값만 컬럼으로 승격했다.)
 """
 
 from datetime import date
@@ -46,13 +47,15 @@ def _prediction(
     age: float = 72.0,
     sex: int = 1,
 ) -> SimpleNamespace:
-    # input_snapshot 은 normalize_features 산출물 — 나이는 80 top-coding 이후 값이 저장된다.
+    # 조회 키는 예측이 저장한 컬럼에서 온다(#408 — 입력 원본은 더 이상 보관하지 않는다).
+    #   나이 키는 normalize_features 의 80 top-coding 이후 값으로 만들어진다.
     return SimpleNamespace(
         internal_risk_score=Decimal(probability),
         model_variant=variant,
         model_version=model_version,
         profile_id=profile_id,
-        input_snapshot={"age": min(age, 80.0), "sex": sex, "bmi": 23.5, "walk_days": 3.0, "musc_days": 1.0},
+        score_cohort_age=_cohort_age_key(min(age, 80.0)),
+        score_cohort_sex=sex,
     )
 
 
