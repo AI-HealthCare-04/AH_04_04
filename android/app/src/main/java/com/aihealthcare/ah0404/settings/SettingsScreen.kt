@@ -38,6 +38,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -112,28 +113,25 @@ fun SettingsScreen(
     val context = LocalContext.current
     // 미접속 리마인드는 기기 로컬 설정이라 서버(#73)와 동기화하지 않는다 — 여기서 직접 읽고 쓴다.
     var remindersEnabled by rememberSaveable { mutableStateOf(InactivityReminder.isEnabled(context)) }
-    // 알림이 실제로 갈 수 있는지. 권한을 시스템 설정에서 바꾸고 돌아올 수 있으므로 **화면이 다시 보일 때마다**
-    //   새로 읽는다 — 한 번만 읽으면 허용하고 돌아와도 계속 "꺼져 있다"고 남는다.
-    var notificationsAllowed by remember { mutableStateOf(notificationsAllowed(context)) }
-    // 막힌 상태를 무엇으로 푸는가. 런타임 권한 거부·앱 알림 스위치 꺼짐·Android 12 이하가 모두 다르다
-    //   (리뷰 P1 2차·정인). 화면은 이 판단만 따르고 조건을 다시 세지 않는다.
-    var recoveryAction by remember { mutableStateOf(notificationRecoveryAction(context, remindersEnabled)) }
-    // 권한을 거절해도 토글은 켜진 채로 둔다: 나중에 시스템 설정에서 허용하면 그대로 동작한다.
-    //   여기서 토글을 되돌리면 사용자가 "껐다"고 오해한다. 대신 아래 안내로 상태를 드러낸다.
+    // 시스템 쪽 상태(권한·앱 알림·채널)는 화면 밖에서 바뀔 수 있다. 바뀔 만한 시점마다 이 값을 올려
+    //   아래 계산을 다시 돌린다.
+    var systemNotificationRevision by remember { mutableIntStateOf(0) }
+    // ⚠️ **상태로 들고 있다가 손으로 갱신하지 않는다.** 그렇게 했더니 토글을 껐을 때 갱신을 빠뜨려
+    //   꺼진 뒤에도 안내가 남았다(실기기 QA). 입력(토글·시스템 상태)에서 매번 파생시킨다.
+    val recoveryAction = remember(remindersEnabled, systemNotificationRevision) {
+        notificationRecoveryAction(context, remindersEnabled)
+    }
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { granted ->
+    ) {
         InactivityReminder.markPermissionAsked(context)
-        notificationsAllowed = granted && notificationsAllowed(context)
-        recoveryAction = notificationRecoveryAction(context, remindersEnabled)
+        systemNotificationRevision++
     }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                notificationsAllowed = notificationsAllowed(context)
-                recoveryAction = notificationRecoveryAction(context, remindersEnabled)
-            }
+            // 시스템 설정에서 권한·채널을 바꾸고 돌아오는 경로가 있다.
+            if (event == Lifecycle.Event.ON_RESUME) systemNotificationRevision++
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -596,22 +594,6 @@ internal fun TopBar(title: String, onBack: (() -> Unit)? = null) {
     }
 }
 
-
-/**
- * 알림이 실제로 갈 수 있는가. 세 가지를 모두 본다.
- *
- * 실기기 QA 에서 확인된 것: **Android 13+ 에서 앱 알림 전체 스위치는 곧 POST_NOTIFICATIONS 권한 자체**라
- * 그 둘은 사실상 같이 움직인다. 대신 사용자가 앱 알림은 켠 채 **'다시 알림' 채널만** 끌 수 있고, 그때는
- * 권한도 앱 스위치도 통과하지만 알림은 뜨지 않는다 — 화면이 "켜짐"이라 말하는데 안 오는 상태다.
- */
-private fun notificationsAllowed(context: Context): Boolean {
-    val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
-        PackageManager.PERMISSION_GRANTED
-    return granted &&
-        NotificationManagerCompat.from(context).areNotificationsEnabled() &&
-        ReminderWorker.channelEnabled(context)
-}
 
 /** 프레임워크에서 사실만 읽어 순수 함수([InactivityReminder.recoveryAction])에 넘긴다. */
 private fun notificationRecoveryAction(
