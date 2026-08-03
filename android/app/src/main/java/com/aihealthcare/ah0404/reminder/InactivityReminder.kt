@@ -120,7 +120,7 @@ object InactivityReminder {
      * 토글이 켜져 있다고 해서 알림이 오는 게 아니다 - Android 13+ 는 런타임 권한이 필요하고, 권한이 있어도
      * 사용자가 앱 알림을 통째로 꺼둘 수 있다. 그 어긋남을 화면이 숨기면 **사용자는 켜져 있다고 믿는데
      * 알림은 영영 오지 않는다.** 기본값이 켜짐이라 더 그렇다 - 토글을 건드릴 일이 없으니 권한을 물을
-     * 기회조차 없다. 그래서 세 상태를 구분해 [BLOCKED] 를 화면에 드러낸다.
+     * 기회조차 없다. 그래서 세 상태를 구분해 [RowState.NEEDS_PERMISSION] 을 화면에 드러낸다.
      */
     enum class RowState {
         /** 사용자가 껐다. 안내할 것 없음. */
@@ -130,20 +130,74 @@ object InactivityReminder {
         ACTIVE,
 
         /** 켜져 있지만 권한이 없어 알림이 가지 않는다 - 화면이 이 사실을 말해야 한다. */
-        BLOCKED,
+        NEEDS_PERMISSION,
     }
 
     fun rowState(enabled: Boolean, notificationsAllowed: Boolean): RowState = when {
         !enabled -> RowState.OFF
         notificationsAllowed -> RowState.ACTIVE
-        else -> RowState.BLOCKED
+        else -> RowState.NEEDS_PERMISSION
     }
 
     /** 권한을 아직 물어볼 수 있을 때. 눌러서 바로 허용할 수 있다. */
     const val PERMISSION_NOTICE_ASKABLE = "알림 권한이 꺼져 있어 알림이 가지 않아요. 눌러서 허용해 주세요."
 
-    /** 요청이 더 이상 뜨지 않는 상태(두 번 거절·앱 알림 전체 끔). 시스템 설정으로 보내야 한다. */
+    /** 요청이 더 이상 뜨지 않는 상태(영구 거부·앱 알림 전체 끔). 시스템 설정으로 보내야 한다. */
     const val PERMISSION_NOTICE_SETTINGS = "알림 권한이 꺼져 있어 알림이 가지 않아요. 눌러서 설정에서 켜 주세요."
+
+    private const val KEY_PERMISSION_ASKED = "permission_asked"
+
+    /** 알림 권한을 한 번이라도 요청한 적 있는가. 아래 [canRequestPermission] 의 모호함을 푸는 데 쓴다. */
+    fun hasAskedPermission(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_PERMISSION_ASKED, false)
+
+    fun markPermissionAsked(context: Context) {
+        prefs(context).edit().putBoolean(KEY_PERMISSION_ASKED, true).apply()
+    }
+
+    /**
+     * 지금 권한 요청 팝업을 띄울 수 있는가(리뷰 - 정인).
+     *
+     * Android 13+ 에서 영구 거부되면 `launch()` 는 **팝업 없이 조용히 끝난다.** 그 상태에서 요청만 다시
+     * 던지면 사용자는 눌러도 아무 일이 없는 화면을 보게 되므로, 시스템 알림 설정으로 보내야 한다.
+     *
+     * `shouldShowRequestPermissionRationale` 만으로는 판별이 안 된다 - **한 번도 안 물어본 상태**와
+     * **영구 거부 상태**가 둘 다 false 라서다. 그래서 '물어본 적 있는가'를 함께 본다.
+     */
+    fun canRequestPermission(hasAsked: Boolean, shouldShowRationale: Boolean): Boolean =
+        !hasAsked || shouldShowRationale
+
+    /** 안내를 눌렀을 때 무엇을 해야 복구되는가. */
+    enum class RecoveryAction { REQUEST_PERMISSION, OPEN_SETTINGS }
+
+    /**
+     * 막힌 상태를 **무엇으로 풀 수 있는지** 고른다(리뷰 P1 2차).
+     *
+     * 알림이 막히는 경로는 하나가 아니다. 런타임 권한 거부만 보고 요청을 던지면, **권한은 허용됐는데
+     * 사용자가 앱 알림을 통째로 끈 경우** 요청 함수가 "이미 허용됨"으로 즉시 돌아와 **눌러도 아무 일이
+     * 일어나지 않는다.** Android 12 이하도 런타임 권한 자체가 없어 같은 막다른 길이 된다.
+     * 그래서 '권한이 없는가'가 아니라 **'런타임 요청으로 복구되는가'** 를 기준으로 나눈다.
+     */
+    fun recoveryAction(
+        supportsRuntimePermission: Boolean,
+        permissionGranted: Boolean,
+        hasAsked: Boolean,
+        shouldShowRationale: Boolean,
+    ): RecoveryAction = when {
+        // Android 12 이하: 런타임 권한이 없다 → 막혔다면 앱 알림 스위치가 꺼진 것뿐이다.
+        !supportsRuntimePermission -> RecoveryAction.OPEN_SETTINGS
+        // 권한은 있는데 막혔다 → 앱 알림 스위치가 꺼졌다. 요청해봤자 즉시 "이미 허용됨"으로 끝난다.
+        permissionGranted -> RecoveryAction.OPEN_SETTINGS
+        canRequestPermission(hasAsked, shouldShowRationale) -> RecoveryAction.REQUEST_PERMISSION
+        // 영구 거부 — launch() 가 팝업 없이 조용히 끝난다.
+        else -> RecoveryAction.OPEN_SETTINGS
+    }
+
+    /** 복구 방법에 맞는 안내 문구. 문구와 동작이 어긋나면 눌러도 기대한 화면이 안 뜬다. */
+    fun permissionNotice(action: RecoveryAction): String = when (action) {
+        RecoveryAction.REQUEST_PERMISSION -> PERMISSION_NOTICE_ASKABLE
+        RecoveryAction.OPEN_SETTINGS -> PERMISSION_NOTICE_SETTINGS
+    }
 
     /**
      * 알림 문구. 며칠 비었는지에 따라 나눈다 - 오래 비었는데 "며칠 못 뵈었어요"는 어색하다.

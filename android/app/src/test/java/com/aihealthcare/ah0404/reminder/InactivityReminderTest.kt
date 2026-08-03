@@ -85,7 +85,7 @@ class InactivityReminderTest {
     fun enabled_without_permission_is_surfaced_as_blocked() {
         assertEquals(
             "켜져 있는데 알림이 못 가는 상태를 숨기면 안 된다",
-            InactivityReminder.RowState.BLOCKED,
+            InactivityReminder.RowState.NEEDS_PERMISSION,
             InactivityReminder.rowState(enabled = true, notificationsAllowed = false),
         )
     }
@@ -117,7 +117,7 @@ class InactivityReminderTest {
         listOf(true, false).forEach { enabled ->
             listOf(true, false).forEach { allowed ->
                 val state = InactivityReminder.rowState(enabled, allowed)
-                val showsNotice = state == InactivityReminder.RowState.BLOCKED
+                val showsNotice = state == InactivityReminder.RowState.NEEDS_PERMISSION
                 assertEquals(
                     "enabled=$enabled allowed=$allowed",
                     enabled && !allowed,
@@ -125,6 +125,102 @@ class InactivityReminderTest {
                 )
             }
         }
+    }
+
+    // ── 영구 거부 판별(리뷰 - 정인) ──────────────────────────────────────────
+    // 영구 거부 상태에서 launch() 는 팝업 없이 조용히 끝난다. 그때 요청만 다시 던지면 사용자는
+    //   눌러도 아무 일이 없는 화면을 보게 되므로, 미리 알아내 시스템 설정으로 보내야 한다.
+
+    @Test
+    fun a_first_request_is_always_allowed() {
+        // 한 번도 안 물어봤으면 rationale 은 false 다 — 그것만 보면 영구 거부와 구분되지 않는다.
+        assertTrue(
+            "물어본 적 없으면 요청할 수 있어야 한다",
+            InactivityReminder.canRequestPermission(hasAsked = false, shouldShowRationale = false),
+        )
+    }
+
+    @Test
+    fun after_a_soft_denial_we_can_ask_again() {
+        assertTrue(InactivityReminder.canRequestPermission(hasAsked = true, shouldShowRationale = true))
+    }
+
+    @Test
+    fun a_permanent_denial_must_not_pretend_it_can_ask() {
+        // 물어본 적 있는데 rationale 도 false = 영구 거부. 여기서 요청하면 아무 일도 안 일어난다.
+        assertFalse(
+            "영구 거부면 요청 대신 시스템 설정으로 보내야 한다",
+            InactivityReminder.canRequestPermission(hasAsked = true, shouldShowRationale = false),
+        )
+    }
+
+    // ── 복구 경로 라우팅(리뷰 P1 2차) ─────────────────────────────────────────
+    // 알림이 막히는 경로는 하나가 아니다. '권한이 없는가'로 나누면 권한은 있는데 앱 알림 스위치가
+    //   꺼진 경우에 요청을 던지게 되고, 요청 함수는 "이미 허용됨"으로 즉시 돌아와 **눌러도 아무 일이
+    //   일어나지 않는다.** 그래서 '런타임 요청으로 복구되는가'로 나눈다.
+
+    private fun action(
+        supportsRuntime: Boolean = true,
+        granted: Boolean = false,
+        hasAsked: Boolean = false,
+        rationale: Boolean = false,
+    ) = InactivityReminder.recoveryAction(supportsRuntime, granted, hasAsked, rationale)
+
+    @Test
+    fun a_denied_runtime_permission_is_recovered_by_requesting() {
+        assertEquals(
+            InactivityReminder.RecoveryAction.REQUEST_PERMISSION,
+            action(granted = false, hasAsked = false),
+        )
+        assertEquals(
+            "한 번 거절했어도 다시 물을 수 있으면 요청이다",
+            InactivityReminder.RecoveryAction.REQUEST_PERMISSION,
+            action(granted = false, hasAsked = true, rationale = true),
+        )
+    }
+
+    @Test
+    fun permission_granted_but_notifications_off_must_open_settings() {
+        // 권한은 있는데 막혔다면 앱 알림 스위치가 꺼진 것이다. 요청은 즉시 "이미 허용됨"으로 끝나
+        //   사용자가 눌러도 아무 화면이 안 뜬다.
+        assertEquals(
+            InactivityReminder.RecoveryAction.OPEN_SETTINGS,
+            action(granted = true),
+        )
+    }
+
+    @Test
+    fun below_android_13_always_opens_settings() {
+        // 런타임 권한이 없는 버전이라 요청할 것이 없다 — 막혔다면 앱 알림 스위치뿐이다.
+        assertEquals(
+            InactivityReminder.RecoveryAction.OPEN_SETTINGS,
+            action(supportsRuntime = false, granted = true),
+        )
+        assertEquals(
+            InactivityReminder.RecoveryAction.OPEN_SETTINGS,
+            action(supportsRuntime = false, granted = false),
+        )
+    }
+
+    @Test
+    fun a_permanent_denial_opens_settings() {
+        assertEquals(
+            InactivityReminder.RecoveryAction.OPEN_SETTINGS,
+            action(granted = false, hasAsked = true, rationale = false),
+        )
+    }
+
+    @Test
+    fun the_notice_always_matches_what_the_tap_will_do() {
+        // 문구와 동작이 어긋나면 "눌러서 허용"이라 해놓고 설정이 열리거나 그 반대가 된다.
+        assertEquals(
+            InactivityReminder.PERMISSION_NOTICE_ASKABLE,
+            InactivityReminder.permissionNotice(InactivityReminder.RecoveryAction.REQUEST_PERMISSION),
+        )
+        assertEquals(
+            InactivityReminder.PERMISSION_NOTICE_SETTINGS,
+            InactivityReminder.permissionNotice(InactivityReminder.RecoveryAction.OPEN_SETTINGS),
+        )
     }
 
     @Test
