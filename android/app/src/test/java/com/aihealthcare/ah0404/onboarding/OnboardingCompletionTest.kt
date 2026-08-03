@@ -198,7 +198,7 @@ class OnboardingCompletionTest {
         //   continueAuthenticated 가 주인을 갱신하므로 방금 시작한 흐름이 WELCOME 으로 되돌아가면 안 된다.
         TokenHolder.token = "qa-token"
         var auth = 3
-        val vm = OnboardingViewModel(FakeApi(), todayYear = 2026, todayMonth = 7, todayDay = 15) { auth }
+        val vm = OnboardingViewModel(FakeApi(), todayYear = 2026, todayMonth = 7, todayDay = 15, authKey = { auth })
         vm.start(); advanceUntilIdle()
         vm.agreeAll(); vm.submitAgreements(); advanceUntilIdle()
         assertEquals(OnbStep.PROFILE, vm.step)
@@ -216,7 +216,7 @@ class OnboardingCompletionTest {
     fun welcome_is_never_stale_even_when_the_subject_changed() = runTest {
         // 남은 진행이 없으면(WELCOME) 주체가 달라도 되돌릴 게 없다 — 불필요한 리셋 방지.
         var auth = 1
-        val vm = OnboardingViewModel(FakeApi(), todayYear = 2026, todayMonth = 7, todayDay = 15) { auth }
+        val vm = OnboardingViewModel(FakeApi(), todayYear = 2026, todayMonth = 7, todayDay = 15, authKey = { auth })
         auth = 2
 
         assertEquals(OnbStep.WELCOME, vm.step)

@@ -65,6 +65,7 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import com.aihealthcare.ah0404.onboarding.OnboardingScreen
+import com.aihealthcare.ah0404.onboarding.OnboardingViewModel
 import com.aihealthcare.ah0404.profile.ProfileScreen
 import com.aihealthcare.ah0404.record.RecordScreen
 import com.aihealthcare.ah0404.feedback.AppFeedback
@@ -107,6 +108,10 @@ class MainActivity : ComponentActivity() {
 
                 val authLoginViewModel: AuthLoginViewModel = viewModel()
                 val authLoginState by authLoginViewModel.state.collectAsState()
+                // 온보딩 VM 은 Activity 수명이라 OnboardingScreen 의 기본 viewModel() 과 같은 인스턴스다.
+                //   LOGIN_REQUIRED 에서 **미완료 계정**으로 로그인했을 때 온보딩 흐름을 이어가라고 알려주려면
+                //   여기서 같은 인스턴스를 잡아야 한다(#398).
+                val onboardingViewModel: OnboardingViewModel = viewModel()
                 var demoMode by remember { mutableStateOf(false) }
                 var sessionRevision by remember { mutableIntStateOf(0) }
                 val networkAvailable by rememberNetworkAvailable()
@@ -138,6 +143,8 @@ class MainActivity : ComponentActivity() {
 
                 when (route) {
                     AppRoute.ONBOARDING -> OnboardingScreen(
+                        // LOGIN_REQUIRED 핸들러가 같은 인스턴스에 지시를 넣으므로 명시적으로 넘긴다(#398).
+                        vm = onboardingViewModel,
                         // 완주(결과 → 홈): 게스트면 디스크 무영속, 소셜이면 토큰+완료 저장(#153).
                         onComplete = { isGuest ->
                             SessionStore.markOnboarded(context, isGuest)
@@ -151,12 +158,22 @@ class MainActivity : ComponentActivity() {
                         onExit = activity::finish,
                     )
                     AppRoute.LOGIN_REQUIRED -> LoginRequiredScreen(
+                        // ⚠️ 이 화면에 **미완료 계정도 도달한다**(#398). 예전 주석의 "완료된 소셜 계정만 도달"은
+                        //   틀린 전제였다 — 탈퇴 후 같은 계정 재로그인은 서버에서 미완료 신규 계정이 되고(#383)
+                        //   이 화면을 거친다. 완료 여부를 버리고 라우팅만 재평가하면 온보딩 호스트로 가긴 해도
+                        //   VM 은 아무 지시를 못 받아 WELCOME 에 머물러, 방금 로그인한 사용자에게 다시 로그인
+                        //   화면이 뜬다. 온보딩 화면 안의 분기(onSocialLogin)와 같게 처리한다.
                         onGoogleLogin = {
-                            // 재로그인은 완료된 소셜 계정만 도달 → applyLogin 이 저장·게이트 처리, 라우팅만 재평가.
-                            authLoginViewModel.signIn(SocialProvider.GOOGLE, activity) { _ -> sessionRevision++ }
+                            authLoginViewModel.signIn(SocialProvider.GOOGLE, activity) { completed ->
+                                if (!completed) onboardingViewModel.continueAuthenticated()
+                                sessionRevision++
+                            }
                         },
                         onKakaoLogin = {
-                            authLoginViewModel.signIn(SocialProvider.KAKAO, activity) { _ -> sessionRevision++ }
+                            authLoginViewModel.signIn(SocialProvider.KAKAO, activity) { completed ->
+                                if (!completed) onboardingViewModel.continueAuthenticated()
+                                sessionRevision++
+                            }
                         },
                         onExit = activity::finish,
                         onResetSession = {

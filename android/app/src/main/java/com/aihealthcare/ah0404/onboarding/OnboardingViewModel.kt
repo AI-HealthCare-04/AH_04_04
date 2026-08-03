@@ -54,6 +54,8 @@ class OnboardingViewModel(
     // 현재 인증 주체 키(#383). SessionStore.authRevision 은 private set 이라 테스트에서 못 바꾸므로
     //   ExerciseVideosViewModel 과 같은 방식으로 주입 가능하게 둔다.
     private val authKey: () -> Int = { SessionStore.authRevision },
+    // 현재 세션이 소셜(비게스트)인가(#398). authKey 와 같은 이유로 주입 가능하게 둔다.
+    private val socialAuth: () -> Boolean = { SessionStore.socialAuthenticated },
 ) : ViewModel() {
 
     var step by mutableStateOf(OnbStep.WELCOME); private set
@@ -239,8 +241,23 @@ class OnboardingViewModel(
     fun isProgressFromAnotherAuth(): Boolean =
         step != OnbStep.WELCOME && progressOwner != authKey()
 
-    /** S0 → 체험 사용자의 게스트 로그인 후 약관 목록 로드. 기존 소셜 토큰은 덮어쓰지 않는다. */
-    fun start() = launchStep("시작") {
+    /**
+     * S0 → 체험 사용자의 게스트 로그인 후 약관 목록 로드. 기존 소셜 토큰은 덮어쓰지 않는다.
+     *
+     * ⚠️ 소셜 세션이 살아 있으면 이건 '체험'이 아니다(#398). 토큰이 있으면 게스트 로그인만 건너뛰고
+     *   `isGuest = true` 는 그대로 세우던 탓에, 소셜 계정이 게스트로 취급돼 완주해도 영속화되지 않았다.
+     *   소셜 토큰을 든 채 이 화면에 서는 경우가 실제로 있다 — 탈퇴 후 재로그인하면 진입 가드가
+     *   WELCOME 으로 되돌린다(#383). 그때는 게스트로 시작하지 말고 인증된 흐름을 이어간다.
+     */
+    fun start() {
+        if (socialAuth()) {
+            continueAuthenticated()
+            return
+        }
+        startAsGuest()
+    }
+
+    private fun startAsGuest() = launchStep("시작") {
         finished = false // 온보딩 시작점에서 완주 신호를 깐다 — stale finished 로 즉시 홈 라우팅되는 경로 원천 차단(리뷰 #311).
         isGuest = true // 게스트 온보딩 — 완료해도 디스크에 안 남긴다(#153).
         if (TokenHolder.token.isBlank()) {
