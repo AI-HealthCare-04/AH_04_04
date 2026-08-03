@@ -328,7 +328,12 @@ internal fun trendDescription(segments: List<List<ScorePoint>>): String =
 @Composable
 private fun ScoreTrendChart(segments: List<List<ScorePoint>>) {
     val primary = MaterialTheme.colorScheme.primary
+    // 가로 격자선은 장식이라 옅게 둔다(데이터 선과 경쟁하면 안 된다).
     val grid = MaterialTheme.colorScheme.outlineVariant
+    // 기준 경계 점선은 '의미를 전달하는 선'이라 대비를 따로 확보한다(리뷰 P2):
+    //   카드 배경(#F9FAF5) 기준 outlineVariant 는 1.62:1 로 저시력·고령 사용자가 구분하기 어렵다.
+    //   outline(#717971) 은 4.28:1 로 그래프 선 권장선(3:1)을 넉넉히 넘는다.
+    val baselineDivider = MaterialTheme.colorScheme.outline
     val desc = "근육 건강 점수 변화 그래프. ${trendDescription(segments)}"
     val total = segments.sumOf { it.size }
     Canvas(
@@ -356,14 +361,16 @@ private fun ScoreTrendChart(segments: List<List<ScorePoint>>) {
         var index = 0
         segments.forEachIndexed { segIndex, seg ->
             val isCurrent = segIndex == segments.lastIndex
-            val lineColor = if (isCurrent) primary else primary.copy(alpha = 0.35f)
+            // 이전 기준 구간은 옅게 그리되 식별은 가능해야 한다(리뷰 P2): alpha 0.35 는 1.93:1 이라
+            //   너무 흐렸다. 0.6 이면 3.44:1 로 3:1 을 넘기면서도 현재 기준(10.45:1)과 농도 차이는 유지된다.
+            val lineColor = if (isCurrent) primary else primary.copy(alpha = 0.6f)
             val startIndex = index
             val pts = seg.map { p -> pt(index++, shown(p.score)) }
             // 경계 세로 점선 — 첫 구간 앞에는 그리지 않는다(경계가 아니라 차트 시작이므로).
             if (segIndex > 0 && pts.isNotEmpty()) {
                 val boundaryX = (pt(startIndex - 1, 0).x + pts.first().x) / 2f
                 drawLine(
-                    grid,
+                    baselineDivider,
                     Offset(boundaryX, top),
                     Offset(boundaryX, bottom),
                     strokeWidth = 1.dp.toPx(),
