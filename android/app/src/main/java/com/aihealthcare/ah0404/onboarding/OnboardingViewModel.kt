@@ -117,13 +117,21 @@ class OnboardingViewModel(
     val estimateUnavailableReason: String?
         get() {
             if (canEstimate) return null
-            val ageValid = composeBirthDate() != null && ageYears() != null
-            return if (sex == null || !ageValid) {
+            return if (estimateBlockedByIncompleteDemographics) {
                 "성별·생년월일을 먼저 입력하면 사용할 수 있어요"
             } else {
                 "키·몸무게 추정은 만 50세 이상부터 제공해요. 정확한 값을 직접 입력해 주세요."
             }
         }
+
+    /**
+     * 추정 불가가 '성별·생년월일 미완성/무효' 때문인가(true) '유효 생년월일 + 실제 만 50세 미만' 때문인가(false)
+     *  (#395 리뷰 P1). [estimateUnavailableReason] 과 [estimateInvalidatedNotice] 가 이 하나를 공유해 두 안내가
+     *  어긋나지 않게 한다. canEstimate == true(추정 가능)면 의미 없음 — 호출부가 canEstimate/estimateInvalidated 를
+     *  먼저 확인한다. (예: 56세 사용자가 생년월일 수정 중 월을 잠깐 비우면 age 는 계산 불가지만 만 50세 미만은 아니다.)
+     */
+    private val estimateBlockedByIncompleteDemographics: Boolean
+        get() = sex == null || composeBirthDate() == null || ageYears() == null
 
     /**
      * '모름'으로 추정 플래그가 섰는데 그 뒤 생년월일을 만 50세 미만(또는 무효)으로 바꿔 **추정이 무효화된** 상태(#395).
@@ -135,15 +143,19 @@ class OnboardingViewModel(
     val estimateInvalidated: Boolean get() = (heightEstimated || weightEstimated) && !canEstimate
 
     /**
-     * 무효화된 추정을 알리는 강조 안내(#395 선택지 A). 실제 트리거는 대부분 생년월일 오타(1958→1998)라,
-     *  "직접 입력"뿐 아니라 **생년월일을 다시 확인**하도록 되돌아갈 길을 함께 준다(리뷰 보강). 일반 연령
-     *  안내([underAgeNotice])보다 구체적이라 화면에서 이 안내를 우선한다. 값을 직접 채우면 사라진다.
+     * 무효화된 추정을 알리는 강조 안내(#395 선택지 A). 일반 연령 안내([underAgeNotice])보다 구체적이라 화면에서 우선한다.
+     *  값을 직접 채우면 사라진다. **막힌 이유를 나눠 안내한다**(리뷰 #409 P1):
+     *   - 성별 미선택·생년월일 미완성/무효(입력 중간·1958-02-30·미래) → "만 50세 미만"으로 단정하지 않는다(실제로 50세+일 수 있다).
+     *   - 유효 생년월일 + 실제 만 50세 미만 → 추정 근거가 없음을 알리고, 오타 되돌리기를 위해 생년월일 확인을 함께 유도.
      */
     val estimateInvalidatedNotice: String?
-        get() = if (estimateInvalidated) {
-            "생년월일을 바꾸셔서 추정치를 지웠어요. 만 50세 미만은 추정을 제공하지 않으니 키·몸무게를 직접 입력해 주세요. 생년월일이 맞는지도 한 번 확인해 주세요."
-        } else {
-            null
+        get() {
+            if (!estimateInvalidated) return null
+            return if (estimateBlockedByIncompleteDemographics) {
+                "생년월일을 바꾸셔서 추정치를 지웠어요. 성별·생년월일을 다시 확인하면 추정치를 쓸 수 있어요. 직접 입력하셔도 돼요."
+            } else {
+                "생년월일을 바꾸셔서 추정치를 지웠어요. 만 50세 미만은 추정을 제공하지 않으니 키·몸무게를 직접 입력해 주세요. 생년월일이 맞는지도 한 번 확인해 주세요."
+            }
         }
 
     /** 화면 표시값: 추정이면 현재 성별·나이로 라이브 계산(성별/생일 바꾸면 즉시 갱신), 아니면 수동 입력값. */
