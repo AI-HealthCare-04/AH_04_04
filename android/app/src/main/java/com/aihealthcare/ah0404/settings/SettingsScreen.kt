@@ -46,6 +46,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import com.aihealthcare.ah0404.reminder.InactivityReminder
+import com.aihealthcare.ah0404.reminder.ReminderWorker
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -90,6 +98,13 @@ fun SettingsScreen(
     vm: SettingsViewModel = viewModel(),
 ) {
     val context = LocalContext.current
+    // 미접속 리마인드는 기기 로컬 설정이라 서버(#73)와 동기화하지 않는다 — 여기서 직접 읽고 쓴다.
+    var remindersEnabled by rememberSaveable { mutableStateOf(InactivityReminder.isEnabled(context)) }
+    // 권한을 거절해도 토글은 켜진 채로 둔다: 나중에 시스템 설정에서 허용하면 그대로 동작한다.
+    //   여기서 토글을 되돌리면 사용자가 "껐다"고 오해한다.
+    val notificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { /* 결과와 무관하게 설정값은 유지 */ }
     // 로그아웃 확인 다이얼로그(#154). 시니어 대상이라 실수 방지로 한 번 되묻는다.
     var showLogoutConfirm by rememberSaveable { mutableStateOf(false) }
     // 회원탈퇴 확인(#356). 되돌릴 수 없는 파괴적 액션이라 로그아웃과 별도로 강하게 안내한다.
@@ -168,6 +183,34 @@ fun SettingsScreen(
             Text("펫 종류", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = SInk)
             Spacer(Modifier.height(10.dp))
             PetSelector(selected = vm.petType, onSelectDog = { vm.changePetType("dog") })
+        }
+        Spacer(Modifier.height(14.dp))
+
+        SettingsCard {
+            // 미접속 리마인드(1차 검토 피드백 — 이탈 방어). 기기 로컬 알림이라 서버 설정(#73)과 무관하게
+            //   AppSettings 계열이 아닌 InactivityReminder 가 직접 들고 있고, 서버 저장도 하지 않는다.
+            SettingsToggleRow(
+                label = "다시 알림",
+                checked = remindersEnabled,
+                onChange = { on ->
+                    remindersEnabled = on
+                    InactivityReminder.setEnabled(context, on)
+                    if (on) {
+                        ReminderWorker.schedule(context)
+                        // Android 13+ 는 알림에 런타임 권한이 필요하다. **켤 때** 물어야 이유가 분명하다 —
+                        //   첫 실행에 맥락 없이 물으면 거절률이 높고, 거절하면 다시 물을 수 없다.
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    } else {
+                        ReminderWorker.cancel(context)
+                    }
+                },
+                description = "며칠 동안 앱을 열지 않으면 알려드려요",
+            )
         }
         Spacer(Modifier.height(14.dp))
 
