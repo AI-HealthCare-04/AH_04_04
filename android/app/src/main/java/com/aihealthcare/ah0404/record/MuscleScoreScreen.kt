@@ -37,11 +37,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aihealthcare.ah0404.R
 import com.aihealthcare.ah0404.network.CohortDistributionResponse
+import com.aihealthcare.ah0404.network.ContributionItemDto
 import com.aihealthcare.ah0404.network.RiskHistoryItem
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
 import com.aihealthcare.ah0404.ui.theme.ChartLineGreen
 import com.aihealthcare.ah0404.ui.theme.Dimens
+import kotlin.math.abs
 import kotlin.math.max
 
 // =====================================================================================
@@ -111,6 +113,8 @@ internal data class MuscleScoreUi(
     // 점수 기준일(ISO). latest 응답에 날짜가 없어 추이 최신 항목에서 가져온다(#387, 핸드오프 §13 B-2).
     //   null = 추이 조회 실패 → H1 의 기준일 줄만 숨긴다.
     val measuredAtIso: String? = null,
+    // 점수 기여도(#406): 바꿀 수 있는 근력·걷기·허리만. 빈 목록이면 기여도 카드 미표시.
+    val contributions: List<ContributionItemDto> = emptyList(),
 )
 
 /** ISO(YYYY-MM-DD…) → "2026.08.02 기준". 형식이 짧으면 null(줄 자체를 숨긴다). */
@@ -249,6 +253,7 @@ internal fun MuscleImprovementCards(ui: MuscleScoreUi, onGoToMissions: () -> Uni
     val score = ui.score
     if (score != null) {
         StsSafetyCard(ui, onGoToMissions) // §3.4 (조건 충족 시에만)
+        ContributionCard(ui.contributions) // #406 무엇이 점수에 영향을 줬나(바꿀 수 있는 것만)
         ScoreSimulationCard(ui.muscSim, ui.walkSim, score)
         Spacer(Modifier.height(Dimens.Space8))
     } else {
@@ -685,6 +690,78 @@ private fun ScoreSimulationCard(muscSim: List<ScoreSimPoint>, walkSim: List<Scor
         walkSummaryLine(walkSim, currentScore)?.let { line ->
             Spacer(Modifier.height(Dimens.Space4))
             Text(line, style = MaterialTheme.typography.bodyLarge)
+        }
+    }
+}
+
+// ── #406 SHAP 기여도: 바꿀 수 있는 것(근력·걷기·허리)이 점수에 준 영향 ─────────────
+/** 백엔드 feature 키 → 화면 라벨. 화이트리스트 밖(나이·성별·체중 등)은 null 로 걸러 절대 노출하지 않는다. */
+internal fun contributionLabel(feature: String): String? = when (feature) {
+    "musc_days" -> "근력 운동"
+    "walk_days" -> "걷기"
+    "waist_cm" -> "허리둘레"
+    else -> null
+}
+
+internal data class ContributionRow(val label: String, val effect: Double, val raising: Boolean)
+
+/** 표시용 행: 화이트리스트로 거르고 |영향| 큰 순으로 정렬(가장 영향 큰 것부터). 순수 함수라 테스트로 고정한다. */
+internal fun contributionRows(contributions: List<ContributionItemDto>): List<ContributionRow> =
+    contributions
+        .mapNotNull { c -> contributionLabel(c.feature)?.let { ContributionRow(it, c.effectOnScore, c.effectOnScore > 0) } }
+        .sortedByDescending { abs(it.effect) }
+
+@Composable
+private fun ContributionCard(contributions: List<ContributionItemDto>) {
+    val rows = contributionRows(contributions)
+    // 데이터가 없거나(구버전 서버) 모두 0이면 카드 자체를 그리지 않는다.
+    val maxMag = rows.maxOfOrNull { abs(it.effect) }?.takeIf { it > 0.0 } ?: return
+
+    AigoCard {
+        Text("무엇이 내 점수에 영향을 줬을까요", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(Dimens.Space4))
+        Text(
+            "나이·성별·체중은 바꾸기 어려워 빼고, 지금부터 바꿀 수 있는 것만 보여드려요.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(Dimens.Space12))
+        rows.forEach { row ->
+            ContributionBar(row, maxMag)
+            Spacer(Modifier.height(Dimens.Space12))
+        }
+    }
+}
+
+@Composable
+private fun ContributionBar(row: ContributionRow, maxMag: Double) {
+    // 초록 = 이 습관이 점수를 올리는 중, 주황 = 여기서 더 올릴 수 있음(개선 여지). 오류가 아니라 빨강은 안 쓴다.
+    val barColor = if (row.raising) Color(0xFF2E7D32) else Color(0xFFEF6C00)
+    val fraction = (abs(row.effect) / maxMag).toFloat().coerceIn(0.06f, 1f)
+    Column {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(row.label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+            Text(
+                if (row.raising) "점수를 올리고 있어요" else "여기서 더 올릴 수 있어요",
+                style = MaterialTheme.typography.bodyMedium,
+                color = barColor,
+            )
+        }
+        Spacer(Modifier.height(Dimens.Space4))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(14.dp)
+                .clip(RoundedCornerShape(7.dp))
+                .background(Color(0xFFEDEDED)),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth(fraction)
+                    .height(14.dp)
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(barColor),
+            )
         }
     }
 }

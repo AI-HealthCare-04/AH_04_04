@@ -250,6 +250,8 @@ class RecordViewModel(
                 //   (핸드오프 §13 B-2 승인). 추이 조회가 실패하면 null → 기준일 줄만 숨긴다.
                 //   정렬 가정을 두지 않으려고 ISO 문자열 최댓값으로 고른다(사전순 = 시간순).
                 measuredAtIso = history.maxByOrNull { it.createdAt }?.createdAt,
+                // 점수 기여도(#406) — 구버전 서버면 빈 목록이라 카드 미표시.
+                contributions = latestResult.getOrNull()?.contributions ?: emptyList(),
             )
             loaded = true
         }

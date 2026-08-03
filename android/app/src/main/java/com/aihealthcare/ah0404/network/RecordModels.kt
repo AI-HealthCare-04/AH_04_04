@@ -48,6 +48,19 @@ data class RiskLatestResponse(
     @SerialName("muscle_score") val muscleScore: Int? = null,
     @SerialName("score_band") val scoreBand: String? = null,
     @SerialName("cohort_version") val cohortVersion: String? = null,
+    // 점수 기여도(#406): 바꿀 수 있는 근력·걷기·허리만. 구버전 서버면 빈 목록(ignoreUnknownKeys).
+    val contributions: List<ContributionItemDto> = emptyList(),
+)
+
+/**
+ * 근육 점수 SHAP 기여(#406). feature=musc_days|walk_days|waist_cm(백엔드가 이 3개만 준다).
+ * effectOnScore = 점수 방향 기여(log-odds). 양수=점수를 올리는 방향, 음수=내리는(개선 여지) 방향.
+ * 화면은 |값|으로 막대 길이를, 부호로 색을 정한다.
+ */
+@Serializable
+data class ContributionItemDto(
+    val feature: String,
+    @SerialName("effect_on_score") val effectOnScore: Double = 0.0,
 )
 
 /**
