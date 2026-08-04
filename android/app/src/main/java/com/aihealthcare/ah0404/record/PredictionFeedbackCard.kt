@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import com.aihealthcare.ah0404.ui.components.AigoCard
+import com.aihealthcare.ah0404.ui.text.keepKoreanWords
 import com.aihealthcare.ah0404.ui.theme.Dimens
 import com.aihealthcare.ah0404.ui.theme.SelectionRowShape
 
@@ -97,13 +98,13 @@ internal fun PredictionFeedbackCard(predictionId: Int, onSubmit: (Int, String) -
         }
         Column {
             Text(
-                "이 결과가 평소 느끼는 몸 상태와 비슷한가요?",
+                keepKoreanWords("이 결과가 평소 느끼는 몸 상태와 비슷한가요?"),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
             )
             Spacer(Modifier.height(Dimens.Space4))
             Text(
-                "응답은 서비스 개선에 활용되며, 진단 결과로 사용되지 않아요.",
+                keepKoreanWords("응답은 서비스 개선에 활용되며, 진단 결과로 사용되지 않아요."),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

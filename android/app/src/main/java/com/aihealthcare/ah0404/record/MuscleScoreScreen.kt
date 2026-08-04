@@ -45,6 +45,7 @@ import com.aihealthcare.ah0404.network.ContributionItemDto
 import com.aihealthcare.ah0404.network.RiskHistoryItem
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
+import com.aihealthcare.ah0404.ui.text.keepKoreanWords
 import com.aihealthcare.ah0404.ui.theme.AigoOutlineVariant
 import com.aihealthcare.ah0404.ui.theme.AigoPrimary
 import com.aihealthcare.ah0404.ui.theme.AigoTertiaryDark
@@ -778,9 +779,13 @@ private fun ScoreSimulationCard(muscSim: List<ScoreSimPoint>, walkSim: List<Scor
                 )
             }
             Column {
-                Text("이렇게 하면 이만큼", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(
-                    "생활습관을 바꾸면 예상 점수를 볼 수 있어요.",
+                    keepKoreanWords("이렇게 하면 이만큼"),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    keepKoreanWords("생활습관을 바꾸면 예상 점수를 볼 수 있어요."),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -807,7 +812,13 @@ private fun SimulationRowItem(row: SimulationRow) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Dimens.Space12),
     ) {
-        Text(row.label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+        // 문장이 두 줄로 접힐 때 어절이 갈리지 않게 한다(`주 1일 하/면` 방지). 값은 그대로 —
+        //   [SimulationRow] 원본은 손대지 않고 그리는 순간에만 감싼다.
+        Text(
+            keepKoreanWords(row.label),
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
+        )
         Text(
             row.value,
             style = MaterialTheme.typography.bodyLarge,
