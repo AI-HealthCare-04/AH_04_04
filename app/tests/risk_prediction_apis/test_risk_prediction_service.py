@@ -32,7 +32,6 @@ from app.models.users import User
 from app.services.risk_prediction import (
     COHORT_SEX_CODES,
     RiskPredictionService,
-    _serialize_contributions,
     _snapshot_sex,
     next_reassess_available_at,
 )
@@ -117,6 +116,9 @@ def test_risk_prediction_response_includes_public_model_context() -> None:
     assert response.cohort_version is None
     assert response.care_stage == CareStage.ACTION_NEEDED
     assert response.disclaimer == "본 결과는 참고용이며 의학적 진단이 아닙니다."
+    # 조회 경로(/me/latest 등)는 contributions 를 전달하지 않으므로 빈 목록이다(#406) —
+    #   기여도는 저장하지 않고 create·재계산 응답에만 싣는다. 앱은 로컬 캐시를 쓴다.
+    assert response.contributions == []
 
 
 def test_create_response_includes_onboarding_status() -> None:
@@ -163,7 +165,7 @@ def test_reassess_response_uses_v73_contract_without_model_variant() -> None:
         "display_message": RiskPredictionService._display_message(CareStage.MAINTAIN),
         "disclaimer": "본 결과는 참고용이며 의학적 진단이 아닙니다.",
         "activity_input_source": ActivityInputSource.SERVICE_LOG.value,
-        # 기여도 없는 예측(구행·스냅샷 없음)은 빈 목록(#406) — 계약을 깨지 않는다.
+        # contributions 를 전달하지 않고 만든 응답(조회 경로)은 빈 목록(#406) — 계약을 깨지 않는다.
         "contributions": [],
         # 하루 1회 정책(#388): 기본은 '이번 호출로 새로 계산' + 다음 가능 시각(다음 KST 자정).
         "recalculated": True,
@@ -381,8 +383,9 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
                 score_cohort_age="72",
                 score_cohort_version="knhanes2022_2024_v1",
                 # 예측기는 계산용으로 정규화 입력을 돌려주지만, 서비스는 여기서 성별만 뽑아 컬럼에
-                #   남기고 원본은 저장하지 않는다(#408).
-                input_snapshot={"age": 72.0, "sex": 1, "bmi": 22.7, "waist_cm": 82.0},
+                #   남기고 원본은 저장하지 않는다(#408). SHAP 기여도(#406)도 이 입력으로 계산해 응답에만 싣는다.
+                input_snapshot={"age": 72.0, "sex": 1, "height_cm": 168.0, "weight_kg": 78.0,
+                                "bmi": 27.6, "waist_cm": 98.0, "walk_days": 1.0, "musc_days": 0.0},
             )
 
     session = SimpleNamespace(committed=False, refreshed=None)
@@ -432,12 +435,12 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
     #   원본을 예측마다 복제하면 프로필 컬럼을 아무리 줄여도 노출면이 그대로다.
     assert prediction_repo.created_prediction.score_cohort_sex == 1
     assert prediction_repo.created_prediction.input_snapshot is None
-    # SHAP 기여도(#406)는 원본이 사라지기 전 예측 시점 입력으로 계산해 **파생값만** 컬럼에 남긴다.
-    #   원본(input_snapshot)은 None 이어도 기여도는 유지된다 — 이게 응답 시점 재계산과의 결정적 차이다.
-    stored_contribs = prediction_repo.created_prediction.score_contributions
-    assert stored_contribs, "신규 예측은 파생 SHAP 기여도를 저장해야 한다"
-    assert {c["feature"] for c in stored_contribs} <= {"musc_days", "walk_days", "waist_cm"}
-    assert {c.feature for c in response.contributions} == {c["feature"] for c in stored_contribs}
+    # SHAP 기여도(#406)는 **저장하지 않는다**(리뷰 P1 — 파생값도 x=mean+std×(effect/-coef)로 허리둘레
+    #   원본이 역산돼 #408 최소화를 무력화). 저장 컬럼 자체가 없다.
+    assert not hasattr(prediction_repo.created_prediction, "score_contributions")
+    # 대신 이번 재계산 응답에만 실어 내려준다(recalculated=True). 노출 3개(근력·걷기·허리)만.
+    assert response.recalculated is True
+    assert {c.feature for c in response.contributions} == {"musc_days", "walk_days", "waist_cm"}
     assert response.profile_id == 72
     assert response.prediction_id == 90
     assert response.muscle_score == 81
@@ -535,6 +538,8 @@ async def test_reassess_returns_existing_prediction_when_already_done_today() ->
 
     assert response.prediction_id == 77  # 기존 예측 그대로
     assert response.recalculated is False  # 앱이 "오늘은 이미 계산했어요"를 안내할 수 있다
+    # 재계산하지 않았으므로 기여도는 빈 목록 — 앱은 이걸 받아도 기존 로컬 캐시를 지우지 않는다(#406).
+    assert response.contributions == []
     assert response.next_available_at is not None
     assert prediction_repo.create_calls == 0  # 예측 행이 늘지 않는다
     assert profile_repo.create_calls == 0  # 프로필 이력도 늘지 않는다(#388 결정 4)
@@ -570,61 +575,42 @@ def test_snapshot_sex_rejects_out_of_contract_values() -> None:
     assert _snapshot_sex(None) is None
 
 
-# ---------------- SHAP 기여도 저장/조회 계약(#406, #408 병행) ----------------
+# ---------------- SHAP 기여도 계산/전달 계약(#406, #408 병행) ----------------
+# 기여도는 **저장하지 않는다.** 파생값도 x = mean + std × (effect / -coef) 로 허리둘레 원본이
+#   역산돼(리뷰 P1, round(,4)로 ±0.005cm 사실상 무손실) #408 최소화를 무력화하기 때문이다.
+#   예측(create)·재계산 시점에 한 번 계산해 그 응답에만 싣고, /me/latest·recalculated=False 는
+#   빈 목록으로 내려간다(앱이 prediction_id 기준 로컬 캐시로 막대를 그린다).
 
 
-def test_serialize_contributions_writes_only_derived_whitelist() -> None:
-    """예측 시점 입력으로 파생 기여도만 만들어 저장 형태로 직렬화한다.
+def test_contributions_computes_only_derived_whitelist_from_snapshot() -> None:
+    """예측 시점 입력으로 노출 3개(근력·걷기·허리)의 방향 기여만 계산한다(#406).
 
-    원본이 아니라 노출 3개(근력·걷기·허리)의 방향 기여만 남는다 — 최소화(#408)를 위반하지 않는다.
+    저장이 아니라 응답에 실을 DTO 로만 만든다. 원본 식별 항목은 절대 노출되지 않는다.
     """
     snapshot = {"age": 72.0, "sex": 1, "bmi": 27.6, "height_cm": 168.0, "weight_kg": 78.0,
                 "waist_cm": 98.0, "walk_days": 1.0, "musc_days": 0.0}
-    stored = _serialize_contributions(snapshot)
-    assert stored is not None
-    features = {row["feature"] for row in stored}
+    contribs = RiskPredictionService._contributions(snapshot)
+    features = {c.feature for c in contribs}
     assert features == {"musc_days", "walk_days", "waist_cm"}
-    # 원본 식별 항목(나이·성별·키·체중·BMI)은 절대 저장되지 않는다.
     assert features.isdisjoint({"age", "sex", "height_cm", "weight_kg", "bmi"})
-    assert all(isinstance(row["effect_on_score"], float) for row in stored)
+    # 값 단위는 log-odds(점수 아님) — DTO 필드명이 그 사실을 드러낸다(#406 P2).
+    assert all(isinstance(c.effect_on_score_log_odds, float) for c in contribs)
 
 
-def test_serialize_contributions_empty_when_no_input() -> None:
-    # 입력이 없으면(구행 재계산 등) None 을 저장해 가짜 막대를 만들지 않는다.
-    assert _serialize_contributions(None) is None
-    assert _serialize_contributions({}) is None
+def test_contributions_empty_when_no_input() -> None:
+    # 입력이 없으면(구행 재계산·계산 실패 등) 빈 목록 — 가짜 막대를 만들지 않는다.
+    assert RiskPredictionService._contributions(None) == []
+    assert RiskPredictionService._contributions({}) == []
 
 
-def test_contributions_reads_stored_derived_even_without_snapshot() -> None:
-    """응답은 저장된 파생값을 그대로 읽는다 — 원본(input_snapshot)이 없어도 유지된다.
+def test_prediction_row_has_no_contributions_column() -> None:
+    """기여도는 예측 행에 저장되지 않는다 — 역산 가능한 허리둘레 복제를 두지 않기 위해서다(리뷰 P1).
 
-    이것이 #410(원본 폐기)과 충돌하지 않는 핵심이다. 응답 시점에 재계산하지 않는다.
+    저장 컬럼이 되살아나면(누가 다시 추가하면) 이 계약이 깨지므로 모델 속성 부재로 못박는다.
     """
     prediction = RiskPrediction(
         prediction_id=1, user_id=1, profile_id=1, model_version="v1",
         model_variant=ModelVariant.WITH_WAIST, internal_risk_score=Decimal("0.12"),
-        internal_risk_level=RiskLevel.LOW, input_snapshot=None,
-        score_contributions=[{"feature": "waist_cm", "effect_on_score": -1.29},
-                             {"feature": "musc_days", "effect_on_score": -0.17}],
+        internal_risk_level=RiskLevel.LOW,
     )
-    result = RiskPredictionService._contributions(prediction)
-    assert [(c.feature, c.effect_on_score) for c in result] == [
-        ("waist_cm", -1.29), ("musc_days", -0.17)
-    ]
-
-
-def test_contributions_empty_for_legacy_rows_and_bad_shapes() -> None:
-    # 0021 이전 구행(컬럼 NULL)·형태가 어긋난 항목은 빈 목록으로 안전하게 넘긴다(신규 건만 제공).
-    def _pred(contribs: object) -> RiskPrediction:
-        return RiskPrediction(
-            prediction_id=1, user_id=1, profile_id=1, model_version="v1",
-            model_variant=ModelVariant.MINIMAL, internal_risk_score=Decimal("0.12"),
-            internal_risk_level=RiskLevel.LOW, score_contributions=contribs,  # type: ignore[arg-type]
-        )
-
-    assert RiskPredictionService._contributions(_pred(None)) == []
-    assert RiskPredictionService._contributions(_pred([])) == []
-    # 잘못된 항목은 조용히 버리고, 유효한 항목만 남긴다.
-    mixed = [{"feature": "walk_days", "effect_on_score": 0.2}, {"feature": 3}, "nope", {"effect_on_score": 1}]
-    kept = RiskPredictionService._contributions(_pred(mixed))
-    assert [(c.feature, c.effect_on_score) for c in kept] == [("walk_days", 0.2)]
+    assert not hasattr(prediction, "score_contributions")

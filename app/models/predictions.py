@@ -57,11 +57,10 @@ class RiskPrediction(Base):
     #   화면·추이가 실제로 쓰는 것은 결과 점수와 코호트 키뿐이었다(위 컬럼들).
     #   신규 예측은 NULL 로 남기고 기존 행도 마이그레이션 0020 에서 비웠다.
     input_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    # 근육 점수 SHAP 기여도(#406). 노출 특징 3개(근력·걷기·허리)의 파생 결과만 [{"feature","effect_on_score"}]
-    #   형태로 저장한다. **예측 시점에 메모리의 입력으로 한 번 계산해 고정**한다 — 원본 입력은 저장하지
-    #   않으므로(#408) 사후 재계산은 불가능하다. 파생 3개뿐이라 원본 복원에는 못 쓴다(최소화 위반 아님).
-    #   0021 이전 구행은 원본이 이미 폐기돼 이 값이 없다(NULL) → 응답에서 빈 목록으로 나간다(신규 건만 제공).
-    score_contributions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # 근육 점수 SHAP 기여도(#406)는 **저장하지 않는다.** 파생값도 `x = mean + std × (effect / -coef)` 로
+    #   허리둘레 원본이 역산돼(#406 리뷰 P1, round(,4)로 ±0.005cm 사실상 무손실) #408 최소화를 무력화한다.
+    #   대신 create·재계산 응답에만 실어 한 번 내려주고(app/services/risk_prediction._contributions),
+    #   앱이 prediction_id 기준 로컬 캐시로 대시보드 막대를 그린다. 그래서 이 모델에 컬럼이 없다.
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

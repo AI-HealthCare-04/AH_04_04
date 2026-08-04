@@ -71,9 +71,9 @@ class RiskPredictionService:
         profile = await self.profile_repo.get_profile(data.profile_id, user.user_id)
         if profile is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Health profile not found.")
-        prediction = await self._predict_and_save(user, profile, complete_onboarding=True)
+        prediction, contributions = await self._predict_and_save(user, profile, complete_onboarding=True)
         return RiskPredictionCreateResponse(
-            **self._to_response(prediction).model_dump(),
+            **self._to_response(prediction, contributions).model_dump(),
             onboarding_status=user.onboarding_status.value,
         )
 
@@ -95,14 +95,15 @@ class RiskPredictionService:
         #   프로필 행도 함께 안 늘어난다 — 재평가 프로필 생성이 이 분기 뒤에 있기 때문(#388 결정 4).
         existing = await self.prediction_repo.get_today_reassessment(user.user_id)
         if existing is not None:
+            # recalculated=False: 재계산하지 않으므로 기여도는 빈 목록으로 나간다. 앱은 기존 로컬 캐시를 유지한다.
             return self._to_reassess_response(existing, recalculated=False)
         reassessment_profile = await self._create_reassessment_profile(
             user=user,
             source_profile=profile,
             activity_window_days=data.activity_window_days,
         )
-        prediction = await self._predict_and_save(user, reassessment_profile)
-        return self._to_reassess_response(prediction)
+        prediction, contributions = await self._predict_and_save(user, reassessment_profile)
+        return self._to_reassess_response(prediction, contributions=contributions)
 
     async def get_latest_prediction(self, user: User) -> RiskPredictionResponse:
         prediction = await self.prediction_repo.get_latest_prediction(user.user_id)
@@ -271,7 +272,12 @@ class RiskPredictionService:
         profile: HealthProfile,
         *,
         complete_onboarding: bool = False,
-    ) -> RiskPrediction:
+    ) -> tuple[RiskPrediction, list[FeatureContributionResponse]]:
+        """예측을 계산·저장하고, (예측 행, 이번 계산의 SHAP 기여도)를 함께 돌려준다.
+
+        기여도는 **저장하지 않고** 이 반환값으로만 흘려보낸다(#406 리뷰 P1 — 파생값도 허리둘레 역산이
+        가능해 #408 최소화를 무력화하므로 컬럼에 남기지 않는다). 호출부가 create·재계산 응답에만 싣는다.
+        """
         try:
             result = await self.predictor.predict(features_from_health_profile(profile))
         except AgeNotSupportedError as exc:
@@ -301,17 +307,38 @@ class RiskPredictionService:
             score_cohort_version=getattr(result, "score_cohort_version", None),
             # 입력 원본(input_snapshot)은 저장하지 않는다(#408 — 서버 보관 최소화). 화면·추이가 쓰는 값은
             #   위 파생 컬럼들로 충분하고, 원본을 예측마다 복제하면 프로필을 아무리 줄여도 의미가 없다.
-            # SHAP 기여도(#406)는 원본이 사라지기 전 **지금 메모리의 입력**으로 계산해 파생 3개만 고정 저장한다.
-            score_contributions=_serialize_contributions(result.input_snapshot),
         )
         await self.prediction_repo.create_risk_prediction(prediction)
         if complete_onboarding:
             user.onboarding_status = OnboardingStatus.COMPLETED
         await self.session.commit()
         await self.session.refresh(prediction)
-        return prediction
+        # SHAP 기여도(#406)는 저장하지 않고 지금 메모리의 입력으로 계산해 반환값으로만 흘려보낸다.
+        return prediction, self._contributions(result.input_snapshot)
 
-    def _to_response(self, prediction: RiskPrediction) -> RiskPredictionResponse:
+    @staticmethod
+    def _contributions(snapshot: Mapping[str, object] | None) -> list[FeatureContributionResponse]:
+        """이번 예측 입력으로 SHAP 기여도(#406)를 계산해 응답 DTO 로 만든다.
+
+        저장·재조회 없이 **예측 시점 메모리 입력**으로만 계산한다 — 서버는 원본을 저장하지 않고(#408)
+        파생값도 저장하지 않으므로(리뷰 P1), create·재계산 경로에서만 호출된다. 계산 실패·입력 없음·
+        minimal 모델이면 빈 목록이다.
+        """
+        contributions = compute_score_contributions(snapshot or {})
+        return [
+            FeatureContributionResponse(
+                feature=c.feature,
+                effect_on_score_log_odds=c.effect_on_score_log_odds,
+            )
+            for c in contributions
+        ]
+
+    def _to_response(
+        self,
+        prediction: RiskPrediction,
+        contributions: list[FeatureContributionResponse] | None = None,
+    ) -> RiskPredictionResponse:
+        # contributions 는 create 시점에만 전달된다. /me/latest 등 조회 경로는 None → 빈 목록(앱 캐시 사용).
         care_stage = self._care_stage_from_risk_level(prediction.internal_risk_level)
         return RiskPredictionResponse(
             prediction_id=prediction.prediction_id,
@@ -323,34 +350,17 @@ class RiskPredictionService:
             cohort_version=getattr(prediction, "score_cohort_version", None),
             care_stage=care_stage,
             display_message=self._display_message(care_stage),
-            contributions=self._contributions(prediction),
+            contributions=contributions or [],
         )
-
-    @staticmethod
-    def _contributions(prediction: RiskPrediction) -> list[FeatureContributionResponse]:
-        """예측 행에 저장된 파생 SHAP 기여도를 응답 DTO 로 옮긴다(#406).
-
-        예측 시점에 계산·저장한 값을 그대로 읽을 뿐 여기서 재계산하지 않는다 — 원본 입력은 서버에
-        없다(#408). 저장된 값이 없거나(0021 이전 구행) 형태가 어긋나면 빈 목록으로 안전하게 넘긴다.
-        """
-        stored = getattr(prediction, "score_contributions", None) or []
-        items: list[FeatureContributionResponse] = []
-        for entry in stored:
-            if not isinstance(entry, dict):
-                continue
-            feature = entry.get("feature")
-            effect = entry.get("effect_on_score")
-            if not isinstance(feature, str) or not isinstance(effect, int | float):
-                continue
-            items.append(FeatureContributionResponse(feature=feature, effect_on_score=float(effect)))
-        return items
 
     def _to_reassess_response(
         self,
         prediction: RiskPrediction,
         *,
         recalculated: bool = True,
+        contributions: list[FeatureContributionResponse] | None = None,
     ) -> RiskPredictionReassessResponse:
+        # 기여도는 recalculated=True(새로 계산)일 때만 전달된다. recalculated=False 는 None → 빈 목록.
         care_stage = self._care_stage_from_risk_level(prediction.internal_risk_level)
         return RiskPredictionReassessResponse(
             recalculated=recalculated,
@@ -363,7 +373,7 @@ class RiskPredictionService:
             cohort_version=getattr(prediction, "score_cohort_version", None),
             care_stage=care_stage,
             display_message=self._display_message(care_stage),
-            contributions=self._contributions(prediction),
+            contributions=contributions or [],
         )
 
     async def _create_reassessment_profile(
@@ -470,18 +480,6 @@ def _is_cohort_supported_age(age_key: str) -> bool:
         return AGE_MIN <= int(age_key) < AGE_TOPCODE
     except ValueError:
         return False
-
-
-def _serialize_contributions(snapshot: Mapping[str, object] | None) -> list[dict[str, object]] | None:
-    """예측 시점 입력으로 SHAP 기여도(#406)를 계산해 저장용 JSON 리스트로 만든다.
-
-    원본 스냅샷은 저장하지 않고(#408) 여기서 뽑은 파생 3개(근력·걷기·허리)만 컬럼에 남긴다.
-    기여도가 없으면(입력 없음·계산 실패·minimal 모델) None 을 돌려 컬럼을 비운다.
-    """
-    contributions = compute_score_contributions(snapshot or {})
-    if not contributions:
-        return None
-    return [{"feature": c.feature, "effect_on_score": c.effect_on_score} for c in contributions]
 
 
 def _snapshot_sex(snapshot: dict[str, object] | None) -> int | None:

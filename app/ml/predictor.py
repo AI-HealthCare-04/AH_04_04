@@ -339,13 +339,15 @@ CONTRIBUTION_FEATURES: tuple[str, ...] = ("musc_days", "walk_days", "waist_cm")
 
 @dataclass(frozen=True)
 class FeatureContribution:
-    """점수 방향 SHAP 기여(#406). effect_on_score = -(위험계수)×표준화값 (log-odds).
+    """점수 방향 SHAP 기여(#406). effect_on_score_log_odds = -(위험계수)×표준화값.
 
-    양수 = 점수를 올리는 방향, 음수 = 점수를 내리는(=개선 여지가 큰) 방향. |값|이 클수록 영향이 크다.
+    ⚠️ 단위는 **log-odds** 이며 점수(0~100)가 아니다. 양수 = 점수를 올리는 방향, 음수 = 점수를
+       내리는(=개선 여지가 큰) 방향. |값|이 클수록 영향이 크다. 화면에는 막대 길이·부호로만 쓰고
+       수치를 직접 노출하지 않는다(#406 P2 — "허리 때문에 1.29점 깎였다"는 오독 방지).
     """
 
     feature: str
-    effect_on_score: float
+    effect_on_score_log_odds: float
 
 
 def compute_score_contributions(input_snapshot: Mapping[str, Any]) -> list[FeatureContribution]:
@@ -356,7 +358,9 @@ def compute_score_contributions(input_snapshot: Mapping[str, Any]) -> list[Featu
        뒤집히지 않는다. 기여도는 부가 정보라 어떤 이유로든 계산 실패 시 빈 목록을 돌려 본 응답을 막지 않는다.
 
     ⚠️ 예측 시점에 메모리의 ``result.input_snapshot`` 으로만 호출한다 — 서버는 원본 입력을 저장하지
-       않으므로(#408) 사후 재계산은 불가능하다. 서비스가 이 결과를 파생 컬럼에 고정 저장한다.
+       않으므로(#408) 사후 재계산은 불가능하다. 결과는 **저장하지 않고** create·재계산 응답에만 싣는다.
+       (파생값을 저장하면 ``x = mean + std × (effect / -coef)`` 로 허리둘레 원본이 역산돼 #408 최소화를
+       무력화한다 — #406 리뷰 P1. 그래서 저장 컬럼 없이 응답 1회 전달 + 앱 로컬 캐시로 간다.)
     """
     if not input_snapshot:
         return []  # 입력이 없으면 기여도도 없다(임퓨트된 평균값으로 가짜 막대를 만들지 않는다).
@@ -385,9 +389,11 @@ def compute_score_contributions(input_snapshot: Mapping[str, Any]) -> list[Featu
         for feature in CONTRIBUTION_FEATURES:
             if feature not in name_to_coef or feature not in name_to_z:
                 continue  # waist_cm 은 minimal 모델(허리 미입력)엔 없다.
-            effect_on_score = -name_to_coef[feature] * name_to_z[feature]
+            if input_snapshot.get(feature) is None:
+                continue  # 개별 값이 없으면 임퓨터 대표값으로 가짜 막대를 만들지 않는다(#406 리뷰).
+            effect = -name_to_coef[feature] * name_to_z[feature]
             contributions.append(
-                FeatureContribution(feature=feature, effect_on_score=round(effect_on_score, 4))
+                FeatureContribution(feature=feature, effect_on_score_log_odds=round(effect, 4))
             )
         return contributions
     except Exception:
