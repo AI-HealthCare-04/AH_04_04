@@ -59,7 +59,6 @@ class HomeViewModel(
 fun HomeResponse.toUi(): HomeUi = HomeUi(
     nickname = user.nickname,
     points = pointBalance.currentPoints,
-    activityLevel = activityProfile.currentLevel,
     careStage = latestPrediction?.careStage,
     predictionMessage = latestPrediction?.displayMessage,
     disclaimer = null, // 홈 latest_prediction 엔 disclaimer 없음 → 기본 고지 사용

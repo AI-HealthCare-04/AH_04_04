@@ -14,6 +14,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -41,6 +45,7 @@ import com.aihealthcare.ah0404.network.ContributionItemDto
 import com.aihealthcare.ah0404.network.RiskHistoryItem
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
+import com.aihealthcare.ah0404.ui.text.keepKoreanWords
 import com.aihealthcare.ah0404.ui.theme.AigoOutlineVariant
 import com.aihealthcare.ah0404.ui.theme.AigoPrimary
 import com.aihealthcare.ah0404.ui.theme.AigoTertiaryDark
@@ -717,35 +722,109 @@ private fun CohortDistributionCard(cohort: CohortDistributionResponse?, waistMis
 
 // ── §4 시뮬레이션(점수 곡선) ──────────────────────────────────────────────────
 /**
+ * 예측 한 줄 — 좌측 행동 문장 + 우측 예상 점수(핸드오프 §3). 한 문장에 '→ 점수'까지 붙여 쓰던 것을
+ * 두 축으로 쪼갠다: 점수를 오른쪽에 고정 정렬해야 여러 줄이 세로로 비교되기 때문이다.
+ */
+internal data class SimulationRow(val label: String, val value: String)
+
+/** 미래 지향 카피(§4): "지금보다 근력운동을 주 {n}일 하면" — {score}점. 0일(현재)은 예측이 아니라 제외. */
+internal fun muscSimulationRows(muscSim: List<ScoreSimPoint>): List<SimulationRow> =
+    muscSim.filter { it.days >= 1 }
+        .map { SimulationRow("지금보다 근력운동을 주 ${it.days}일 하면", "${shown(it.score)}점") }
+
+/**
  * 걷기 요약 1줄(리뷰 #275-①). 근력과 달리 걷기는 계수가 완만해(예측 화면 '해석 주의' 명시) 일수별 전체
  * 나열은 "주 7일 걸어도 그대로" 같은 김빠지는 목록이 된다 → 최대 일수 지점 1줄로 요약하고,
  * **점수 이득이 0이면 줄 자체를 생략**한다(걷기가 소용없다는 오해 방지 — 걷기의 가치는 챌린지가 담당).
  */
-internal fun walkSummaryLine(walkSim: List<ScoreSimPoint>, currentScore: Int): String? {
+internal fun walkSummaryRow(walkSim: List<ScoreSimPoint>, currentScore: Int): SimulationRow? {
     val top = walkSim.maxByOrNull { it.days } ?: return null
     val gain = shown(top.score) - shown(currentScore)
     if (gain <= 0) return null
-    return "걷기를 주 ${top.days}일로 늘리면 → ${shown(top.score)}점 (+${gain}점)"
+    // 증감은 보조 정보라 괄호로만 덧붙인다(핸드오프 §3) — 점수 자체와 위계를 섞지 않는다.
+    return SimulationRow("걷기를 주 ${top.days}일로 늘리면", "${shown(top.score)}점 (+${gain}점)")
 }
 
+/**
+ * 예측 리스트 카드(핸드오프 §3). 문장을 그대로 나열하던 것을 **아이콘+제목 헤더 + 우측 정렬 점수 리스트**로
+ * 정리한다 — 문장이 길어 정보 밀도가 높아 보이고 "무엇을 보면 되는지"가 한눈에 안 잡히던 문제.
+ *
+ * 카드 자체를 KPI 처럼 강조하지 않는다: 점수만 진한 녹색으로 두고 배경·테두리는 다른 카드와 같다.
+ */
 @Composable
 private fun ScoreSimulationCard(muscSim: List<ScoreSimPoint>, walkSim: List<ScoreSimPoint>, currentScore: Int) {
-    AigoCard {
-        Text("이렇게 하면 이만큼", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(Dimens.Space8))
-        // 미래 지향 카피(§4): "지금보다 근력운동을 주 {n}일 하면 → {score}점"
-        muscSim.filter { it.days >= 1 }.forEach { p ->
-            Text(
-                "지금보다 근력운동을 주 ${p.days}일 하면 → ${shown(p.score)}점",
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            Spacer(Modifier.height(Dimens.Space4))
+    val rows = muscSimulationRows(muscSim) + listOfNotNull(walkSummaryRow(walkSim, currentScore))
+    // 보여 줄 줄이 하나도 없으면 카드를 통째로 숨긴다 — 제목과 설명만 남은 빈 카드는
+    //   "여기 뭔가 있어야 하는데 없다"로 읽힌다(ContributionCard 와 같은 판단).
+    if (rows.isEmpty()) return
+
+    AigoCard(contentSpacing = Dimens.Space12) {
+        Row(
+            // 위 맞춤 — 아이콘은 제목의 짝이다. 가운데 맞춤이면 설명 문구가 두 줄로 접히거나 사용자가
+            //   글꼴을 키웠을 때 아이콘이 제목에서 멀어져 설명 옆으로 내려간다(실기기 확인).
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(Dimens.Space12),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(Dimens.MinTouchTarget)
+                    .clip(RoundedCornerShape(percent = 50))
+                    .background(MaterialTheme.colorScheme.surfaceContainerLow),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.TrendingUp,
+                    contentDescription = null, // 장식용 — 의미는 옆 제목이 전달한다(§10).
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Column {
+                Text(
+                    keepKoreanWords("이렇게 하면 이만큼"),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    keepKoreanWords("생활습관을 바꾸면 예상 점수를 볼 수 있어요."),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
-        // 걷기 시뮬레이션(리뷰 #275-①): 요약 1줄만. 이득 0이면 생략.
-        walkSummaryLine(walkSim, currentScore)?.let { line ->
-            Spacer(Modifier.height(Dimens.Space4))
-            Text(line, style = MaterialTheme.typography.bodyLarge)
+        rows.forEachIndexed { index, row ->
+            SimulationRowItem(row)
+            // 마지막 줄 아래 구분선은 카드 테두리와 겹쳐 보여 생략한다.
+            if (index < rows.lastIndex) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            }
         }
+    }
+}
+
+/**
+ * 문장(좌) + 점수(우) 한 줄. 문장이 길어져도 점수가 밀리지 않게 문장에만 weight 를 준다(핸드오프 §7-1·2).
+ * 큰 글꼴에서 문장이 두 줄이 돼도 점수는 같은 자리에 남는다.
+ */
+@Composable
+private fun SimulationRowItem(row: SimulationRow) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Dimens.Space12),
+    ) {
+        // 문장이 두 줄로 접힐 때 어절이 갈리지 않게 한다(`주 1일 하/면` 방지). 값은 그대로 —
+        //   [SimulationRow] 원본은 손대지 않고 그리는 순간에만 감싼다.
+        Text(
+            keepKoreanWords(row.label),
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            row.value,
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+        )
     }
 }
 

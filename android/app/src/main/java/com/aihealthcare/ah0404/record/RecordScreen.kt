@@ -262,16 +262,19 @@ fun RecordScreen(
                     if (ui.score != null) {
                         // ⑤ 시뮬레이션 → ⑥ 근력 안전망
                         item { MuscleImprovementCards(ui = ui, onGoToMissions = onGoToMissions) }
-                        // ⑦ 체감 피드백(#357) — 결과를 다 본 뒤에 묻는다. 점수와 추이 사이에 두면
+                    }
+                    // ⑦ 의료 고지 — 점수를 보여주는 탭이므로 여기에 두고, 빈 상태에서도 항상 표시한다(§2-1).
+                    //    예측 카드 **바로 아래**가 자리다(핸드오프 §4): 고지가 가리키는 '이 결과'가 위의
+                    //    예측이고, 아래 피드백 카드의 "이 결과가…"라는 질문도 고지를 읽은 뒤에 나와야 한다.
+                    //    탭에 한 번만 그린다는 #385 규칙은 그대로다.
+                    item { MedicalDisclaimer(text = MEDICAL_DISCLAIMER_DEFAULT) }
+                    if (ui.score != null) {
+                        // ⑧ 체감 피드백(#357) — 결과를 다 본 뒤에 묻는다. 점수와 추이 사이에 두면
                         //    대시보드의 핵심 흐름(지금 어때? → 나아지고 있나?)이 끊기고, 사용자도
                         //    추이를 보기 전이라 답할 근거가 없다(#385).
                         ui.predictionId?.let { id ->
                             item { PredictionFeedbackCard(id, vm::submitPredictionFeedback) }
                         }
-                    }
-                    // ⑧ 의료 고지 — 점수를 보여주는 탭이므로 여기에 두고, 빈 상태에서도 항상 표시한다(§2-1).
-                    item { MedicalDisclaimer(text = MEDICAL_DISCLAIMER_DEFAULT) }
-                    if (ui.score != null) {
                         // ⑨ 결론 → 근거로 이어지는 경로(#385). 두 탭이 끊기지 않게 한다.
                         item {
                             AigoSecondaryButton(

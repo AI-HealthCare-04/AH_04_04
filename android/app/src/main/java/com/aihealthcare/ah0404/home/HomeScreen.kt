@@ -79,7 +79,8 @@ private val HomeOutlineFill = Color(0xFFFCFBF6)
 data class HomeUi(
     val nickname: String,
     val points: Int,                    // point_balance.current_points
-    val activityLevel: String,          // activity_profile.current_level (easy/normal/hard)
+    // activity_profile.current_level 은 계약에 남아 있지만 화면에 쓰지 않는다 — 난이도 개념 폐기로
+    //   등급이 앱 동작을 바꾸지 않게 되어 홈에서 내렸다(온보딩 입력값은 내 정보 화면이 보여 준다).
     val careStage: String?,             // latest_prediction.care_stage (good/maintain/action_needed)
     val predictionMessage: String?,     // latest_prediction.display_message
     val disclaimer: String?,
@@ -101,7 +102,6 @@ data class HomeUi(
 fun mockHome() = HomeUi(
     nickname = "홍길동",
     points = 1250,
-    activityLevel = "normal",
     careStage = "maintain",
     predictionMessage = "지금처럼 꾸준히 이어가고 있어요. 오늘도 가볍게 시작해 볼까요?",
     disclaimer = null,
@@ -269,11 +269,13 @@ private fun HomeContent(
             }
         }
 
-        Text(
-            "활동 강도 · ${activityLevelLabel(ui.activityLevel)}",
-            fontSize = 15.sp,
-            color = HomeMuted,
-        )
+        // (활동 강도 한 줄 제거: 운동 **영상 난이도** 개념이 폐기되면서(속도는 영상 안 톱니로 직접 조절)
+        //  홈에서 이 등급이 설명하는 것도, 여기서 바꿀 방법도 없어졌다. 앱에 activity-profile 변경 호출이
+        //  없어 값은 5STS 측정으로만 정해지는데, 홈에 등급만 떠 있으면 '내가 정한 내 등급'으로 오읽힌다.
+        //  ⚠️ 등급 자체가 죽은 값은 아니다 — 서버가 걷기 미션 템플릿을 레벨로 골라(mission_repository
+        //    get_active_templates) 일일 걷기 목표가 쉬움 20분·보통 30분·어려움 40분으로 갈린다.
+        //    이 줄을 지운 것은 '홈에서 설명되지 않는 표시'를 내린 것이지 등급을 걷어낸 게 아니다.
+        //  온보딩 입력값은 내 정보 화면에 그대로 남는다.)
 
         // 🐶 펫-룸 히어로: 방 배경 이미지 위에 기존 애니메이션 펫(PetIdle) + 말풍선(시안 '기존 움직이는 펫 영역').
         //   PetIdle 은 GLTextureView 라 스크롤 Column 안에 인라인으로 얹어도 안 깨진다.
@@ -428,10 +430,4 @@ private fun HomeOutlineButton(text: String, onClick: () -> Unit) {
             Text(text, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = HomeGreen)
         }
     }
-}
-
-private fun activityLevelLabel(level: String): String = when (level) {
-    "easy" -> "가볍게"
-    "hard" -> "활발히"
-    else -> "보통"
 }
