@@ -37,7 +37,7 @@ from app.ml.predictor import (
     load_cohort_version,
     percentile_low,
 )
-from app.models.enums import ActivityInputSource, InputMethod, OnboardingStatus, RiskLevel, TermsType
+from app.models.enums import OnboardingStatus, RiskLevel, TermsType
 from app.models.health import HealthProfile
 from app.models.predictions import PredictionFeedback, RiskPrediction
 from app.models.users import User
@@ -97,12 +97,16 @@ class RiskPredictionService:
         if existing is not None:
             # recalculated=False: 재계산하지 않으므로 기여도는 빈 목록으로 나간다. 앱은 기존 로컬 캐시를 유지한다.
             return self._to_reassess_response(existing, recalculated=False)
-        reassessment_profile = await self._create_reassessment_profile(
-            user=user,
-            source_profile=profile,
-            activity_window_days=data.activity_window_days,
+        # 프로필 행을 새로 만들지 않는다(#408 A+3). 재평가에서 실제로 달라지는 값은 활동 일수뿐인데,
+        #   그 둘을 담으려고 생년월일·성별·신체계측까지 매번 복제하고 있었다. 활동 일수는 예측 입력으로만
+        #   쓰고, 예측 행은 사용자가 직접 입력한 프로필을 그대로 가리킨다.
+        walk_days, musc_days = await self._derive_activity_days(user, data.activity_window_days)
+        prediction, contributions = await self._predict_and_save(
+            user,
+            profile,
+            activity_override=(walk_days, musc_days),
+            is_reassessment=True,
         )
-        prediction, contributions = await self._predict_and_save(user, reassessment_profile)
         return self._to_reassess_response(prediction, contributions=contributions)
 
     async def get_latest_prediction(self, user: User) -> RiskPredictionResponse:
@@ -272,14 +276,22 @@ class RiskPredictionService:
         profile: HealthProfile,
         *,
         complete_onboarding: bool = False,
+        activity_override: tuple[int, int] | None = None,
+        is_reassessment: bool = False,
     ) -> tuple[RiskPrediction, list[FeatureContributionResponse]]:
         """예측을 계산·저장하고, (예측 행, 이번 계산의 SHAP 기여도)를 함께 돌려준다.
 
         기여도는 **저장하지 않고** 이 반환값으로만 흘려보낸다(#406 리뷰 P1 — 파생값도 허리둘레 역산이
         가능해 #408 최소화를 무력화하므로 컬럼에 남기지 않는다). 호출부가 create·재계산 응답에만 싣는다.
         """
+        features = features_from_health_profile(profile)
+        if activity_override is not None:
+            # 재평가는 최근 기록에서 센 활동 일수로 예측한다. 프로필에 적힌 값(가입 시 자가응답)이
+            #   아니라 이 값을 쓰므로, 프로필 행을 새로 만들지 않아도 재평가의 의미가 유지된다.
+            walk_days, musc_days = activity_override
+            features = {**features, "walk_days": walk_days, "musc_days": musc_days}
         try:
-            result = await self.predictor.predict(features_from_health_profile(profile))
+            result = await self.predictor.predict(features)
         except AgeNotSupportedError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -293,6 +305,7 @@ class RiskPredictionService:
         prediction = RiskPrediction(
             user_id=user.user_id,
             profile_id=profile.profile_id,
+            is_reassessment=is_reassessment,
             model_version=result.model_version,
             model_variant=result.model_variant,
             internal_risk_score=Decimal(str(round(result.risk_score, 3))),
@@ -377,13 +390,8 @@ class RiskPredictionService:
             contributions=contributions or [],
         )
 
-    async def _create_reassessment_profile(
-        self,
-        *,
-        user: User,
-        source_profile: HealthProfile,
-        activity_window_days: int,
-    ) -> HealthProfile:
+    async def _derive_activity_days(self, user: User, activity_window_days: int) -> tuple[int, int]:
+        """최근 N일 실제 기록에서 걷기·근력 일수를 센다(#408 A+3 — 프로필 행 없이 예측 입력만 만든다)."""
         end_date = today_kst()
         start_date = end_date - timedelta(days=activity_window_days - 1)
         activity_logs = await self.dashboard_repo.get_activity_logs_between(
@@ -391,31 +399,7 @@ class RiskPredictionService:
             start_date,
             end_date,
         )
-        walk_days, musc_days = derive_activity_day_counts(
-            activity_logs,
-            activity_window_days=activity_window_days,
-        )
-        profile = HealthProfile(
-            user_id=user.user_id,
-            session_id=None,
-            birth_date=source_profile.birth_date,
-            sex=source_profile.sex,
-            height_cm=source_profile.height_cm,
-            weight_kg=source_profile.weight_kg,
-            bmi=source_profile.bmi,
-            waist_cm=source_profile.waist_cm,
-            walk_days=walk_days,
-            musc_days=musc_days,
-            activity_input_source=ActivityInputSource.SERVICE_LOG,
-            activity_window_days=activity_window_days,
-            kidney_status=source_profile.kidney_status,
-            protein_restriction_status=source_profile.protein_restriction_status,
-            protein_challenge_allowed=source_profile.protein_challenge_allowed,
-            input_method=InputMethod.SERVICE_LOG,
-            has_estimated_value=True,
-        )
-        await self.profile_repo.create_profile(profile)
-        return profile
+        return derive_activity_day_counts(activity_logs, activity_window_days=activity_window_days)
 
     @staticmethod
     def _to_history_item(

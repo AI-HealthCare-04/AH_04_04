@@ -421,14 +421,14 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
     )
 
     assert profile_repo.latest_called_with == 1
-    assert profile_repo.created_profile is not None
-    assert profile_repo.created_profile.profile_id == 72
-    assert profile_repo.created_profile.activity_input_source == ActivityInputSource.SERVICE_LOG
-    assert profile_repo.created_profile.activity_window_days == 14
-    assert profile_repo.created_profile.input_method == InputMethod.SERVICE_LOG
-    assert profile_repo.created_profile.walk_days == 5
-    assert profile_repo.created_profile.musc_days == 2
-    assert profile_repo.created_profile.has_estimated_value is True
+    # 재평가는 프로필 행을 **만들지 않는다**(#408 A+3). 전에는 판별 근거(input_method=SERVICE_LOG)
+    #   하나 때문에 생년월일·성별·신체계측까지 매번 복제했다.
+    assert profile_repo.created_profile is None
+    # 예측은 사용자가 직접 입력한 프로필을 그대로 가리키고, 재평가라는 사실은 예측 행이 들고 있다.
+    assert prediction_repo.created_prediction is not None
+    assert prediction_repo.created_prediction.profile_id == 55
+    assert prediction_repo.created_prediction.is_reassessment is True
+    # 활동 일수는 프로필이 아니라 최근 기록에서 세어 **예측 입력으로만** 쓴다.
     assert dashboard_repo.called_with is not None
     assert dashboard_repo.called_with[0] == 1
     assert prediction_repo.created_prediction is not None
@@ -448,7 +448,8 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
     # 대신 이번 재계산 응답에만 실어 내려준다(recalculated=True). 노출 3개(근력·걷기·허리)만.
     assert response.recalculated is True
     assert {c.feature for c in response.contributions} == {"musc_days", "walk_days", "waist_cm"}
-    assert response.profile_id == 72
+    # 응답의 profile_id 도 사용자가 입력한 프로필을 가리킨다 — 재평가본이 더는 생기지 않는다.
+    assert response.profile_id == 55
     assert response.prediction_id == 90
     assert response.muscle_score == 81
     assert response.score_band == "good"
