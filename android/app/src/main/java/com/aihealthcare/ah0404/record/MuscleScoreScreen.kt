@@ -560,9 +560,12 @@ internal fun scoreChangeCopy(trend: List<ScorePoint>): String {
  */
 internal fun trendBaselineCaption(segments: List<List<ScorePoint>>): String? {
     if (segments.size <= 1) return null
-    // 경계 지점 = 첫 구간을 뺀 각 구간의 첫 점. 사유가 하나로 모일 때만 그 사유를 말한다.
+    // 경계 지점 = 첫 구간을 뺀 각 구간의 첫 점. **모든 경계가 같은 '알려진' 사유일 때만** 그 사유를 말한다.
+    //   ⚠️ null 을 걸러내면 안 된다(리뷰): 사유를 모르는 경계가 사라져 [waist_added, null] 이
+    //     [waist_added] 하나로 접히고, 설명되지 않은 경계까지 허리둘레 탓으로 단정하게 된다.
+    //     null 을 그대로 두면 distinct 결과가 2개가 되어 아래 singleOrNull 이 중립 문구로 떨어뜨린다.
     val reason = segments.drop(1)
-        .mapNotNull { it.firstOrNull()?.baselineReason }
+        .map { it.firstOrNull()?.baselineReason }
         .distinct()
         .singleOrNull()
     val why = when (reason) {

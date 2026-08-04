@@ -203,19 +203,33 @@ class ScoreTrendTest {
         assertEquals(neutral, boundaryWith("something_new_from_server"))
 
         // 경계가 둘인데 사유가 다르면 하나로 단정할 수 없다 — 캡션은 한 줄이라 섞어 말하지 않는다.
-        val mixed = trendBaselineCaption(
-            splitByBaseline(
-                buildScoreTrend(
-                    listOf(
-                        item("2026-07-01", 70),
-                        item("2026-07-08", 62, status = "model_changed", reason = "waist_added"),
-                        item("2026-07-15", 65, status = "model_changed", reason = "cohort_updated"),
-                    ),
+        assertEquals(neutral, twoBoundaries("waist_added", "cohort_updated"))
+
+        // ⚠️ 사유를 **모르는 경계가 섞인** 경우도 마찬가지다(리뷰). 아는 사유 하나만 남기고 모르는 쪽을
+        //   빼버리면, 설명되지 않은 경계까지 허리둘레 탓으로 단정하게 된다.
+        assertEquals("아는 사유 + 사유 없음", neutral, twoBoundaries("waist_added", null))
+        assertEquals("사유 없음 + 아는 사유", neutral, twoBoundaries(null, "waist_added"))
+        assertEquals("아는 사유 + 앱이 모르는 값", neutral, twoBoundaries("waist_added", "future_reason"))
+
+        // 모든 경계가 같은 사유일 때만 그 사유를 말한다.
+        assertEquals(
+            "점선 구분 이후는 허리둘레를 반영해 계산 기준이 달라진 구간이에요. 그 앞뒤 점수는 직접 비교하지 않아요.",
+            twoBoundaries("waist_added", "waist_added"),
+        )
+    }
+
+    /** 경계 두 개짜리 추이의 캡션 — 각 경계의 사유를 지정한다. */
+    private fun twoBoundaries(first: String?, second: String?) = trendBaselineCaption(
+        splitByBaseline(
+            buildScoreTrend(
+                listOf(
+                    item("2026-07-01", 70),
+                    item("2026-07-08", 62, status = "model_changed", reason = first),
+                    item("2026-07-15", 65, status = "model_changed", reason = second),
                 ),
             ),
-        )
-        assertEquals(neutral, mixed)
-    }
+        ),
+    )
 
     // ── #389 C: 신체 정보 변경은 활동 탓으로 말하지 않는다 ──────────────────
 
