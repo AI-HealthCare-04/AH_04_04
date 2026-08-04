@@ -45,4 +45,38 @@ class ContributionRowsTest {
     fun empty_input_yields_empty() {
         assertTrue(contributionRows(emptyList()).isEmpty())
     }
+
+    @Test
+    fun zero_effect_is_dropped_not_shown_as_improvable() {
+        // 0(영향 없음)은 '여기서 더 올릴 수 있어요'로 오표시하지 않고 행에서 제외한다(#406 리뷰). 양수·음수·0 혼합.
+        val rows = contributionRows(
+            listOf(item("musc_days", 0.0), item("waist_cm", -0.5), item("walk_days", 0.3)),
+        )
+        assertEquals(listOf("허리둘레", "걷기"), rows.map { it.label }) // 근력(0.0)은 빠진다
+        assertTrue("0 항목은 개선 여지로도 나오지 않는다", rows.none { it.label == "근력 운동" })
+    }
+
+    @Test
+    fun all_zero_yields_empty_so_card_hides() {
+        // 전부 0이면 빈 목록 → ContributionCard 가 통째로 숨는다(표시 여부가 이 순수 함수로 고정된다).
+        val rows = contributionRows(
+            listOf(item("musc_days", 0.0), item("walk_days", 0.0), item("waist_cm", 0.0)),
+        )
+        assertTrue(rows.isEmpty())
+    }
+
+    @Test
+    fun tiny_rounding_noise_is_treated_as_zero() {
+        // 백엔드 round(,4) 노이즈(|x| < 5e-5)는 0으로 취급해 제외한다 — API 반올림 단위에 맞춘 epsilon.
+        val rows = contributionRows(listOf(item("walk_days", 0.00004), item("waist_cm", -0.4)))
+        assertEquals(listOf("허리둘레"), rows.map { it.label })
+    }
+
+    @Test
+    fun bar_percent_label_reads_fraction_as_percent() {
+        // TalkBack 음성 안내용 백분율 문구(막대 길이=영향 크기). 수치(log-odds)는 노출하지 않는다.
+        assertEquals("100%", barPercentLabel(1f))
+        assertEquals("50%", barPercentLabel(0.5f))
+        assertEquals("6%", barPercentLabel(0.06f))
+    }
 }

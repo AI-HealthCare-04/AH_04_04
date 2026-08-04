@@ -41,6 +41,9 @@ import com.aihealthcare.ah0404.network.ContributionItemDto
 import com.aihealthcare.ah0404.network.RiskHistoryItem
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
+import com.aihealthcare.ah0404.ui.theme.AigoOutlineVariant
+import com.aihealthcare.ah0404.ui.theme.AigoPrimary
+import com.aihealthcare.ah0404.ui.theme.AigoTertiary
 import com.aihealthcare.ah0404.ui.theme.ChartLineGreen
 import com.aihealthcare.ah0404.ui.theme.Dimens
 import kotlin.math.abs
@@ -705,23 +708,38 @@ internal fun contributionLabel(feature: String): String? = when (feature) {
 
 internal data class ContributionRow(val label: String, val effect: Double, val raising: Boolean)
 
-/** 표시용 행: 화이트리스트로 거르고 |영향| 큰 순으로 정렬(가장 영향 큰 것부터). 순수 함수라 테스트로 고정한다. */
+// 영향이 사실상 0인 항목의 컷오프. 백엔드가 log-odds 를 소수 넷째 자리로 반올림하므로(#411),
+//   |effect| < 0.00005 는 표시상 0(영향 없음)으로 본다 — 0 을 '개선 여지'로 오표시하지 않기 위함(#406 P2).
+internal const val CONTRIBUTION_EFFECT_EPSILON = 5e-5
+
+/**
+ * 표시용 행: 화이트리스트로 거르고, **영향이 0인 항목은 제외**한 뒤 |영향| 큰 순으로 정렬한다.
+ * 0(영향 없음)은 '개선 여지'라는 근거가 없어 행에서 빼며(#406 리뷰), 그 결과 전부 0이면 빈 목록이 되어
+ * 카드가 통째로 숨는다 — 표시 여부 판단이 이 순수 함수 하나로 고정돼 테스트할 수 있다(#406 리뷰).
+ */
 internal fun contributionRows(contributions: List<ContributionItemDto>): List<ContributionRow> =
     contributions
-        .mapNotNull { c -> contributionLabel(c.feature)?.let { ContributionRow(it, c.effectOnScore, c.effectOnScore > 0) } }
+        .mapNotNull { c ->
+            val effect = c.effectOnScoreLogOdds
+            if (abs(effect) < CONTRIBUTION_EFFECT_EPSILON) return@mapNotNull null // 0 은 표시하지 않는다.
+            contributionLabel(c.feature)?.let { ContributionRow(it, effect, effect > 0) }
+        }
         .sortedByDescending { abs(it.effect) }
 
 @Composable
 private fun ContributionCard(contributions: List<ContributionItemDto>) {
+    // 표시할 행이 없으면(구버전 서버·기여도 없음·모두 0) 카드 자체를 그리지 않는다.
     val rows = contributionRows(contributions)
-    // 데이터가 없거나(구버전 서버) 모두 0이면 카드 자체를 그리지 않는다.
-    val maxMag = rows.maxOfOrNull { abs(it.effect) }?.takeIf { it > 0.0 } ?: return
+    if (rows.isEmpty()) return
+    val maxMag = abs(rows.first().effect) // 정렬 결과 첫 행이 최대. epsilon 필터로 항상 > 0.
 
     AigoCard {
         Text("무엇이 내 점수에 영향을 줬을까요", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(Dimens.Space4))
         Text(
-            "나이·성별·체중은 바꾸기 어려워 빼고, 지금부터 바꿀 수 있는 것만 보여드려요.",
+            // 체중·BMI 는 '바꾸기 어려워서'가 아니라 모델 계수 방향이 건강 조언과 어긋나 오해를 막으려 뺀 것이다
+            //   (#406 설계·리뷰). 사용자가 "체중은 못 바꾼다"로 읽지 않도록 중립적으로 안내한다.
+            "지금부터 꾸준히 바꿀 수 있는 근력·걷기·허리 중심으로 보여드려요.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -735,14 +753,22 @@ private fun ContributionCard(contributions: List<ContributionItemDto>) {
 
 @Composable
 private fun ContributionBar(row: ContributionRow, maxMag: Double) {
-    // 초록 = 이 습관이 점수를 올리는 중, 주황 = 여기서 더 올릴 수 있음(개선 여지). 오류가 아니라 빨강은 안 쓴다.
-    val barColor = if (row.raising) Color(0xFF2E7D32) else Color(0xFFEF6C00)
+    // 진녹색 = 이 습관이 점수를 올리는 중, 골드 = 여기서 더 올릴 수 있음(개선 여지). 오류가 아니라 빨강은 안 쓴다.
+    //   두 색·트랙 모두 테마 토큰이며 카드 배경(AigoSurface) 대비 4.5:1 이상을 만족한다(#406 P1 — 저시력 접근성).
+    val barColor = if (row.raising) AigoPrimary else AigoTertiary
     val fraction = (abs(row.effect) / maxMag).toFloat().coerceIn(0.06f, 1f)
-    Column {
+    val directionText = if (row.raising) "점수를 올리고 있어요" else "여기서 더 올릴 수 있어요"
+    Column(
+        // 막대 길이=영향 크기는 순수 시각 정보라, TalkBack 사용자를 위해 라벨·방향·상대 크기를 음성으로 안내한다
+        //   (#406 리뷰 — 같은 화면 ScoreTrendChart 와 기준을 맞춘다). 수치(log-odds)는 노출하지 않는다.
+        Modifier.semantics {
+            contentDescription = "$directionText 항목: ${row.label}, 영향 크기 ${barPercentLabel(fraction)}"
+        },
+    ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(row.label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
             Text(
-                if (row.raising) "점수를 올리고 있어요" else "여기서 더 올릴 수 있어요",
+                directionText,
                 style = MaterialTheme.typography.bodyMedium,
                 color = barColor,
             )
@@ -753,7 +779,7 @@ private fun ContributionBar(row: ContributionRow, maxMag: Double) {
                 .fillMaxWidth()
                 .height(14.dp)
                 .clip(RoundedCornerShape(7.dp))
-                .background(Color(0xFFEDEDED)),
+                .background(AigoOutlineVariant),
         ) {
             Box(
                 Modifier
@@ -765,6 +791,9 @@ private fun ContributionBar(row: ContributionRow, maxMag: Double) {
         }
     }
 }
+
+/** 막대 채움 비율(0~1)을 음성 안내용 백분율 문구로. 순수 함수라 테스트로 고정한다. */
+internal fun barPercentLabel(fraction: Float): String = "${(fraction * 100).toInt()}%"
 
 // ── §3.4 근력 기능 안전망 카드(5STS 규칙 오버레이) ────────────────────────────
 @Composable

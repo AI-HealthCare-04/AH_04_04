@@ -54,13 +54,15 @@ data class RiskLatestResponse(
 
 /**
  * 근육 점수 SHAP 기여(#406). feature=musc_days|walk_days|waist_cm(백엔드가 이 3개만 준다).
- * effectOnScore = 점수 방향 기여(log-odds). 양수=점수를 올리는 방향, 음수=내리는(개선 여지) 방향.
- * 화면은 |값|으로 막대 길이를, 부호로 색을 정한다.
+ *
+ * ⚠️ effectOnScoreLogOdds 는 **log-odds 단위이며 점수(0~100)가 아니다.** 화면은 |값|으로 막대 길이를,
+ * 부호로 색·방향 문구를 정하고 **수치 자체는 절대 노출하지 않는다**(#406 P2 — "허리 때문에 1.29점
+ * 깎였다"는 근거 없는 원인 단정 방지). 양수=점수를 올리는 방향, 음수=내리는(개선 여지) 방향.
  */
 @Serializable
 data class ContributionItemDto(
     val feature: String,
-    @SerialName("effect_on_score") val effectOnScore: Double = 0.0,
+    @SerialName("effect_on_score_log_odds") val effectOnScoreLogOdds: Double = 0.0,
 )
 
 /**
