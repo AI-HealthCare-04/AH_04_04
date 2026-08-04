@@ -54,6 +54,14 @@ DENSITY_PLOT_MAX_PROBABILITY = 0.5
 #   0 같은 다른 값이 저장되면 표에 없는 키라 또래 분포가 실패한다(#408 리뷰 P1).
 COHORT_SEX_CODES = frozenset({1, 2})
 
+# 활동 일수를 실기록으로 세기 시작하는 날(#422). 온보딩 완료일이 1일차이므로 8일차 = 완료 후 7일.
+#   그 전에는 활동 창(7일)을 채울 기록이 없어, 실기록으로 세면 자가응답보다 무조건 낮게 나온다.
+ACTIVITY_REFLECTION_START_DAY = 8
+
+# 자동 예측이 쓰는 활동 창. 앱의 재평가 요청 기본값(RecordModels.kt)과 같은 7일로 맞춘다 —
+#   두 경로가 다른 창을 쓰면 같은 날 수동/자동 점수가 달라져 사용자가 설명할 수 없는 차이를 본다.
+DEFAULT_ACTIVITY_WINDOW_DAYS = 7
+
 
 class RiskPredictionService:
     def __init__(self, session: AsyncSession, predictor: RiskPredictor | None = None):
@@ -101,14 +109,38 @@ class RiskPredictionService:
         # 프로필 행을 새로 만들지 않는다(#408 A+3). 재평가에서 실제로 달라지는 값은 활동 일수뿐인데,
         #   그 둘을 담으려고 생년월일·성별·신체계측까지 매번 복제하고 있었다. 활동 일수는 예측 입력으로만
         #   쓰고, 예측 행은 사용자가 직접 입력한 프로필을 그대로 가리킨다.
-        walk_days, musc_days = await self._derive_activity_days(user, data.activity_window_days)
+        activity_override = await self._derive_activity_days(user, data.activity_window_days)
         prediction, contributions = await self._predict_and_save(
             user,
             profile,
-            activity_override=(walk_days, musc_days),
+            activity_override=activity_override,
             is_reassessment=True,
         )
         return self._to_reassess_response(prediction, contributions=contributions)
+
+    async def create_auto_prediction(self, user: User) -> RiskPrediction | None:
+        """자정 배치가 사용자 1명의 오늘 점수를 만든다(#422). 이미 있으면 만들지 않고 None.
+
+        수동 재평가와 **카운터가 분리**돼 있어(`is_auto`) 이 호출이 사용자의 그날 재평가 권리를
+        소진하지 않는다. 반대로 사용자가 먼저 재평가했더라도 자동 예측은 따로 남는다 — 추이는
+        하루 한 점을 자동으로 보장하고, 수동 재평가는 그날의 최신 상태를 반영한다.
+
+        활동 일수 규칙은 수동 재평가와 같다 — 온보딩 8일차 전이면 자가응답 값을 그대로 쓴다.
+        """
+        if await self.prediction_repo.get_today_auto_prediction(user.user_id) is not None:
+            return None
+        profile = await self.profile_repo.get_latest_profile(user.user_id)
+        if profile is None:
+            return None
+        activity_override = await self._derive_activity_days(user, DEFAULT_ACTIVITY_WINDOW_DAYS)
+        prediction, _ = await self._predict_and_save(
+            user,
+            profile,
+            activity_override=activity_override,
+            is_reassessment=True,
+            is_auto=True,
+        )
+        return prediction
 
     async def get_latest_prediction(self, user: User) -> RiskPredictionResponse:
         prediction = await self.prediction_repo.get_latest_prediction(user.user_id)
@@ -285,6 +317,7 @@ class RiskPredictionService:
         complete_onboarding: bool = False,
         activity_override: tuple[int, int] | None = None,
         is_reassessment: bool = False,
+        is_auto: bool = False,
     ) -> tuple[RiskPrediction, list[FeatureContributionResponse]]:
         """예측을 계산·저장하고, (예측 행, 이번 계산의 SHAP 기여도)를 함께 돌려준다.
 
@@ -313,6 +346,7 @@ class RiskPredictionService:
             user_id=user.user_id,
             profile_id=profile.profile_id,
             is_reassessment=is_reassessment,
+            is_auto=is_auto,
             model_version=result.model_version,
             model_variant=result.model_variant,
             internal_risk_score=Decimal(str(round(result.risk_score, 3))),
@@ -397,8 +431,19 @@ class RiskPredictionService:
             contributions=contributions or [],
         )
 
-    async def _derive_activity_days(self, user: User, activity_window_days: int) -> tuple[int, int]:
-        """최근 N일 실제 기록에서 걷기·근력 일수를 센다(#408 A+3 — 프로필 행 없이 예측 입력만 만든다)."""
+    async def _derive_activity_days(self, user: User, activity_window_days: int) -> tuple[int, int] | None:
+        """최근 N일 실제 기록에서 걷기·근력 일수를 센다(#408 A+3 — 프로필 행 없이 예측 입력만 만든다).
+
+        **온보딩 완료 8일차부터만 센다**(#422). 그 전에는 None 을 돌려 온보딩 자가응답 값을 그대로
+        쓴다 — 창(7일)을 채울 기록이 아직 없는데 실기록으로 세면 "걷기 주 5일"이라 답한 사용자가
+        가입 이튿날 재평가를 눌렀을 때 `walk_days=0` 이 되어 점수가 급락한다. 사용자는 아무것도
+        하지 않았는데 떨어진 그래프를 보게 되고, 원인도 활동 부족이 아니다.
+
+        8일차 = 완료일 당일을 1일차로 세어 7일이 지난 날. 그날부터는 창이 완료 이후 기록으로
+        가득 차므로 실기록만으로 판단할 수 있다.
+        """
+        if not await self._activity_window_is_ready(user):
+            return None
         end_date = today_kst()
         start_date = end_date - timedelta(days=activity_window_days - 1)
         activity_logs = await self.dashboard_repo.get_activity_logs_between(
@@ -407,6 +452,13 @@ class RiskPredictionService:
             end_date,
         )
         return derive_activity_day_counts(activity_logs, activity_window_days=activity_window_days)
+
+    async def _activity_window_is_ready(self, user: User) -> bool:
+        """실기록 반영을 시작해도 되는 날인가(#422). 온보딩 완료일이 없으면 아직 아니다."""
+        completed_on = await self.profile_repo.get_onboarding_completed_on(user.user_id)
+        if completed_on is None:
+            return False
+        return (today_kst() - completed_on).days >= ACTIVITY_REFLECTION_START_DAY - 1
 
     @staticmethod
     def _to_history_item(

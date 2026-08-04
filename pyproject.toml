@@ -16,6 +16,9 @@ dependencies = [
 [dependency-groups]
 app = [
     "alembic>=1.17.2",
+    # 자정 자동 예측 스케줄러(#422). 앱 프로세스 안에서 도는 인프로세스 타이머라 EC2 1대 구성에
+    #   컨테이너를 더 띄우지 않는다. 놓친 실행은 라이브러리가 아니라 '오늘 예측이 있나' 조회로 메운다.
+    "apscheduler>=3.11.0,<4",
     "asyncmy>=0.2.11",
     "bcrypt<=4.0.1",
     "fastapi[standard]>=0.128.0",

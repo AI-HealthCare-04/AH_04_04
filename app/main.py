@@ -1,6 +1,9 @@
 # FastAPI 앱을 만들고, 라우터와 '공통 예외 처리'를 등록하는 최상위 진입점 파일입니다.
 
 # Request : 예외 핸들러가 넘겨받는 '들어온 요청' 객체 (여기선 직접 쓰진 않지만 시그니처상 필요)
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import ORJSONResponse
@@ -11,12 +14,28 @@ from fastapi.responses import ORJSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.apis.v1 import v1_routers
+from app.core.scheduler import catch_up_on_startup, shutdown_scheduler, start_scheduler
+
+
+# -------------------------------------------------------------------------------------
+# 자정 자동 예측(#422)의 수명주기. 스케줄러를 켜고, **기동 직후 오늘 치를 한 번 메운다** —
+# 배포로 컨테이너가 자정에 내려가 있었으면 그날 실행이 통째로 빠지는데, 인프로세스 타이머는
+# 놓친 실행을 스스로 복구하지 못한다. 보정 작업은 멱등이라 매 기동마다 돌아도 안전하다.
+# -------------------------------------------------------------------------------------
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
+    start_scheduler()
+    await catch_up_on_startup()
+    yield
+    shutdown_scheduler()
+
 
 app = FastAPI(
     default_response_class=ORJSONResponse,
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
+    lifespan=lifespan,
 )
 
 

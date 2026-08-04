@@ -353,6 +353,11 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
             self.latest_called_with = user_id
             return source_profile
 
+        async def get_onboarding_completed_on(self, user_id: int) -> date:
+            # 활동 반영 시작일(#422) 통과 — 이 테스트의 관심은 '실기록으로 센 값이 예측 입력에
+            #   실리는가'이므로, 8일차 게이트에 걸리지 않게 충분히 지난 날짜를 준다.
+            return today_kst() - timedelta(days=30)
+
         async def create_profile(self, profile: HealthProfile) -> HealthProfile:
             profile.profile_id = 72
             self.created_profile = profile
