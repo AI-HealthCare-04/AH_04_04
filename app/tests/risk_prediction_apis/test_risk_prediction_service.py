@@ -370,7 +370,14 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
             return _reassessment_activity_logs()
 
     class _Predictor:
+        def __init__(self) -> None:
+            # 예측기가 **실제로 받은 입력**을 보관한다(리뷰 비차단 제안). 저장 결과만 보면
+            #   activity_override 배선이 빠져도 테스트가 통과한다 — 이 PR 의 핵심이 "프로필을
+            #   복제하지 않고도 계산 의미를 유지한다"는 것이라 그 연결 고리를 직접 단언한다.
+            self.seen_features: dict[str, object] | None = None
+
         async def predict(self, features: object) -> object:
+            self.seen_features = dict(cast(dict[str, object], features))
             return SimpleNamespace(
                 model_version="test",
                 model_variant=ModelVariant.WITH_WAIST,
@@ -406,7 +413,8 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
     session.commit = commit
     session.refresh = refresh
 
-    service = RiskPredictionService(session=None, predictor=_Predictor())  # type: ignore[arg-type]
+    predictor = _Predictor()
+    service = RiskPredictionService(session=None, predictor=predictor)  # type: ignore[arg-type]
     profile_repo = _ProfileRepo()
     prediction_repo = _PredictionRepo()
     dashboard_repo = _DashboardRepo()
@@ -431,6 +439,14 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
     # 활동 일수는 프로필이 아니라 최근 기록에서 세어 **예측 입력으로만** 쓴다.
     assert dashboard_repo.called_with is not None
     assert dashboard_repo.called_with[0] == 1
+    # 센 값이 예측기까지 실제로 전달됐는지 직접 단언한다(리뷰 비차단 제안). 로그 조회와 저장 결과만
+    #   보면 activity_override 인자가 통째로 빠져도 통과한다 — 그러면 재평가가 가입 시 자가응답으로
+    #   계산되면서 겉보기엔 정상이라 알아채기 어렵다.
+    #   기대값: 걷기 10일/2주 -> 5, 근력 4일(1·3·8·10)/2주 -> 2.
+    #   특히 musc_days 는 원본 프로필 값이 0 이라, 배선이 빠지면 이 단언이 먼저 깨진다.
+    assert predictor.seen_features is not None
+    assert predictor.seen_features["walk_days"] == 5
+    assert predictor.seen_features["musc_days"] == 2
     assert prediction_repo.created_prediction is not None
     assert prediction_repo.created_prediction.muscle_score == 81
     assert prediction_repo.created_prediction.score_band == "good"
