@@ -56,12 +56,30 @@ import kotlin.math.max
 //      교체한다. 확률(%)·관리 필요도 표기는 이 화면에 없다(§3.2).
 // =====================================================================================
 
+/**
+ * 기준이 바뀐 이유(#389 B). 서버 문자열을 앱이 아는 값으로 좁힌다 —
+ * 모르는 값·구버전 서버는 null 이라 지금의 중립 문구로 폴백한다.
+ */
+internal enum class BaselineChangeReason { WAIST_ADDED, WAIST_REMOVED, COHORT_UPDATED }
+
+internal fun baselineChangeReasonOf(raw: String?): BaselineChangeReason? = when (raw) {
+    "waist_added" -> BaselineChangeReason.WAIST_ADDED
+    "waist_removed" -> BaselineChangeReason.WAIST_REMOVED
+    "cohort_updated" -> BaselineChangeReason.COHORT_UPDATED
+    else -> null
+}
+
 internal data class ScorePoint(
     val label: String,
     val score: Int,
     // 비교 불가 경계(리뷰 #275-②): 이 점부터 다른 기준(모델 변경 or 코호트표 버전 변경)의 점수다.
     //   경계를 넘어 선을 잇거나 증감을 계산하지 않는다.
     val newBaseline: Boolean = false,
+    // 이 점에서 기준이 바뀐 이유(#389 B). newBaseline 이 아니면 의미 없다. null = 서버가 단정하지 못함.
+    val baselineReason: BaselineChangeReason? = null,
+    // 이 점수가 **직전과 다른 신체 정보**로 계산됐는가(#389 C). 체중처럼 모델을 바꾸지 않는 변경은
+    //   경계를 만들지 않지만 점수는 달라진다 — 그 변화를 활동 탓으로 단정하지 않기 위한 신호다.
+    val profileChanged: Boolean = false,
 )
 internal data class ScoreSimPoint(val days: Int, val score: Int)
 
@@ -78,7 +96,13 @@ internal fun buildScoreTrend(items: List<RiskHistoryItem>): List<ScorePoint> {
         val score = item.muscleScore ?: continue
         val boundary = item.comparisonStatus == "model_changed" ||
             (out.isNotEmpty() && item.cohortVersion != prevCohort)
-        out += ScorePoint(trendLabel(item.createdAt), score, newBaseline = boundary && out.isNotEmpty())
+        out += ScorePoint(
+            trendLabel(item.createdAt),
+            score,
+            newBaseline = boundary && out.isNotEmpty(),
+            baselineReason = baselineChangeReasonOf(item.baselineChangeReason),
+            profileChanged = item.profileChanged,
+        )
         prevCohort = item.cohortVersion
     }
     return out
@@ -505,11 +529,21 @@ internal fun scoreChangeCopy(trend: List<ScorePoint>): String {
         }
     }
     val delta = shown(lastSegment.last().score) - shown(lastSegment[lastSegment.size - 2].score)
+    // 신체 정보를 고쳐서 다시 계산된 점수라면 원인을 그렇게 말한다(#389 C). 활동으로 생긴 변화가 아니다.
+    //   ⚠️ **오르내림 양쪽 다** 분기한다. 이슈는 하락만 지적했지만, 허리둘레를 고쳐서 오른 것을
+    //     "지금처럼 이어가 봐요"로 칭찬하면 하지도 않은 활동을 원인으로 돌리는 같은 오귀속이다.
+    if (lastSegment.last().profileChanged) {
+        return when {
+            delta > 0 -> "신체 정보가 바뀌어 점수를 다시 계산했어요. 지난 기록보다 ${delta}점 올랐어요."
+            delta < 0 -> "신체 정보가 바뀌어 점수를 다시 계산했어요. 지난 기록보다 ${-delta}점 낮아졌어요."
+            else -> "신체 정보가 바뀌어 점수를 다시 계산했어요. 점수는 지난 기록과 비슷해요."
+        }
+    }
     return when {
         delta > 0 -> "지난 기록보다 ${delta}점 올랐어요. 지금처럼 이어가 봐요."
-        // 하락 원인을 단정하지 않는다(#389 문제 2): 점수는 활동뿐 아니라 신체 정보 갱신(허리둘레 등)으로도
-        //   내려간다. 실측값을 정확히 고쳤을 뿐인데 "운동을 안 해서 떨어졌다"로 읽히면 원인도 틀리고
-        //   고령 사용자에게 불필요한 불안이 된다. API 가 원인을 내려주기 전까지는 사실만 말한다(#389 B·C 후속).
+        // 하락 원인을 단정하지 않는다(#389 문제 2): 신체 정보 변경이 아닌데 내려갔다면 원인을 알 수 없다.
+        //   실측값을 정확히 고쳤을 뿐인데 "운동을 안 해서 떨어졌다"로 읽히면 원인도 틀리고 고령 사용자에게
+        //   불필요한 불안이 된다. 서버가 원인을 알려주지 못하는 경우이므로 사실만 말한다.
         delta < 0 -> "지난 기록보다 ${-delta}점 낮아졌어요."
         else -> "지난 기록과 비슷하게 유지되고 있어요."
     }
@@ -519,11 +553,26 @@ internal fun scoreChangeCopy(trend: List<ScorePoint>): String {
  * 기준 경계가 있는 추이의 하단 캡션(#389 문제 1). 서로 다른 기준(모델 번들·코호트표)으로 계산된 점수를
  * 한 선으로 잇지 않느라 선이 끊기는데, 화면에 아무 표시가 없어 사용자가 **데이터 누락·앱 오류로 읽는다.**
  *
- * 원인(허리둘레 추가/제거 vs 코호트표 갱신)은 API 가 알려주지 않으므로(#389 B 후속) 중립적으로만 안내한다.
+ * 서버가 사유를 내려주면(#389 B) 그것까지 말한다 — "기준이 달라졌다"까지만 알려주면 사용자는 여전히
+ * 왜인지 모른다. 사유를 모르거나(구버전 서버·서버가 단정 못 함) 경계가 여러 개인데 사유가 섞이면
+ * 지금까지의 중립 문구 그대로다: 틀린 설명을 하느니 말하지 않는 편이 낫다.
  * 경계가 없으면 null — 캡션을 그리지 않는다.
  */
-internal fun trendBaselineCaption(segments: List<List<ScorePoint>>): String? =
-    if (segments.size > 1) "점선 구분 이후는 계산 기준이 달라진 구간이에요. 그 앞뒤 점수는 직접 비교하지 않아요." else null
+internal fun trendBaselineCaption(segments: List<List<ScorePoint>>): String? {
+    if (segments.size <= 1) return null
+    // 경계 지점 = 첫 구간을 뺀 각 구간의 첫 점. 사유가 하나로 모일 때만 그 사유를 말한다.
+    val reason = segments.drop(1)
+        .mapNotNull { it.firstOrNull()?.baselineReason }
+        .distinct()
+        .singleOrNull()
+    val why = when (reason) {
+        BaselineChangeReason.WAIST_ADDED -> "허리둘레를 반영해 "
+        BaselineChangeReason.WAIST_REMOVED -> "허리둘레를 빼고 "
+        BaselineChangeReason.COHORT_UPDATED -> "또래 비교표가 새로워져 "
+        null -> ""
+    }
+    return "점선 구분 이후는 ${why}계산 기준이 달라진 구간이에요. 그 앞뒤 점수는 직접 비교하지 않아요."
+}
 
 /** 접근성용 추이 설명 — 기준 경계도 음성으로 안내한다(리뷰 #275-②, 기존 확률 추이의 접근성 복원). */
 internal fun trendDescription(segments: List<List<ScorePoint>>): String =

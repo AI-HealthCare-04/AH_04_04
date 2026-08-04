@@ -19,12 +19,16 @@ class ScoreTrendTest {
         score: Int?,
         status: String = "comparable",
         cohort: String? = "knhanes2022_2024_v1",
+        reason: String? = null,
+        profileChanged: Boolean = false,
     ) = RiskHistoryItem(
         createdAt = "${date}T09:00:00+09:00",
         careStage = "maintain",
         muscleScore = score,
         cohortVersion = cohort,
         comparisonStatus = status,
+        baselineChangeReason = reason,
+        profileChanged = profileChanged,
     )
 
     @Test
@@ -157,8 +161,89 @@ class ScoreTrendTest {
         val caption = trendBaselineCaption(splitByBaseline(boundary))
         assertNotNull(caption)
         assertTrue(caption!!.contains("계산 기준"))
-        // 원인을 단정하지 않는다 — API 가 사유를 안 주므로(#389 B 후속) 활동·허리둘레 등을 지목하지 않는다.
+        // 사유를 모르면(서버가 null) 원인을 단정하지 않는다 — 구버전 서버·서버가 단정 못 한 전환.
         assertFalse(caption.contains("걷기"))
         assertFalse(caption.contains("허리"))
+    }
+
+    // ── #389 B: 사유를 알면 캡션이 그것까지 말한다 ─────────────────────────
+
+    private fun boundaryWith(reason: String?) = trendBaselineCaption(
+        splitByBaseline(
+            buildScoreTrend(
+                listOf(
+                    item("2026-07-01", 70),
+                    item("2026-07-08", 62, status = "model_changed", reason = reason),
+                ),
+            ),
+        ),
+    )
+
+    @Test
+    fun baseline_caption_names_the_reason_when_server_provides_it() {
+        assertEquals(
+            "점선 구분 이후는 허리둘레를 반영해 계산 기준이 달라진 구간이에요. 그 앞뒤 점수는 직접 비교하지 않아요.",
+            boundaryWith("waist_added"),
+        )
+        assertEquals(
+            "점선 구분 이후는 허리둘레를 빼고 계산 기준이 달라진 구간이에요. 그 앞뒤 점수는 직접 비교하지 않아요.",
+            boundaryWith("waist_removed"),
+        )
+        assertEquals(
+            "점선 구분 이후는 또래 비교표가 새로워져 계산 기준이 달라진 구간이에요. 그 앞뒤 점수는 직접 비교하지 않아요.",
+            boundaryWith("cohort_updated"),
+        )
+    }
+
+    @Test
+    fun baseline_caption_falls_back_when_reason_is_unknown_or_mixed() {
+        val neutral = "점선 구분 이후는 계산 기준이 달라진 구간이에요. 그 앞뒤 점수는 직접 비교하지 않아요."
+        // 구버전 서버(필드 없음)와 앱이 모르는 값은 똑같이 중립 문구로 떨어진다.
+        assertEquals(neutral, boundaryWith(null))
+        assertEquals(neutral, boundaryWith("something_new_from_server"))
+
+        // 경계가 둘인데 사유가 다르면 하나로 단정할 수 없다 — 캡션은 한 줄이라 섞어 말하지 않는다.
+        val mixed = trendBaselineCaption(
+            splitByBaseline(
+                buildScoreTrend(
+                    listOf(
+                        item("2026-07-01", 70),
+                        item("2026-07-08", 62, status = "model_changed", reason = "waist_added"),
+                        item("2026-07-15", 65, status = "model_changed", reason = "cohort_updated"),
+                    ),
+                ),
+            ),
+        )
+        assertEquals(neutral, mixed)
+    }
+
+    // ── #389 C: 신체 정보 변경은 활동 탓으로 말하지 않는다 ──────────────────
+
+    @Test
+    fun change_copy_attributes_to_body_info_when_profile_changed() {
+        val down = buildScoreTrend(
+            listOf(item("2026-07-01", 74), item("2026-07-08", 70, profileChanged = true)),
+        )
+        assertEquals("신체 정보가 바뀌어 점수를 다시 계산했어요. 지난 기록보다 4점 낮아졌어요.", scoreChangeCopy(down))
+
+        // 상승도 같이 분기한다: 하지도 않은 활동을 "지금처럼 이어가 봐요"로 칭찬하면 방향만 뒤집힌 같은 오귀속이다.
+        val up = buildScoreTrend(
+            listOf(item("2026-07-01", 70), item("2026-07-08", 74, profileChanged = true)),
+        )
+        assertEquals("신체 정보가 바뀌어 점수를 다시 계산했어요. 지난 기록보다 4점 올랐어요.", scoreChangeCopy(up))
+        assertFalse("활동을 원인으로 지목하지 않는다", scoreChangeCopy(up).contains("이어가"))
+
+        val flat = buildScoreTrend(
+            listOf(item("2026-07-01", 70), item("2026-07-08", 70, profileChanged = true)),
+        )
+        assertEquals("신체 정보가 바뀌어 점수를 다시 계산했어요. 점수는 지난 기록과 비슷해요.", scoreChangeCopy(flat))
+    }
+
+    @Test
+    fun change_copy_keeps_neutral_wording_when_profile_did_not_change() {
+        // 신체 정보 변경이 아닌데 내려갔다면 원인을 알 수 없다 — 사실만 말한다(#394 에서 잡은 계약 유지).
+        val down = buildScoreTrend(listOf(item("2026-07-01", 74), item("2026-07-08", 70)))
+        assertEquals("지난 기록보다 4점 낮아졌어요.", scoreChangeCopy(down))
+        assertFalse(scoreChangeCopy(down).contains("신체 정보"))
     }
 }
