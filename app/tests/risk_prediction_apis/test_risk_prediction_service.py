@@ -725,21 +725,26 @@ def _pred(
     cohort: str | None = "knhanes2022_2024_v1",
     profile_id: int = 1,
     model_version: str = "awgs2025-v2",
-) -> object:
-    return SimpleNamespace(
-        prediction_id=prediction_id,
-        created_at=datetime(2026, 7, prediction_id, 12, 0, 0),
-        internal_risk_level=RiskLevel.MEDIUM,
-        internal_risk_score=Decimal("0.300"),
-        model_version=model_version,
-        model_variant=variant,
-        score_cohort_version=cohort,
-        profile_id=profile_id,
+) -> RiskPrediction:
+    # 이 테스트가 쓰는 필드만 채운 가짜 예측. 호출부마다 type: ignore 를 흩뿌리지 않도록
+    #   여기서 한 번만 cast 한다(다중 행 호출에서는 ignore 가 인자 줄에 걸려야 해 지저분해진다).
+    return cast(
+        RiskPrediction,
+        SimpleNamespace(
+            prediction_id=prediction_id,
+            created_at=datetime(2026, 7, prediction_id, 12, 0, 0),
+            internal_risk_level=RiskLevel.MEDIUM,
+            internal_risk_score=Decimal("0.300"),
+            model_version=model_version,
+            model_variant=variant,
+            score_cohort_version=cohort,
+            profile_id=profile_id,
+        ),
     )
 
 
 def test_baseline_change_reason_is_none_for_first_prediction() -> None:
-    item = RiskPredictionService._to_history_item(_pred(1))  # type: ignore[arg-type]
+    item = RiskPredictionService._to_history_item(_pred(1))
 
     assert item.baseline_change_reason is None
     assert item.profile_changed is False
@@ -747,11 +752,11 @@ def test_baseline_change_reason_is_none_for_first_prediction() -> None:
 
 def test_baseline_change_reason_reports_waist_added_and_removed() -> None:
     # 허리둘레 유무가 모델 번들을 가른다 — 사용자가 체감하는 '허리둘레를 넣었다/뺐다'가 곧 경계의 원인이다.
-    added = RiskPredictionService._to_history_item(  # type: ignore[arg-type]
+    added = RiskPredictionService._to_history_item(
         _pred(2, variant=ModelVariant.WITH_WAIST),
         _pred(1, variant=ModelVariant.MINIMAL),
     )
-    removed = RiskPredictionService._to_history_item(  # type: ignore[arg-type]
+    removed = RiskPredictionService._to_history_item(
         _pred(2, variant=ModelVariant.MINIMAL),
         _pred(1, variant=ModelVariant.WITH_WAIST),
     )
@@ -761,7 +766,7 @@ def test_baseline_change_reason_reports_waist_added_and_removed() -> None:
 
 
 def test_baseline_change_reason_reports_cohort_update_when_variant_is_same() -> None:
-    item = RiskPredictionService._to_history_item(  # type: ignore[arg-type]
+    item = RiskPredictionService._to_history_item(
         _pred(2, cohort="knhanes2022_2024_v2"),
         _pred(1, cohort="knhanes2022_2024_v1"),
     )
@@ -771,7 +776,7 @@ def test_baseline_change_reason_reports_cohort_update_when_variant_is_same() -> 
 
 def test_baseline_change_reason_stays_silent_when_cohort_version_is_unknown() -> None:
     # 코호트 컬럼 도입 이전 행은 버전이 없다 — 모르는 것을 '갱신됐다'고 말하면 안 된다.
-    item = RiskPredictionService._to_history_item(  # type: ignore[arg-type]
+    item = RiskPredictionService._to_history_item(
         _pred(2, cohort="knhanes2022_2024_v1"),
         _pred(1, cohort=None),
     )
@@ -780,7 +785,7 @@ def test_baseline_change_reason_stays_silent_when_cohort_version_is_unknown() ->
 
 
 def test_baseline_change_reason_is_none_when_nothing_changed() -> None:
-    item = RiskPredictionService._to_history_item(_pred(2), _pred(1))  # type: ignore[arg-type]
+    item = RiskPredictionService._to_history_item(_pred(2), _pred(1))
 
     assert item.baseline_change_reason is None
     assert item.profile_changed is False
@@ -790,7 +795,7 @@ def test_profile_changed_marks_new_body_info_snapshot() -> None:
     # 재평가는 프로필을 복제하지 않으므로(#408 A+3) profile_id 가 달라졌다는 것은 '내 정보' 저장이다.
     #   체중만 고치면 모델 변형도 코호트도 그대로라 경계·사유가 없지만 점수는 달라진다 —
     #   그 하락을 활동 부족으로 단정하지 않으려면 앱이 이 신호를 봐야 한다(#389 문제 2).
-    item = RiskPredictionService._to_history_item(  # type: ignore[arg-type]
+    item = RiskPredictionService._to_history_item(
         _pred(2, profile_id=77),
         _pred(1, profile_id=55),
     )
