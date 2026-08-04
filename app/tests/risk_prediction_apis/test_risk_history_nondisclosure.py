@@ -19,6 +19,9 @@ def test_history_item_exposes_display_scores_without_internal_model_fields() -> 
     assert "risk_level" not in fields
     assert "model_version" not in fields
     assert "model_variant" not in fields
+    # 기준 변경 사유(#389)는 내부 식별자를 그대로 흘리는 게 아니라 사용자가 이해할 수 있는
+    #   값으로 추상화한 것이다 — 모델 버전·변형 비노출 계약은 위 단언으로 그대로 유지된다.
+    assert "baseline_change_reason" in fields
 
 
 def test_history_item_shape_is_display_safe() -> None:
@@ -32,6 +35,8 @@ def test_history_item_shape_is_display_safe() -> None:
         "cohort_version",
         "change_percentage_points",
         "comparison_status",
+        "baseline_change_reason",
+        "profile_changed",
         "care_stage",
     }
 
