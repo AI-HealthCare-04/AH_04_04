@@ -61,7 +61,7 @@ class HomeViewModelTest {
         val ui = vm.ui!!
         assertEquals("홍길동", ui.nickname)
         assertEquals(1250, ui.points)
-        assertEquals("normal", ui.activityLevel)
+        // activity_profile 은 응답에 남아 있지만 화면에 매핑하지 않는다(난이도 폐기로 홈에서 내림).
         assertEquals("maintain", ui.careStage)
         assertEquals("잘 유지 중이에요", ui.predictionMessage)
         assertEquals(2, ui.completedToday)

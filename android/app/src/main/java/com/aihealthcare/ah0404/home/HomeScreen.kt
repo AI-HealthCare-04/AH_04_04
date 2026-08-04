@@ -79,7 +79,8 @@ private val HomeOutlineFill = Color(0xFFFCFBF6)
 data class HomeUi(
     val nickname: String,
     val points: Int,                    // point_balance.current_points
-    val activityLevel: String,          // activity_profile.current_level (easy/normal/hard)
+    // activity_profile.current_level 은 계약에 남아 있지만 화면에 쓰지 않는다 — 난이도 개념 폐기로
+    //   등급이 앱 동작을 바꾸지 않게 되어 홈에서 내렸다(온보딩 입력값은 내 정보 화면이 보여 준다).
     val careStage: String?,             // latest_prediction.care_stage (good/maintain/action_needed)
     val predictionMessage: String?,     // latest_prediction.display_message
     val disclaimer: String?,
@@ -101,7 +102,6 @@ data class HomeUi(
 fun mockHome() = HomeUi(
     nickname = "홍길동",
     points = 1250,
-    activityLevel = "normal",
     careStage = "maintain",
     predictionMessage = "지금처럼 꾸준히 이어가고 있어요. 오늘도 가볍게 시작해 볼까요?",
     disclaimer = null,
@@ -269,11 +269,9 @@ private fun HomeContent(
             }
         }
 
-        Text(
-            "활동 강도 · ${activityLevelLabel(ui.activityLevel)}",
-            fontSize = 15.sp,
-            color = HomeMuted,
-        )
+        // (활동 강도 한 줄 제거: 난이도 개념 폐기와 함께 이 값이 앱 동작을 아무것도 바꾸지 않게 됐다.
+        //  바꿀 수도 없고 결과도 없는 등급이라 홈에 남겨 두면 '내 등급'으로 오읽힌다 — 온보딩 입력값은
+        //  내 정보 화면에 그대로 남는다.)
 
         // 🐶 펫-룸 히어로: 방 배경 이미지 위에 기존 애니메이션 펫(PetIdle) + 말풍선(시안 '기존 움직이는 펫 영역').
         //   PetIdle 은 GLTextureView 라 스크롤 Column 안에 인라인으로 얹어도 안 깨진다.
@@ -428,10 +426,4 @@ private fun HomeOutlineButton(text: String, onClick: () -> Unit) {
             Text(text, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = HomeGreen)
         }
     }
-}
-
-private fun activityLevelLabel(level: String): String = when (level) {
-    "easy" -> "가볍게"
-    "hard" -> "활발히"
-    else -> "보통"
 }
