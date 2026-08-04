@@ -18,6 +18,8 @@ import com.aihealthcare.ah0404.network.SkipResponse
 import com.aihealthcare.ah0404.network.SocialLoginRequest
 import com.aihealthcare.ah0404.network.Term
 import com.aihealthcare.ah0404.network.TermsListResponse
+import com.aihealthcare.ah0404.network.TokenCipher
+import com.aihealthcare.ah0404.network.TokenEnvelope
 import com.aihealthcare.ah0404.record.SharedPrefsContributionCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -51,6 +53,21 @@ class OnboardingContributionSupplyTest {
 
     private val dispatcher = StandardTestDispatcher()
     private lateinit var context: Context
+
+    /**
+     * 기여도 캐시는 Keystore AES/GCM 봉투로 저장되는데(#406 리뷰 P1) Keystore 는 JVM·Robolectric 에
+     * 없다. 주입하지 않으면 암호화가 실패해 **저장이 조용히 생략**되고, 이 테스트가 검증하려는
+     * "최초 공급이 남는다"가 항상 거짓이 된다([ContributionCacheTest] 와 같은 방식의 가역 fake).
+     */
+    private class FakeCipher : TokenCipher {
+        override fun encrypt(plain: String): String = TokenEnvelope.build("iv", "fk." + plain.reversed())
+
+        override fun decrypt(stored: String): String? {
+            val (_, cipher) = TokenEnvelope.parse(stored) ?: return null
+            if (!cipher.startsWith("fk.")) return null
+            return cipher.removePrefix("fk.").reversed()
+        }
+    }
 
     @Before
     fun setUp() {
@@ -113,7 +130,7 @@ class OnboardingContributionSupplyTest {
     @Test
     fun `온보딩 예측 기여도는 완주 확정 뒤에 저장된다`() = runTest(dispatcher) {
         loginIncompleteSocial(11)
-        val cache = SharedPrefsContributionCache(context)
+        val cache = SharedPrefsContributionCache(context, FakeCipher())
         val vm = OnboardingViewModel(
             FakeApi(),
             todayYear = 2026,
@@ -142,14 +159,14 @@ class OnboardingContributionSupplyTest {
         assertEquals(
             "온보딩 예측의 기여도가 최초 공급으로 남는다",
             listOf("waist_cm", "musc_days"),
-            SharedPrefsContributionCache(context).load(42).map { it.feature },
+            SharedPrefsContributionCache(context, FakeCipher()).load(42).map { it.feature },
         )
     }
 
     @Test
     fun `게스트는 완주해도 기여도를 기기에 남기지 않는다`() = runTest(dispatcher) {
         // 게스트 토큰은 재시작 시 소실된다 — 그 기여도를 다음 사용자에게 붙이면 안 된다(#153 방침).
-        val cache = SharedPrefsContributionCache(context)
+        val cache = SharedPrefsContributionCache(context, FakeCipher())
         val vm = OnboardingViewModel(
             FakeApi(),
             todayYear = 2026,
