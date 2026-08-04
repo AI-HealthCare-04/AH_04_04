@@ -16,14 +16,17 @@
 
 | 항목 | 목적 | 없으면 |
 |---|---|---|
-| `birth_date` | **만 나이** 산출 → 코호트 조회 키·예측 제공 여부 판정 | 점수·또래 비교 불가 |
+| `birth_date` | **모델 입력**(만 나이) + 코호트 조회 키 + 예측 제공 여부 판정 | 예측·또래 비교 모두 불가 |
 | `sex` | **모델 입력** + 코호트 조회 키(성별 분리 표) | 점수·또래 비교 모두 불가 |
 | `height_cm` · `weight_kg` · `bmi` | 모델 입력 | 예측 불가 |
 | `waist_cm` (선택) | 허리 포함 모델·코호트 선택 | 허리 제외 모델로 계산 |
 | `walk_days` · `musc_days` | 모델 입력(활동량) | 예측 불가 |
 | `kidney_status` · `protein_restriction_status` | **고단백 식사 미션 노출 게이트**(#304) — 예측 입력 아님 | 안전을 위해 미션 차단 |
 
-`sex` 는 두 모델의 입력 목록(`MINIMAL_FEATURE_COLUMNS` · `WITH_WAIST_FEATURE_COLUMNS`) 양쪽에 들어 있고, 점수 산출도 성별 없이는 진행되지 않습니다(`compute_muscle_score` 가 `sex is None` 이면 점수·구간을 모두 `None` 으로 반환). 조회 키로만 쓰는 값이 아닙니다(리뷰 #415 P2).
+`age` 와 `sex` 는 두 모델의 입력 목록(`MINIMAL_FEATURE_COLUMNS` · `WITH_WAIST_FEATURE_COLUMNS`) 양쪽에 **첫 두 항목으로** 들어 있습니다. 둘 다 조회 키로만 쓰는 값이 아닙니다(리뷰 #415 P2).
+
+- `age` — 모델 입력이면서, 코호트 조회 키(`_cohort_age_key`)와 제공 여부 판정(`AGE_MIN = 65`)에도 쓰입니다. 세 가지 용도 모두 만 나이 기준입니다
+- `sex` — 모델 입력이면서 성별 분리 코호트표의 조회 키입니다. 점수 산출도 성별 없이는 진행되지 않습니다(`compute_muscle_score` 가 `sex is None` 이면 점수·구간을 모두 `None` 으로 반환)
 
 **생년월일을 연도로 줄이지 않는 이유** — #408 논의에서 제가 제안했다가 철회한 항목입니다.
 
