@@ -799,6 +799,19 @@ private fun ContributionBar(row: ContributionRow, maxMag: Double) {
 internal fun barPercentLabel(fraction: Float): String = "${(fraction * 100).toInt()}%"
 
 // ── §3.4 근력 기능 안전망 카드(5STS 규칙 오버레이) ────────────────────────────
+/**
+ * 키(cm)·몸무게(kg) → BMI. 오버레이의 **강조 티어**(BMI 25 이상) 판정에만 쓴다(#406).
+ *
+ * 값이 없거나 비정상(0 이하)이면 null 이다 — 모르는 값을 0 이나 기본값으로 메우면 강조 티어가
+ * 임의로 켜지거나 꺼진다. 서버 원본(소수)에서 계산한다: 정수로 반올림된 값을 쓰면 25 경계에서
+ * 티어가 뒤집힐 수 있다.
+ */
+internal fun bmiOf(heightCm: Double?, weightKg: Double?): Double? {
+    if (heightCm == null || weightKg == null || heightCm <= 0.0 || weightKg <= 0.0) return null
+    val meters = heightCm / 100.0
+    return weightKg / (meters * meters)
+}
+
 @Composable
 private fun StsSafetyCard(ui: MuscleScoreUi, onGoToMissions: () -> Unit) {
     val sts = ui.stsSeconds
