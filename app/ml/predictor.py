@@ -82,6 +82,9 @@ class RiskPredictionResult:
     score_p_high: float | None = None    # 조회에 쓴 코호트 P95
     score_cohort_age: str | None = None  # "72" 또는 "80+" 등 실제 조회 키
     score_cohort_version: str | None = None
+    # 점수 방향 SHAP 기여도(#406). 예측에 쓴 것과 **같은 모델 번들**로 이 시점에 계산해 싣는다
+    #   (서비스가 전역 아티팩트를 재선택하지 않게 함 — #406 리뷰 P1). 저장하지 않고 응답으로만 흘려보낸다.
+    score_contributions: tuple[FeatureContribution, ...] = ()
 
 
 @lru_cache(maxsize=2)
@@ -350,12 +353,22 @@ class FeatureContribution:
     effect_on_score_log_odds: float
 
 
-def compute_score_contributions(input_snapshot: Mapping[str, Any]) -> list[FeatureContribution]:
+def compute_score_contributions(
+    input_snapshot: Mapping[str, Any],
+    *,
+    model: Any,
+    feature_columns: Sequence[str],
+) -> list[FeatureContribution]:
     """로지스틱 회귀의 닫힌형 SHAP(계수×표준화값)으로 점수 방향 기여도를 구한다(#406, 재학습·shap 라이브러리 불필요).
 
     ⚠️ LR ``coef_`` 순서는 ``feature_columns`` 가 아니라 전처리(ColumnTransformer)의 **출력 순서**다
        (범주형 ``sex`` 가 맨 뒤로 감). 반드시 ``get_feature_names_out()`` 로 원 특징명에 매핑해야 부호가
        뒤집히지 않는다. 기여도는 부가 정보라 어떤 이유로든 계산 실패 시 빈 목록을 돌려 본 응답을 막지 않는다.
+
+    ⚠️ **점수를 낸 것과 반드시 같은 모델 번들로 계산해야 한다**(#406 리뷰 P1). 그래서 이 함수는
+       아티팩트 경로를 **다시 고르지 않고**, ``predict_sync`` 가 예측에 이미 쓴 ``model``·
+       ``feature_columns`` 를 그대로 받는다. 전역 기본 아티팩트를 재선택하면 커스텀 아티팩트·모델 버전
+       전환·테스트 predictor 주입 시 응답의 점수는 A 모델, 막대는 B 모델에서 나올 수 있다.
 
     ⚠️ 예측 시점에 메모리의 ``result.input_snapshot`` 으로만 호출한다 — 서버는 원본 입력을 저장하지
        않으므로(#408) 사후 재계산은 불가능하다. 결과는 **저장하지 않고** create·재계산 응답에만 싣는다.
@@ -365,17 +378,10 @@ def compute_score_contributions(input_snapshot: Mapping[str, Any]) -> list[Featu
     if not input_snapshot:
         return []  # 입력이 없으면 기여도도 없다(임퓨트된 평균값으로 가짜 막대를 만들지 않는다).
     try:
-        include_waist = has_waist_input(input_snapshot)
-        artifact_path = WITH_WAIST_ARTIFACT_PATH if include_waist else MINIMAL_ARTIFACT_PATH
-        bundle = load_model_bundle(artifact_path)
-        model = bundle["model"]
-        feature_columns = tuple(
-            bundle.get("feature_columns")
-            or (WITH_WAIST_FEATURE_COLUMNS if include_waist else MINIMAL_FEATURE_COLUMNS)
-        )
+        columns = list(feature_columns)
         frame = pd.DataFrame(
-            [{column: input_snapshot.get(column) for column in feature_columns}],
-            columns=feature_columns,
+            [{column: input_snapshot.get(column) for column in columns}],
+            columns=columns,
         )
         pre = model.named_steps["pre"]
         lr = model.named_steps["lr"]
@@ -446,6 +452,10 @@ class RiskPredictor:
             age=snapshot.get("age"),
         )
 
+        # 기여도(#406)는 점수를 낸 이 model/feature_columns 로 **여기서** 계산한다 — 서비스가 전역
+        #   아티팩트를 다시 고르지 않게 해 점수와 막대가 항상 같은 번들에서 나오게 한다(리뷰 P1).
+        contributions = compute_score_contributions(snapshot, model=model, feature_columns=feature_columns)
+
         return RiskPredictionResult(
             risk_score=score,
             risk_level=level,
@@ -461,4 +471,5 @@ class RiskPredictor:
             score_p_high=p_high,
             score_cohort_age=age_key,
             score_cohort_version=load_cohort_version() if muscle_score is not None else None,
+            score_contributions=tuple(contributions),
         )

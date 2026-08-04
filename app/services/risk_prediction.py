@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Sequence
 from datetime import datetime, time, timedelta
 from decimal import Decimal
 
@@ -30,8 +30,8 @@ from app.ml.predictor import (
     AGE_MIN,
     AGE_TOPCODE,
     AgeNotSupportedError,
+    FeatureContribution,
     RiskPredictor,
-    compute_score_contributions,
     features_from_health_profile,
     load_cohort_distribution,
     load_cohort_version,
@@ -313,24 +313,25 @@ class RiskPredictionService:
             user.onboarding_status = OnboardingStatus.COMPLETED
         await self.session.commit()
         await self.session.refresh(prediction)
-        # SHAP 기여도(#406)는 저장하지 않고 지금 메모리의 입력으로 계산해 반환값으로만 흘려보낸다.
-        return prediction, self._contributions(result.input_snapshot)
+        # SHAP 기여도(#406)는 저장하지 않고, 예측기가 **점수와 같은 모델 번들로** 계산해 result 에 실어준 값을
+        #   그대로 응답 DTO 로 흘려보낸다(리뷰 P1 — 서비스가 전역 아티팩트를 재선택하지 않는다).
+        return prediction, self._contributions(getattr(result, "score_contributions", ()))
 
     @staticmethod
-    def _contributions(snapshot: Mapping[str, object] | None) -> list[FeatureContributionResponse]:
-        """이번 예측 입력으로 SHAP 기여도(#406)를 계산해 응답 DTO 로 만든다.
+    def _contributions(
+        contributions: Sequence[FeatureContribution] | None,
+    ) -> list[FeatureContributionResponse]:
+        """예측기가 result 에 실어준 SHAP 기여도(#406)를 응답 DTO 로 변환한다.
 
-        저장·재조회 없이 **예측 시점 메모리 입력**으로만 계산한다 — 서버는 원본을 저장하지 않고(#408)
-        파생값도 저장하지 않으므로(리뷰 P1), create·재계산 경로에서만 호출된다. 계산 실패·입력 없음·
-        minimal 모델이면 빈 목록이다.
+        서비스는 계산하지 않고 전달만 한다 — 점수를 낸 것과 같은 모델 번들 보장은 예측기(``predict_sync``)가
+        진다(리뷰 P1). 저장·재조회 없이 create·재계산 경로에서만 전달되고, 없으면 빈 목록이다(#408).
         """
-        contributions = compute_score_contributions(snapshot or {})
         return [
             FeatureContributionResponse(
                 feature=c.feature,
                 effect_on_score_log_odds=c.effect_on_score_log_odds,
             )
-            for c in contributions
+            for c in (contributions or [])
         ]
 
     def _to_response(

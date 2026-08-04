@@ -14,7 +14,7 @@ from app.dtos.risk_prediction import (
     RiskPredictionCreateResponse,
     RiskPredictionReassessRequest,
 )
-from app.ml.predictor import AgeNotSupportedError
+from app.ml.predictor import AgeNotSupportedError, FeatureContribution
 from app.models.enums import (
     ActivityInputSource,
     ActivityType,
@@ -383,9 +383,16 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
                 score_cohort_age="72",
                 score_cohort_version="knhanes2022_2024_v1",
                 # 예측기는 계산용으로 정규화 입력을 돌려주지만, 서비스는 여기서 성별만 뽑아 컬럼에
-                #   남기고 원본은 저장하지 않는다(#408). SHAP 기여도(#406)도 이 입력으로 계산해 응답에만 싣는다.
+                #   남기고 원본은 저장하지 않는다(#408).
                 input_snapshot={"age": 72.0, "sex": 1, "height_cm": 168.0, "weight_kg": 78.0,
                                 "bmi": 27.6, "waist_cm": 98.0, "walk_days": 1.0, "musc_days": 0.0},
+                # SHAP 기여도(#406)는 예측기가 **점수와 같은 모델 번들로** 계산해 result 에 실어준다
+                #   (리뷰 P1 — 서비스는 계산하지 않고 전달만 한다). 노출 3개만.
+                score_contributions=(
+                    FeatureContribution(feature="musc_days", effect_on_score_log_odds=-0.17),
+                    FeatureContribution(feature="walk_days", effect_on_score_log_odds=-0.13),
+                    FeatureContribution(feature="waist_cm", effect_on_score_log_odds=-1.29),
+                ),
             )
 
     session = SimpleNamespace(committed=False, refreshed=None)
@@ -578,29 +585,103 @@ def test_snapshot_sex_rejects_out_of_contract_values() -> None:
 # ---------------- SHAP 기여도 계산/전달 계약(#406, #408 병행) ----------------
 # 기여도는 **저장하지 않는다.** 파생값도 x = mean + std × (effect / -coef) 로 허리둘레 원본이
 #   역산돼(리뷰 P1, round(,4)로 ±0.005cm 사실상 무손실) #408 최소화를 무력화하기 때문이다.
-#   예측(create)·재계산 시점에 한 번 계산해 그 응답에만 싣고, /me/latest·recalculated=False 는
-#   빈 목록으로 내려간다(앱이 prediction_id 기준 로컬 캐시로 막대를 그린다).
+#   예측(create)·재계산 시점에 예측기가 **점수와 같은 모델 번들로** 한 번 계산해 result 에 실어주고,
+#   서비스는 그걸 응답에 전달만 한다(리뷰 P1 — 서비스가 전역 아티팩트를 재선택하지 않는다).
+#   /me/latest·recalculated=False 는 빈 목록으로 내려간다(앱이 prediction_id 기준 로컬 캐시로 막대를 그린다).
 
 
-def test_contributions_computes_only_derived_whitelist_from_snapshot() -> None:
-    """예측 시점 입력으로 노출 3개(근력·걷기·허리)의 방향 기여만 계산한다(#406).
+def test_contributions_transfers_predictor_output_without_recomputing() -> None:
+    """서비스 ``_contributions`` 는 예측기가 준 기여도를 DTO 로 **변환만** 한다(#406 리뷰 P1).
 
-    저장이 아니라 응답에 실을 DTO 로만 만든다. 원본 식별 항목은 절대 노출되지 않는다.
+    서비스가 스냅샷에서 다시 계산하면 점수를 낸 모델과 다른(전역 기본) 아티팩트를 고를 수 있어,
+    점수와 막대가 다른 모델에서 나온다. 그래서 계산은 예측기 몫이고 서비스는 전달만 한다.
     """
-    snapshot = {"age": 72.0, "sex": 1, "bmi": 27.6, "height_cm": 168.0, "weight_kg": 78.0,
-                "waist_cm": 98.0, "walk_days": 1.0, "musc_days": 0.0}
-    contribs = RiskPredictionService._contributions(snapshot)
-    features = {c.feature for c in contribs}
-    assert features == {"musc_days", "walk_days", "waist_cm"}
-    assert features.isdisjoint({"age", "sex", "height_cm", "weight_kg", "bmi"})
-    # 값 단위는 log-odds(점수 아님) — DTO 필드명이 그 사실을 드러낸다(#406 P2).
-    assert all(isinstance(c.effect_on_score_log_odds, float) for c in contribs)
+    contribs = RiskPredictionService._contributions(
+        (
+            FeatureContribution(feature="waist_cm", effect_on_score_log_odds=-1.29),
+            FeatureContribution(feature="musc_days", effect_on_score_log_odds=-0.17),
+        )
+    )
+    assert [(c.feature, c.effect_on_score_log_odds) for c in contribs] == [
+        ("waist_cm", -1.29),
+        ("musc_days", -0.17),
+    ]
 
 
-def test_contributions_empty_when_no_input() -> None:
-    # 입력이 없으면(구행 재계산·계산 실패 등) 빈 목록 — 가짜 막대를 만들지 않는다.
+def test_contributions_empty_when_predictor_provides_none() -> None:
+    # 예측기가 기여도를 안 실어주면(조회 경로·계산 실패) 빈 목록 — 가짜 막대를 만들지 않는다.
     assert RiskPredictionService._contributions(None) == []
-    assert RiskPredictionService._contributions({}) == []
+    assert RiskPredictionService._contributions(()) == []
+
+
+async def test_create_prediction_delivers_predictor_contributions_to_response() -> None:
+    """create 응답이 예측기가 실어준 기여도를 그대로 전달한다(#406 리뷰 P2 — 최초 공급 경로 고정).
+
+    앱은 이 응답의 기여도를 prediction_id 기준으로 로컬 캐시해 대시보드 막대를 그린다.
+    서비스가 전달을 빠뜨리면 최초 예측 후 카드가 비므로 서비스 경로에서 고정한다.
+    """
+    profile = HealthProfile(
+        profile_id=55, user_id=1, session_id=10, birth_date=date(1958, 3, 1), sex=Sex.MALE,
+        height_cm=Decimal("168.00"), weight_kg=Decimal("78.00"), bmi=Decimal("27.6"),
+        waist_cm=Decimal("98.00"), walk_days=1, musc_days=0,
+        activity_input_source=ActivityInputSource.SELF_REPORT, activity_window_days=None,
+        kidney_status=KidneyStatus.NONE, protein_restriction_status=ProteinRestrictionStatus.NONE,
+        protein_challenge_allowed=True, input_method=InputMethod.FORM, has_estimated_value=False,
+    )
+
+    class _Predictor:
+        async def predict(self, features: object) -> object:
+            return SimpleNamespace(
+                model_version="test", model_variant=ModelVariant.WITH_WAIST,
+                risk_score=0.42, risk_level=RiskLevel.MEDIUM, muscle_score=81, score_band="good",
+                score_p_low=0.01, score_p_high=0.50, score_cohort_age="72",
+                score_cohort_version="knhanes2022_2024_v1",
+                input_snapshot={"age": 72.0, "sex": 1, "waist_cm": 98.0, "walk_days": 1.0, "musc_days": 0.0},
+                score_contributions=(
+                    FeatureContribution(feature="waist_cm", effect_on_score_log_odds=-1.29),
+                    FeatureContribution(feature="musc_days", effect_on_score_log_odds=-0.17),
+                    FeatureContribution(feature="walk_days", effect_on_score_log_odds=-0.13),
+                ),
+            )
+
+    class _ProfileRepo:
+        async def get_profile(self, profile_id: int, user_id: int) -> HealthProfile:
+            return profile
+
+    class _PredictionRepo:
+        async def create_risk_prediction(self, prediction: RiskPrediction) -> RiskPrediction:
+            prediction.prediction_id = 90
+            return prediction
+
+    session = SimpleNamespace()
+
+    async def commit() -> None:
+        return None
+
+    async def refresh(instance: object) -> None:
+        return None
+
+    session.commit = commit
+    session.refresh = refresh
+
+    service = RiskPredictionService(session=None, predictor=_Predictor())  # type: ignore[arg-type]
+    service.session = session  # type: ignore[assignment]
+    service.profile_repo = _ProfileRepo()  # type: ignore[assignment]
+    service.prediction_repo = _PredictionRepo()  # type: ignore[assignment]
+
+    user = SimpleNamespace(user_id=1, onboarding_status=OnboardingStatus.PROFILE_REQUIRED)
+    response = await service.create_prediction(
+        cast(User, user),
+        SimpleNamespace(profile_id=55),  # type: ignore[arg-type]
+    )
+
+    # 예측기가 준 3개가 순서·값 그대로 응답에 전달된다(서비스가 재계산하지 않는다).
+    assert [(c.feature, c.effect_on_score_log_odds) for c in response.contributions] == [
+        ("waist_cm", -1.29),
+        ("musc_days", -0.17),
+        ("walk_days", -0.13),
+    ]
+    assert response.onboarding_status == OnboardingStatus.COMPLETED.value
 
 
 def test_prediction_row_has_no_contributions_column() -> None:
