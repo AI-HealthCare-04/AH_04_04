@@ -3,7 +3,9 @@ package com.aihealthcare.ah0404.record
 import android.content.Context
 import android.util.Log
 import com.aihealthcare.ah0404.network.ContributionItemDto
+import com.aihealthcare.ah0404.network.KeystoreContributionCipher
 import com.aihealthcare.ah0404.network.SessionStore
+import com.aihealthcare.ah0404.network.TokenCipher
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -54,7 +56,11 @@ class NoOpContributionCache : ContributionCache {
  *  무한 증가 방지로 사용자당 최신 [MAX_ENTRIES] 건만 남긴다 — 화면은 항상 '최신 예측' 하나만 읽으므로
  *  과거 항목은 재설치 없이 예측이 여러 번 생긴 경우의 여유분일 뿐이다.
  */
-class SharedPrefsContributionCache(context: Context) : ContributionCache {
+internal class SharedPrefsContributionCache(
+    context: Context,
+    // Keystore 는 JVM 테스트에 없으므로 테스트가 fake 를 주입할 수 있게 둔다(#365 와 같은 방식).
+    private val cipher: TokenCipher = KeystoreContributionCipher,
+) : ContributionCache {
     private val preferences = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     override fun load(predictionId: Int): List<ContributionItemDto> {
@@ -77,18 +83,35 @@ class SharedPrefsContributionCache(context: Context) : ContributionCache {
         } else {
             merged
         }
+        // ⚠️ 평문으로 두지 않는다(리뷰 P1). effect_on_score_log_odds 는 #411 에서 **서버 저장을 폐지한**
+        //   바로 그 값이다 — 배포 모델의 계수·mean·std 가 있으면 x = mean + std × (effect / -coef) 로
+        //   허리둘레·활동 입력을 역산할 수 있고, 소수 넷째 자리 반올림이면 허리둘레는 사실상 원값이다.
+        //   백업 제외·로그아웃 삭제는 기기 밖으로 나가는 것만 막지, 기기 안에 평문으로 남는 것은 못 막는다.
         runCatching {
-            preferences.edit().putString(key(userId), json.encodeToString(capped)).apply()
-        }.onFailure { Log.w(TAG, "기여도 캐시 저장 실패: ${it.message}") }
+            val sealed = cipher.encrypt(json.encodeToString(capped))
+            preferences.edit().putString(key(userId), sealed).apply()
+        }.onFailure {
+            // 암호화 실패(키 손상·Keystore 불가) — 저장을 생략한다. 평문으로 떨어뜨리지 않는다.
+            Log.w(TAG, "기여도 캐시 저장 실패(평문 저장 안 함): ${it.javaClass.simpleName}")
+            runCatching { preferences.edit().remove(key(userId)).apply() }
+        }
     }
 
     private fun entries(userId: Int): Map<String, List<ContributionItemDto>> = runCatching {
-        val raw = preferences.getString(key(userId), null) ?: return emptyMap()
-        json.decodeFromString<Map<String, List<ContributionItemDto>>>(raw)
+        val stored = preferences.getString(key(userId), null) ?: return emptyMap()
+        // 봉투가 아니면 구버전 평문이다 — 되살리지 않고 폐기한다(리뷰 P1). 카드 미표시로 폴백되고,
+        //   다음 create·재계산 응답에서 다시 채워진다.
+        val plain = cipher.decrypt(stored) ?: return discard(userId, "복호화 실패·구버전 평문")
+        json.decodeFromString<Map<String, List<ContributionItemDto>>>(plain)
     }.getOrElse {
-        Log.w(TAG, "기여도 캐시 복원 실패 — 해당 키 폐기: ${it.message}")
+        discard(userId, "형식 오류: ${it.javaClass.simpleName}")
+    }
+
+    /** 읽을 수 없는 캐시는 남겨 두지 않는다 — 카드 미표시로 안전 폴백. */
+    private fun discard(userId: Int, reason: String): Map<String, List<ContributionItemDto>> {
+        Log.w(TAG, "기여도 캐시 폐기($reason)")
         runCatching { preferences.edit().remove(key(userId)).apply() }
-        emptyMap()
+        return emptyMap()
     }
 
     private fun key(userId: Int) = "user_${userId}_contributions"

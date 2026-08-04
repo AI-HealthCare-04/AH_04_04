@@ -31,6 +31,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import com.aihealthcare.ah0404.network.TokenCipher
+import com.aihealthcare.ah0404.network.TokenEnvelope
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -53,6 +57,27 @@ class ContributionCacheTest {
 
     // refreshScore() 는 viewModelScope 를 쓰므로 Main 을 테스트 디스패처로 교체한다.
     private val dispatcher = StandardTestDispatcher()
+
+    /**
+     * Keystore 는 JVM·Robolectric 에 없으므로 가역 fake 로 대체한다(#365 와 같은 방식).
+     * 평문이 부분 문자열로도 남지 않아야 '디스크에 평문 없음' 단언이 유효하다 — 뒤집어 넣는다.
+     */
+    private class FakeCipher : TokenCipher {
+        override fun encrypt(plain: String): String = TokenEnvelope.build("iv", "fk." + plain.reversed())
+
+        override fun decrypt(stored: String): String? {
+            val (_, cipher) = TokenEnvelope.parse(stored) ?: return null
+            if (!cipher.startsWith("fk.")) return null
+            return cipher.removePrefix("fk.").reversed()
+        }
+    }
+
+    /** 키가 바뀐·손상된 상황 — 복호화가 항상 실패한다. */
+    private class BrokenCipher : TokenCipher {
+        override fun encrypt(plain: String): String = TokenEnvelope.build("iv", "broken")
+
+        override fun decrypt(stored: String): String? = null
+    }
 
     // 어댑터 내부 저장 위치 — 손상/키 제거를 화이트박스로 확인하려 구현과 같은 값을 참조한다(바뀌면 회귀로 잡히게).
     private val prefsName = "contribution_cache"
@@ -96,10 +121,10 @@ class ContributionCacheTest {
     @Test
     fun `저장한 기여도를 새 인스턴스에서 prediction_id 로 복원한다`() {
         loginAs(1)
-        SharedPrefsContributionCache(context).save(7, items("waist_cm" to -0.83, "musc_days" to 0.41))
+        SharedPrefsContributionCache(context, FakeCipher()).save(7, items("waist_cm" to -0.83, "musc_days" to 0.41))
 
         // 새 인스턴스 로드 = 앱 재시작 모사(정적 상태 없이 디스크에서만 복원).
-        val restored = SharedPrefsContributionCache(context).load(7)
+        val restored = SharedPrefsContributionCache(context, FakeCipher()).load(7)
 
         assertEquals(listOf("waist_cm", "musc_days"), restored.map { it.feature })
         assertEquals(listOf(-0.83, 0.41), restored.map { it.effectOnScoreLogOdds })
@@ -110,7 +135,7 @@ class ContributionCacheTest {
         // 하루 1회 정책(#388): 같은 날 재평가를 다시 부르면 recalculated=false + 빈 목록이 온다.
         //   그걸로 덮어쓰면 사용자는 오늘 하루 기여도 카드를 잃는다 — 리뷰가 지목한 가장 위험한 자리.
         loginAs(1)
-        val cache = SharedPrefsContributionCache(context)
+        val cache = SharedPrefsContributionCache(context, FakeCipher())
         cache.save(7, items("musc_days" to 0.41))
 
         cache.save(7, emptyList())
@@ -122,7 +147,7 @@ class ContributionCacheTest {
     fun `다른 prediction_id 의 기여도가 새 예측에 붙지 않는다`() {
         // 재계산으로 새 예측이 생겼는데 기여도가 없으면(구버전 서버 등) 옛 예측 값을 보여주면 안 된다.
         loginAs(1)
-        val cache = SharedPrefsContributionCache(context)
+        val cache = SharedPrefsContributionCache(context, FakeCipher())
         cache.save(7, items("musc_days" to 0.41))
 
         assertTrue("캐시에 없는 예측은 빈 목록 = 카드 미표시", cache.load(8).isEmpty())
@@ -131,41 +156,41 @@ class ContributionCacheTest {
 
     @Test
     fun `사용자별로 분리 저장돼 다른 계정 기여도를 침범하지 않는다`() {
-        loginAs(1); SharedPrefsContributionCache(context).save(7, items("musc_days" to 0.41))
-        loginAs(2); SharedPrefsContributionCache(context).save(7, items("waist_cm" to -0.9))
+        loginAs(1); SharedPrefsContributionCache(context, FakeCipher()).save(7, items("musc_days" to 0.41))
+        loginAs(2); SharedPrefsContributionCache(context, FakeCipher()).save(7, items("waist_cm" to -0.9))
 
         loginAs(2)
-        assertEquals(listOf("waist_cm"), SharedPrefsContributionCache(context).load(7).map { it.feature })
+        assertEquals(listOf("waist_cm"), SharedPrefsContributionCache(context, FakeCipher()).load(7).map { it.feature })
         loginAs(1)
         assertEquals(
             "같은 prediction_id 라도 1 번 사용자 저장분은 2 번이 덮지 않는다",
             listOf("musc_days"),
-            SharedPrefsContributionCache(context).load(7).map { it.feature },
+            SharedPrefsContributionCache(context, FakeCipher()).load(7).map { it.feature },
         )
     }
 
     @Test
     fun `게스트·비로그인은 저장하지 않고 항상 빈 목록을 반환한다`() {
         loginAsGuest() // persistentUserId=null
-        val cache = SharedPrefsContributionCache(context)
+        val cache = SharedPrefsContributionCache(context, FakeCipher())
         cache.save(7, items("musc_days" to 0.41)) // 무시돼야 한다
 
         assertTrue("게스트 저장은 무시", cache.load(7).isEmpty())
         loginAs(9)
-        assertTrue("게스트 기여도가 다음 사용자에게 오배분되지 않는다", SharedPrefsContributionCache(context).load(7).isEmpty())
+        assertTrue("게스트 기여도가 다음 사용자에게 오배분되지 않는다", SharedPrefsContributionCache(context, FakeCipher()).load(7).isEmpty())
     }
 
     @Test
     fun `로그아웃·탈퇴 시 clearAll 이 모든 계정의 캐시를 지운다`() {
-        loginAs(1); SharedPrefsContributionCache(context).save(7, items("musc_days" to 0.41))
-        loginAs(2); SharedPrefsContributionCache(context).save(9, items("waist_cm" to -0.9))
+        loginAs(1); SharedPrefsContributionCache(context, FakeCipher()).save(7, items("musc_days" to 0.41))
+        loginAs(2); SharedPrefsContributionCache(context, FakeCipher()).save(9, items("waist_cm" to -0.9))
 
         SharedPrefsContributionCache.clearAll(context)
 
         assertFalse("1 번 키 제거", rawPrefs().contains(cacheKey(1)))
         assertFalse("2 번 키 제거", rawPrefs().contains(cacheKey(2)))
         loginAs(1)
-        assertTrue(SharedPrefsContributionCache(context).load(7).isEmpty())
+        assertTrue(SharedPrefsContributionCache(context, FakeCipher()).load(7).isEmpty())
     }
 
     @Test
@@ -173,14 +198,14 @@ class ContributionCacheTest {
         loginAs(1)
         rawPrefs().edit().putString(cacheKey(1), "{ 이건 깨진 json 이라 파싱 실패").apply()
 
-        assertTrue("손상 값은 크래시 없이 빈 목록", SharedPrefsContributionCache(context).load(7).isEmpty())
+        assertTrue("손상 값은 크래시 없이 빈 목록", SharedPrefsContributionCache(context, FakeCipher()).load(7).isEmpty())
         assertFalse("손상된 키는 폐기돼 다음 로드가 반복 실패하지 않는다", rawPrefs().contains(cacheKey(1)))
     }
 
     @Test
     fun `상한 5 를 넘기면 최신 5건만 남기고 오래된 예측부터 버린다`() {
         loginAs(1)
-        val cache = SharedPrefsContributionCache(context)
+        val cache = SharedPrefsContributionCache(context, FakeCipher())
         (1..7).forEach { cache.save(it, items("musc_days" to it.toDouble())) }
 
         assertTrue("가장 오래된 예측 1·2 는 버려진다", cache.load(1).isEmpty() && cache.load(2).isEmpty())
@@ -217,7 +242,7 @@ class ContributionCacheTest {
     fun `조회 응답만으로는 카드가 뜨지 않는다`() = runBlocking {
         // 리뷰 P1 의 증상 그 자체: /me/latest 는 기여도를 싣지 않으므로 캐시가 비면 표시할 행이 없다.
         loginAs(1)
-        val vm = RecordViewModel(FakeRecordApi(latestPredictionId = 7), SharedPrefsContributionCache(context))
+        val vm = RecordViewModel(FakeRecordApi(latestPredictionId = 7), SharedPrefsContributionCache(context, FakeCipher()))
 
         vm.refresh()
 
@@ -236,7 +261,7 @@ class ContributionCacheTest {
                 contributions = items("waist_cm" to -0.83, "musc_days" to 0.41),
             )
         }
-        val vm = RecordViewModel(api, SharedPrefsContributionCache(context))
+        val vm = RecordViewModel(api, SharedPrefsContributionCache(context, FakeCipher()))
 
         vm.refreshScore() // APPLIED → 내부에서 refresh() 까지 이어진다
         advanceUntilIdle()
@@ -251,7 +276,7 @@ class ContributionCacheTest {
     @Test
     fun `같은 날 재평가로 빈 목록이 와도 카드가 유지된다`() = runTest(dispatcher) {
         loginAs(1)
-        val cache = SharedPrefsContributionCache(context)
+        val cache = SharedPrefsContributionCache(context, FakeCipher())
         cache.save(8, items("waist_cm" to -0.83)) // 어제 계산된 예측 8 의 기여도
         // 하루 1회 정책(#388): 오늘 이미 계산했으므로 기존 예측(8) + recalculated=false + 빈 기여도.
         val api = FakeRecordApi(latestPredictionId = 8) {
@@ -268,6 +293,54 @@ class ContributionCacheTest {
             "빈 목록이 기존 기여도를 덮으면 오늘 하루 카드가 사라진다",
             listOf("허리둘레"),
             contributionRows(vm.muscleScore?.contributions.orEmpty()).map { it.label },
+        )
+    }
+
+    // ── 저장 중 암호화(리뷰 P1) ──────────────────────────────────────────────
+    // effect_on_score_log_odds 는 #411 에서 서버 저장을 폐지한 값이다 — 모델 계수·mean·std 가 있으면
+    //   허리둘레·활동 입력을 역산할 수 있다. 백업 제외·로그아웃 삭제는 기기 밖으로 나가는 것만 막는다.
+
+    @Test
+    fun `디스크에 feature 이름도 effect 숫자도 평문으로 남지 않는다`() {
+        loginAs(1)
+        SharedPrefsContributionCache(context, FakeCipher())
+            .save(7, items("waist_cm" to -0.8312, "musc_days" to 0.4177))
+
+        val raw = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+            .getString(cacheKey(1), null)
+        assertNotNull(raw)
+        val stored = raw!!
+        listOf("waist_cm", "musc_days", "walk_days", "0.8312", "0.4177", "effect").forEach {
+            assertFalse("평문이 남았다: $it in $stored", stored.contains(it))
+        }
+        assertTrue("봉투 포맷이어야 한다: $stored", TokenEnvelope.isEnvelope(stored))
+    }
+
+    @Test
+    fun `복호화 실패하면 캐시를 폐기하고 카드가 뜨지 않는다`() {
+        loginAs(1)
+        SharedPrefsContributionCache(context, FakeCipher()).save(7, items("waist_cm" to -0.83))
+
+        // 키가 바뀐 상황 — 되살리지 않고 폐기해야 한다(카드 미표시로 안전 폴백).
+        val broken = SharedPrefsContributionCache(context, BrokenCipher())
+        assertTrue(broken.load(7).isEmpty())
+        assertNull(
+            "읽을 수 없는 캐시는 남겨 두지 않는다",
+            context.getSharedPreferences(prefsName, Context.MODE_PRIVATE).getString(cacheKey(1), null),
+        )
+    }
+
+    @Test
+    fun `구버전 평문 캐시는 되살리지 않고 폐기한다`() {
+        loginAs(1)
+        // 암호화 도입 전 설치에서 넘어온 평문 JSON.
+        context.getSharedPreferences(prefsName, Context.MODE_PRIVATE).edit()
+            .putString(cacheKey(1), """{"7":[{"feature":"waist_cm","effect_on_score_log_odds":-0.83}]}""")
+            .apply()
+
+        assertTrue(SharedPrefsContributionCache(context, FakeCipher()).load(7).isEmpty())
+        assertNull(
+            context.getSharedPreferences(prefsName, Context.MODE_PRIVATE).getString(cacheKey(1), null),
         )
     }
 }
