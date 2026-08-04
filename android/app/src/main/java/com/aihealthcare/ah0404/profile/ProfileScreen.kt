@@ -27,8 +27,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import com.aihealthcare.ah0404.mission.PROTEIN_GATE_UNKNOWN_NOTICE
+import com.aihealthcare.ah0404.record.SharedPrefsContributionCache
 import com.aihealthcare.ah0404.network.HealthProfileLatest
 import com.aihealthcare.ah0404.network.OnbEnums
 import com.aihealthcare.ah0404.network.UserInfoResponse
@@ -54,7 +58,7 @@ fun ProfileScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     vm: ProfileViewModel = viewModel(),
-    healthVm: HealthInfoViewModel = viewModel(),
+    healthVm: HealthInfoViewModel = healthInfoViewModel(),
 ) {
     LaunchedEffect(Unit) { vm.load(); healthVm.load() }
 
@@ -373,4 +377,20 @@ private fun providerLabel(provider: String): String = when (provider) {
     "kakao" -> "카카오"
     "guest" -> "게스트"
     else -> provider
+}
+
+/**
+ * 기여도 캐시(#406)를 주입한 [HealthInfoViewModel] 을 만든다.
+ *  '내 정보' 저장은 재평가를 부르고, 기여도는 **그 응답에만** 실려 온다 — 저장해 두지 않으면 기록 탭
+ *  기여도 카드가 뜨지 않는다. `viewModel()` 기본 팩토리로는 Context 를 넘길 수 없어 팩토리로 주입한다.
+ */
+@Composable
+private fun healthInfoViewModel(): HealthInfoViewModel {
+    val context = LocalContext.current.applicationContext
+    val factory = remember(context) {
+        viewModelFactory {
+            initializer { HealthInfoViewModel(contributionCache = SharedPrefsContributionCache(context)) }
+        }
+    }
+    return viewModel(factory = factory)
 }

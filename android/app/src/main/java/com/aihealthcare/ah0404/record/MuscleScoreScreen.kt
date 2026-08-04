@@ -37,11 +37,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aihealthcare.ah0404.R
 import com.aihealthcare.ah0404.network.CohortDistributionResponse
+import com.aihealthcare.ah0404.network.ContributionItemDto
 import com.aihealthcare.ah0404.network.RiskHistoryItem
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
+import com.aihealthcare.ah0404.ui.theme.AigoOutlineVariant
+import com.aihealthcare.ah0404.ui.theme.AigoPrimary
+import com.aihealthcare.ah0404.ui.theme.AigoTertiaryDark
 import com.aihealthcare.ah0404.ui.theme.ChartLineGreen
 import com.aihealthcare.ah0404.ui.theme.Dimens
+import kotlin.math.abs
 import kotlin.math.max
 
 // =====================================================================================
@@ -111,6 +116,8 @@ internal data class MuscleScoreUi(
     // 점수 기준일(ISO). latest 응답에 날짜가 없어 추이 최신 항목에서 가져온다(#387, 핸드오프 §13 B-2).
     //   null = 추이 조회 실패 → H1 의 기준일 줄만 숨긴다.
     val measuredAtIso: String? = null,
+    // 점수 기여도(#406): 바꿀 수 있는 근력·걷기·허리만. 빈 목록이면 기여도 카드 미표시.
+    val contributions: List<ContributionItemDto> = emptyList(),
 )
 
 /** ISO(YYYY-MM-DD…) → "2026.08.02 기준". 형식이 짧으면 null(줄 자체를 숨긴다). */
@@ -249,6 +256,7 @@ internal fun MuscleImprovementCards(ui: MuscleScoreUi, onGoToMissions: () -> Uni
     val score = ui.score
     if (score != null) {
         StsSafetyCard(ui, onGoToMissions) // §3.4 (조건 충족 시에만)
+        ContributionCard(ui.contributions) // #406 무엇이 점수에 영향을 줬나(바꿀 수 있는 것만)
         ScoreSimulationCard(ui.muscSim, ui.walkSim, score)
         Spacer(Modifier.height(Dimens.Space8))
     } else {
@@ -688,6 +696,107 @@ private fun ScoreSimulationCard(muscSim: List<ScoreSimPoint>, walkSim: List<Scor
         }
     }
 }
+
+// ── #406 SHAP 기여도: 바꿀 수 있는 것(근력·걷기·허리)이 점수에 준 영향 ─────────────
+/** 백엔드 feature 키 → 화면 라벨. 화이트리스트 밖(나이·성별·체중 등)은 null 로 걸러 절대 노출하지 않는다. */
+internal fun contributionLabel(feature: String): String? = when (feature) {
+    "musc_days" -> "근력 운동"
+    "walk_days" -> "걷기"
+    "waist_cm" -> "허리둘레"
+    else -> null
+}
+
+internal data class ContributionRow(val label: String, val effect: Double, val raising: Boolean)
+
+// 영향이 사실상 0인 항목의 컷오프. 백엔드가 log-odds 를 소수 넷째 자리로 반올림하므로(#411),
+//   |effect| < 0.00005 는 표시상 0(영향 없음)으로 본다 — 0 을 '개선 여지'로 오표시하지 않기 위함(#406 P2).
+internal const val CONTRIBUTION_EFFECT_EPSILON = 5e-5
+
+/**
+ * 표시용 행: 화이트리스트로 거르고, **영향이 0인 항목은 제외**한 뒤 |영향| 큰 순으로 정렬한다.
+ * 0(영향 없음)은 '개선 여지'라는 근거가 없어 행에서 빼며(#406 리뷰), 그 결과 전부 0이면 빈 목록이 되어
+ * 카드가 통째로 숨는다 — 표시 여부 판단이 이 순수 함수 하나로 고정돼 테스트할 수 있다(#406 리뷰).
+ */
+internal fun contributionRows(contributions: List<ContributionItemDto>): List<ContributionRow> =
+    contributions
+        .mapNotNull { c ->
+            val effect = c.effectOnScoreLogOdds
+            if (abs(effect) < CONTRIBUTION_EFFECT_EPSILON) return@mapNotNull null // 0 은 표시하지 않는다.
+            contributionLabel(c.feature)?.let { ContributionRow(it, effect, effect > 0) }
+        }
+        .sortedByDescending { abs(it.effect) }
+
+@Composable
+private fun ContributionCard(contributions: List<ContributionItemDto>) {
+    // 표시할 행이 없으면(구버전 서버·기여도 없음·모두 0) 카드 자체를 그리지 않는다.
+    val rows = contributionRows(contributions)
+    if (rows.isEmpty()) return
+    val maxMag = abs(rows.first().effect) // 정렬 결과 첫 행이 최대. epsilon 필터로 항상 > 0.
+
+    AigoCard {
+        Text("무엇이 내 점수에 영향을 줬을까요", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(Dimens.Space4))
+        Text(
+            // 체중·BMI 는 '바꾸기 어려워서'가 아니라 모델 계수 방향이 건강 조언과 어긋나 오해를 막으려 뺀 것이다
+            //   (#406 설계·리뷰). 사용자가 "체중은 못 바꾼다"로 읽지 않도록 중립적으로 안내한다.
+            "지금부터 꾸준히 바꿀 수 있는 근력·걷기·허리 중심으로 보여드려요.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(Dimens.Space12))
+        rows.forEach { row ->
+            ContributionBar(row, maxMag)
+            Spacer(Modifier.height(Dimens.Space12))
+        }
+    }
+}
+
+@Composable
+private fun ContributionBar(row: ContributionRow, maxMag: Double) {
+    // 진녹색 = 이 습관이 점수를 올리는 중, 골드 = 여기서 더 올릴 수 있음(개선 여지). 오류가 아니라 빨강은 안 쓴다.
+    //   두 색·트랙 모두 테마 토큰이며, 카드 배경(AigoSurface) 대비 4.5:1 이상(텍스트)과
+    //   트랙(AigoOutlineVariant) 대비 3:1 이상(막대)을 **둘 다** 만족한다(#406 리뷰 — 저시력 접근성):
+    //     진녹 AigoPrimary      텍스트 10.45:1 · 막대 6.46:1
+    //     골드 AigoTertiaryDark 텍스트  5.96:1 · 막대 3.68:1
+    val barColor = if (row.raising) AigoPrimary else AigoTertiaryDark
+    val fraction = (abs(row.effect) / maxMag).toFloat().coerceIn(0.06f, 1f)
+    val directionText = if (row.raising) "점수를 올리고 있어요" else "여기서 더 올릴 수 있어요"
+    Column(
+        // 막대 길이=영향 크기는 순수 시각 정보라, TalkBack 사용자를 위해 라벨·방향·상대 크기를 음성으로 안내한다
+        //   (#406 리뷰 — 같은 화면 ScoreTrendChart 와 기준을 맞춘다). 수치(log-odds)는 노출하지 않는다.
+        Modifier.semantics {
+            contentDescription = "$directionText 항목: ${row.label}, 영향 크기 ${barPercentLabel(fraction)}"
+        },
+    ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(row.label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+            Text(
+                directionText,
+                style = MaterialTheme.typography.bodyMedium,
+                color = barColor,
+            )
+        }
+        Spacer(Modifier.height(Dimens.Space4))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(14.dp)
+                .clip(RoundedCornerShape(7.dp))
+                .background(AigoOutlineVariant),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth(fraction)
+                    .height(14.dp)
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(barColor),
+            )
+        }
+    }
+}
+
+/** 막대 채움 비율(0~1)을 음성 안내용 백분율 문구로. 순수 함수라 테스트로 고정한다. */
+internal fun barPercentLabel(fraction: Float): String = "${(fraction * 100).toInt()}%"
 
 // ── §3.4 근력 기능 안전망 카드(5STS 규칙 오버레이) ────────────────────────────
 @Composable

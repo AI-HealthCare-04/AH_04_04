@@ -92,6 +92,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import com.aihealthcare.ah0404.record.SharedPrefsContributionCache
 import com.aihealthcare.ah0404.BuildConfig
 import com.aihealthcare.ah0404.auth.AuthLoginUiState
 import com.aihealthcare.ah0404.auth.AuthLoginViewModel
@@ -130,7 +133,7 @@ fun OnboardingScreen(
     onBrowseDemo: () -> Unit,
     onExit: () -> Unit,
     modifier: Modifier = Modifier,
-    vm: OnboardingViewModel = viewModel(),
+    vm: OnboardingViewModel = onboardingViewModel(),
     authVm: AuthLoginViewModel = viewModel(),
 ) {
     val activity = LocalContext.current as Activity
@@ -1548,3 +1551,22 @@ private fun AssessOutlineButton(text: String, onClick: () -> Unit) {
     ) { Text(text, fontSize = 17.sp, fontWeight = FontWeight.Bold) }
 }
 
+
+/**
+ * 기여도 캐시(#406)를 주입한 [OnboardingViewModel] 을 만든다.
+ *
+ *  ⚠️ **[MainActivity] 와 같은 헬퍼를 써야 한다.** 이 VM 은 Activity 수명이라 두 곳이 같은 인스턴스를
+ *     공유하는데, `viewModel()` 은 이미 만들어진 인스턴스가 있으면 팩토리를 무시하고 그것을 돌려준다 —
+ *     한쪽만 팩토리를 쓰면 **먼저 만든 쪽이 이기고** 캐시가 주입되지 않는 경로가 생긴다.
+ *     온보딩 예측은 기여도의 최초 공급 경로라, 놓치면 다음 재계산(하루 1회)까지 카드가 뜨지 않는다.
+ */
+@Composable
+internal fun onboardingViewModel(): OnboardingViewModel {
+    val context = LocalContext.current.applicationContext
+    val factory = remember(context) {
+        viewModelFactory {
+            initializer { OnboardingViewModel(contributionCache = SharedPrefsContributionCache(context)) }
+        }
+    }
+    return viewModel(factory = factory)
+}

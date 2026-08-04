@@ -36,6 +36,12 @@ val AigoOnErrorContainer = Color(0xFF93000A)
 // tertiary = 성취/보상 강조 골드. 초록 단색 팔레트에 따뜻한 포인트를 더해
 // "성공 경험을 주는" 순간(포인트 적립·미션 완료·배지)에 쓴다(안전배지 앰버와 톤 일관).
 val AigoTertiary = Color(0xFF8A6A00)            // 리치 골드(성취 강조 텍스트/아이콘)
+// 트랙 위에 얹는 골드 막대용 한 단계 어두운 골드(#406). AigoTertiary 는 텍스트로는 충분하지만
+//   (배경 AigoSurface 대비 4.83:1) **트랙(AigoOutlineVariant) 대비가 2.99:1** 이라 비텍스트 3:1 에
+//   미달했다 — 하필 '개선 여지' 쪽이라 가장 봐야 할 막대가 가장 안 보이는 조합이었다.
+//   트랙을 진하게(outline) 하는 방향은 역효과다: 골드 1.13:1·진녹 2.44:1 로 **둘 다** 더 나빠진다.
+//   이 값은 막대 vs 트랙 3.68:1, 텍스트 vs 배경 5.96:1 로 두 기준을 모두 넘긴다.
+val AigoTertiaryDark = Color(0xFF7A5C00)        // 기여도 막대·방향 문구용 진한 골드
 val AigoOnTertiary = Color(0xFFFFFFFF)
 val AigoTertiaryContainer = Color(0xFFFFE49B)   // 밝은 골드 면(보상 배지 배경)
 val AigoOnTertiaryContainer = Color(0xFF2B2000)

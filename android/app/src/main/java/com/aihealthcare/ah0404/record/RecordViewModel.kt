@@ -44,6 +44,9 @@ import kotlin.math.roundToInt
  */
 class RecordViewModel(
     private val api: RecordApi = retrofit.create(RecordApi::class.java),
+    // 점수 기여도(#406)는 조회 응답에 없다 — 새로 계산될 때만 오므로 로컬 캐시가 유일한 표시 소스다.
+    //   기본값 NoOp = 저장 없음·항상 빈 목록(카드 미표시). 실제 저장소는 화면이 주입한다(RecordScreen).
+    private val contributionCache: ContributionCache = NoOpContributionCache(),
 ) : ViewModel() {
 
     var loading by mutableStateOf(false); private set
@@ -250,6 +253,12 @@ class RecordViewModel(
                 //   (핸드오프 §13 B-2 승인). 추이 조회가 실패하면 null → 기준일 줄만 숨긴다.
                 //   정렬 가정을 두지 않으려고 ISO 문자열 최댓값으로 고른다(사전순 = 시간순).
                 measuredAtIso = history.maxByOrNull { it.createdAt }?.createdAt,
+                // 점수 기여도(#406) — **조회(latest) 응답이 아니라 로컬 캐시**에서 읽는다. 서버는 기여도를
+                //   저장하지 않아 사후 조회로는 만들 수 없고(#411), 새 예측을 계산하는 응답(온보딩 create·
+                //   재평가)에만 실려 온다. 캐시에 없으면 빈 목록 → 카드 미표시(구버전 서버·재설치 직후).
+                contributions = latestResult.getOrNull()?.predictionId?.takeIf { it > 0 }
+                    ?.let { contributionCache.load(it) }
+                    ?: emptyList(),
             )
             loaded = true
         }
@@ -301,6 +310,9 @@ class RecordViewModel(
         viewModelScope.launch {
             scoreRefresh = try {
                 val result = api.reassessRiskPrediction(RiskReassessRequest())
+                // 기여도는 이 응답에만 실린다(#406) — 아래 refresh() 가 캐시에서 읽으므로 **먼저** 저장한다.
+                //   recalculated=false 면 빈 목록이 오지만 save 가 무시하므로 기존 캐시는 그대로 살아 있다.
+                contributionCache.save(result.predictionId, result.contributions)
                 scoreRefreshNextAvailableAt = parseNextAvailableAt(result.nextAvailableAt)
                 scoreRefreshResult(recalculated = result.recalculated, muscleScore = result.muscleScore)
                     .also { if (it == ScoreRefreshState.APPLIED) refresh() }

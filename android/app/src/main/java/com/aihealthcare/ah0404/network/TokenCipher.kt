@@ -49,21 +49,31 @@ internal object TokenEnvelope {
     }
 }
 
-/** 실기기용 구현 — Android Keystore 의 AES-256/GCM 키를 lazy 생성·재사용한다. */
-internal object KeystoreTokenCipher : TokenCipher {
-    private const val TAG = "TokenCipher"
-    private const val KEY_ALIAS = "aigo_session_token_key"
-    private const val ANDROID_KEYSTORE = "AndroidKeyStore"
-    private const val TRANSFORMATION = "AES/GCM/NoPadding"
-    private const val GCM_TAG_BITS = 128
+/**
+ * 실기기용 구현 — Android Keystore 의 AES-256/GCM 키를 lazy 생성·재사용한다.
+ *
+ * **별칭을 받는다**(#412 리뷰 P1): 토큰과 기여도 캐시가 같은 키를 쓰면 한쪽을 폐기할 때 다른 쪽까지
+ * 못 읽게 된다. 수명주기와 삭제 범위를 분리하려고 각자 별칭을 갖는다. 봉투 포맷·실패 시 null 반환
+ * 같은 계약은 공유한다.
+ */
+internal open class KeystoreAesCipher(
+    private val keyAlias: String,
+    private val logLabel: String,
+) : TokenCipher {
+    private companion object {
+        const val TAG = "KeystoreAesCipher"
+        const val ANDROID_KEYSTORE = "AndroidKeyStore"
+        const val TRANSFORMATION = "AES/GCM/NoPadding"
+        const val GCM_TAG_BITS = 128
+    }
 
     private fun getOrCreateKey(): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
+        (keyStore.getKey(keyAlias, null) as? SecretKey)?.let { return it }
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
         generator.init(
             KeyGenParameterSpec.Builder(
-                KEY_ALIAS,
+                keyAlias,
                 KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
             )
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
@@ -95,9 +105,18 @@ internal object KeystoreTokenCipher : TokenCipher {
             )
             String(cipher.doFinal(Base64.decode(cipherB64, Base64.NO_WRAP)), Charsets.UTF_8)
         } catch (e: Exception) {
-            // 키 손상·기기 복원(백업은 키를 못 옮김)·값 훼손 — 로그아웃 상태로 떨어뜨린다(이슈 체크리스트).
-            Log.w(TAG, "토큰 복호화 실패 — 세션을 비우고 재로그인 유도: ${e.javaClass.simpleName}")
+            // 키 손상·기기 복원(백업은 키를 못 옮김)·값 훼손 — 호출부가 안전 폴백한다(이슈 체크리스트).
+            Log.w(TAG, "$logLabel 복호화 실패 — 폐기하고 폴백: ${e.javaClass.simpleName}")
             null
         }
     }
 }
+
+/** 액세스 토큰용(#358). 실패 시 SessionStore 가 로그아웃 상태로 떨어뜨린다. */
+internal object KeystoreTokenCipher : KeystoreAesCipher("aigo_session_token_key", "토큰")
+
+/**
+ * 기여도 캐시용(#412 리뷰 P1). 토큰과 **별도 키**라 한쪽을 폐기해도 다른 쪽에 영향이 없다.
+ * 실패 시 캐시를 폐기해 카드 미표시로 폴백한다 — 세션에는 영향을 주지 않는다.
+ */
+internal object KeystoreContributionCipher : KeystoreAesCipher("aigo_contribution_cache_key", "기여도 캐시")

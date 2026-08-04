@@ -48,6 +48,22 @@ data class RiskLatestResponse(
     @SerialName("muscle_score") val muscleScore: Int? = null,
     @SerialName("score_band") val scoreBand: String? = null,
     @SerialName("cohort_version") val cohortVersion: String? = null,
+    // ⚠️ 기여도(#406)는 **여기에 없다.** 서버가 기여도를 저장하지 않기로 해(#411) 이 조회 응답은 항상
+    //   빈 목록을 준다 — 필드를 두면 "여기서 읽으면 된다"로 읽혀 카드가 영영 안 뜨는 배선이 다시 생긴다.
+    //   기여도는 새로 계산하는 응답(create·reassess)에서만 오고, 화면은 ContributionCache 에서 읽는다.
+)
+
+/**
+ * 근육 점수 SHAP 기여(#406). feature=musc_days|walk_days|waist_cm(백엔드가 이 3개만 준다).
+ *
+ * ⚠️ effectOnScoreLogOdds 는 **log-odds 단위이며 점수(0~100)가 아니다.** 화면은 |값|으로 막대 길이를,
+ * 부호로 색·방향 문구를 정하고 **수치 자체는 절대 노출하지 않는다**(#406 P2 — "허리 때문에 1.29점
+ * 깎였다"는 근거 없는 원인 단정 방지). 양수=점수를 올리는 방향, 음수=내리는(개선 여지) 방향.
+ */
+@Serializable
+data class ContributionItemDto(
+    val feature: String,
+    @SerialName("effect_on_score_log_odds") val effectOnScoreLogOdds: Double = 0.0,
 )
 
 /**
@@ -84,6 +100,9 @@ data class RiskReassessResponse(
     @SerialName("recalculated") val recalculated: Boolean = true,
     // 다음 재평가 가능 시각(다음 KST 자정). 구버전 서버 호환을 위해 기본 null.
     @SerialName("next_available_at") val nextAvailableAt: String? = null,
+    // 점수 기여도(#406) — **recalculated=true 일 때만** 실린다. false(하루 1회 정책)면 빈 목록이며,
+    //   그 빈 목록으로 기존 캐시를 덮으면 오늘 하루 카드를 잃는다(ContributionCache.save 가 막는다).
+    val contributions: List<ContributionItemDto> = emptyList(),
 )
 
 /** what-if 점수 시뮬레이션(#기록탭 §4). score=null 인 지점은 점수 미제공. */
