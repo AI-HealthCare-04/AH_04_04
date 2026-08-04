@@ -39,29 +39,34 @@ from app.services.risk_prediction import (
 
 
 def _reassessment_activity_logs() -> list[object]:
+    """최근 7일 창에 들어가는 기록 — 걷기 5일(각 30분), 근력 2일.
+
+    창이 7일 하나로 좁혀졌으므로(리뷰 P1) 일수 정규화는 weeks=1 이라 센 값이 그대로 특징이 된다.
+    근력 2일은 원본 프로필의 musc_days=0 과 달라서, activity_override 배선이 빠지면 이 값이 먼저 깨진다.
+    """
     logs: list[object] = []
     logs.extend(
         [
             SimpleNamespace(
-                activity_date=date(2026, 7, day),
+                activity_date=today_kst() - timedelta(days=offset),
                 activity_type=ActivityType.WALKING,
                 duration_min=Decimal("30"),
                 reps=None,
                 sets=None,
             )
-            for day in range(1, 11)
+            for offset in range(5)
         ]
     )
     logs.extend(
         [
             SimpleNamespace(
-                activity_date=date(2026, 7, day),
+                activity_date=today_kst() - timedelta(days=offset),
                 activity_type=ActivityType.SEATED_EXERCISE,
                 duration_min=Decimal("10"),
                 reps=None,
                 sets=None,
             )
-            for day in (1, 3, 8, 10)
+            for offset in (1, 3)
         ]
     )
     return logs
@@ -137,11 +142,16 @@ def test_create_response_includes_onboarding_status() -> None:
 
 
 def test_reassess_request_accepts_only_supported_activity_windows() -> None:
-    assert RiskPredictionReassessRequest(activity_window_days=7).activity_window_days == 7
-    assert RiskPredictionReassessRequest(activity_window_days=14).activity_window_days == 14
+    """활동 창은 7일 하나만 받는다(리뷰 P1).
 
-    with pytest.raises(ValidationError):
-        RiskPredictionReassessRequest.model_validate({"activity_window_days": 30})
+    14 를 함께 열어 두면 8일차 게이트를 통과한 채 창 앞 7일이 온보딩 이전으로 새어, 게이트가
+    막으려던 가입 직후 점수 급락이 그대로 재현된다. 앱도 자동 배치도 7 만 쓴다.
+    """
+    assert RiskPredictionReassessRequest(activity_window_days=7).activity_window_days == 7
+
+    for unsupported in (14, 30):
+        with pytest.raises(ValidationError):
+            RiskPredictionReassessRequest.model_validate({"activity_window_days": unsupported})
 
 
 def test_reassess_response_uses_v73_contract_without_model_variant() -> None:
@@ -445,7 +455,7 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
 
     response = await service.reassess_latest_profile(
         cast(User, SimpleNamespace(user_id=1)),
-        RiskPredictionReassessRequest(activity_window_days=14),
+        RiskPredictionReassessRequest(activity_window_days=7),
     )
 
     assert profile_repo.latest_called_with == 1
@@ -462,7 +472,7 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
     # 센 값이 예측기까지 실제로 전달됐는지 직접 단언한다(리뷰 비차단 제안). 로그 조회와 저장 결과만
     #   보면 activity_override 인자가 통째로 빠져도 통과한다 — 그러면 재평가가 가입 시 자가응답으로
     #   계산되면서 겉보기엔 정상이라 알아채기 어렵다.
-    #   기대값: 걷기 10일/2주 -> 5, 근력 4일(1·3·8·10)/2주 -> 2.
+    #   기대값: 7일 창이라 정규화 없이 걷기 5일 -> 5, 근력 2일 -> 2.
     #   특히 musc_days 는 원본 프로필 값이 0 이라, 배선이 빠지면 이 단언이 먼저 깨진다.
     assert predictor.seen_features is not None
     assert predictor.seen_features["walk_days"] == 5

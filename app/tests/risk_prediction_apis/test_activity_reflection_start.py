@@ -97,10 +97,31 @@ async def test_activity_input_source_follows_the_gate() -> None:
     실기록을 세서 DTO 기본값이 늘 맞았지만, 이제는 아니다.
     """
     seventh_day = today_kst() - timedelta(days=ACTIVITY_REFLECTION_START_DAY - 2)
-    assert await _service(seventh_day)._activity_input_source(_USER) == ActivityInputSource.SELF_REPORT
+    assert await _service(seventh_day)._activity_input_source(_USER, 7) == ActivityInputSource.SELF_REPORT
 
     eighth_day = today_kst() - timedelta(days=ACTIVITY_REFLECTION_START_DAY - 1)
-    assert await _service(eighth_day)._activity_input_source(_USER) == ActivityInputSource.SERVICE_LOG
+    assert await _service(eighth_day)._activity_input_source(_USER, 7) == ActivityInputSource.SERVICE_LOG
 
     # 완료일을 모르면 아직 세지 않으므로 자가응답이다(_derive_activity_days 와 같은 판정).
-    assert await _service(None)._activity_input_source(_USER) == ActivityInputSource.SELF_REPORT
+    assert await _service(None)._activity_input_source(_USER, 7) == ActivityInputSource.SELF_REPORT
+
+
+@pytest.mark.asyncio
+async def test_gate_moves_with_the_window_length() -> None:
+    """게이트 기준이 상수가 아니라 창 길이를 따라간다(리뷰 P1).
+
+    상수(8일차)로 고정하면 8일차에 14일 창으로 부를 때 게이트를 통과하고, 창의 앞 7일은 온보딩
+    이전이라 0 으로 채워져 이 게이트가 막으려던 급락이 그대로 재현된다. 지금 요청 계약은 7일
+    하나뿐이라 실제로 닿지 않는 경로지만, 창을 다시 넓혀도 식이 따라가도록 못박는다.
+    """
+    eighth_day = today_kst() - timedelta(days=ACTIVITY_REFLECTION_START_DAY - 1)
+    service = _service(eighth_day, _walking_logs(5))
+
+    # 7일 창은 8일차에 열린다.
+    assert await service._activity_window_is_ready(_USER, 7) is True
+    # 14일 창은 아직이다 — 15일차부터 창이 온보딩 이후로만 채워진다.
+    assert await service._activity_window_is_ready(_USER, 14) is False
+    assert await service._derive_activity_days(_USER, 14) is None
+
+    fifteenth_day = today_kst() - timedelta(days=14)
+    assert await _service(fifteenth_day)._activity_window_is_ready(_USER, 14) is True

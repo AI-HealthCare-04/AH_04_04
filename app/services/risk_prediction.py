@@ -54,8 +54,11 @@ DENSITY_PLOT_MAX_PROBABILITY = 0.5
 #   0 같은 다른 값이 저장되면 표에 없는 키라 또래 분포가 실패한다(#408 리뷰 P1).
 COHORT_SEX_CODES = frozenset({1, 2})
 
-# 활동 일수를 실기록으로 세기 시작하는 날. 온보딩 완료일이 1일차이므로 8일차 = 완료 후 7일.
-#   그 전에는 활동 창(7일)을 채울 기록이 없어, 실기록으로 세면 자가응답보다 무조건 낮게 나온다.
+# 활동 일수를 실기록으로 세기 시작하는 날(현행 7일 창 기준). 온보딩 완료일이 1일차이므로
+#   8일차 = 완료 후 7일. 그 전에는 창을 채울 기록이 없어, 실기록으로 세면 자가응답보다 무조건 낮다.
+#   ⚠️ 판정은 이 상수가 아니라 **창 길이**로 한다(_activity_window_is_ready). 창이 길어지면
+#     시작일도 함께 밀려야 하는데 상수로 고정하면 창 앞쪽이 온보딩 이전으로 새기 때문이다(리뷰 P1).
+#     이 값은 7일 창일 때의 결과를 문서·테스트에서 부르는 이름으로 남긴다.
 ACTIVITY_REFLECTION_START_DAY = 8
 
 # 자동 예측이 쓰는 활동 창. 앱의 재평가 요청 기본값(RecordModels.kt)과 같은 7일로 맞춘다 —
@@ -109,7 +112,7 @@ class RiskPredictionService:
             return self._to_reassess_response(
                 existing,
                 recalculated=False,
-                activity_input_source=await self._activity_input_source(user),
+                activity_input_source=await self._activity_input_source(user, data.activity_window_days),
             )
         # 프로필 행을 새로 만들지 않는다(#408 A+3). 재평가에서 실제로 달라지는 값은 활동 일수뿐인데,
         #   그 둘을 담으려고 생년월일·성별·신체계측까지 매번 복제하고 있었다. 활동 일수는 예측 입력으로만
@@ -464,7 +467,7 @@ class RiskPredictionService:
         8일차 = 완료일 당일을 1일차로 세어 7일이 지난 날. 그날부터는 창이 완료 이후 기록으로
         가득 차므로 실기록만으로 판단할 수 있다.
         """
-        if not await self._activity_window_is_ready(user):
+        if not await self._activity_window_is_ready(user, activity_window_days):
             return None
         end_date = today_kst()
         start_date = end_date - timedelta(days=activity_window_days - 1)
@@ -475,20 +478,30 @@ class RiskPredictionService:
         )
         return derive_activity_day_counts(activity_logs, activity_window_days=activity_window_days)
 
-    async def _activity_window_is_ready(self, user: User) -> bool:
-        """실기록 반영을 시작해도 되는 날인가. 온보딩 완료일이 없으면 아직 아니다."""
+    async def _activity_window_is_ready(self, user: User, activity_window_days: int) -> bool:
+        """창이 **온보딩 이후 기록만으로** 채워지는 날인가. 완료일을 모르면 아직 아니다.
+
+        기준을 상수(8일차)가 아니라 창 길이로 두는 이유(리뷰 P1) — 창이 7일이면 완료 후 7일이 지난
+        8일차부터지만, 14일이면 15일차여야 앞부분이 온보딩 이전으로 새지 않는다. 상수로 고정하면
+        더 긴 창이 게이트를 통과하면서 창 앞쪽 0 이 그대로 점수에 들어간다.
+
+        지금 요청 계약은 7일뿐이라(RiskPredictionReassessRequest) 결과는 종전과 같은 8일차다.
+        창을 다시 넓히더라도 이 식이 자동으로 따라간다.
+        """
         completed_on = await self.profile_repo.get_onboarding_completed_on(user.user_id)
         if completed_on is None:
             return False
-        return (today_kst() - completed_on).days >= ACTIVITY_REFLECTION_START_DAY - 1
+        return (today_kst() - completed_on).days >= activity_window_days
 
-    async def _activity_input_source(self, user: User) -> ActivityInputSource:
-        """오늘 이 사용자의 예측이 어떤 활동 값을 쓰는가 — 8일차 게이트와 같은 판정.
+    async def _activity_input_source(self, user: User, activity_window_days: int) -> ActivityInputSource:
+        """오늘 이 사용자의 예측이 어떤 활동 값을 쓰는가 — 게이트와 같은 판정.
 
-        게이트가 날짜 기준이라 같은 날 안에서는 결과가 바뀌지 않는다. 그래서 멱등 반환(오늘 이미
-        재평가함) 경로에서도 그 예측이 저장될 때와 같은 값을 다시 계산해 답할 수 있다.
+        요청 창이 7일 하나뿐이라(리뷰 P1 로 좁혔다) 같은 날 안에서는 판정이 바뀌지 않는다. 그래서
+        멱등 반환(오늘 이미 재평가함) 경로에서도 그 예측이 저장될 때와 같은 값을 다시 계산해 답할 수
+        있다. 창이 다시 둘 이상이 되면 이 재계산은 성립하지 않으므로, 그때는 예측 행에 실제 사용한
+        창·출처를 저장해야 한다.
         """
-        if await self._activity_window_is_ready(user):
+        if await self._activity_window_is_ready(user, activity_window_days):
             return ActivityInputSource.SERVICE_LOG
         return ActivityInputSource.SELF_REPORT
 
