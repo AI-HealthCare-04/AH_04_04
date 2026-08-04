@@ -207,12 +207,16 @@ fun RecordScreen(
                     }
                 } else {
                     // ①~④ 점수 → 변화 → 또래 → 5STS (+ 빈 상태면 생활습관 카드)
-                    item { MuscleDashboardCards(ui, onGoToMissions) }
-                    // 사용자가 직접 점수를 다시 계산할 수 있게 한다(#388). 지금까지 트리거가
-                    //   '내 정보 저장' 하나뿐이라, 챌린지를 해도 점수가 그대로인 이유를 알 수 없었다.
-                    // 점수 제공 대상이 아닌 연령대에는 그리지 않는다 — 눌러도 '대상 아님'만 나온다(#403 판정 재사용).
-                    if (ui.score != null || scoreEmptyState(ui.age) == ScoreEmptyState.PENDING) {
-                        item { ScoreRefreshCard(state = vm.scoreRefresh, onRefresh = vm::refreshScore) }
+                    item {
+                        MuscleDashboardCards(
+                            ui = ui,
+                            onGoToMissions = onGoToMissions,
+                            // 사용자가 직접 점수를 다시 계산할 수 있게 한다(#388). 배치는 이 섹션이
+                            //   맡는다 — 여기서 뒤에 붙이면 5STS 아래로 밀린다(실기기 QA).
+                            //   점수가 없으면 넘기지 않는다: 눌러도 '대상 아님'만 나온다.
+                            scoreRefresh = vm.scoreRefresh,
+                            onRefreshScore = vm::refreshScore.takeIf { ui.score != null },
+                        )
                     }
                     // 점수가 없으면 위 섹션의 연령·예측 상태별 준비 카드 하나만 보여준다. 개선 섹션의
                     // ImprovementPendingCard까지 이어 붙이면 같은 안내와 미션 버튼이 중복된다(리뷰 #386).
@@ -303,32 +307,3 @@ private fun EmptyText(text: String) {
     )
 }
 
-/**
- * '점수 다시 계산하기'(#388). 점수 카드 바로 아래에 둔다 — 사용자가 "왜 안 바뀌지"를 느끼는 자리다.
- *
- * 하루 1회 제한(#396)에 걸리면 숫자가 그대로라 고장으로 읽히므로, 왜 안 바뀌었는지와 언제 다시
- * 되는지를 함께 말한다. 재시도 버튼은 네트워크·서버 실패에서만 의미가 있다.
- */
-@Composable
-private fun ScoreRefreshCard(state: ScoreRefreshState?, onRefresh: () -> Unit) {
-    AigoCard {
-        AigoPrimaryButton(
-            text = if (state == ScoreRefreshState.IN_PROGRESS) "다시 계산 중…" else "점수 다시 계산하기",
-            onClick = onRefresh,
-            // 다시 눌러도 서버가 같은 답을 주는 상태에서는 비활성(리뷰 P2). 정책은 순수 함수에 있다.
-            enabled = canRequestScoreRefresh(state),
-        )
-        scoreRefreshStatusText(state)?.let { status ->
-            Spacer(Modifier.height(Dimens.Space8))
-            Text(
-                status,
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (state == ScoreRefreshState.FAILED) {
-                    MaterialTheme.colorScheme.error
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-            )
-        }
-    }
-}
