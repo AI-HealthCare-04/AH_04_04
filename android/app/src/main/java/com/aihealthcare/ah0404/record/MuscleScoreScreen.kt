@@ -193,6 +193,12 @@ private fun bandColor(band: String?): Color = when (band) {
 internal fun MuscleDashboardCards(
     ui: MuscleScoreUi,
     onGoToMissions: () -> Unit,
+    // 점수 재계산(#388). 이 섹션이 5STS 까지 그리므로 **호출부에서 뒤에 붙이면 점수 카드가 아니라
+    //   5STS 아래로 밀린다**(실기기 QA). 사용자가 "왜 안 바뀌지"를 느끼는 자리는 점수 옆이라
+    //   여기서 직접 배치한다. null 이면 그리지 않는다(점수 제공 대상이 아닌 화면).
+    scoreRefresh: ScoreRefreshState? = null,
+    canRefreshScore: Boolean = true,
+    onRefreshScore: (() -> Unit)? = null,
 ) {
     val age = ui.age
     val score = ui.score
@@ -201,6 +207,8 @@ internal fun MuscleDashboardCards(
         //   조회만 실패해도 유효한 점수가 "준비 중"에 가려지지 않게 score 우선(#273 게이트).
         score != null -> {
             ScoreHeadlineCard(ui, score)            // H1 지금 내 점수
+            // H1 바로 아래 — 점수를 보고 "안 바뀌네" 하는 그 자리에 둔다.
+            onRefreshScore?.let { ScoreRefreshCard(scoreRefresh, canRefreshScore, it) }
             ScoreTrendCard(ui.trend)                // H2 점수 변화
             CohortDistributionCard(ui.cohort, waistMissing = ui.waistCm == null) // H3 또래 중 내 위치(#193)
         }
@@ -832,6 +840,36 @@ internal fun LifestyleTipCard() {
                 contentDescription = null, // 장식용(§10)
                 modifier = Modifier.size(88.dp),
                 contentScale = ContentScale.Fit,
+            )
+        }
+    }
+}
+
+/**
+ * '점수 다시 계산하기'(#388). 점수 카드 바로 아래에 둔다 — 사용자가 "왜 안 바뀌지"를 느끼는 자리다.
+ *
+ * 하루 1회 제한(#396)에 걸리면 숫자가 그대로라 고장으로 읽히므로, 왜 안 바뀌었는지와 언제 다시
+ * 되는지를 함께 말한다. 재시도 버튼은 네트워크·서버 실패에서만 의미가 있다.
+ */
+@Composable
+private fun ScoreRefreshCard(state: ScoreRefreshState?, canRefresh: Boolean, onRefresh: () -> Unit) {
+    AigoCard {
+        AigoPrimaryButton(
+            text = if (state == ScoreRefreshState.IN_PROGRESS) "다시 계산 중…" else "점수 다시 계산하기",
+            onClick = onRefresh,
+            // 정책 판정은 호출부가 순수 함수로 계산해 넘긴다 — 시각 경과를 화면 재개마다 반영해야 한다.
+            enabled = canRefresh,
+        )
+        scoreRefreshStatusText(state)?.let { status ->
+            Spacer(Modifier.height(Dimens.Space8))
+            Text(
+                status,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (state == ScoreRefreshState.FAILED) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
             )
         }
     }

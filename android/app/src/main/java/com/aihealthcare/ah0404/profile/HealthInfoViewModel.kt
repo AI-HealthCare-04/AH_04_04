@@ -11,6 +11,8 @@ import com.aihealthcare.ah0404.network.HealthProfileLatest
 import com.aihealthcare.ah0404.network.HealthProfilePatchRequest
 import com.aihealthcare.ah0404.network.RecordApi
 import com.aihealthcare.ah0404.network.RiskReassessRequest
+import com.aihealthcare.ah0404.record.ScoreRefreshState
+import com.aihealthcare.ah0404.record.scoreRefreshResult
 import com.aihealthcare.ah0404.network.retrofit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -42,13 +44,9 @@ class HealthInfoViewModel(
     var saveError by mutableStateOf<String?>(null); private set
     var savedMessage by mutableStateOf<String?>(null); private set
 
-    /** 점수 재평가 진행 상태 — 저장(PATCH)과 분리된 부가 상태(리뷰 #294 P1). null = 아직 시도 전. */
-    enum class ScoreRefreshState {
-        IN_PROGRESS,
-        APPLIED, // 새 예측 생성 + 점수 존재 → 즉시 반영됨
-        NOT_ELIGIBLE, // 422(연령 미지원 등)·2xx 점수 미제공 — 재시도해도 같으므로 버튼 없음
-        FAILED, // 네트워크·5xx — 정보는 저장됐고 재시도 버튼 제공
-    }
+    // 재평가 상태는 기록 탭의 '점수 다시 계산하기'와 **같은 엔드포인트·같은 제한**을 공유하므로
+    //   record/ScoreRefresh.kt 로 옮겼다(#388). 여기서만 갖고 있으면 하루 1회 제한 같은 규칙이
+    //   한쪽에만 반영돼 같은 상황에 다른 말을 하게 된다.
 
     var scoreRefresh by mutableStateOf<ScoreRefreshState?>(null); private set
 
@@ -161,7 +159,9 @@ class HealthInfoViewModel(
         scoreRefresh = ScoreRefreshState.IN_PROGRESS
         scoreRefresh = try {
             val result = recordApi.reassessRiskPrediction(RiskReassessRequest())
-            if (result.muscleScore != null) ScoreRefreshState.APPLIED else ScoreRefreshState.NOT_ELIGIBLE
+            // recalculated 를 무시하면 오늘 이미 계산한 **옛 점수**를 받고도 "바로 반영됐어요"라고
+            //   말하게 된다(#396 하루 1회 도입 후 생긴 어긋남).
+            scoreRefreshResult(recalculated = result.recalculated, muscleScore = result.muscleScore)
         } catch (e: CancellationException) {
             throw e
         } catch (e: HttpException) {

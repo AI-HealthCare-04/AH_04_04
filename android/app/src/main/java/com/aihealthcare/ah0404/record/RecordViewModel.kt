@@ -3,6 +3,8 @@ package com.aihealthcare.ah0404.record
 import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import com.aihealthcare.ah0404.network.RiskReassessRequest
+import retrofit2.HttpException
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -277,6 +279,41 @@ class RecordViewModel(
         viewModelScope.launch {
             safeCall { api.submitPredictionFeedback(predictionId, PredictionFeedbackRequest(response)) }
                 .onFailure { Log.w(TAG, "피드백 전송 실패(무시): ${it.message}") }
+        }
+    }
+
+    /** 기록 탭 '점수 다시 계산하기' 상태(#388). null = 아직 누르지 않음. */
+    var scoreRefresh by mutableStateOf<ScoreRefreshState?>(null); private set
+
+    /** 서버가 준 다음 재평가 가능 시각(epoch millis). null = 모름 → 화면은 잠그지 않는다. */
+    var scoreRefreshNextAvailableAt by mutableStateOf<Long?>(null); private set
+
+    /**
+     * 사용자가 직접 누른 재평가(#388). 지금까지는 '내 정보 저장'만이 트리거라, 챌린지를 해도
+     * 점수가 그대로인 이유를 알 수 없고 손쓸 방법도 없었다.
+     *
+     * 성공하면 대시보드를 다시 불러 새 점수를 화면에 반영한다. 하루 1회 제한(#396)에 걸린 경우
+     * (`recalculated=false`)에는 다시 부르지 않는다 — 값이 그대로라 의미가 없다.
+     */
+    fun refreshScore() {
+        if (scoreRefresh == ScoreRefreshState.IN_PROGRESS) return // 연타 방지
+        scoreRefresh = ScoreRefreshState.IN_PROGRESS
+        viewModelScope.launch {
+            scoreRefresh = try {
+                val result = api.reassessRiskPrediction(RiskReassessRequest())
+                scoreRefreshNextAvailableAt = parseNextAvailableAt(result.nextAvailableAt)
+                scoreRefreshResult(recalculated = result.recalculated, muscleScore = result.muscleScore)
+                    .also { if (it == ScoreRefreshState.APPLIED) refresh() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: HttpException) {
+                Log.w(TAG, "점수 재평가 거절(code=${e.code()})")
+                // 422 는 연령 미지원 등 — 다시 눌러도 같으므로 재시도 버튼을 주지 않는다.
+                if (e.code() == 422) ScoreRefreshState.NOT_ELIGIBLE else ScoreRefreshState.FAILED
+            } catch (e: Exception) {
+                Log.w(TAG, "점수 재평가 실패: ${e.message}")
+                ScoreRefreshState.FAILED
+            }
         }
     }
 

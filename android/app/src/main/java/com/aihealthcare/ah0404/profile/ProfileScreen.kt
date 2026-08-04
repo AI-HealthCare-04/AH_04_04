@@ -36,6 +36,7 @@ import com.aihealthcare.ah0404.settings.TopBar
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoDialog
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
+import com.aihealthcare.ah0404.record.ScoreRefreshState
 import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
 import com.aihealthcare.ah0404.ui.components.AigoSegmentedSelector
 import com.aihealthcare.ah0404.ui.components.AigoTextField
@@ -210,7 +211,7 @@ private fun HealthInfoEditor(healthVm: HealthInfoViewModel, profile: HealthProfi
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        if (healthVm.scoreRefresh == HealthInfoViewModel.ScoreRefreshState.FAILED) {
+        if (healthVm.scoreRefresh == ScoreRefreshState.FAILED) {
             Spacer(Modifier.height(Dimens.Space8))
             // 네트워크·서버 실패만 재시도 의미가 있다(422·점수 미제공은 재시도해도 같아 버튼 없음).
             AigoSecondaryButton(text = "점수 다시 계산", onClick = healthVm::retryScoreRefresh)
@@ -222,12 +223,18 @@ private fun HealthInfoEditor(healthVm: HealthInfoViewModel, profile: HealthProfi
 internal const val KIDNEY_USAGE_FOOTER = "신장 건강 정보는 단백질 식사 기록하기 미션에 적용돼요."
 
 /** 하단 고정 안내 문구 — 재평가 상태별(리뷰 #294 상태 경계). 문구 회귀는 테스트로 고정한다. */
-internal fun scoreRefreshFooterText(state: HealthInfoViewModel.ScoreRefreshState?): String = when (state) {
+internal fun scoreRefreshFooterText(state: ScoreRefreshState?): String = when (state) {
     null -> "저장하면 수정한 정보로 근육 건강 점수를 바로 다시 계산해요."
-    HealthInfoViewModel.ScoreRefreshState.IN_PROGRESS -> "저장한 정보로 근육 건강 점수를 다시 계산하고 있어요…"
-    HealthInfoViewModel.ScoreRefreshState.APPLIED -> "근육 건강 정보에 바로 반영됐어요."
-    HealthInfoViewModel.ScoreRefreshState.NOT_ELIGIBLE -> "정보는 저장됐어요. 지금은 근육 점수 제공 대상이 아니에요."
-    HealthInfoViewModel.ScoreRefreshState.FAILED -> "정보는 저장됐어요. 점수 다시 계산에 실패했어요 — 아래 버튼으로 다시 시도해 주세요."
+    ScoreRefreshState.IN_PROGRESS -> "저장한 정보로 근육 건강 점수를 다시 계산하고 있어요…"
+    ScoreRefreshState.APPLIED -> "근육 건강 정보에 바로 반영됐어요."
+    // 오늘 이미 계산한 경우(#396 하루 1회). 저장은 됐지만 점수는 그대로다.
+    //   ⚠️ "내일 반영돼요"라고 하면 안 된다(리뷰 P1) — 자동 반영 배치가 없다. 사용자가 다시
+    //   눌러야 한다는 사실을 정확히 말한다. "바로 반영됐어요"도 어제 점수를 새 점수로 오해시킨다.
+    ScoreRefreshState.ALREADY_TODAY ->
+        "정보는 저장됐어요. 점수는 하루에 한 번만 새로 계산할 수 있어 오늘은 반영되지 않았어요 — " +
+            "내일 기록 탭에서 다시 계산해 주세요."
+    ScoreRefreshState.NOT_ELIGIBLE -> "정보는 저장됐어요. 지금은 근육 점수 제공 대상이 아니에요."
+    ScoreRefreshState.FAILED -> "정보는 저장됐어요. 점수 다시 계산에 실패했어요 — 아래 버튼으로 다시 시도해 주세요."
 }
 
 /** 소수 반올림 없는 표시용 문자열: 170.0 → "170", 63.5 → "63.5". */

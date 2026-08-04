@@ -14,10 +14,10 @@ import com.aihealthcare.ah0404.network.RiskLatestResponse
 import com.aihealthcare.ah0404.network.PredictionFeedbackRequest
 import com.aihealthcare.ah0404.network.RiskReassessRequest
 import com.aihealthcare.ah0404.network.RiskReassessResponse
+import com.aihealthcare.ah0404.record.ScoreRefreshState
 import com.aihealthcare.ah0404.network.ScoreSimulationResponse
 import com.aihealthcare.ah0404.network.StampsResponse
 import com.aihealthcare.ah0404.network.WalkingDailyResponse
-import com.aihealthcare.ah0404.profile.HealthInfoViewModel.ScoreRefreshState
 import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -221,5 +221,20 @@ class HealthInfoViewModelTest {
             "정보는 저장됐어요. 점수 다시 계산에 실패했어요 — 아래 버튼으로 다시 시도해 주세요.",
             scoreRefreshFooterText(ScoreRefreshState.FAILED),
         )
+    }
+
+    @Test
+    fun `하루 1회 제한 안내는 자동 반영을 약속하지 않는다`() {
+        // #396 정책에는 자동 재평가 배치가 없다. "내일 반영돼요"라고 하면 사용자가 다시 누르지
+        //   않는 한 영영 반영되지 않는 약속이 된다(리뷰 P1). 무엇을 해야 하는지까지 말해야 한다.
+        val text = scoreRefreshFooterText(ScoreRefreshState.ALREADY_TODAY)
+        assertEquals(
+            "정보는 저장됐어요. 점수는 하루에 한 번만 새로 계산할 수 있어 오늘은 반영되지 않았어요 — " +
+                "내일 기록 탭에서 다시 계산해 주세요.",
+            text,
+        )
+        assertFalse("자동 반영을 약속하면 안 된다: $text", text.contains("내일 반영"))
+        assertTrue("반영되지 않았다는 사실: $text", text.contains("반영되지 않았어요"))
+        assertTrue("사용자가 할 일: $text", text.contains("다시 계산해 주세요"))
     }
 }

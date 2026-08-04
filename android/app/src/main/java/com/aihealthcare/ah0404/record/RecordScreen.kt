@@ -21,6 +21,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import kotlinx.coroutines.delay
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.Lifecycle
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -30,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aihealthcare.ah0404.settings.TopBar
 import com.aihealthcare.ah0404.ui.components.AigoCard
+import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
 import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
 import com.aihealthcare.ah0404.ui.components.AigoSegmentedSelector
 import com.aihealthcare.ah0404.ui.components.MEDICAL_DISCLAIMER_DEFAULT
@@ -65,6 +72,28 @@ fun RecordScreen(
     // 상단 세그먼트: 근육 건강(점수·추이·시뮬) ↔ 미션 기록(달력·걷기·챌린지).
     //   기본값은 근육 건강 — 화면을 열었을 때 결론이 먼저 보여야 한다(#385).
     var tab by remember { mutableStateOf(RecordTab.DASHBOARD) }
+    // 재계산 제한 해제 시각 판정에 쓸 '지금'(#388 리뷰). **시간이 흐르는 것만으로는 재구성이 일어나지
+    //   않는다** — System.currentTimeMillis() 를 그냥 읽으면 자정을 넘겨도 화면이 다시 판정하지 않는다.
+    //   상태로 들고, 아래 두 경로에서 갱신한다.
+    var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    // ① 화면 복귀 — 백그라운드에 있는 동안 자정을 넘겼을 수 있다.
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) nowMillis = System.currentTimeMillis()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    // ② 켜둔 채 자정을 넘기는 경우 — 해제 시각까지 기다렸다가 한 번 깨운다.
+    LaunchedEffect(vm.scoreRefreshNextAvailableAt) {
+        val target = vm.scoreRefreshNextAvailableAt ?: return@LaunchedEffect
+        val wait = target - System.currentTimeMillis()
+        if (wait > 0) {
+            delay(wait)
+            nowMillis = System.currentTimeMillis()
+        }
+    }
     // §5.2 달력 일자 탭 → 바텀시트로 그날 완료 미션 목록.
     var selectedDay by remember { mutableStateOf<String?>(null) }
     // §5.3 걷기 막대 축 전환(시간/걸음).
@@ -206,7 +235,24 @@ fun RecordScreen(
                     }
                 } else {
                     // ①~④ 점수 → 변화 → 또래 → 5STS (+ 빈 상태면 생활습관 카드)
-                    item { MuscleDashboardCards(ui, onGoToMissions) }
+                    item {
+                        MuscleDashboardCards(
+                            ui = ui,
+                            onGoToMissions = onGoToMissions,
+                            // 사용자가 직접 점수를 다시 계산할 수 있게 한다(#388). 배치는 이 섹션이
+                            //   맡는다 — 여기서 뒤에 붙이면 5STS 아래로 밀린다(실기기 QA).
+                            //   점수가 없으면 넘기지 않는다: 눌러도 '대상 아님'만 나온다.
+                            scoreRefresh = vm.scoreRefresh,
+                            // 제한 해제 시각이 지났는지는 시간이 흐르면 달라진다 — 화면이 다시 보일
+                            //   때마다 판정한다(리뷰: 앱을 켜둔 채 자정을 넘겨도 살아나야 한다).
+                            canRefreshScore = canRequestScoreRefresh(
+                                state = vm.scoreRefresh,
+                                nextAvailableAtMillis = vm.scoreRefreshNextAvailableAt,
+                                nowMillis = nowMillis,
+                            ),
+                            onRefreshScore = vm::refreshScore.takeIf { ui.score != null },
+                        )
+                    }
                     // 점수가 없으면 위 섹션의 연령·예측 상태별 준비 카드 하나만 보여준다. 개선 섹션의
                     // ImprovementPendingCard까지 이어 붙이면 같은 안내와 미션 버튼이 중복된다(리뷰 #386).
                     // 피드백·"이 점수" 링크도 실제 점수가 있을 때만 의미가 있다.
@@ -295,3 +341,4 @@ private fun EmptyText(text: String) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
+
