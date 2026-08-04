@@ -68,14 +68,14 @@ class RiskPredictionRepository:
         했다 — 판별 근거 하나 때문에 생년월일·성별·신체계측이 매번 복사됐다.
         온보딩 최초 예측은 이 조회에 걸리지 않아 가입 당일에도 재평가를 한 번은 쓸 수 있다.
 
-        **자동 예측은 제외한다**(#422). 자정 배치가 만든 행까지 세면 그날의 1회를 자동이 소진해,
+        **자동 예측은 제외한다**. 자정 배치가 만든 행까지 세면 그날의 1회를 자동이 소진해,
         사용자가 내 정보를 고치고 재평가를 눌러도 자동 예측이 그대로 반환된다 — 수정이 다음 날까지
         반영되지 않는다. 카운터를 나눠 자동 1회와 수동 1회를 각각 보장한다.
         """
         return await self._get_today_prediction(user_id, is_auto=False)
 
     async def get_today_auto_prediction(self, user_id: int) -> RiskPrediction | None:
-        """오늘(KST) 저장된 **자동(자정 배치)** 예측 1건(#422).
+        """오늘(KST) 저장된 **자동(자정 배치)** 예측 1건.
 
         배치가 시각이 아니라 **상태**로 판단하도록 하는 조회다. "00:00 에 실행"으로 두면 그 순간
         컨테이너가 내려가 있을 때(배포·재시작) 그날 예측이 통째로 빠지고 추이에 구멍이 생긴다.
@@ -101,7 +101,7 @@ class RiskPredictionRepository:
         return await self.session.scalar(stmt)
 
     async def get_user_ids_needing_auto_prediction(self) -> list[int]:
-        """자정 배치 대상 — 건강 프로필이 있고 **오늘 자동 예측이 아직 없는** 사용자(#422).
+        """자정 배치 대상 — 건강 프로필이 있고 **오늘 자동 예측이 아직 없는** 사용자.
 
         조건을 `onboarding_status = completed` 가 아니라 **프로필 보유**로 잡는다. 그 상태값은
         최초 예측이 성공해야 붙는데(complete_onboarding), 정작 예측에 필요한 것은 프로필뿐이다.

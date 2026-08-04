@@ -1,5 +1,5 @@
 # =====================================================================================
-# #422 자정 자동 예측 — 실 MySQL 통합 테스트.
+# 자정 자동 예측 — 실 MySQL 통합 테스트.
 #
 # 여기서만 잡히는 것 두 가지라 통합으로 둔다.
 #   1) **카운터 분리** — 자동 예측이 그날의 수동 재평가 권리를 소진하지 않는가. 가짜 repo 로는
@@ -86,7 +86,7 @@ async def _prediction_counts(sm: async_sessionmaker[AsyncSession], user_id: int)
 async def test_auto_prediction_does_not_consume_manual_reassess(
     db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
 ) -> None:
-    """자정 배치가 돈 뒤에도 사용자는 그날 재평가를 한 번 쓸 수 있다(#422 카운터 분리).
+    """자정 배치가 돈 뒤에도 사용자는 그날 재평가를 한 번 쓸 수 있다(카운터 분리).
 
     카운터를 나누지 않으면 `get_today_reassessment` 가 자동 예측을 집어 recalculated=False 로
     돌려준다 — 내 정보를 고치고 눌러도 수정이 다음 날까지 반영되지 않는다.
@@ -127,7 +127,7 @@ async def test_manual_reassess_does_not_block_auto_prediction(
 async def test_batch_is_idempotent_within_a_day(
     db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
 ) -> None:
-    """두 번 돌려도 하루 한 점 — 기동 보정이 자정 실행과 겹쳐도 안전해야 한다(#422).
+    """두 번 돌려도 하루 한 점 — 기동 보정이 자정 실행과 겹쳐도 안전해야 한다.
 
     배치를 '시각'이 아니라 '오늘 자동 예측이 없는 사용자'로 정의한 근거가 이 성질이다.
     """

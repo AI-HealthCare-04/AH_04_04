@@ -21,7 +21,7 @@ class HealthProfileRepository:
         return await self.session.scalar(stmt)
 
     async def get_onboarding_completed_on(self, user_id: int) -> date | None:
-        """온보딩을 마친 날(KST). 활동 일수 반영 시작일(8일차) 판정의 기준점이다(#422).
+        """온보딩을 마친 날(KST). 활동 일수 반영 시작일(8일차) 판정의 기준점이다.
 
         가입일(`users.created_at`)이 아니라 이 날을 쓴다. User 행은 **소셜 로그인 시점에**
         `onboarding_status=pending` 으로 먼저 만들어져서, 약관 화면에서 이탈했다가 며칠 뒤

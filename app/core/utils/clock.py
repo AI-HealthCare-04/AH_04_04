@@ -20,7 +20,7 @@ def today_kst() -> date:
 
 
 def to_kst_date(value: datetime) -> date:
-    """저장된 시각을 KST 날짜로 바꾼다(#422 — 온보딩 완료일 판정).
+    """저장된 시각을 KST 날짜로 바꾼다(온보딩 완료일 판정).
 
     naive 로 돌아오는 값은 이미 KST 다(세션 tz 를 +09:00 으로 고정해 두었다). aware 면 KST 로
     변환한 뒤 날짜를 뗀다 — 드라이버·백엔드에 따라 UTC aware 로 오는 경우가 있어, 그대로

@@ -354,7 +354,7 @@ async def test_reassess_uses_latest_user_entered_profile_as_source() -> None:  #
             return source_profile
 
         async def get_onboarding_completed_on(self, user_id: int) -> date:
-            # 활동 반영 시작일(#422) 통과 — 이 테스트의 관심은 '실기록으로 센 값이 예측 입력에
+            # 활동 반영 시작일 통과 — 이 테스트의 관심은 '실기록으로 센 값이 예측 입력에
             #   실리는가'이므로, 8일차 게이트에 걸리지 않게 충분히 지난 날짜를 준다.
             return today_kst() - timedelta(days=30)
 
@@ -527,6 +527,11 @@ async def test_reassess_returns_existing_prediction_when_already_done_today() ->
     class _ProfileRepo:
         def __init__(self) -> None:
             self.create_calls = 0
+
+        async def get_onboarding_completed_on(self, user_id: int) -> date:
+            # 멱등 반환 경로도 활동 입력 출처를 답해야 해서 게이트를 다시 판정한다.
+            #   충분히 지난 날짜를 줘 이 테스트의 관심(행이 늘지 않는가)과 분리한다.
+            return today_kst() - timedelta(days=30)
 
         async def get_latest_profile(self, user_id: int) -> HealthProfile:
             return HealthProfile(

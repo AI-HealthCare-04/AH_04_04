@@ -1,12 +1,17 @@
-"""Separate the auto (nightly) prediction from the user's manual reassessment (#422).
+"""Separate the auto (nightly) prediction from the user's manual reassessment.
 
 자정 자동 예측을 켜면 하루 1회 정책(#388)과 정면으로 부딪힌다. 자동 예측이 `is_reassessment`
 하나만 보고 저장되면 **그날의 1회를 자동이 소진**해, 사용자가 내 정보를 고치고 재평가를 눌러도
 `get_today_reassessment` 가 자동 예측을 그대로 돌려준다 — 수정이 다음 날까지 반영되지 않는다.
 
 그래서 카운터를 나눈다. `is_auto` 로 트리거 주체를 구분해 **자동 1회 + 수동 1회**를 각각
-보장한다. `is_reassessment` 의 의미(활동 일수를 실기록에서 센 예측인가)는 그대로 두고,
-'누가 시켰나'만 새 컬럼이 답한다 — 자동 예측도 실기록을 세므로 둘 다 참인 행이 정상이다.
+보장한다. `is_reassessment` 는 '재평가 경로로 만들어진 예측인가'(온보딩 최초 예측이 아닌가)를
+뜻하고, '누가 시켰나'만 새 컬럼이 답한다 — 자동도 재평가 경로라 둘 다 참인 행이 정상이다.
+
+⚠️ `is_reassessment` 는 **활동 일수를 실기록에서 셌는지를 뜻하지 않는다.** 8일차 게이트
+(`ACTIVITY_REFLECTION_START_DAY`) 때문에 온보딩 완료 7일 이내의 재평가는 실기록 대신 자가응답
+값으로 계산되지만, 하루 1회 정책의 멱등 판정에 필요하므로 그 행도 `is_reassessment=1` 이다.
+실제 활동 입력 출처는 이 컬럼이 아니라 예측 시점의 게이트 통과 여부로 판정한다.
 
 | is_reassessment | is_auto | 뜻                                   |
 |---|---|---|
@@ -14,7 +19,7 @@
 | 1 | 0 | 사용자가 누른 재평가                      |
 | 1 | 1 | 자정 배치가 만든 자동 예측                 |
 
-⚠️ 순서(#410 · #422 에서 이어지는 규칙): MySQL 은 DDL 이 암시적 커밋이라, 컬럼을 추가한 뒤
+⚠️ 순서(#410 에서 이어지는 규칙): MySQL 은 DDL 이 암시적 커밋이라, 컬럼을 추가한 뒤
 실패하면 revision 은 이전에 머문 채 컬럼만 남아 재실행이 duplicate column 으로 막힌다.
 그래서 컬럼 추가를 **조건부**로 둔다. 백필은 없다 — 이 마이그레이션 이전의 예측은 전부
 사람이 만든 것이라 server_default 0 이 곧 정답이다.

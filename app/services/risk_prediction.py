@@ -38,7 +38,7 @@ from app.ml.predictor import (
     load_cohort_version,
     percentile_low,
 )
-from app.models.enums import ModelVariant, OnboardingStatus, RiskLevel, TermsType
+from app.models.enums import ActivityInputSource, ModelVariant, OnboardingStatus, RiskLevel, TermsType
 from app.models.health import HealthProfile
 from app.models.predictions import PredictionFeedback, RiskPrediction
 from app.models.users import User
@@ -54,7 +54,7 @@ DENSITY_PLOT_MAX_PROBABILITY = 0.5
 #   0 같은 다른 값이 저장되면 표에 없는 키라 또래 분포가 실패한다(#408 리뷰 P1).
 COHORT_SEX_CODES = frozenset({1, 2})
 
-# 활동 일수를 실기록으로 세기 시작하는 날(#422). 온보딩 완료일이 1일차이므로 8일차 = 완료 후 7일.
+# 활동 일수를 실기록으로 세기 시작하는 날. 온보딩 완료일이 1일차이므로 8일차 = 완료 후 7일.
 #   그 전에는 활동 창(7일)을 채울 기록이 없어, 실기록으로 세면 자가응답보다 무조건 낮게 나온다.
 ACTIVITY_REFLECTION_START_DAY = 8
 
@@ -105,7 +105,12 @@ class RiskPredictionService:
         existing = await self.prediction_repo.get_today_reassessment(user.user_id)
         if existing is not None:
             # recalculated=False: 재계산하지 않으므로 기여도는 빈 목록으로 나간다. 앱은 기존 로컬 캐시를 유지한다.
-            return self._to_reassess_response(existing, recalculated=False)
+            #   활동 출처는 게이트가 날짜 기준이라 오늘 만들어진 그 예측과 같은 결과가 나온다.
+            return self._to_reassess_response(
+                existing,
+                recalculated=False,
+                activity_input_source=await self._activity_input_source(user),
+            )
         # 프로필 행을 새로 만들지 않는다(#408 A+3). 재평가에서 실제로 달라지는 값은 활동 일수뿐인데,
         #   그 둘을 담으려고 생년월일·성별·신체계측까지 매번 복제하고 있었다. 활동 일수는 예측 입력으로만
         #   쓰고, 예측 행은 사용자가 직접 입력한 프로필을 그대로 가리킨다.
@@ -116,10 +121,18 @@ class RiskPredictionService:
             activity_override=activity_override,
             is_reassessment=True,
         )
-        return self._to_reassess_response(prediction, contributions=contributions)
+        # 8일차 게이트가 걸리면 override 가 None 이고 예측은 프로필의 자가응답 값으로 계산된다.
+        #   그때 service_log 라고 답하면 응답이 사실과 달라진다(#408 A+3 이후 이 필드의 유일한 출처).
+        return self._to_reassess_response(
+            prediction,
+            contributions=contributions,
+            activity_input_source=(
+                ActivityInputSource.SERVICE_LOG if activity_override is not None else ActivityInputSource.SELF_REPORT
+            ),
+        )
 
     async def create_auto_prediction(self, user: User) -> RiskPrediction | None:
-        """자정 배치가 사용자 1명의 오늘 점수를 만든다(#422). 이미 있으면 만들지 않고 None.
+        """자정 배치가 사용자 1명의 오늘 점수를 만든다. 이미 있으면 만들지 않고 None.
 
         수동 재평가와 **카운터가 분리**돼 있어(`is_auto`) 이 호출이 사용자의 그날 재평가 권리를
         소진하지 않는다. 반대로 사용자가 먼저 재평가했더라도 자동 예측은 따로 남는다 — 추이는
@@ -421,10 +434,12 @@ class RiskPredictionService:
         *,
         recalculated: bool = True,
         contributions: list[FeatureContributionResponse] | None = None,
+        activity_input_source: ActivityInputSource = ActivityInputSource.SERVICE_LOG,
     ) -> RiskPredictionReassessResponse:
         # 기여도는 recalculated=True(새로 계산)일 때만 전달된다. recalculated=False 는 None → 빈 목록.
         care_stage = self._care_stage_from_risk_level(prediction.internal_risk_level)
         return RiskPredictionReassessResponse(
+            activity_input_source=activity_input_source,
             recalculated=recalculated,
             next_available_at=next_reassess_available_at(),
             profile_id=prediction.profile_id,
@@ -441,7 +456,7 @@ class RiskPredictionService:
     async def _derive_activity_days(self, user: User, activity_window_days: int) -> tuple[int, int] | None:
         """최근 N일 실제 기록에서 걷기·근력 일수를 센다(#408 A+3 — 프로필 행 없이 예측 입력만 만든다).
 
-        **온보딩 완료 8일차부터만 센다**(#422). 그 전에는 None 을 돌려 온보딩 자가응답 값을 그대로
+        **온보딩 완료 8일차부터만 센다**. 그 전에는 None 을 돌려 온보딩 자가응답 값을 그대로
         쓴다 — 창(7일)을 채울 기록이 아직 없는데 실기록으로 세면 "걷기 주 5일"이라 답한 사용자가
         가입 이튿날 재평가를 눌렀을 때 `walk_days=0` 이 되어 점수가 급락한다. 사용자는 아무것도
         하지 않았는데 떨어진 그래프를 보게 되고, 원인도 활동 부족이 아니다.
@@ -461,11 +476,21 @@ class RiskPredictionService:
         return derive_activity_day_counts(activity_logs, activity_window_days=activity_window_days)
 
     async def _activity_window_is_ready(self, user: User) -> bool:
-        """실기록 반영을 시작해도 되는 날인가(#422). 온보딩 완료일이 없으면 아직 아니다."""
+        """실기록 반영을 시작해도 되는 날인가. 온보딩 완료일이 없으면 아직 아니다."""
         completed_on = await self.profile_repo.get_onboarding_completed_on(user.user_id)
         if completed_on is None:
             return False
         return (today_kst() - completed_on).days >= ACTIVITY_REFLECTION_START_DAY - 1
+
+    async def _activity_input_source(self, user: User) -> ActivityInputSource:
+        """오늘 이 사용자의 예측이 어떤 활동 값을 쓰는가 — 8일차 게이트와 같은 판정.
+
+        게이트가 날짜 기준이라 같은 날 안에서는 결과가 바뀌지 않는다. 그래서 멱등 반환(오늘 이미
+        재평가함) 경로에서도 그 예측이 저장될 때와 같은 값을 다시 계산해 답할 수 있다.
+        """
+        if await self._activity_window_is_ready(user):
+            return ActivityInputSource.SERVICE_LOG
+        return ActivityInputSource.SELF_REPORT
 
     @staticmethod
     def _to_history_item(

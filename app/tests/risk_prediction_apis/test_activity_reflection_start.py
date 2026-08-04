@@ -1,5 +1,5 @@
 # =====================================================================================
-# #422 활동 일수 반영 시작일(온보딩 8일차) — 순수 로직 검증.
+# 활동 일수 반영 시작일(온보딩 8일차) — 순수 로직 검증.
 #
 # 왜 게이트가 필요한가: 활동 창이 7일인데 온보딩 직후에는 그 창을 채울 기록이 없다. 실기록으로
 #   세면 "걷기 주 5일"이라 답한 사용자가 이튿날 재평가를 눌렀을 때 walk_days=0 이 되어 점수가
@@ -15,7 +15,7 @@ from typing import cast
 import pytest
 
 from app.core.utils.clock import today_kst
-from app.models.enums import ActivityType
+from app.models.enums import ActivityInputSource, ActivityType
 from app.models.users import User
 from app.services.risk_prediction import ACTIVITY_REFLECTION_START_DAY, RiskPredictionService
 
@@ -86,3 +86,21 @@ async def test_no_logs_after_day_eight_counts_zero() -> None:
     """8일차 이후 기록이 없으면 0 이다 — 게이트가 푼 뒤에는 실기록이 그대로 반영된다(A안)."""
     eighth_day = today_kst() - timedelta(days=ACTIVITY_REFLECTION_START_DAY - 1)
     assert await _service(eighth_day, [])._derive_activity_days(_USER, 7) == (0, 0)
+
+
+@pytest.mark.asyncio
+async def test_activity_input_source_follows_the_gate() -> None:
+    """응답의 activity_input_source 가 게이트와 같이 움직인다.
+
+    게이트가 걸린 날은 자가응답 값으로 계산되는데도 응답이 service_log 로 나가면, 재평가 응답만
+    보고는 그 점수가 실기록에서 나온 줄 알게 된다. 8일차 게이트가 생기기 전에는 재평가가 언제나
+    실기록을 세서 DTO 기본값이 늘 맞았지만, 이제는 아니다.
+    """
+    seventh_day = today_kst() - timedelta(days=ACTIVITY_REFLECTION_START_DAY - 2)
+    assert await _service(seventh_day)._activity_input_source(_USER) == ActivityInputSource.SELF_REPORT
+
+    eighth_day = today_kst() - timedelta(days=ACTIVITY_REFLECTION_START_DAY - 1)
+    assert await _service(eighth_day)._activity_input_source(_USER) == ActivityInputSource.SERVICE_LOG
+
+    # 완료일을 모르면 아직 세지 않으므로 자가응답이다(_derive_activity_days 와 같은 판정).
+    assert await _service(None)._activity_input_source(_USER) == ActivityInputSource.SELF_REPORT
