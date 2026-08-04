@@ -39,6 +39,17 @@ internal fun stsChangeLine(previousSec: Double?, latestSec: Double?): String? {
     }
 }
 
+/**
+ * 가장 최근 측정의 5STS(초). 측정 이력이 없으면 null.
+ *
+ * §3.4 안전망 오버레이(#406)의 발화 입력이다. **정렬 가정을 두지 않으려고** ISO 문자열 최댓값으로
+ * 고른다(사전순 = 시간순) — 서버는 최신순으로 주지만, 오버레이는 "가장 최근 측정이 12초 이상인가"라는
+ * 판정이라 순서가 뒤집히면 옛 측정으로 카드가 뜨거나 안 뜬다. 같은 이유로 점수 기준일도 같은 방식으로
+ * 고른다(RecordViewModel 의 measuredAtIso).
+ */
+internal fun latestStsSeconds(items: List<StsAssessmentItem>): Double? =
+    items.maxByOrNull { it.createdAt }?.chairStand5TimeSec
+
 /** 최근 측정 행(최신순 최대 [max]): "07.31 · 10.8초". 날짜는 점수 추이와 같은 MM.DD 포맷. */
 internal fun stsRecentLines(items: List<StsAssessmentItem>, max: Int = 5): List<String> =
     items.take(max).map { "${trendLabel(it.createdAt)} · ${stsSecondsLabel(it.chairStand5TimeSec)}" }

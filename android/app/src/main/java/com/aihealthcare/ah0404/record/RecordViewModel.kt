@@ -197,6 +197,8 @@ class RecordViewModel(
             val simCall = async { safeCall { api.getScoreSimulation() } }
             // 또래 분포(#193): 실패(미탑재·65세 미만·구버전)해도 차트만 미표시 — 다른 섹션과 독립.
             val cohortCall = async { safeCall { api.getCohortDistribution() } }
+            // 5STS 이력(#353) — §3.4 안전망 오버레이(#406)의 발화 입력. 실패·미측정이면 카드만 미표시.
+            val stsCall = async { safeCall { api.getStsHistory().assessments } }
             val historyResult = historyCall.await()
             val lineResult = lineCall.await()
             val walkingResult = walkingCall.await()
@@ -205,6 +207,7 @@ class RecordViewModel(
             val latestResult = latestCall.await()
             val simResult = simCall.await()
             val cohortResult = cohortCall.await()
+            val stsResult = stsCall.await()
 
             // 이 refresh 이후 더 최신 refresh 가 시작됐다면, 낡은 결과는 버린다(commit 안 함).
             if (gen != generation) return@coroutineScope
@@ -232,8 +235,8 @@ class RecordViewModel(
             simResult.onFailure { Log.w(TAG, "점수 시뮬레이션 조회 실패: ${it.message}") }
             latestResult.onFailure { Log.w(TAG, "근육 건강 점수 조회 실패: ${it.message}") }
             cohortResult.onFailure { Log.w(TAG, "또래 분포 조회 실패(차트 미표시): ${it.message}") }
+            stsResult.onFailure { Log.w(TAG, "5STS 이력 조회 실패(안전망 카드 미표시): ${it.message}") }
             // 근육 건강 정보 UI 상태(§3·§4)는 실데이터로 구성한다 — 앱은 점수를 계산하지 않는다(서버 값 표시만).
-            //   5STS(초)는 아직 노출 API가 없어(백엔드 필요) stsSeconds=null → §3.4 안전망 카드는 미표시.
             muscleScore = MuscleScoreUi(
                 age = predictionPrefill?.age,
                 score = latestResult.getOrNull()?.muscleScore,
@@ -244,8 +247,12 @@ class RecordViewModel(
                 trend = buildScoreTrend(history),
                 walkSim = simResult.getOrNull()?.walk?.mapNotNull { p -> p.score?.let { ScoreSimPoint(p.days, it) } } ?: emptyList(),
                 muscSim = simResult.getOrNull()?.musc?.mapNotNull { p -> p.score?.let { ScoreSimPoint(p.days, it) } } ?: emptyList(),
-                stsSeconds = null,
-                bmi = null,
+                // §3.4 안전망 오버레이(#406) 입력. 둘 중 하나라도 없으면 카드는 뜨지 않거나(5STS 미측정)
+                //   기본 티어로만 뜬다(BMI 미상) — 모르는 값을 메우지 않는다.
+                //   ⚠️ BMI 는 서버 원본(소수)에서 계산한다. predictionPrefill 은 정수로 반올림된 값이라
+                //     25 경계에서 강조 티어가 뒤집힐 수 있다.
+                stsSeconds = stsResult.getOrNull()?.let { latestStsSeconds(it) },
+                bmi = prefillResult.getOrNull()?.let { bmiOf(it.heightCm, it.weightKg) },
                 cohort = cohortResult.getOrNull(),
                 // 허리둘레 미입력이면 점수·또래 비교가 '허리 제외' 모델로 계산된 것이라 그 사실을 안내한다.
                 waistCm = predictionPrefill?.waistCm,
