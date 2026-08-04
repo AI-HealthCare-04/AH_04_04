@@ -14,10 +14,10 @@ import com.aihealthcare.ah0404.network.RiskLatestResponse
 import com.aihealthcare.ah0404.network.PredictionFeedbackRequest
 import com.aihealthcare.ah0404.network.RiskReassessRequest
 import com.aihealthcare.ah0404.network.RiskReassessResponse
+import com.aihealthcare.ah0404.record.ScoreRefreshState
 import com.aihealthcare.ah0404.network.ScoreSimulationResponse
 import com.aihealthcare.ah0404.network.StampsResponse
 import com.aihealthcare.ah0404.network.WalkingDailyResponse
-import com.aihealthcare.ah0404.profile.HealthInfoViewModel.ScoreRefreshState
 import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers

@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aihealthcare.ah0404.settings.TopBar
 import com.aihealthcare.ah0404.ui.components.AigoCard
+import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
 import com.aihealthcare.ah0404.ui.components.AigoSecondaryButton
 import com.aihealthcare.ah0404.ui.components.AigoSegmentedSelector
 import com.aihealthcare.ah0404.ui.components.MEDICAL_DISCLAIMER_DEFAULT
@@ -207,6 +208,9 @@ fun RecordScreen(
                 } else {
                     // ①~④ 점수 → 변화 → 또래 → 5STS (+ 빈 상태면 생활습관 카드)
                     item { MuscleDashboardCards(ui, onGoToMissions) }
+                    // 사용자가 직접 점수를 다시 계산할 수 있게 한다(#388). 지금까지 트리거가
+                    //   '내 정보 저장' 하나뿐이라, 챌린지를 해도 점수가 그대로인 이유를 알 수 없었다.
+                    item { ScoreRefreshCard(state = vm.scoreRefresh, onRefresh = vm::refreshScore) }
                     // 점수가 없으면 위 섹션의 연령·예측 상태별 준비 카드 하나만 보여준다. 개선 섹션의
                     // ImprovementPendingCard까지 이어 붙이면 같은 안내와 미션 버튼이 중복된다(리뷰 #386).
                     // 피드백·"이 점수" 링크도 실제 점수가 있을 때만 의미가 있다.
@@ -294,4 +298,33 @@ private fun EmptyText(text: String) {
         style = MaterialTheme.typography.bodyLarge,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+/**
+ * '점수 다시 계산하기'(#388). 점수 카드 바로 아래에 둔다 — 사용자가 "왜 안 바뀌지"를 느끼는 자리다.
+ *
+ * 하루 1회 제한(#396)에 걸리면 숫자가 그대로라 고장으로 읽히므로, 왜 안 바뀌었는지와 언제 다시
+ * 되는지를 함께 말한다. 재시도 버튼은 네트워크·서버 실패에서만 의미가 있다.
+ */
+@Composable
+private fun ScoreRefreshCard(state: ScoreRefreshState?, onRefresh: () -> Unit) {
+    AigoCard {
+        AigoPrimaryButton(
+            text = if (state == ScoreRefreshState.IN_PROGRESS) "다시 계산 중…" else "점수 다시 계산하기",
+            onClick = onRefresh,
+            enabled = state != ScoreRefreshState.IN_PROGRESS,
+        )
+        scoreRefreshStatusText(state)?.let { status ->
+            Spacer(Modifier.height(Dimens.Space8))
+            Text(
+                status,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (state == ScoreRefreshState.FAILED) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        }
+    }
 }

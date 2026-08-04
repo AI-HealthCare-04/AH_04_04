@@ -79,6 +79,11 @@ data class RiskReassessResponse(
     @SerialName("prediction_id") val predictionId: Int = 0,
     @SerialName("muscle_score") val muscleScore: Int? = null,
     @SerialName("score_band") val scoreBand: String? = null,
+    // 하루 1회 정책(#396). false = 오늘 이미 계산해 **기존 예측을 그대로** 돌려준 것 —
+    //   점수가 있다고 새로 계산된 게 아니다(#388).
+    @SerialName("recalculated") val recalculated: Boolean = true,
+    // 다음 재평가 가능 시각(다음 KST 자정). 구버전 서버 호환을 위해 기본 null.
+    @SerialName("next_available_at") val nextAvailableAt: String? = null,
 )
 
 /** what-if 점수 시뮬레이션(#기록탭 §4). score=null 인 지점은 점수 미제공. */
