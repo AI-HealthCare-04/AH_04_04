@@ -14,18 +14,17 @@ from fastapi.responses import ORJSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.apis.v1 import v1_routers
-from app.core.scheduler import catch_up_on_startup, shutdown_scheduler, start_scheduler
+from app.core.scheduler import schedule_startup_catch_up, shutdown_scheduler
 
 
 # -------------------------------------------------------------------------------------
-# 자정 자동 예측(#422)의 수명주기. 스케줄러를 켜고, **기동 직후 오늘 치를 한 번 메운다** —
-# 배포로 컨테이너가 자정에 내려가 있었으면 그날 실행이 통째로 빠지는데, 인프로세스 타이머는
-# 놓친 실행을 스스로 복구하지 못한다. 보정 작업은 멱등이라 매 기동마다 돌아도 안전하다.
+# 자정 자동 예측(#422)의 수명주기. 스케줄러를 켜고 기동 보정 작업을 **등록만** 한다 —
+# 여기서 await 하면 배치가 끝날 때까지 서버가 준비 상태가 되지 않아, 배포의 /health 확인
+# (약 60초)이 타임아웃 나면 재시작 루프가 된다(리뷰 P2). 보정은 스케줄러가 백그라운드로 돌린다.
 # -------------------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
-    start_scheduler()
-    await catch_up_on_startup()
+    schedule_startup_catch_up()
     yield
     shutdown_scheduler()
 

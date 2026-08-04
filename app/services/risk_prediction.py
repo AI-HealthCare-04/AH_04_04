@@ -126,7 +126,14 @@ class RiskPredictionService:
         하루 한 점을 자동으로 보장하고, 수동 재평가는 그날의 최신 상태를 반영한다.
 
         활동 일수 규칙은 수동 재평가와 같다 — 온보딩 8일차 전이면 자가응답 값을 그대로 쓴다.
+
+        ⚠️ **잠금을 먼저 잡는다**(리뷰 P1). 확인 후 저장은 그 자체로 check-then-insert 경쟁이고
+        `(user_id, 날짜, is_auto)` 유일성 제약도 없다. 단일 워커여도 겹친다 — 기동 보정과 00:05
+        cron 은 서로 다른 작업이라 `max_instances` 가 막지 못하고, 00:05 직전에 기동하면 둘이
+        동시에 돈다. 수동 재평가와 **같은 users 행 잠금**을 써서 자동끼리는 물론 자동과 수동
+        사이의 경합까지 한 줄에 세운다(커밋까지 유지된다).
         """
+        await self.prediction_repo.lock_user_for_reassess(user.user_id)
         if await self.prediction_repo.get_today_auto_prediction(user.user_id) is not None:
             return None
         profile = await self.profile_repo.get_latest_profile(user.user_id)

@@ -11,20 +11,25 @@
 #   스스로 복구하지 않는다. 그래서 **기동 직후에도 같은 작업을 한 번 돌린다.** 작업 자체가
 #   "오늘 자동 예측이 없는 사용자"만 고르는 멱등 연산이라 중복 실행이 안전하다.
 #
-# 워커가 여러 개면 같은 작업이 동시에 뜬다 — 지금은 uvicorn 단일 워커라 문제되지 않고,
-#   설령 겹쳐도 대상 조회 + create_auto_prediction 의 재확인으로 하루 한 점은 유지된다.
+# ⚠️ 중복 실행은 잠금으로 막는다(리뷰 P1) — 단일 워커여도 겹친다. 기동 보정과 00:05 cron 은
+#   서로 다른 작업이라 max_instances 가 막지 못하고, 00:05 직전에 기동하면 둘이 동시에 돈다.
+#   대상 조회 + 재확인만으로는 check-then-insert 경쟁이 남으므로, 사용자 단위 FOR UPDATE 잠금을
+#   커밋까지 유지해 하루 한 점을 DB 수준에서 보장한다(create_auto_prediction).
 # =====================================================================================
 import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler  # type: ignore[import-untyped]
 from apscheduler.triggers.cron import CronTrigger  # type: ignore[import-untyped]
+from apscheduler.triggers.date import DateTrigger  # type: ignore[import-untyped]
 
 from app.core import config
+from app.core.utils.clock import now_kst
 from app.services.auto_prediction import run_daily_auto_predictions
 
 logger = logging.getLogger(__name__)
 
 _JOB_ID = "daily_auto_predictions"
+_CATCH_UP_JOB_ID = "daily_auto_predictions_catch_up"
 
 _scheduler: AsyncIOScheduler | None = None
 
@@ -63,19 +68,35 @@ def shutdown_scheduler() -> None:
     logger.info("자동 예측 스케줄러 종료")
 
 
-async def catch_up_on_startup() -> None:
-    """기동 직후 오늘 치를 메운다 — 자정에 앱이 내려가 있었던 경우의 유일한 복구 경로다.
+def schedule_startup_catch_up() -> None:
+    """기동 직후 오늘 치를 메우는 작업을 **스케줄러에 맡긴다**(리뷰 P2).
 
-    실패해도 앱 기동을 막지 않는다. 이 작업이 안 돌아도 서비스는 정상 동작하고, 다음 자정이나
-    다음 기동에서 다시 시도된다.
+    자정에 앱이 내려가 있었던 경우의 유일한 복구 경로지만, lifespan 에서 `await` 하면 배치가
+    끝날 때까지 서버가 준비 상태가 되지 않는다. 배포의 `/health` 확인은 `--retry 12
+    --retry-delay 5` 로 **약 60초**만 기다리므로, 사용자가 늘거나 DB 가 느려지면 헬스체크
+    타임아웃 → 재시작 루프가 된다. 스케줄러에 즉시 실행 작업으로 넘겨 기동 경로에서 뗀다.
+
+    `_JOB_ID` 와 다른 id 를 쓰되 같은 함수를 부른다 — 작업 자체가 멱등이고, 사용자 단위 잠금이
+    자정 작업과의 중복 저장을 막는다(리뷰 P1).
     """
-    try:
-        await _run_and_log()
-    except Exception:  # noqa: BLE001 - 기동을 막지 않는 것이 이 호출의 목적이다
-        logger.exception("기동 시 자동 예측 보정 실패 — 다음 실행에서 재시도한다")
+    scheduler = start_scheduler()
+    scheduler.add_job(
+        _run_and_log,
+        trigger=DateTrigger(run_date=now_kst()),
+        id=_CATCH_UP_JOB_ID,
+        # 이전 기동의 보정이 아직 돌고 있으면 새로 넣지 않는다(재시작이 잦을 때의 중복 방지).
+        replace_existing=True,
+        misfire_grace_time=None,
+    )
+    logger.info("기동 보정 작업 등록 — 즉시 실행")
 
 
 async def _run_and_log() -> None:
-    summary = await run_daily_auto_predictions()
+    """작업 본체. 예외가 스케줄러 밖으로 나가 로그만 남기고 사라지지 않게 여기서 잡는다."""
+    try:
+        summary = await run_daily_auto_predictions()
+    except Exception:  # noqa: BLE001 - 한 번의 실패가 다음 실행을 막지 않아야 한다
+        logger.exception("자동 예측 배치 실패 — 다음 실행에서 재시도한다")
+        return
     if summary.failed:
         logger.warning("자동 예측에 실패한 사용자가 있다 — 실패 %d명", summary.failed)
