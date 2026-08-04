@@ -30,7 +30,6 @@ class ProfileViewModelTest {
         birthDate = "1958-03-01",
         sex = "male",
         currentPoints = points,
-        activityLevel = "normal",
     )
 
     private class FakeUserApi(

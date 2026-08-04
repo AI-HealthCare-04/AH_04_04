@@ -1,6 +1,5 @@
 package com.aihealthcare.ah0404.record
 
-import com.aihealthcare.ah0404.network.ActivityProfile
 import com.aihealthcare.ah0404.network.AgreementsRequest
 import com.aihealthcare.ah0404.network.HealthProfileRequest
 import com.aihealthcare.ah0404.network.OnboardingApi
@@ -70,11 +69,7 @@ class StsTrendViewModelTest {
         override suspend fun createPhysicalAssessment(body: PhysicalAssessmentRequest): PhysicalAssessmentResponse {
             requests += body
             if (fail) throw RuntimeException("network down")
-            return PhysicalAssessmentResponse(
-                physicalAssessmentId = 1,
-                usedForLevelSetting = false,
-                activityProfile = ActivityProfile(currentLevel = "easy", levelReason = "sts_norm"),
-            )
+            return PhysicalAssessmentResponse(physicalAssessmentId = 1)
         }
         override suspend fun guestLogin() = TODO()
         override suspend fun loginGoogle(body: SocialLoginRequest) = TODO()

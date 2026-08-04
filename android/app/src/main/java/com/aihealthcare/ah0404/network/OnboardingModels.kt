@@ -95,7 +95,6 @@ data class SkipResponse(
     @SerialName("session_id") val sessionId: Int,
     val status: String,
     @SerialName("onboarding_status") val onboardingStatus: String,
-    @SerialName("activity_profile") val activityProfile: ActivityProfile? = null,
 )
 
 // ── 5) 건강 프로필 ────────────────────────────────────────────────────────
@@ -150,17 +149,9 @@ data class PhysicalAssessmentRequest(
 )
 
 @Serializable
-data class ActivityProfile(
-    @SerialName("current_level") val currentLevel: String,
-    // physical-assessment 응답엔 있으나 home.activity_profile 엔 없음(홈은 current_level 만) → nullable.
-    @SerialName("level_reason") val levelReason: String? = null,
-)
-
-@Serializable
 data class PhysicalAssessmentResponse(
+    // 난이도 폐기(#428): 서버가 난이도를 산출·반환하지 않는다 — id 만 온다(v1.3 §19).
     @SerialName("physical_assessment_id") val physicalAssessmentId: Int,
-    @SerialName("used_for_level_setting") val usedForLevelSetting: Boolean? = null,
-    @SerialName("activity_profile") val activityProfile: ActivityProfile,
 )
 
 // ── 7) 위험도 예측 → completed ────────────────────────────────────────────
