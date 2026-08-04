@@ -27,6 +27,19 @@ class RiskComparisonStatus(StrEnum):
     MODEL_CHANGED = "model_changed"
 
 
+class BaselineChangeReason(StrEnum):
+    """비교 기준이 바뀐 **이유**(#389). `comparison_status=model_changed` 만으로는 앱이
+    "여기서 기준이 달라졌다"까지만 말할 수 있고 왜인지는 못 말한다 — 사용자는 그걸 고장으로 읽는다.
+
+    모델 버전·변형 자체는 비노출 계약이라(`test_risk_history_nondisclosure`) 내부 식별자 대신
+    **사용자가 이해할 수 있는 사유**로 추상화해 내려준다. 단정할 수 없는 전환은 None 이다.
+    """
+
+    WAIST_ADDED = "waist_added"  # 허리둘레가 들어와 허리 포함 모델로 바뀜
+    WAIST_REMOVED = "waist_removed"  # 허리둘레가 빠져 허리 제외 모델로 바뀜
+    COHORT_UPDATED = "cohort_updated"  # 또래 비교표(코호트) 버전 갱신
+
+
 class FeatureContributionResponse(BaseModel):
     """근육 점수 SHAP 기여(#406). feature=musc_days|walk_days|waist_cm(바꿀 수 있는 3개만).
 
@@ -119,6 +132,14 @@ class RiskPredictionHistoryItem(BaseModel):
     cohort_version: str | None = None
     change_percentage_points: float | None = Field(ge=-100, le=100)
     comparison_status: RiskComparisonStatus
+    # 기준이 바뀐 이유(#389). None = 직전이 없거나(첫 예측) 사유를 단정할 수 없는 전환.
+    #   내부 식별자가 아니라 사용자가 이해할 수 있는 사유로만 내려준다.
+    baseline_change_reason: BaselineChangeReason | None = None
+    # 직전 예측과 **다른 신체 정보 스냅샷**으로 계산됐는가(#389 C). 점수가 내려간 이유를
+    #   활동 부족으로 단정하지 않으려면 앱이 이걸 알아야 한다 — 허리둘레처럼 모델을 바꾸지 않는
+    #   변경(체중·키)은 경계도 사유도 만들지 않지만 점수는 달라진다.
+    #   재평가는 프로필을 복제하지 않으므로(#408 A+3) 값이 달라졌다면 사용자가 내 정보를 고친 것이다.
+    profile_changed: bool = False
     # 기존 Android 계약 호환용. 연속형 화면 전환 후 제거 또는 내부 한정 예정이다.
     care_stage: CareStage
 

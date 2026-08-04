@@ -12,6 +12,7 @@ from app.core.terms_catalog import CATALOG_BY_TYPE
 from app.core.utils.clock import today_kst
 from app.dtos.dashboard import ScoreSimPoint, ScoreSimulationResponse
 from app.dtos.risk_prediction import (
+    BaselineChangeReason,
     CareStage,
     CohortDistributionResponse,
     FeatureContributionResponse,
@@ -37,7 +38,7 @@ from app.ml.predictor import (
     load_cohort_version,
     percentile_low,
 )
-from app.models.enums import OnboardingStatus, RiskLevel, TermsType
+from app.models.enums import ModelVariant, OnboardingStatus, RiskLevel, TermsType
 from app.models.health import HealthProfile
 from app.models.predictions import PredictionFeedback, RiskPrediction
 from app.models.users import User
@@ -426,8 +427,53 @@ class RiskPredictionService:
             cohort_version=getattr(prediction, "score_cohort_version", None),
             change_percentage_points=change_percentage_points,
             comparison_status=comparison_status,
+            baseline_change_reason=RiskPredictionService._baseline_change_reason(prediction, previous),
+            # 재평가는 프로필을 복제하지 않으므로(#408 A+3) profile_id 가 달라졌다는 것은
+            #   사용자가 '내 정보'를 저장해 새 스냅샷이 생겼다는 뜻이다.
+            profile_changed=RiskPredictionService._profile_changed(prediction, previous),
             care_stage=RiskPredictionService._care_stage_from_risk_level(prediction.internal_risk_level),
         )
+
+    @staticmethod
+    def _baseline_change_reason(
+        prediction: RiskPrediction,
+        previous: RiskPrediction | None,
+    ) -> BaselineChangeReason | None:
+        """비교 기준이 바뀐 이유(#389). 단정할 수 없으면 None — 틀린 설명보다 침묵이 낫다.
+
+        모델 변형 전환이 먼저다. 허리둘레 유무가 번들을 가르므로(app/ml/predictor.py) 그 전환이
+        곧 사용자가 체감하는 '허리둘레를 넣었다/뺐다'이고, comparison_status=model_changed 의
+        실제 원인이기도 하다. 변형이 같을 때만 코호트표 갱신을 본다.
+        """
+        if previous is None:
+            return None
+        if previous.model_variant != prediction.model_variant:
+            if prediction.model_variant == ModelVariant.WITH_WAIST:
+                return BaselineChangeReason.WAIST_ADDED
+            if previous.model_variant == ModelVariant.WITH_WAIST:
+                return BaselineChangeReason.WAIST_REMOVED
+            # 스캐폴드 등 그 밖의 전환은 사용자에게 설명할 사유가 없다.
+            return None
+        # 한쪽이라도 버전을 모르면(컬럼 도입 이전 행) 갱신됐다고 말하지 않는다.
+        previous_cohort = getattr(previous, "score_cohort_version", None)
+        current_cohort = getattr(prediction, "score_cohort_version", None)
+        if previous_cohort is not None and current_cohort is not None and previous_cohort != current_cohort:
+            return BaselineChangeReason.COHORT_UPDATED
+        return None
+
+    @staticmethod
+    def _profile_changed(prediction: RiskPrediction, previous: RiskPrediction | None) -> bool:
+        """직전 예측과 다른 신체 정보 스냅샷으로 계산됐는가(#389 C).
+
+        모를 때는 False 다 — '신체 정보가 바뀌어서'라고 잘못 말하느니 기존 중립 문구를 쓰는 편이 낫다.
+        """
+        if previous is None:
+            return False
+        previous_profile = getattr(previous, "profile_id", None)
+        current_profile = getattr(prediction, "profile_id", None)
+        if previous_profile is None or current_profile is None:
+            return False
+        return previous_profile != current_profile
 
     @staticmethod
     def _public_risk_score(prediction: RiskPrediction) -> float:
