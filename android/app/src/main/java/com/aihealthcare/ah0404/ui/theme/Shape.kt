@@ -26,3 +26,9 @@ val HeroCardShape = RoundedCornerShape(24.dp)
 
 /** 팝업/다이얼로그용 라운드(§5). */
 val DialogShape = RoundedCornerShape(28.dp)
+
+/**
+ * 카드 안에서 고르는 선택 행용 라운드(예측·피드백 핸드오프 §6).
+ * 카드(large 16dp)보다 크고 알약(PillShape)보다 각져, 버튼이 아니라 '고르는 줄'로 읽히게 한다.
+ */
+val SelectionRowShape = RoundedCornerShape(18.dp)
