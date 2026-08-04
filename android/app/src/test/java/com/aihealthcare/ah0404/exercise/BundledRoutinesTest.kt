@@ -1,6 +1,7 @@
 package com.aihealthcare.ah0404.exercise
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -25,6 +26,14 @@ class BundledRoutinesTest {
         val byStage = BUNDLED_ROUTINES.associateBy { it.stage }
         assertEquals("warmup_common.json", byStage["warmup"]?.file)
         assertEquals("cooldown_common.json", byStage["cooldown"]?.file)
+    }
+
+    @Test
+    fun `모든 번들 루틴에 포스터가 있다`() {
+        // 포스터가 없으면 VideoArea 가 조용히 이모지 안내로 떨어져, 네 탭 중 둘만 포스터인 상태로 되돌아간다.
+        BUNDLED_ROUTINES.forEach {
+            assertNotNull("포스터 누락 — 이모지 안내로 되돌아감: ${it.stage}", exercisePosterRes(it.stage))
+        }
     }
 
     @Test
