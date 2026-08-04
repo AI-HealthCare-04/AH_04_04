@@ -178,6 +178,9 @@ data class RiskPredictionResponse(
     @SerialName("display_message") val displayMessage: String,
     val disclaimer: String? = null,
     @SerialName("onboarding_status") val onboardingStatus: String,
+    // 점수 기여도(#406) — 기여도가 실려 오는 **최초이자 유일한 공급 경로**다(이후는 재평가). 서버가 저장하지
+    //   않으므로 여기서 놓치면 다음 재계산 전까지 기록 탭 기여도 카드가 뜨지 않는다 → ContributionCache 에 저장한다.
+    val contributions: List<ContributionItemDto> = emptyList(),
 )
 
 // 또래 분포 병합 차트(#193) 데이터. GET /risk-predictions/me/cohort-distribution.

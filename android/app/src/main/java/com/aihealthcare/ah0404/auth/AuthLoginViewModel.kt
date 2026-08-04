@@ -10,6 +10,7 @@ import com.aihealthcare.ah0404.network.OnboardingApi
 import com.aihealthcare.ah0404.network.SessionStore
 import com.aihealthcare.ah0404.network.SocialLoginRequest
 import com.aihealthcare.ah0404.network.retrofit
+import com.aihealthcare.ah0404.record.SharedPrefsContributionCache
 import java.io.IOException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -93,6 +94,10 @@ class AuthLoginViewModel(application: Application) : AndroidViewModel(applicatio
     fun signOut(notice: String?, onDone: () -> Unit) {
         viewModelScope.launch {
             withTimeoutOrNull(3_000) { SocialSignInClients.signOutProviders(getApplication()) }
+            // 기여도 캐시(#406)는 건강 상태에서 파생된 값이라 기기에 남기지 않는다. 이 경로 하나가
+            //   로그아웃·회원탈퇴·탈퇴 결과 불명을 모두 지나므로 여기서 한 번만 지우면 된다.
+            //   clearAll 은 계정 구분 없이 파일째 지우므로 아래 세션 정리와의 순서에 의존하지 않는다.
+            SharedPrefsContributionCache.clearAll(getApplication())
             SessionStore.clearAuthentication(getApplication())
             if (notice != null) mutableState.value = AuthLoginUiState(message = notice)
             onDone()

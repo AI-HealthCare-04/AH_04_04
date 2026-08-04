@@ -11,6 +11,8 @@ import com.aihealthcare.ah0404.network.HealthProfileLatest
 import com.aihealthcare.ah0404.network.HealthProfilePatchRequest
 import com.aihealthcare.ah0404.network.RecordApi
 import com.aihealthcare.ah0404.network.RiskReassessRequest
+import com.aihealthcare.ah0404.record.ContributionCache
+import com.aihealthcare.ah0404.record.NoOpContributionCache
 import com.aihealthcare.ah0404.record.ScoreRefreshState
 import com.aihealthcare.ah0404.record.scoreRefreshResult
 import com.aihealthcare.ah0404.network.retrofit
@@ -34,6 +36,9 @@ import retrofit2.HttpException
 class HealthInfoViewModel(
     private val api: HealthProfileApi = retrofit.create(HealthProfileApi::class.java),
     private val recordApi: RecordApi = retrofit.create(RecordApi::class.java),
+    // 이 재평가 응답이 기여도(#406)의 공급 경로 중 하나다 — 저장해 두지 않으면 기록 탭 카드가 뜨지 않는다.
+    //   기본값 NoOp(저장 없음). 실제 저장소는 화면이 주입한다(ProfileScreen).
+    private val contributionCache: ContributionCache = NoOpContributionCache(),
 ) : ViewModel() {
 
     var loading by mutableStateOf(false); private set
@@ -159,6 +164,9 @@ class HealthInfoViewModel(
         scoreRefresh = ScoreRefreshState.IN_PROGRESS
         scoreRefresh = try {
             val result = recordApi.reassessRiskPrediction(RiskReassessRequest())
+            // 기여도(#406)는 이 응답에만 실린다 — 기록 탭은 여기 저장된 값을 읽는다.
+            //   recalculated=false 면 빈 목록이지만 save 가 무시하므로 기존 캐시는 지워지지 않는다.
+            contributionCache.save(result.predictionId, result.contributions)
             // recalculated 를 무시하면 오늘 이미 계산한 **옛 점수**를 받고도 "바로 반영됐어요"라고
             //   말하게 된다(#396 하루 1회 도입 후 생긴 어긋남).
             scoreRefreshResult(recalculated = result.recalculated, muscleScore = result.muscleScore)

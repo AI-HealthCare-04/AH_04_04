@@ -66,6 +66,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import com.aihealthcare.ah0404.onboarding.OnboardingScreen
 import com.aihealthcare.ah0404.onboarding.OnboardingViewModel
+import com.aihealthcare.ah0404.onboarding.onboardingViewModel
 import com.aihealthcare.ah0404.profile.ProfileScreen
 import com.aihealthcare.ah0404.reminder.InactivityReminder
 import com.aihealthcare.ah0404.reminder.ReminderWorker
@@ -125,7 +126,9 @@ class MainActivity : ComponentActivity() {
                 // 온보딩 VM 은 Activity 수명이라 OnboardingScreen 의 기본 viewModel() 과 같은 인스턴스다.
                 //   LOGIN_REQUIRED 에서 **미완료 계정**으로 로그인했을 때 온보딩 흐름을 이어가라고 알려주려면
                 //   여기서 같은 인스턴스를 잡아야 한다(#398).
-                val onboardingViewModel: OnboardingViewModel = viewModel()
+                //   기여도 캐시(#406) 주입도 여기서 결정된다 — 먼저 만드는 쪽이 인스턴스를 확정하므로
+                //   OnboardingScreen 의 기본값과 **같은 팩토리 헬퍼**를 쓴다.
+                val onboardingViewModel: OnboardingViewModel = onboardingViewModel()
                 var demoMode by remember { mutableStateOf(false) }
                 var sessionRevision by remember { mutableIntStateOf(0) }
                 val networkAvailable by rememberNetworkAvailable()
@@ -162,6 +165,9 @@ class MainActivity : ComponentActivity() {
                         // 완주(결과 → 홈): 게스트면 디스크 무영속, 소셜이면 토큰+완료 저장(#153).
                         onComplete = { isGuest ->
                             SessionStore.markOnboarded(context, isGuest)
+                            // 기여도 캐시(#406)는 계정 스코프라 **완주 확정 뒤**에야 저장된다 — 위 markOnboarded 가
+                            //   persistentUserId 를 세우기 전에 부르면 조용히 무시된다(게스트는 그대로 미저장).
+                            onboardingViewModel.persistScoreContributions()
                             sessionRevision++
                         },
                         // 이미 완료된 소셜 계정 로그인 → applyLogin 이 게이트를 세웠으니 라우팅만 재평가(→ 홈).

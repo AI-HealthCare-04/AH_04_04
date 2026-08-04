@@ -48,8 +48,9 @@ data class RiskLatestResponse(
     @SerialName("muscle_score") val muscleScore: Int? = null,
     @SerialName("score_band") val scoreBand: String? = null,
     @SerialName("cohort_version") val cohortVersion: String? = null,
-    // 점수 기여도(#406): 바꿀 수 있는 근력·걷기·허리만. 구버전 서버면 빈 목록(ignoreUnknownKeys).
-    val contributions: List<ContributionItemDto> = emptyList(),
+    // ⚠️ 기여도(#406)는 **여기에 없다.** 서버가 기여도를 저장하지 않기로 해(#411) 이 조회 응답은 항상
+    //   빈 목록을 준다 — 필드를 두면 "여기서 읽으면 된다"로 읽혀 카드가 영영 안 뜨는 배선이 다시 생긴다.
+    //   기여도는 새로 계산하는 응답(create·reassess)에서만 오고, 화면은 ContributionCache 에서 읽는다.
 )
 
 /**
@@ -99,6 +100,9 @@ data class RiskReassessResponse(
     @SerialName("recalculated") val recalculated: Boolean = true,
     // 다음 재평가 가능 시각(다음 KST 자정). 구버전 서버 호환을 위해 기본 null.
     @SerialName("next_available_at") val nextAvailableAt: String? = null,
+    // 점수 기여도(#406) — **recalculated=true 일 때만** 실린다. false(하루 1회 정책)면 빈 목록이며,
+    //   그 빈 목록으로 기존 캐시를 덮으면 오늘 하루 카드를 잃는다(ContributionCache.save 가 막는다).
+    val contributions: List<ContributionItemDto> = emptyList(),
 )
 
 /** what-if 점수 시뮬레이션(#기록탭 §4). score=null 인 지점은 점수 미제공. */

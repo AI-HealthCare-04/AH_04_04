@@ -43,7 +43,7 @@ import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
 import com.aihealthcare.ah0404.ui.theme.AigoOutlineVariant
 import com.aihealthcare.ah0404.ui.theme.AigoPrimary
-import com.aihealthcare.ah0404.ui.theme.AigoTertiary
+import com.aihealthcare.ah0404.ui.theme.AigoTertiaryDark
 import com.aihealthcare.ah0404.ui.theme.ChartLineGreen
 import com.aihealthcare.ah0404.ui.theme.Dimens
 import kotlin.math.abs
@@ -754,8 +754,11 @@ private fun ContributionCard(contributions: List<ContributionItemDto>) {
 @Composable
 private fun ContributionBar(row: ContributionRow, maxMag: Double) {
     // 진녹색 = 이 습관이 점수를 올리는 중, 골드 = 여기서 더 올릴 수 있음(개선 여지). 오류가 아니라 빨강은 안 쓴다.
-    //   두 색·트랙 모두 테마 토큰이며 카드 배경(AigoSurface) 대비 4.5:1 이상을 만족한다(#406 P1 — 저시력 접근성).
-    val barColor = if (row.raising) AigoPrimary else AigoTertiary
+    //   두 색·트랙 모두 테마 토큰이며, 카드 배경(AigoSurface) 대비 4.5:1 이상(텍스트)과
+    //   트랙(AigoOutlineVariant) 대비 3:1 이상(막대)을 **둘 다** 만족한다(#406 리뷰 — 저시력 접근성):
+    //     진녹 AigoPrimary      텍스트 10.45:1 · 막대 6.46:1
+    //     골드 AigoTertiaryDark 텍스트  5.96:1 · 막대 3.68:1
+    val barColor = if (row.raising) AigoPrimary else AigoTertiaryDark
     val fraction = (abs(row.effect) / maxMag).toFloat().coerceIn(0.06f, 1f)
     val directionText = if (row.raising) "점수를 올리고 있어요" else "여기서 더 올릴 수 있어요"
     Column(

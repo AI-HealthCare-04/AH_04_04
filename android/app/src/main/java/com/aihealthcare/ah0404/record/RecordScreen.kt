@@ -33,7 +33,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import com.aihealthcare.ah0404.settings.TopBar
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
@@ -66,7 +69,7 @@ fun RecordScreen(
     onBack: (() -> Unit)? = null,
     onGoToMissions: () -> Unit = {},
     modifier: Modifier = Modifier,
-    vm: RecordViewModel = viewModel(),
+    vm: RecordViewModel = recordViewModel(),
 ) {
     LaunchedEffect(Unit) { vm.load() }
     // 상단 세그먼트: 근육 건강(점수·추이·시뮬) ↔ 미션 기록(달력·걷기·챌린지).
@@ -342,3 +345,20 @@ private fun EmptyText(text: String) {
     )
 }
 
+
+/**
+ * 기여도 캐시(#406)를 주입한 [RecordViewModel] 을 만든다.
+ *  `viewModel()` 기본 팩토리는 Context 를 넘길 수 없어 실제 저장소를 붙이지 못하고(→ 기여도 카드가 영영
+ *  안 뜬다), 기여도는 조회 API 로는 받을 수 없으므로 이 주입이 유일한 표시 경로다.
+ *  테스트/프리뷰는 vm 을 직접 넘겨 우회한다([ExerciseVideosScreen] 과 같은 패턴).
+ */
+@Composable
+private fun recordViewModel(): RecordViewModel {
+    val context = LocalContext.current.applicationContext
+    val factory = remember(context) {
+        viewModelFactory {
+            initializer { RecordViewModel(contributionCache = SharedPrefsContributionCache(context)) }
+        }
+    }
+    return viewModel(factory = factory)
+}

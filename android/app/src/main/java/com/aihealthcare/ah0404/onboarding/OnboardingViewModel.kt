@@ -17,6 +17,8 @@ import com.aihealthcare.ah0404.network.SessionStore
 import com.aihealthcare.ah0404.network.Term
 import com.aihealthcare.ah0404.network.TokenHolder
 import com.aihealthcare.ah0404.network.retrofit
+import com.aihealthcare.ah0404.record.ContributionCache
+import com.aihealthcare.ah0404.record.NoOpContributionCache
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
 
@@ -56,6 +58,9 @@ class OnboardingViewModel(
     private val authKey: () -> Int = { SessionStore.authRevision },
     // 현재 세션이 소셜(비게스트)인가(#398). authKey 와 같은 이유로 주입 가능하게 둔다.
     private val socialAuth: () -> Boolean = { SessionStore.socialAuthenticated },
+    // 온보딩 예측 응답이 기여도(#406)의 **최초 공급 경로**다 — 여기서 저장하지 않으면 다음 재계산(하루 1회)
+    //   전까지 기록 탭 기여도 카드가 뜨지 않는다. 기본값 NoOp(저장 없음), 실제 저장소는 화면이 주입한다.
+    private val contributionCache: ContributionCache = NoOpContributionCache(),
 ) : ViewModel() {
 
     var step by mutableStateOf(OnbStep.WELCOME); private set
@@ -489,6 +494,19 @@ class OnboardingViewModel(
             }
         }
         finished = true
+    }
+
+    /**
+     * 온보딩 예측 응답의 기여도(#406)를 로컬 캐시에 남긴다 — 기록 탭 기여도 카드의 **최초 공급**이다.
+     *
+     * ⚠️ **[SessionStore.markOnboarded] 뒤에** 불러야 한다. 캐시는 계정 스코프(`persistentUserId`)인데
+     *    그 값은 완주 확정 시점에 세워지므로, 예측 응답을 받은 자리([predictAndFinish])에서 바로 저장하면
+     *    아직 null 이라 **조용히 무시된다**(= 다음 재계산 전까지 카드가 안 뜬다). 게스트는 완주해도
+     *    persistentUserId 가 null 이라 저장되지 않는데, 그건 의도된 동작이다(#153 — 기기에 안 남긴다).
+     */
+    fun persistScoreContributions() {
+        val prediction = result ?: return // 65세 미만 등 예측 없이 완주한 경우(#298 C)
+        contributionCache.save(prediction.predictionId, prediction.contributions)
     }
 
     /**
