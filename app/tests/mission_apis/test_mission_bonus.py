@@ -29,6 +29,12 @@ async def _guest(db_client: AsyncClient) -> tuple[dict[str, str], int]:
     return {"Authorization": f"Bearer {body['access_token']}"}, body["user"]["user_id"]
 
 
+async def _current_points(db_client: AsyncClient, auth: dict[str, str]) -> int:
+    # 포인트 조회 API 제거(#429) 이후 잔액 확인은 홈 point_balance 로 한다(단일 노출 경로).
+    home = (await db_client.get(f"{API}/home", headers=auth)).json()
+    return home["point_balance"]["current_points"]
+
+
 async def _seed_template(
     sm: async_sessionmaker[AsyncSession],
     *,
@@ -112,18 +118,14 @@ async def test_bonus_awarded_when_every_visible_mission_is_complete(
     first = await db_client.post(f"{API}/mission-logs", json=_meal_body(meal_id), headers=auth)
     assert first.status_code == status.HTTP_201_CREATED
     assert await _bonus_logs(db_sessionmaker, user_id) == 0
-    assert (await db_client.get(f"{API}/users/me/points", headers=auth)).json()["current_points"] == MEAL_POINTS
+    assert await _current_points(db_client, auth) == MEAL_POINTS
 
     # 게임까지 끝내 '보이는 미션'(식사·게임)을 모두 채움 → 보너스 적립
     second = await db_client.post(f"{API}/mission-logs", json=_game_body(game_id), headers=auth)
     assert second.status_code == status.HTTP_201_CREATED
     assert await _bonus_logs(db_sessionmaker, user_id) == 1
 
-    points = (await db_client.get(f"{API}/users/me/points", headers=auth)).json()
-    assert points["current_points"] == MEAL_POINTS + GAME_POINTS + BONUS_POINTS
-    # 적립 이력에도 보너스가 따로 남는다(reason 이 mission_type 이라 'bonus' 로 구분된다).
-    reasons = [log["reason"] for log in points["earn_logs"]]
-    assert reasons.count("bonus") == 1
+    assert await _current_points(db_client, auth) == MEAL_POINTS + GAME_POINTS + BONUS_POINTS
 
 
 # -------------------------------------------------------------------------------------
@@ -144,13 +146,13 @@ async def test_bonus_is_awarded_only_once_a_day(
     await db_client.post(f"{API}/mission-logs", json=_meal_body(meal_id), headers=auth)
     await db_client.post(f"{API}/mission-logs", json=_game_body(game_id), headers=auth)
     assert await _bonus_logs(db_sessionmaker, user_id) == 1
-    after_first = (await db_client.get(f"{API}/users/me/points", headers=auth)).json()["current_points"]
+    after_first = await _current_points(db_client, auth)
 
     # 게임은 일일 한도가 없어 또 할 수 있다 — 게임 포인트는 늘지만 보너스는 그대로 1회.
     again = await db_client.post(f"{API}/mission-logs", json=_game_body(game_id), headers=auth)
     assert again.status_code == status.HTTP_201_CREATED
     assert await _bonus_logs(db_sessionmaker, user_id) == 1
-    assert (await db_client.get(f"{API}/users/me/points", headers=auth)).json()["current_points"] == after_first + GAME_POINTS
+    assert await _current_points(db_client, auth) == after_first + GAME_POINTS
 
 
 # -------------------------------------------------------------------------------------
@@ -203,7 +205,7 @@ async def test_bonus_cannot_be_claimed_through_the_public_api(
     assert resp.status_code == status.HTTP_400_BAD_REQUEST
 
     assert await _bonus_logs(db_sessionmaker, user_id) == 0
-    assert (await db_client.get(f"{API}/users/me/points", headers=auth)).json()["current_points"] == 0
+    assert await _current_points(db_client, auth) == 0
 
     # 자연 키를 바꿔 다시 보내도 마찬가지 — 재전송 조회로 우회되지 않는다.
     retry = await db_client.post(

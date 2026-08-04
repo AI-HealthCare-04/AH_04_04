@@ -1,7 +1,8 @@
 # =====================================================================================
-# 포인트(잔액·적립이력) 파생 통합 테스트 (실 MySQL).
-# 잔액 = SUM(mission_logs.earned_points), 적립이력 = earned_points>0인 미션 로그.
-# 별도 point_balances/point_earn_logs 테이블 없이 미션 로그가 단일 원천임을 검증한다.
+# 포인트 잔액 파생 통합 테스트 (실 MySQL).
+# 잔액 = SUM(mission_logs.earned_points). 별도 point_balances 테이블 없이
+# 미션 로그가 단일 원천임을 검증한다. (포인트 조회 API 제거 이후에는 홈 point_balance
+# 와 DashboardRepository.get_current_points 가 유일한 노출 경로다.)
 # =====================================================================================
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -9,6 +10,7 @@ from starlette import status
 
 from app.models.enums import ActivityLevel, MissionStatus, MissionType, TargetUnit
 from app.models.missions import MissionLog, MissionTemplate
+from app.repositories.dashboard_repository import DashboardRepository
 
 
 async def _guest(db_client: AsyncClient) -> tuple[dict[str, str], int]:
@@ -44,33 +46,24 @@ async def _seed_earnings(sm: async_sessionmaker[AsyncSession], user_id: int, poi
         await s.commit()
 
 
-async def test_points_balance_and_earn_logs_derive_from_mission_logs(
+async def test_points_balance_derives_from_mission_logs(
     db_client: AsyncClient, db_sessionmaker: async_sessionmaker[AsyncSession]
 ) -> None:
     auth, user_id = await _guest(db_client)
-    # 적립 10, 5 (0은 미적립 → 이력 제외)
+    # 적립 10, 5 (0은 잔액에 영향 없음)
     await _seed_earnings(db_sessionmaker, user_id, [10, 5, 0])
 
-    resp = await db_client.get("/api/v1/users/me/points", headers=auth)
-    assert resp.status_code == status.HTTP_200_OK
-    body = resp.json()
-
-    # 잔액 = 적립 총합
-    assert body["current_points"] == 15
-    # 적립 이력 = earned_points>0 인 것만(2건), 각 항목 계약 준수
-    assert len(body["earn_logs"]) == 2
-    assert {log["earned_points"] for log in body["earn_logs"]} == {10, 5}
-    for log in body["earn_logs"]:
-        assert log["reason"] == "game"
-        assert isinstance(log["earn_id"], int)
-        assert log["created_at"].endswith("+09:00")  # KstDatetime
+    # 저장소 잔액 = 적립 총합
+    async with db_sessionmaker() as s:
+        assert await DashboardRepository(s).get_current_points(user_id) == 15
 
     # 홈에도 실제 잔액이 반영된다
     home = await db_client.get("/api/v1/home", headers=auth)
+    assert home.status_code == status.HTTP_200_OK
     assert home.json()["point_balance"]["current_points"] == 15
 
 
 async def test_points_zero_when_no_earnings(db_client: AsyncClient) -> None:
     auth, _ = await _guest(db_client)
-    resp = await db_client.get("/api/v1/users/me/points", headers=auth)
-    assert resp.json() == {"current_points": 0, "earn_logs": []}
+    home = await db_client.get("/api/v1/home", headers=auth)
+    assert home.json()["point_balance"]["current_points"] == 0

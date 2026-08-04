@@ -10,7 +10,7 @@ from app.models.base import Base
 class StsOverlayEvent(Base):
     """근력 기능 안전망 카드(#기록탭 §3.4) 노출 이벤트 — 주간 발화율의 **분자**(#373).
 
-    앱이 카드를 실제로 노출할 때 1건 전송한다. 분모는 [StsScoreViewEvent](점수 화면 조회).
+    앱이 카드를 실제로 노출할 때 1건 전송한다. 분모 이벤트(점수 화면 조회)는 앱 미배선으로 폐기했다(#429).
     지표 정의·중복·보존 정책은 docs/sts_overlay_metrics.md 가 단일 원천이다. 요약:
       - 중복 허용: 앱 fire-and-forget 재시도로 같은 노출이 여러 행일 수 있다 — 집계가
         COUNT(DISTINCT user_id) 라 지표에 영향 없음(멱등키 없음이 결정사항).
@@ -30,20 +30,4 @@ class StsOverlayEvent(Base):
     sts_sec: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
     bmi: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), nullable=True)
     score_band: Mapped[str | None] = mapped_column(String(20), nullable=True)  # good | maintain | caution
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
-
-class StsScoreViewEvent(Base):
-    """근력 점수 화면 조회 이벤트 — 주간 발화율의 **분모**(#373).
-
-    앱이 근력 점수 화면에 진입할 때 1건 전송한다(fire-and-forget, 화면당 1회 dedupe 는 앱 몫).
-    분모 목적상 '누가/언제'만 필요하므로 건강 필드를 두지 않는다(최소 수집).
-    중복·보존 정책은 [StsOverlayEvent] 와 동일 — docs/sts_overlay_metrics.md 참조.
-    """
-
-    __tablename__ = "sts_score_view_events"
-    __table_args__ = (Index("ix_sts_score_view_events_created_user", "created_at", "user_id"),)
-
-    event_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id"), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

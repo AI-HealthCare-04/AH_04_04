@@ -1,26 +1,26 @@
-# STS 안전망 카드 발화율 지표 정의 (#373)
+# STS 안전망 카드 노출 지표 정의 (#373 → #429 개정)
 
 `sts_overlay_events` 관련 지표·중복·보존 정책의 **단일 원천**이다. #242 DB 점검에서 분리된
 후속(#373)의 결정 사항을 기록한다. 관련 코드: `scripts/sts_overlay_report.py`(집계),
 `scripts/prune_sts_events.py`(보존 정리), `app/apis/v1/analytics_routers.py`(수집).
 
+> **개정(#429, 2026-08-05)**: 발화율(노출/조회) 지표는 폐기했다. 분모 이벤트
+> (`POST /events/sts-score-viewed`, `sts_score_view_events`)가 앱에 배선되지 않아 산출된 적이
+> 없었고, 명세서 v1.3 정합 정리에서 라우트·테이블(마이그레이션 0023)과 함께 제거했다.
+> 이후 관측 지표는 **주간 노출 사용자 수(절대량)** 와 노출 구성 분해다.
+
 ## 1. 지표 정의
 
-**주간 발화율 = 카드 노출 사용자 수 / 점수 화면 조회 사용자 수**
+**주간 노출 사용자 수 = 해당 주에 카드가 노출된 사용자 수**
 
 | 항목 | 정의 |
 |---|---|
-| 분자 | 해당 주에 `sts_overlay_events` 가 1건 이상인 사용자 수 (`COUNT(DISTINCT user_id)`) |
-| 분모 | 해당 주에 `sts_score_view_events` 가 1건 이상인 사용자 수 (`COUNT(DISTINCT user_id)`) |
+| 노출 사용자 | 해당 주에 `sts_overlay_events` 가 1건 이상인 사용자 수 (`COUNT(DISTINCT user_id)`) |
 | 집계 단위 | **사용자 · ISO 주** — `YEARWEEK(created_at, 3)`(월요일 시작), DB 저장 시각(운영 세션 tz = KST) 기준 |
-| 산출 불가 | 분모 0 인 주는 0% 가 아니라 `-` 로 표기한다(분모 이벤트 앱 배선 전 기간 포함) |
-| 오류 표기 | 분자 > 분모인 주는 발화율 대신 `오류(노출>조회)` 로 표기한다 — 100% 초과 값은 지표가 아니라 **수집 결함 신호**다(§6). 원인 확인 전에는 운영 판단에 쓰지 않는다 |
 
-- 노출 횟수가 아니라 **노출된 사용자 비율**을 본다: 같은 사용자에게 카드가 여러 번 떠도
+- 노출 횟수가 아니라 **노출된 사용자 수**를 본다: 같은 사용자에게 카드가 여러 번 떠도
   발화 대상 집단의 크기는 변하지 않는다 — 컷(12초) 조정 판단에 필요한 것은 "얼마나 많은
   사용자가 걸리는가"다.
-- 분모 이벤트(`POST /events/sts-score-viewed`)는 이 PR 로 서버 수집이 열리고, 앱 배선은
-  #366(`StsOverlayReporter`) 구조를 확장하는 별도 안드로이드 후속이다.
 
 ## 2. 중복 규칙 — 중복 허용 + `COUNT(DISTINCT user_id)`
 
@@ -54,7 +54,7 @@
 | | `sts_sec` | 유지 | 발화 컷(5STS ≥ **12초**)의 노출 시점 입력값 스냅샷 — 컷 재조정 분석의 직접 근거 |
 | | `bmi` | 유지 | strong 티어 컷(BMI ≥ **25**)의 노출 시점 입력값 스냅샷 — 티어 경계 재조정 근거 |
 | | `score_band` | 유지 | 발화 조건(구간 ≠ caution)의 입력값 — 구간별 발화 구성 확인 |
-| `sts_score_view_events` | (건강 필드 없음) | — | 분모는 '누가/언제'만 필요 — 설계상 최소 수집 |
+| `sts_score_view_events` | — | **제거(#429)** | 분모 폐기와 함께 테이블 자체를 마이그레이션 0023 에서 drop |
 
 - 세 필드 모두 **발화 조건의 입력값**이다(§3.4: `sts >= 12 AND band != caution`, 티어는
   `bmi >= 25`). 프로필·측정 테이블의 현재값과 조인하면 노출 이후 변경이 섞여 "그때 왜
@@ -63,11 +63,11 @@
 
 ## 5. 집계 쿼리와 인덱스 검증
 
-집계·정리 쿼리는 `WHERE created_at 범위` + `user_id` 만 읽는다. 두 테이블에
+집계·정리 쿼리는 `WHERE created_at 범위` + `user_id` 만 읽는다. `sts_overlay_events` 에
 **`(created_at, user_id)` 복합 인덱스**(`ix_*_created_user`, 마이그레이션 0019)를 두어
 커버링 인덱스로 돌게 했다. 기존 `user_id` 단일 인덱스는 FK·탈퇴 파기(user_id 등가 조건)용으로 유지.
 
-로컬 MySQL 8 에 마이그레이션 적용 후(사용자 200 · 노출 5,000행 · 조회 8,000행) EXPLAIN 확인:
+로컬 MySQL 8 에 마이그레이션 적용 후(사용자 200 · 노출 5,000행) EXPLAIN 확인:
 
 ```
 EXPLAIN SELECT YEARWEEK(created_at, 3) AS iso_week, COUNT(DISTINCT user_id) AS exposed_users
@@ -75,9 +75,6 @@ EXPLAIN SELECT YEARWEEK(created_at, 3) AS iso_week, COUNT(DISTINCT user_id) AS e
         WHERE created_at >= DATE_SUB(NOW(), INTERVAL 12 WEEK)
         GROUP BY iso_week ORDER BY iso_week;
 -- type: range | key: ix_sts_overlay_events_created_user | Extra: Using where; Using index; Using filesort
-
-EXPLAIN (동일 형태, sts_score_view_events);
--- type: range | key: ix_sts_score_view_events_created_user | Extra: Using where; Using index; Using filesort
 
 EXPLAIN SELECT COUNT(*) FROM sts_overlay_events
         WHERE created_at < DATE_SUB(NOW(), INTERVAL 90 DAY);   -- prune 대상 산정
@@ -91,11 +88,7 @@ EXPLAIN SELECT COUNT(*) FROM sts_overlay_events
 
 ## 6. 알려진 한계
 
-- **분자 > 분모 가능**: 분자·분모가 서로 독립인 fire-and-forget 요청이라, 조회 이벤트만
-  유실되거나 조회와 노출이 ISO 주 경계를 사이에 두고 갈라지면 그 주의 노출 사용자가 조회
-  사용자보다 많아질 수 있다. 이때 발화율은 산출하지 않고 `오류(노출>조회)` 로 표기한다(§1)
-  — 근본 해소(노출-조회 연결로 부분집합 보장)는 이벤트 계약 변경이 필요해 범위 밖.
-- **시연·QA 오염**: `prediction_feedbacks.is_test` 같은 마킹이 없다 — 발화율은 컷 조정의
+- **시연·QA 오염**: `prediction_feedbacks.is_test` 같은 마킹이 없다 — 노출 지표는 컷 조정의
   방향 판단용 내부 지표라 허용했다. 심사 자료에 수치를 인용하게 되면 그때 마킹을 추가한다.
 - **주 경계**: 저장 시각(KST 세션) 기준이라 주 경계 부근 이벤트는 사용자 체감 주와 1일
   이내로 어긋날 수 있다 — 주 단위 추이 판단에는 영향 없다.

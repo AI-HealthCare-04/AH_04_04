@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db.session import get_db_session
 from app.dependencies.security import get_request_user
 from app.dtos.mission import MissionListResponse
-from app.models.enums import ActivityLevel, MissionType
+from app.models.enums import MissionType
 from app.models.users import User
 from app.services.mission import MissionService
 
@@ -24,7 +24,6 @@ async def get_missions(
     # 쿼리 필터(모두 optional). status는 명세상 "available" 고정이라 현재 로직엔 미사용.
     status: str | None = None,
     mission_type: MissionType | None = None,
-    level: ActivityLevel | None = None,
 ) -> MissionListResponse:
-    missions = await MissionService(session).get_missions(user=user, mission_type=mission_type, level=level)
+    missions = await MissionService(session).get_missions(user=user, mission_type=mission_type)
     return MissionListResponse(missions=missions)

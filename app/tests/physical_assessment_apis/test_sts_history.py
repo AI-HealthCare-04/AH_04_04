@@ -1,4 +1,4 @@
-"""5STS 조회·이력(#353): 측정 기록만 이력에 담고, 측정이 없으면 latest 는 404.
+"""5STS 이력(#353): 측정 기록만 이력에 담는다. (latest 단건 조회는 난이도 폐기 리팩터링에서 제거)
 
 비의료 가드레일(#57): 응답은 시간·시각 등 사실만 — 판정 필드가 없음을 DTO 스키마로 고정한다.
 """
@@ -9,9 +9,6 @@ from datetime import datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import cast
-
-import pytest
-from fastapi import HTTPException
 
 from app.dtos.physical_assessment import PhysicalAssessmentHistoryItem
 from app.models.enums import AssessmentType
@@ -43,26 +40,13 @@ def _service(rows: Sequence[object]) -> PhysicalAssessmentService:
     return service
 
 
-def test_latest_returns_newest_measurement() -> None:
-    service = _service([_assessment(2, "10.80", day=30), _assessment(1, "12.50", day=1)])
-    item = asyncio.run(service.get_latest_measured(_USER))
-    assert item.physical_assessment_id == 2
-    assert item.chair_stand_5_time_sec == 10.80
-    assert service._captured["limit"] == 1  # type: ignore[attr-defined]
-
-
-def test_latest_404_when_no_measurement() -> None:
-    # 스킵만 있고 측정이 없는 사용자(repo 쿼리가 스킵을 이미 거르므로 빈 목록) → 404 로 '측정 전' 구분.
-    with pytest.raises(HTTPException) as exc:
-        asyncio.run(_service([]).get_latest_measured(_USER))
-    assert exc.value.status_code == 404
-
-
 def test_history_orders_and_limits() -> None:
     rows = [_assessment(3, "10.10", day=31), _assessment(2, "10.80", day=30), _assessment(1, "12.50", day=1)]
-    resp = asyncio.run(_service(rows).get_measured_history(_USER, limit=2))
+    service = _service(rows)
+    resp = asyncio.run(service.get_measured_history(_USER, limit=2))
     assert [a.physical_assessment_id for a in resp.assessments] == [3, 2]
     assert resp.assessments[0].chair_stand_5_time_sec == 10.10
+    assert service._captured["limit"] == 2  # type: ignore[attr-defined]
 
 
 def test_history_item_exposes_facts_only() -> None:

@@ -1,7 +1,7 @@
 # =====================================================================================
 # Mission 도메인 Repository — DB 접근만 담당 (비즈니스 규칙은 Service에).
 # 사용하는 테이블: mission_templates, mission_logs, meal_logs, game_logs,
-#                  physical_activity_logs, daily_activity_summaries, user_activity_profiles
+#                  physical_activity_logs, daily_activity_summaries
 # =====================================================================================
 from datetime import date, datetime, time, timedelta
 
@@ -10,7 +10,6 @@ from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.clock import today_kst
-from app.models.activity import UserActivityProfile
 from app.models.dashboard import DailyActivitySummary
 from app.models.enums import (
     ActivityLevel,
@@ -116,13 +115,6 @@ class MissionRepository:
         self.session.add(log)
         await self.session.flush()
         return log
-
-    # ---------------- user_activity_profiles (읽기 전용) ----------------
-
-    async def get_user_current_level(self, user_id: int) -> ActivityLevel | None:
-        """사용자의 현재 활동 레벨 (없으면 None). health/risk 담당 영역이라 읽기만 함."""
-        stmt = select(UserActivityProfile.current_level).where(UserActivityProfile.user_id == user_id)
-        return await self.session.scalar(stmt)
 
     # ---------------- mission_logs ----------------
 

@@ -6,7 +6,6 @@ from app.models.base import Base
 
 def test_core_db_metadata_tables() -> None:
     assert set(Base.metadata.tables) == {
-        "activity_level_change_logs",
         "daily_activity_summaries",
         "game_logs",
         "health_check_sessions",
@@ -22,9 +21,7 @@ def test_core_db_metadata_tables() -> None:
         "risk_predictions",
         "sensor_sessions",
         "sts_overlay_events",
-        "sts_score_view_events",
         "terms_agreements",
-        "user_activity_profiles",
         "users",
     }
 
@@ -33,6 +30,13 @@ def test_deferred_tables_are_not_in_initial_metadata() -> None:
     assert "point_balances" not in Base.metadata.tables
     assert "point_earn_logs" not in Base.metadata.tables
     assert "point_spend_logs" not in Base.metadata.tables
+
+
+def test_dropped_level_and_sts_view_tables_are_not_in_metadata() -> None:
+    # 난이도 폐기(#428)·조회 이벤트 제거: 마이그레이션 0023이 떨군 테이블은 모델에도 없어야 한다.
+    assert "user_activity_profiles" not in Base.metadata.tables
+    assert "activity_level_change_logs" not in Base.metadata.tables
+    assert "sts_score_view_events" not in Base.metadata.tables
 
 
 def test_removed_unused_columns_are_not_in_metadata() -> None:
@@ -104,45 +108,6 @@ def test_v71_enum_contracts() -> None:
         "failed",
         "manual_override",
     ]
-
-
-def test_level_reason_enum_contract() -> None:
-    # 운동 난이도 상태 사유(user_activity_profiles.level_reason)는 명세 확정값만 가진다.
-    # #23에서 default/reassessment 제거 + llm_recommendation 추가(마이그레이션 0003)와 계약 일치 검증.
-    level_reason_type = Base.metadata.tables["user_activity_profiles"].columns["level_reason"].type
-    assert isinstance(level_reason_type, SAEnum)
-    assert level_reason_type.enums == [
-        "initial_test",
-        "rule",
-        "llm_recommendation",
-        "user_selected",
-    ]
-
-
-def test_activity_level_change_logs_contract() -> None:
-    logs = Base.metadata.tables["activity_level_change_logs"]
-
-    assert set(logs.columns.keys()) == {
-        "level_change_id",
-        "user_id",
-        "from_level",
-        "to_level",
-        "reason_type",
-        "reason_text",
-        "accepted_by_user",
-        "created_at",
-    }
-
-    from_level_type = logs.columns["from_level"].type
-    to_level_type = logs.columns["to_level"].type
-    reason_type_type = logs.columns["reason_type"].type
-
-    assert isinstance(from_level_type, SAEnum)
-    assert from_level_type.enums == ["easy", "normal", "hard"]
-    assert isinstance(to_level_type, SAEnum)
-    assert to_level_type.enums == ["easy", "normal", "hard"]
-    assert isinstance(reason_type_type, SAEnum)
-    assert reason_type_type.enums == ["rule", "llm_recommendation", "user_request"]
 
 
 def test_timestamp_columns_have_defaults() -> None:

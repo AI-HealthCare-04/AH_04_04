@@ -17,7 +17,6 @@ from httpx import AsyncClient
 from starlette import status
 
 _CARE_STAGES = {"good", "maintain", "action_needed"}
-_LEVELS = {"easy", "normal", "hard"}
 
 
 async def _guest_auth(db_client: AsyncClient) -> dict[str, str]:
@@ -96,7 +95,7 @@ async def test_onboarding_happy_path_guest_to_completed(db_client: AsyncClient) 
     assert profile_id > 0
     assert profile.json()["bmi"] > 0
 
-    # 6) 기초체력검사 → activity_profile.current_level 산정
+    # 6) 기초체력검사 → 측정 기록 저장(난이도 폐기 #428: 응답은 physical_assessment_id 만)
     assessment = await db_client.post(
         "/api/v1/physical-assessments",
         json={
@@ -110,7 +109,9 @@ async def test_onboarding_happy_path_guest_to_completed(db_client: AsyncClient) 
         headers=auth,
     )
     assert assessment.status_code == status.HTTP_201_CREATED
-    assert assessment.json()["activity_profile"]["current_level"] in _LEVELS
+    assessment_body = assessment.json()
+    assert set(assessment_body) == {"physical_assessment_id"}
+    assert assessment_body["physical_assessment_id"] > 0
 
     # 7) 위험도 예측 → onboarding_status completed (pending→terms_agreed→completed 최종 전이)
     risk = await db_client.post(
@@ -171,7 +172,8 @@ async def test_physical_assessment_mutual_exclusion_returns_422(db_client: Async
 
 
 async def test_health_check_skip_completes_onboarding(db_client: AsyncClient) -> None:
-    # 체력검사 스킵 대체 경로: 세션 생성 후 skip → onboarding completed + 기본 난이도
+    # 체력검사 스킵 대체 경로: 세션 생성 후 skip → onboarding completed
+    #   (난이도 폐기 #428: 기본 난이도 생성·activity_profile 응답 없음)
     auth = await _guest_auth(db_client)
     await db_client.post(
         "/api/v1/users/me/agreements", json=await _agreements_payload(db_client, auth), headers=auth
@@ -184,12 +186,12 @@ async def test_health_check_skip_completes_onboarding(db_client: AsyncClient) ->
     assert skip.status_code == status.HTTP_200_OK
     body = skip.json()
     assert body["onboarding_status"] == "completed"
-    assert body["activity_profile"]["current_level"] in _LEVELS
+    assert body["status"] == "skipped"
+    assert "activity_profile" not in body
 
 
-async def test_legacy_walk_6m_payload_ignored_band_from_5sts(db_client: AsyncClient) -> None:
-    # 구버전 앱이 walk_6m_*를 계속 보내도 422가 아니라 200/201로 무시(deprecated no-op)되고,
-    #   밴드는 5STS 단독으로 산출된다(6m 유무와 무관, 리뷰 #118-3).
+async def test_legacy_walk_6m_payload_ignored(db_client: AsyncClient) -> None:
+    # 구버전 앱이 walk_6m_*를 계속 보내도 422가 아니라 200/201로 무시된다(deprecated no-op, 리뷰 #118-3).
     auth = await _guest_auth(db_client)
     await db_client.post(
         "/api/v1/users/me/agreements", json=await _agreements_payload(db_client, auth), headers=auth
@@ -197,7 +199,6 @@ async def test_legacy_walk_6m_payload_ignored_band_from_5sts(db_client: AsyncCli
     sid = (
         await db_client.post("/api/v1/health-check/sessions", json={"input_method": "form"}, headers=auth)
     ).json()["session_id"]
-    # 나이 68세(1958년생) → 65-69 규준 11.4초. 5STS 12.4 > 11.4 → easy.
     await db_client.post(
         "/api/v1/health-profiles",
         json={
@@ -213,7 +214,7 @@ async def test_legacy_walk_6m_payload_ignored_band_from_5sts(db_client: AsyncCli
             "assessment_type": "initial",
             "chair_stand_5_time_sec": 12.4,
             "chair_stand_skipped": False,
-            # 구버전 앱 잔재(deprecated no-op): 무시돼야 하고 밴드에 영향 없음.
+            # 구버전 앱 잔재(deprecated no-op): 무시돼야 하고 저장에 영향 없음.
             "walk_6m_time_sec": 6.1,
             "walk_6m_distance_m": 6.0,
             "walk_6m_skipped": False,
@@ -223,4 +224,4 @@ async def test_legacy_walk_6m_payload_ignored_band_from_5sts(db_client: AsyncCli
     assert resp.status_code == status.HTTP_201_CREATED
     body = resp.json()
     assert "walk_6m_speed_mps" not in resp.text  # 응답 계약에도 6m 없음
-    assert body["activity_profile"]["current_level"] == "easy"  # 5STS 12.4 > 11.4 → easy
+    assert set(body) == {"physical_assessment_id"}  # 난이도 폐기 #428: 측정 id 만 반환

@@ -2,9 +2,7 @@ from datetime import date
 
 from pydantic import BaseModel, Field
 
-from app.dtos.base import KstDatetime
-from app.dtos.risk_prediction import RiskComparisonStatus
-from app.models.enums import ActivityLevel, DailyResult
+from app.models.enums import DailyResult
 
 
 class DashboardPredictionInputs(BaseModel):
@@ -26,25 +24,6 @@ class HomeUser(BaseModel):
 
 class PointBalanceResponse(BaseModel):
     current_points: int
-
-
-# GET /users/me/points — 포인트 잔액 + 적립 이력.
-# earn_logs 항목 계약(명세). 적립 이력 테이블(point_earn_logs)은 MVP 이후로 미뤄져 있어
-#   현재는 항상 빈 배열로 응답한다(테이블 도입 시 채운다).
-class PointEarnLogItem(BaseModel):
-    earn_id: int
-    earned_points: int
-    reason: str
-    created_at: KstDatetime
-
-
-class PointsResponse(BaseModel):
-    current_points: int
-    earn_logs: list[PointEarnLogItem]
-
-
-class HomeActivityProfile(BaseModel):
-    current_level: ActivityLevel
 
 
 class HomeLatestPrediction(BaseModel):
@@ -88,7 +67,6 @@ class HomeStreak(BaseModel):
 class HomeResponse(BaseModel):
     user: HomeUser
     point_balance: PointBalanceResponse
-    activity_profile: HomeActivityProfile
     latest_prediction: HomeLatestPrediction | None
     today_summary: HomeTodaySummary
     available_mission_summary: HomeAvailableMissionSummary
@@ -143,43 +121,3 @@ class ScoreSimulationResponse(BaseModel):
     walk: list[ScoreSimPoint]  # 걷기 0~7일
     musc: list[ScoreSimPoint]  # 근력 0~5일
     cohort_version: str | None = None
-
-
-# [응답] 근력 기능 안전망 카드(§3.4) 발화 판정 입력. 앱이 score_band(별도)와 함께 5STS·BMI로 카드 노출을 정한다.
-#   chair_stand_sec: 최신 체력검사의 5STS(초). 스킵/미측정이면 null → 카드 미표시. bmi: 최신 프로필 BMI.
-class MuscleScoreContextResponse(BaseModel):
-    chair_stand_sec: float | None = None
-    bmi: float | None = None
-
-
-# [응답] 대시보드 시각화 (GET /dashboard/summary). 최근 days일 구간의 활동 추이·생활기록·위험도 변화.
-class ActivityTrendPoint(BaseModel):
-    date: date
-    moderate_equivalent_min: float
-
-
-class LifestyleRecords(BaseModel):
-    meal_days: int
-    game_count: int
-
-
-class RiskChangePoint(BaseModel):
-    at: KstDatetime
-    risk_score: float = Field(ge=0, le=1)
-    muscle_score: int | None = Field(default=None, ge=0, le=100)
-    score_band: str | None = None
-    cohort_version: str | None = None
-    change_percentage_points: float | None = Field(ge=-100, le=100)
-    comparison_status: RiskComparisonStatus
-    # 기존 Android 호환 필드. 연속형 화면 전환 뒤 제거 또는 내부 한정 예정이다.
-    care_stage: str
-
-
-class DashboardSummaryResponse(BaseModel):
-    range_days: int
-    baseline_date: date
-    total_moderate_equivalent_min: float
-    activity_trend: list[ActivityTrendPoint]
-    lifestyle_records: LifestyleRecords
-    # 위험도 변화 추이(오래된→최신). 예측 이력이 없으면 빈 배열.
-    risk_change: list[RiskChangePoint]

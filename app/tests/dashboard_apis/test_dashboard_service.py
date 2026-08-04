@@ -1,6 +1,5 @@
 import asyncio
-from collections.abc import Sequence
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import cast
@@ -11,13 +10,12 @@ from fastapi import HTTPException, status
 from app.core.utils.clock import today_kst
 from app.dtos.dashboard import HomeAvailableMissionSummary, HomeLatestPrediction
 from app.models.dashboard import DailyActivitySummary
-from app.models.enums import ActivityLevel, ActivityType, MissionType
 from app.models.users import User
 from app.services.dashboard import DashboardService
 
 # 카운팅 로직만 검증하므로 user는 스텁된 get_missions로 전달만 되고 실제로 쓰이지 않는다.
 _USER = cast(User, object())
-# user_id를 읽는 경로(get_points/get_summary 등)에는 id가 있는 사용자를 쓴다.
+# user_id를 읽는 경로(get_prediction_inputs 등)에는 id가 있는 사용자를 쓴다.
 _USER_WITH_ID = cast(User, SimpleNamespace(user_id=1))
 # get_home은 user.nickname을 읽으므로 홈 테스트에는 닉네임이 있는 사용자를 쓴다.
 _HOME_USER = cast(User, SimpleNamespace(user_id=1, nickname="테스터"))
@@ -39,7 +37,7 @@ def _service_with_missions(missions: list[_FakeMission]) -> DashboardService:
     # DB 접근 없이 카운팅 로직만 검증하기 위해 mission_service.get_missions를 스텁한다.
     service = DashboardService(session=None)  # type: ignore[arg-type]
 
-    async def fake_get_missions(user: object, mission_type: object = None, level: object = None) -> list[_FakeMission]:
+    async def fake_get_missions(user: object, mission_type: object = None) -> list[_FakeMission]:
         return missions
 
     service.mission_service.get_missions = fake_get_missions  # type: ignore[assignment]
@@ -57,7 +55,7 @@ def test_available_mission_summary_counts_by_type() -> None:
         ]
     )
 
-    result = asyncio.run(service._available_mission_summary(_USER, ActivityLevel.EASY))
+    result = asyncio.run(service._available_mission_summary(_USER))
 
     assert result == HomeAvailableMissionSummary(meal=2, exercise=1, walking=1, game=1)
 
@@ -66,7 +64,7 @@ def test_available_mission_summary_skips_unknown_type() -> None:
     # enum에 없는 타입("bogus")이 섞여도 500 없이 건너뛴다.
     service = _service_with_missions([_FakeMission("meal"), _FakeMission("bogus")])
 
-    result = asyncio.run(service._available_mission_summary(_USER, ActivityLevel.EASY))
+    result = asyncio.run(service._available_mission_summary(_USER))
 
     assert result == HomeAvailableMissionSummary(meal=1, exercise=0, walking=0, game=0)
 
@@ -74,7 +72,7 @@ def test_available_mission_summary_skips_unknown_type() -> None:
 def test_available_mission_summary_empty() -> None:
     service = _service_with_missions([])
 
-    result = asyncio.run(service._available_mission_summary(_USER, ActivityLevel.EASY))
+    result = asyncio.run(service._available_mission_summary(_USER))
 
     assert result == HomeAvailableMissionSummary(meal=0, exercise=0, walking=0, game=0)
 
@@ -86,7 +84,7 @@ def test_available_mission_summary_excludes_daily_limited_when_done_today() -> N
         DailyActivitySummary, SimpleNamespace(meal_counted=True, exercise_count=0, walking_count=0, game_count=0)
     )
 
-    result = asyncio.run(service._available_mission_summary(_USER, ActivityLevel.EASY, today))
+    result = asyncio.run(service._available_mission_summary(_USER, today))
 
     assert result == HomeAvailableMissionSummary(meal=0, exercise=0, walking=1, game=0)
 
@@ -98,25 +96,9 @@ def test_available_mission_summary_keeps_daily_limited_when_not_done_today() -> 
         DailyActivitySummary, SimpleNamespace(meal_counted=False, exercise_count=0, walking_count=0, game_count=0)
     )
 
-    result = asyncio.run(service._available_mission_summary(_USER, ActivityLevel.EASY, today))
+    result = asyncio.run(service._available_mission_summary(_USER, today))
 
     assert result == HomeAvailableMissionSummary(meal=1, exercise=0, walking=0, game=0)
-
-
-def test_available_mission_summary_forwards_level_to_get_missions() -> None:
-    # 표시 레벨과 카운트 산정 레벨을 일치시키기 위해, 전달한 level이 get_missions로 그대로 넘어가는지 검증.
-    captured: dict[str, object] = {}
-    service = DashboardService(session=None)  # type: ignore[arg-type]
-
-    async def fake_get_missions(user: object, mission_type: object = None, level: object = None) -> list[object]:
-        captured["level"] = level
-        return []
-
-    service.mission_service.get_missions = fake_get_missions  # type: ignore[assignment]
-
-    asyncio.run(service._available_mission_summary(_USER, ActivityLevel.EASY))
-
-    assert captured["level"] == ActivityLevel.EASY
 
 
 def _service_with_risk(*, result: object = None, raises: Exception | None = None) -> DashboardService:
@@ -153,126 +135,8 @@ def test_latest_prediction_reraises_non_404() -> None:
         asyncio.run(service._latest_prediction(_USER))
 
 
-def _summary_service(
-    *, logs: Sequence[object], summaries: Sequence[object], predictions: Sequence[object] = ()
-) -> DashboardService:
-    service = DashboardService(session=None)  # type: ignore[arg-type]
-
-    async def fake_logs(user_id: object, start: object, end: object) -> Sequence[object]:
-        return logs
-
-    async def fake_summaries(user_id: object, start: object, end: object) -> Sequence[object]:
-        return summaries
-
-    async def fake_recent(user: object, limit: int) -> object:
-        # get_recent_predictions는 그래프용 오래된→최신 목록을 돌려준다.
-        return SimpleNamespace(predictions=list(predictions))
-
-    service.repo.get_activity_logs_between = fake_logs  # type: ignore[assignment]
-    service.repo.get_summaries_between = fake_summaries  # type: ignore[assignment]
-    service.risk_service.get_recent_predictions = fake_recent  # type: ignore[assignment]
-    return service
-
-
-def test_get_summary_aggregates_trend_total_and_lifestyle() -> None:
-    today = today_kst()
-    # 오늘 걷기 10분(=10) + 20분(=20) → 오늘 합 30. 구간은 0으로 채워진다.
-    logs = [
-        SimpleNamespace(
-            activity_date=today, activity_type=ActivityType.WALKING, intensity=None, duration_min=10, met_value=None
-        ),
-        SimpleNamespace(
-            activity_date=today, activity_type=ActivityType.WALKING, intensity=None, duration_min=20, met_value=None
-        ),
-    ]
-    summaries = [
-        SimpleNamespace(meal_counted=True, game_count=2),
-        SimpleNamespace(meal_counted=False, game_count=1),
-        SimpleNamespace(meal_counted=True, game_count=0),
-    ]
-    service = _summary_service(logs=logs, summaries=summaries)
-
-    result = asyncio.run(service.get_summary(_USER_WITH_ID, days=7))
-
-    assert result.range_days == 7
-    assert result.baseline_date == today - timedelta(days=6)
-    assert len(result.activity_trend) == 7  # 구간 전체 0-fill
-    assert result.total_moderate_equivalent_min == 30.0
-    assert result.activity_trend[-1].date == today
-    assert result.activity_trend[-1].moderate_equivalent_min == 30.0
-    assert result.activity_trend[0].moderate_equivalent_min == 0.0  # 활동 없는 날은 0
-    assert result.lifestyle_records.meal_days == 2  # meal_counted True인 날 수
-    assert result.lifestyle_records.game_count == 3  # game_count 합
-    assert result.risk_change == []
-
-
-def test_get_summary_maps_risk_change_chronologically() -> None:
-    # 예측 이력의 오래된→최신 순서와 서버 계산 변화량을 대시보드 계약이 보존한다.
-    newer = datetime(2026, 7, 10, 12, 0, 0)
-    older = datetime(2026, 7, 3, 12, 0, 0)
-    predictions = [
-        SimpleNamespace(
-            created_at=older,
-            risk_score=0.324,
-            change_percentage_points=None,
-            comparison_status="baseline",
-            care_stage="maintain",
-        ),
-        SimpleNamespace(
-            created_at=newer,
-            risk_score=0.281,
-            change_percentage_points=-4.3,
-            comparison_status="comparable",
-            care_stage="action_needed",
-        ),
-    ]
-    service = _summary_service(logs=[], summaries=[], predictions=predictions)
-
-    result = asyncio.run(service.get_summary(_USER_WITH_ID, days=7))
-
-    assert [
-        (p.at, p.risk_score, p.change_percentage_points, p.comparison_status, p.care_stage) for p in result.risk_change
-    ] == [
-        (older, 0.324, None, "baseline", "maintain"),
-        (newer, 0.281, -4.3, "comparable", "action_needed"),
-    ]
-
-
-@pytest.mark.parametrize("bad_days", [0, -1, 91])
-def test_get_summary_rejects_out_of_range_days(bad_days: int) -> None:
-    service = DashboardService(session=None)  # type: ignore[arg-type]
-    with pytest.raises(HTTPException) as exc:
-        asyncio.run(service.get_summary(_USER_WITH_ID, days=bad_days))
-    assert exc.value.status_code == 400
-
-
-def test_get_points_derives_balance_and_earn_logs_from_mission_logs() -> None:
-    # 잔액·적립이력 모두 mission_logs에서 파생. 잔액은 합계, 이력은 earned_points>0 로그를 매핑.
-    service = DashboardService(session=None)  # type: ignore[arg-type]
-    earned = SimpleNamespace(
-        mission_log_id=7, earned_points=10, mission_type=MissionType.GAME, created_at=datetime(2026, 7, 13, 9, 0, 0)
-    )
-
-    async def fake_get_current_points(user_id: object) -> int:
-        return 120
-
-    async def fake_get_earn_logs(user_id: object) -> list[object]:
-        return [earned]
-
-    service.repo.get_current_points = fake_get_current_points  # type: ignore[assignment]
-    service.repo.get_earn_logs = fake_get_earn_logs  # type: ignore[assignment]
-
-    result = asyncio.run(service.get_points(_USER_WITH_ID))
-
-    assert result.current_points == 120
-    assert len(result.earn_logs) == 1
-    assert result.earn_logs[0].earn_id == 7
-    assert result.earn_logs[0].earned_points == 10
-    assert result.earn_logs[0].reason == "game"
-
-
-def _service_for_home(*, profile: object | None) -> tuple[DashboardService, dict[str, object]]:
-    # get_home의 모든 의존을 스텁해 DB 없이 난이도 연결만 검증한다.
+def _service_for_home() -> tuple[DashboardService, dict[str, object]]:
+    # get_home의 모든 의존을 스텁해 DB 없이 홈 조립 로직만 검증한다.
     service = DashboardService(session=None)  # type: ignore[arg-type]
     captured: dict[str, object] = {}
 
@@ -285,11 +149,7 @@ def _service_for_home(*, profile: object | None) -> tuple[DashboardService, dict
     async def fake_get_counted_summary_dates(user_id: object, through_date: object) -> list[date]:
         return captured.get("completed_dates", [])  # type: ignore[return-value]
 
-    async def fake_get_by_user_id(user_id: object) -> object:
-        return profile
-
-    async def fake_get_missions(user: object, mission_type: object = None, level: object = None) -> list[object]:
-        captured["mission_level"] = level
+    async def fake_get_missions(user: object, mission_type: object = None) -> list[object]:
         return []
 
     async def fake_get_latest(user: object) -> object:
@@ -301,36 +161,15 @@ def _service_for_home(*, profile: object | None) -> tuple[DashboardService, dict
     service.repo.get_current_points = fake_get_current_points  # type: ignore[assignment]
     service.repo.get_today_summary = fake_get_today_summary  # type: ignore[assignment]
     service.repo.get_counted_summary_dates = fake_get_counted_summary_dates  # type: ignore[assignment]
-    service.activity_repo.get_by_user_id = fake_get_by_user_id  # type: ignore[assignment]
     service.mission_service.get_missions = fake_get_missions  # type: ignore[assignment]
     service.mission_service.get_today_walking_totals = fake_today_walking  # type: ignore[assignment]
     service.risk_service.get_latest_prediction = fake_get_latest  # type: ignore[assignment]
     return service, captured
 
 
-def test_get_home_uses_real_activity_level() -> None:
-    # 프로필이 있으면 홈 표시 난이도가 실제 current_level을 따르고, 미션 수 산정도 같은 레벨로 한다.
-    service, captured = _service_for_home(profile=SimpleNamespace(current_level=ActivityLevel.HARD))
-
-    result = asyncio.run(service.get_home(_HOME_USER))
-
-    assert result.activity_profile.current_level == ActivityLevel.HARD
-    assert captured["mission_level"] == ActivityLevel.HARD  # 표시 레벨 == 카운트 레벨
-
-
-def test_get_home_defaults_easy_when_no_profile() -> None:
-    # 프로필이 아직 없으면(건강체크 스킵/기초체력검사 전) 기본 easy로 본다.
-    service, captured = _service_for_home(profile=None)
-
-    result = asyncio.run(service.get_home(_HOME_USER))
-
-    assert result.activity_profile.current_level == ActivityLevel.EASY
-    assert captured["mission_level"] == ActivityLevel.EASY
-
-
 def test_get_home_includes_today_walking_totals() -> None:
     # 홈 '오늘 걷기' 위젯: 당일 누적 실적(분·걸음)을 미션 도메인 원천에서 그대로 담는다.
-    service, captured = _service_for_home(profile=None)
+    service, captured = _service_for_home()
     captured["walking"] = (22.0, 2350)
 
     result = asyncio.run(service.get_home(_HOME_USER))
@@ -341,7 +180,7 @@ def test_get_home_includes_today_walking_totals() -> None:
 
 def test_get_home_today_walking_defaults_to_zero_when_no_walking() -> None:
     # 걷기 안 한 날도 null 아니라 {0, 0}으로 내려 앱 바인딩을 단순화한다.
-    service, _ = _service_for_home(profile=None)
+    service, _ = _service_for_home()
 
     result = asyncio.run(service.get_home(_HOME_USER))
 
@@ -350,7 +189,7 @@ def test_get_home_today_walking_defaults_to_zero_when_no_walking() -> None:
 
 
 def test_get_home_includes_server_authoritative_streak() -> None:
-    service, captured = _service_for_home(profile=None)
+    service, captured = _service_for_home()
     today = today_kst()
     captured["completed_dates"] = [today, today - timedelta(days=1), today - timedelta(days=2)]
 

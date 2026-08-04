@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import cast
@@ -8,23 +8,14 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dtos.physical_assessment import PhysicalAssessmentCreateRequest
-from app.models.activity import ActivityLevelChangeLog, UserActivityProfile
-from app.models.enums import (
-    ActivityLevel,
-    AssessmentType,
-    HealthCheckStatus,
-    InputMethod,
-    LevelReason,
-    ReasonType,
-)
+from app.dtos.physical_assessment import PhysicalAssessmentCreateRequest, PhysicalAssessmentResponse
+from app.models.enums import AssessmentType, HealthCheckStatus, InputMethod
 from app.models.health import HealthCheckSession, PhysicalAssessment
 from app.models.users import User
 from app.services.physical_assessment import PhysicalAssessmentService
 
-# 밴드는 5STS 단독 산출(팀 결정 2026-07-20). 6m 걷기는 확장/기록용이라 밴드에 쓰지 않는다.
-# 서비스 테스트용 기본 생년: 나이 71 → 70-79 연령대(평균 12.6초). chair_stand 11.2 ≤ 12.6 → 중.
-_DEFAULT_BIRTH = date(1955, 1, 1)
+# 난이도 폐기(#428): 5STS 는 측정 기록·추이(#353)·안전망 카드 입력으로만 저장된다.
+#   활동수준 산출·프로필 upsert 는 제거됐고, 응답은 physical_assessment_id 만 담는다.
 
 
 class _FakeSession:
@@ -53,44 +44,6 @@ class _FakePhysicalAssessmentRepository:
         return self.stored
 
 
-class _FakeActivityProfileRepository:
-    def __init__(self, profile: UserActivityProfile | None = None) -> None:
-        self.profile = profile
-        self.created: UserActivityProfile | None = None
-        self.updated: UserActivityProfile | None = None
-        self.created_level_change_log: ActivityLevelChangeLog | None = None
-
-    async def get_by_user_id(self, user_id: int) -> UserActivityProfile | None:
-        return self.profile
-
-    async def create_profile(self, profile: UserActivityProfile) -> UserActivityProfile:
-        profile.activity_profile_id = 100
-        self.profile = profile
-        self.created = profile
-        return profile
-
-    async def update_profile(self, profile: UserActivityProfile) -> UserActivityProfile:
-        self.profile = profile
-        self.updated = profile
-        return profile
-
-    async def create_level_change_log(self, log: ActivityLevelChangeLog) -> ActivityLevelChangeLog:
-        self.created_level_change_log = log
-        return log
-
-
-class _FakeHealthProfileRepository:
-    """연령대 평균 산출에 필요한 생년만 제공(없으면 나이 미상)."""
-
-    def __init__(self, birth_date: date | None = _DEFAULT_BIRTH) -> None:
-        self.birth_date = birth_date
-
-    async def get_latest_profile(self, user_id: int) -> object | None:
-        if self.birth_date is None:
-            return None
-        return SimpleNamespace(birth_date=self.birth_date)
-
-
 class _FakeHealthCheckRepository:
     def __init__(self, health_check_session: HealthCheckSession | None) -> None:
         self.health_check_session = health_check_session
@@ -109,23 +62,12 @@ class _FakeHealthCheckRepository:
         return health_check_session
 
 
-def _service(
-    profile: UserActivityProfile | None = None,
-    birth_date: date | None = _DEFAULT_BIRTH,
-) -> tuple[
-    PhysicalAssessmentService,
-    _FakePhysicalAssessmentRepository,
-    _FakeActivityProfileRepository,
-    _FakeSession,
-]:
+def _service() -> tuple[PhysicalAssessmentService, _FakePhysicalAssessmentRepository, _FakeSession]:
     session = _FakeSession()
     service = PhysicalAssessmentService(cast(AsyncSession, session))
     assessment_repo = _FakePhysicalAssessmentRepository()
-    activity_repo = _FakeActivityProfileRepository(profile)
     service.repo = assessment_repo  # type: ignore[assignment]
-    service.activity_repo = activity_repo  # type: ignore[assignment]
-    service.health_repo = _FakeHealthProfileRepository(birth_date)  # type: ignore[assignment]
-    return service, assessment_repo, activity_repo, session
+    return service, assessment_repo, session
 
 
 # ---------------- DTO 검증 ----------------
@@ -159,125 +101,55 @@ def test_deprecated_walk_6m_fields_are_ignored_not_rejected() -> None:
     assert not hasattr(data, "walk_6m_skipped")
 
 
-# ---------------- 밴드 산출(5STS 단독) ----------------
+def test_response_shape_has_only_assessment_id() -> None:
+    # 난이도 폐기(#428) 계약: 응답은 physical_assessment_id 하나만 — level/프로필 필드 회귀 방지.
+    assert set(PhysicalAssessmentResponse.model_fields.keys()) == {"physical_assessment_id"}
 
 
-def test_age_norm_5sts_by_age_band() -> None:
-    assert PhysicalAssessmentService._age_norm_5sts(65) == Decimal("11.4")  # 하한 경계(포함)
-    assert PhysicalAssessmentService._age_norm_5sts(67) == Decimal("11.4")  # 65-69
-    assert PhysicalAssessmentService._age_norm_5sts(75) == Decimal("12.6")  # 70-79
-    assert PhysicalAssessmentService._age_norm_5sts(89) == Decimal("14.8")  # 80-89 (규준 상한)
-    assert PhysicalAssessmentService._age_norm_5sts(90) is None  # 90+ 규준 범위 밖 → 밴드 미산출(하)
-    assert PhysicalAssessmentService._age_norm_5sts(None) is None  # 나이 미상
+# ---------------- 5STS 시간 정규화 ----------------
 
 
-def test_age_norm_5sts_out_of_range_is_none_easy() -> None:
-    # 범위 밖·비정상 연령은 안전하게 None(→하): 하한 미만(<65)·음수(미래 생년) (리뷰 #103).
-    assert PhysicalAssessmentService._age_norm_5sts(64) is None  # 앱대상·규준 하한 미만
-    assert PhysicalAssessmentService._age_norm_5sts(40) is None  # 젊은 성인도 지원 대상 밖 → None
-    assert PhysicalAssessmentService._age_norm_5sts(0) is None
-    assert PhysicalAssessmentService._age_norm_5sts(-1) is None  # 미래 생년 → 음수 연령
-
-
-def test_under_65_stays_easy_even_when_very_fast_is_intended_not_a_bug() -> None:
-    # 정책 고정(#155): 앱 대상이 65+ 이고 5STS 규준(Bohannon 65-89)이 그 밖을 외삽하지 않으므로,
-    #   65세 미만은 규준을 잡지 않고 '하'로 수렴한다. 40세가 매우 빠른 5STS(6초)를 기록해도 EASY 다 —
-    #   성능 역전이 아니라 '지원 대상 밖 기본값'. 젊은 연령대 규준을 새로 도입해 NORMAL 로 바꾸지 말 것.
-    assert (
-        PhysicalAssessmentService._determine_activity_level(
-            chair_stand_sec=Decimal("6.0"),  # 매우 빠름
-            age_norm_sec=PhysicalAssessmentService._age_norm_5sts(40),  # 40세 → None
-            pain_reported=False,
-            dizziness_reported=False,
-        )
-        == ActivityLevel.EASY
-    )
-
-
-def test_activity_level_from_5sts_vs_age_norm() -> None:
-    # 5STS ≤ 연령대 평균 → 중, 초과 → 하. 콜드스타트는 상(hard) 없음.
-    assert (
-        PhysicalAssessmentService._determine_activity_level(
-            chair_stand_sec=Decimal("11.4"),
-            age_norm_sec=Decimal("11.4"),
-            pain_reported=False,
-            dizziness_reported=False,
-        )
-        == ActivityLevel.NORMAL
-    )
-    assert (
-        PhysicalAssessmentService._determine_activity_level(
-            chair_stand_sec=Decimal("15.0"),
-            age_norm_sec=Decimal("12.6"),
-            pain_reported=False,
-            dizziness_reported=False,
-        )
-        == ActivityLevel.EASY
-    )
-
-
-def test_activity_level_easy_when_measurement_or_age_missing() -> None:
-    # 미실시(chair_stand None) 또는 연령 미상 → 하(기본).
-    assert (
-        PhysicalAssessmentService._determine_activity_level(
-            chair_stand_sec=None,
-            age_norm_sec=Decimal("12.6"),
-            pain_reported=False,
-            dizziness_reported=False,
-        )
-        == ActivityLevel.EASY
-    )
-    assert (
-        PhysicalAssessmentService._determine_activity_level(
-            chair_stand_sec=Decimal("9.0"),
-            age_norm_sec=None,
-            pain_reported=False,
-            dizziness_reported=False,
-        )
-        == ActivityLevel.EASY
-    )
-
-
-def test_activity_level_falls_back_to_easy_for_safety_flags() -> None:
-    # 아주 빠른 5STS(잘함)여도 통증/어지럼이면 안전상 하.
-    assert (
-        PhysicalAssessmentService._determine_activity_level(
-            chair_stand_sec=Decimal("8.0"),
-            age_norm_sec=Decimal("12.6"),
-            pain_reported=True,
-            dizziness_reported=False,
-        )
-        == ActivityLevel.EASY
-    )
+def test_quantize_5sts_normalizes_to_two_decimals() -> None:
+    # 저장 컬럼(Numeric(5,2))과 같은 2자리(HALF_UP)로 정규화. None 은 그대로.
+    assert PhysicalAssessmentService._quantize_5sts(Decimal("11.2")) == Decimal("11.20")
+    assert PhysicalAssessmentService._quantize_5sts(Decimal("11.005")) == Decimal("11.01")
+    assert PhysicalAssessmentService._quantize_5sts(None) is None
 
 
 # ---------------- create_assessment 통합 ----------------
 
 
-async def test_create_assessment_sets_activity_profile_from_5sts() -> None:
-    service, assessment_repo, activity_repo, session = _service()
+async def test_create_assessment_stores_measurement() -> None:
+    service, assessment_repo, session = _service()
     user = cast(User, SimpleNamespace(user_id=1))
 
     response = await service.create_assessment(
         user,
-        PhysicalAssessmentCreateRequest(
-            chair_stand_5_time_sec=Decimal("11.2"),  # ≤ 12.6(70-79 평균) → 중
-        ),
+        PhysicalAssessmentCreateRequest(chair_stand_5_time_sec=Decimal("11.2")),
     )
 
     assert response.physical_assessment_id == 30
-    assert response.used_for_level_setting is True
-    assert response.activity_profile.current_level == ActivityLevel.NORMAL
-    assert response.activity_profile.level_reason == LevelReason.INITIAL_TEST
     assert assessment_repo.created is not None
-    assert assessment_repo.created.used_for_level_setting is True
-    assert activity_repo.created is not None
-    assert activity_repo.created.physical_assessment_id == 30
+    assert assessment_repo.created.chair_stand_5_time_sec == Decimal("11.2")
+    assert assessment_repo.created.chair_stand_skipped is False
     assert session.committed is True
 
 
+async def test_create_assessment_saves_used_for_level_setting_false() -> None:
+    # 난이도 폐기 이후 저장분: 컬럼은 과거 데이터 사실 기록용으로만 남아, 신규 행은 항상 False.
+    service, assessment_repo, _ = _service()
+
+    await service.create_assessment(
+        cast(User, SimpleNamespace(user_id=1)),
+        PhysicalAssessmentCreateRequest(chair_stand_5_time_sec=Decimal("11.2")),
+    )
+
+    assert assessment_repo.created is not None
+    assert assessment_repo.created.used_for_level_setting is False
+
+
 async def test_create_assessment_completes_linked_started_session() -> None:
-    service, _, _, session = _service()
+    service, _, session = _service()
     health_check_session = HealthCheckSession(
         session_id=10,
         user_id=1,
@@ -307,7 +179,7 @@ async def test_create_assessment_completes_linked_started_session() -> None:
 
 
 async def test_create_assessment_rejects_finished_session() -> None:
-    service, assessment_repo, _, session = _service()
+    service, assessment_repo, session = _service()
     health_check_session = HealthCheckSession(
         session_id=10,
         user_id=1,
@@ -356,22 +228,14 @@ def _stored_assessment() -> PhysicalAssessment:
         chair_stand_skipped=False,
         pain_reported=False,
         dizziness_reported=False,
-        used_for_level_setting=True,
+        used_for_level_setting=False,
     )
 
 
 async def test_create_assessment_completed_session_same_payload_is_idempotent() -> None:
     # 응답 유실 재전송(#180): 이미 COMPLETED 된 세션에 같은 내용 재제출 →
     #   새로 만들지 않고 기존 결과를 그대로 돌려준다(멱등). 11.2 vs 저장 11.20 은 2자리 정규화로 동일.
-    existing_profile = UserActivityProfile(
-        activity_profile_id=100,
-        user_id=1,
-        current_level=ActivityLevel.NORMAL,
-        level_reason=LevelReason.INITIAL_TEST,
-        physical_assessment_id=30,
-        started_at=datetime(2026, 7, 10, 12, 0, 0),
-    )
-    service, assessment_repo, _, session = _service(existing_profile)
+    service, assessment_repo, session = _service()
     assessment_repo.stored = _stored_assessment()
     service.health_check_repo = _FakeHealthCheckRepository(_completed_session())  # type: ignore[assignment]
 
@@ -388,15 +252,7 @@ async def test_create_assessment_completed_session_same_payload_is_idempotent() 
 async def test_create_assessment_completed_session_different_payload_conflicts() -> None:
     # #180 완료기준(리뷰 #207 2b): 이미 완료된 세션에 '다른' 내용 제출 →
     #   확정된 결과를 덮어쓰지 않도록 409. 같은 값의 멱등 재시도와 구분된다.
-    existing_profile = UserActivityProfile(
-        activity_profile_id=100,
-        user_id=1,
-        current_level=ActivityLevel.NORMAL,
-        level_reason=LevelReason.INITIAL_TEST,
-        physical_assessment_id=30,
-        started_at=datetime(2026, 7, 10, 12, 0, 0),
-    )
-    service, assessment_repo, _, session = _service(existing_profile)
+    service, assessment_repo, session = _service()
     assessment_repo.stored = _stored_assessment()  # 저장값 11.20
     service.health_check_repo = _FakeHealthCheckRepository(_completed_session())  # type: ignore[assignment]
 
@@ -412,7 +268,7 @@ async def test_create_assessment_completed_session_different_payload_conflicts()
 
 
 async def test_create_assessment_rejects_missing_session() -> None:
-    service, assessment_repo, _, session = _service()
+    service, assessment_repo, session = _service()
     service.health_check_repo = _FakeHealthCheckRepository(None)  # type: ignore[assignment]
 
     with pytest.raises(HTTPException) as exc:
@@ -428,85 +284,3 @@ async def test_create_assessment_rejects_missing_session() -> None:
     assert exc.value.detail == "세션을 찾을 수 없습니다."
     assert assessment_repo.created is None
     assert session.committed is False
-
-
-async def test_create_assessment_slow_5sts_sets_easy() -> None:
-    # 연령대 평균 초과(느림) → 하.
-    service, _, _, _ = _service()
-    user = cast(User, SimpleNamespace(user_id=1))
-
-    response = await service.create_assessment(
-        user,
-        PhysicalAssessmentCreateRequest(chair_stand_5_time_sec=Decimal("15.0")),
-    )
-
-    assert response.used_for_level_setting is True
-    assert response.activity_profile.current_level == ActivityLevel.EASY
-
-
-async def test_create_assessment_logs_activity_level_change() -> None:
-    existing = UserActivityProfile(
-        activity_profile_id=100,
-        user_id=1,
-        current_level=ActivityLevel.HARD,
-        level_reason=LevelReason.USER_SELECTED,
-        physical_assessment_id=10,
-        started_at=datetime(2026, 7, 10, 12, 0, 0),
-    )
-    service, _, activity_repo, _ = _service(existing)
-    user = cast(User, SimpleNamespace(user_id=1))
-
-    response = await service.create_assessment(
-        user,
-        PhysicalAssessmentCreateRequest(chair_stand_5_time_sec=Decimal("11.2")),
-    )
-
-    assert response.activity_profile.current_level == ActivityLevel.NORMAL
-    assert response.activity_profile.level_reason == LevelReason.RULE
-    assert activity_repo.created_level_change_log is not None
-    assert activity_repo.created_level_change_log.from_level == ActivityLevel.HARD
-    assert activity_repo.created_level_change_log.to_level == ActivityLevel.NORMAL
-    assert activity_repo.created_level_change_log.reason_type == ReasonType.RULE
-    assert activity_repo.created_level_change_log.reason_text == "physical_assessment:30"
-    assert activity_repo.created_level_change_log.accepted_by_user is False
-
-
-async def test_create_assessment_skipped_5sts_falls_to_easy() -> None:
-    # 팀 결정: 5STS 미실시/스킵 → 하(기본). 기존 hard 사용자도 하로 수렴한다(리뷰 #103-1).
-    existing = UserActivityProfile(
-        activity_profile_id=100,
-        user_id=1,
-        current_level=ActivityLevel.HARD,
-        level_reason=LevelReason.USER_SELECTED,
-        physical_assessment_id=10,
-        started_at=datetime(2026, 7, 10, 12, 0, 0),
-    )
-    service, assessment_repo, activity_repo, session = _service(existing)
-    user = cast(User, SimpleNamespace(user_id=1))
-
-    response = await service.create_assessment(
-        user,
-        PhysicalAssessmentCreateRequest(chair_stand_skipped=True),
-    )
-
-    assert response.used_for_level_setting is True
-    assert response.activity_profile.current_level == ActivityLevel.EASY
-    assert assessment_repo.created is not None
-    assert activity_repo.updated is not None
-    assert activity_repo.created_level_change_log is not None
-    assert activity_repo.created_level_change_log.from_level == ActivityLevel.HARD
-    assert activity_repo.created_level_change_log.to_level == ActivityLevel.EASY
-    assert session.committed is True
-
-
-async def test_create_assessment_future_birthdate_negative_age_is_easy() -> None:
-    # 미래 생년월일 → 음수 연령. 빠른 5STS(잘함)여도 NORMAL로 오판하지 않고 안전하게 하(리뷰 #103).
-    #   DTO가 미래 생년을 걸러도 기존/비정상 데이터가 들어올 수 있어 서비스 fail-safe를 확인한다.
-    service, _, _, _ = _service(birth_date=date(2100, 1, 1))
-    user = cast(User, SimpleNamespace(user_id=1))
-
-    response = await service.create_assessment(
-        user, PhysicalAssessmentCreateRequest(chair_stand_5_time_sec=Decimal("9.0"))
-    )
-
-    assert response.activity_profile.current_level == ActivityLevel.EASY
