@@ -45,14 +45,40 @@ fun scoreRefreshResult(recalculated: Boolean, muscleScore: Int?): ScoreRefreshSt
  * 준다 — `APPLIED` 직후도 마찬가지다(다음 호출은 `recalculated=false`). 눌리는 버튼을 두면
  * "눌러도 안 바뀐다"는 경험만 반복시킨다.
  */
-fun canRequestScoreRefresh(state: ScoreRefreshState?): Boolean = when (state) {
+fun canRequestScoreRefresh(
+    state: ScoreRefreshState?,
+    nextAvailableAtMillis: Long? = null,
+    nowMillis: Long = System.currentTimeMillis(),
+): Boolean = when (state) {
     null -> true
     ScoreRefreshState.FAILED -> true
-    ScoreRefreshState.IN_PROGRESS,
-    ScoreRefreshState.APPLIED,
-    ScoreRefreshState.ALREADY_TODAY,
-    ScoreRefreshState.NOT_ELIGIBLE,
-    -> false
+    ScoreRefreshState.IN_PROGRESS, ScoreRefreshState.NOT_ELIGIBLE -> false
+    // 하루 1회 제한은 **시각이 지나면 풀린다**(리뷰). 상태만 보고 잠그면 앱을 켜둔 채 자정을
+    //   넘겨도 다음 실행 전까지 기능이 잠긴다 — 서버는 이미 허용하는데 화면만 막는 꼴이다.
+    //   시각을 모르면(구버전 서버·파싱 실패) 잠그지 않는다: 다시 눌러도 서버가 같은 답을 줄 뿐이고,
+    //   기능이 영영 잠기는 쪽이 훨씬 나쁘다.
+    ScoreRefreshState.APPLIED, ScoreRefreshState.ALREADY_TODAY ->
+        nextAvailableAtMillis == null || nowMillis >= nextAvailableAtMillis
+}
+
+/**
+ * 서버가 준 다음 재평가 가능 시각(`2026-08-05T00:00:00+09:00`)을 epoch millis 로.
+ *
+ * `java.time` 은 minSdk 24 에서 desugaring 없이 못 쓰므로 [java.text.SimpleDateFormat] 을 쓴다.
+ * 오프셋 표기가 기기·서버 버전에 따라 갈릴 수 있어 몇 가지를 순서대로 시도하고, 전부 실패하면
+ * null 을 돌려준다 — 위 판정이 그 경우 **잠그지 않는 쪽**으로 처리한다.
+ */
+fun parseNextAvailableAt(iso: String?): Long? {
+    val text = iso?.trim().orEmpty()
+    if (text.isEmpty()) return null
+    val patterns = listOf("yyyy-MM-dd'T'HH:mm:ssXXX", "yyyy-MM-dd'T'HH:mm:ssZ", "yyyy-MM-dd'T'HH:mm:ss")
+    patterns.forEach { pattern ->
+        val parsed = runCatching {
+            java.text.SimpleDateFormat(pattern, java.util.Locale.US).parse(text)
+        }.getOrNull()
+        if (parsed != null) return parsed.time
+    }
+    return null
 }
 
 /**

@@ -215,6 +215,12 @@ fun RecordScreen(
                             //   맡는다 — 여기서 뒤에 붙이면 5STS 아래로 밀린다(실기기 QA).
                             //   점수가 없으면 넘기지 않는다: 눌러도 '대상 아님'만 나온다.
                             scoreRefresh = vm.scoreRefresh,
+                            // 제한 해제 시각이 지났는지는 시간이 흐르면 달라진다 — 화면이 다시 보일
+                            //   때마다 판정한다(리뷰: 앱을 켜둔 채 자정을 넘겨도 살아나야 한다).
+                            canRefreshScore = canRequestScoreRefresh(
+                                state = vm.scoreRefresh,
+                                nextAvailableAtMillis = vm.scoreRefreshNextAvailableAt,
+                            ),
                             onRefreshScore = vm::refreshScore.takeIf { ui.score != null },
                         )
                     }

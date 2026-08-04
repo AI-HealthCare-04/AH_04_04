@@ -48,13 +48,75 @@ class ScoreRefreshTest {
 
     @Test
     fun states_that_return_the_same_answer_disable_the_button() {
+        val tomorrow = 1_000_000L
+        val now = 500L
         listOf(
-            ScoreRefreshState.IN_PROGRESS,
             // APPLIED 직후 다시 부르면 서버가 recalculated=false 를 준다 — 같은 답이다.
             ScoreRefreshState.APPLIED,
             ScoreRefreshState.ALREADY_TODAY,
-            ScoreRefreshState.NOT_ELIGIBLE,
-        ).forEach { assertFalse("state=$it 에서는 눌릴 수 없어야 한다", canRequestScoreRefresh(it)) }
+        ).forEach {
+            assertFalse(
+                "state=$it 에서는 제한 시각 전까지 눌릴 수 없어야 한다",
+                canRequestScoreRefresh(it, nextAvailableAtMillis = tomorrow, nowMillis = now),
+            )
+        }
+        assertFalse(canRequestScoreRefresh(ScoreRefreshState.IN_PROGRESS, tomorrow, now))
+        assertFalse(canRequestScoreRefresh(ScoreRefreshState.NOT_ELIGIBLE, tomorrow, now))
+    }
+
+    // ── 날짜 경계(리뷰) ──────────────────────────────────────────────────────
+    // 상태만 보고 잠그면 앱을 켜둔 채 자정을 넘겼을 때 서버는 이미 허용하는데 화면만 막는다.
+
+    @Test
+    fun the_limit_lifts_once_the_next_available_time_passes() {
+        val midnight = 1_000_000L
+        listOf(ScoreRefreshState.APPLIED, ScoreRefreshState.ALREADY_TODAY).forEach { state ->
+            assertFalse(
+                "제한 시각 직전에는 잠긴다(state=$state)",
+                canRequestScoreRefresh(state, midnight, nowMillis = midnight - 1),
+            )
+            assertTrue(
+                "제한 시각이 되면 프로세스 재시작 없이 풀린다(state=$state)",
+                canRequestScoreRefresh(state, midnight, nowMillis = midnight),
+            )
+            assertTrue(canRequestScoreRefresh(state, midnight, nowMillis = midnight + 1))
+        }
+    }
+
+    @Test
+    fun an_unknown_next_time_never_locks_the_feature() {
+        // 구버전 서버·파싱 실패로 시각을 모를 수 있다. 다시 눌러도 서버가 같은 답을 줄 뿐이라
+        //   기능이 영영 잠기는 쪽이 훨씬 나쁘다.
+        listOf(ScoreRefreshState.APPLIED, ScoreRefreshState.ALREADY_TODAY).forEach { state ->
+            assertTrue("state=$state", canRequestScoreRefresh(state, nextAvailableAtMillis = null))
+        }
+    }
+
+    @Test
+    fun in_progress_and_not_eligible_ignore_the_clock() {
+        // 시각이 지나도 계산 중이면 못 누르고, 대상이 아니면 여전히 의미가 없다.
+        val past = 1L
+        assertFalse(canRequestScoreRefresh(ScoreRefreshState.IN_PROGRESS, past, nowMillis = 999L))
+        assertFalse(canRequestScoreRefresh(ScoreRefreshState.NOT_ELIGIBLE, past, nowMillis = 999L))
+    }
+
+    // ── 서버 시각 파싱 ───────────────────────────────────────────────────────
+
+    @Test
+    fun the_server_timestamp_is_parsed_with_its_offset() {
+        // 2026-08-05T00:00:00+09:00 == 2026-08-04T15:00:00Z
+        val parsed = parseNextAvailableAt("2026-08-05T00:00:00+09:00")
+        assertEquals(1785_855_600_000L / 1000 * 1000, parsed?.div(1000)?.times(1000))
+        // 오프셋을 무시하면 9시간 어긋난다 — UTC 자정으로 읽히는지 확인.
+        val utcSame = parseNextAvailableAt("2026-08-05T00:00:00+00:00")
+        assertTrue("오프셋이 반영돼야 한다", parsed!! < utcSame!!)
+    }
+
+    @Test
+    fun an_unparseable_timestamp_is_null_not_a_crash() {
+        assertNull(parseNextAvailableAt(null))
+        assertNull(parseNextAvailableAt(""))
+        assertNull(parseNextAvailableAt("내일"))
     }
 
     // ── 문구 ────────────────────────────────────────────────────────────────

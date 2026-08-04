@@ -285,6 +285,9 @@ class RecordViewModel(
     /** 기록 탭 '점수 다시 계산하기' 상태(#388). null = 아직 누르지 않음. */
     var scoreRefresh by mutableStateOf<ScoreRefreshState?>(null); private set
 
+    /** 서버가 준 다음 재평가 가능 시각(epoch millis). null = 모름 → 화면은 잠그지 않는다. */
+    var scoreRefreshNextAvailableAt by mutableStateOf<Long?>(null); private set
+
     /**
      * 사용자가 직접 누른 재평가(#388). 지금까지는 '내 정보 저장'만이 트리거라, 챌린지를 해도
      * 점수가 그대로인 이유를 알 수 없고 손쓸 방법도 없었다.
@@ -298,6 +301,7 @@ class RecordViewModel(
         viewModelScope.launch {
             scoreRefresh = try {
                 val result = api.reassessRiskPrediction(RiskReassessRequest())
+                scoreRefreshNextAvailableAt = parseNextAvailableAt(result.nextAvailableAt)
                 scoreRefreshResult(recalculated = result.recalculated, muscleScore = result.muscleScore)
                     .also { if (it == ScoreRefreshState.APPLIED) refresh() }
             } catch (e: CancellationException) {

@@ -197,6 +197,7 @@ internal fun MuscleDashboardCards(
     //   5STS 아래로 밀린다**(실기기 QA). 사용자가 "왜 안 바뀌지"를 느끼는 자리는 점수 옆이라
     //   여기서 직접 배치한다. null 이면 그리지 않는다(점수 제공 대상이 아닌 화면).
     scoreRefresh: ScoreRefreshState? = null,
+    canRefreshScore: Boolean = true,
     onRefreshScore: (() -> Unit)? = null,
 ) {
     val age = ui.age
@@ -207,7 +208,7 @@ internal fun MuscleDashboardCards(
         score != null -> {
             ScoreHeadlineCard(ui, score)            // H1 지금 내 점수
             // H1 바로 아래 — 점수를 보고 "안 바뀌네" 하는 그 자리에 둔다.
-            onRefreshScore?.let { ScoreRefreshCard(state = scoreRefresh, onRefresh = it) }
+            onRefreshScore?.let { ScoreRefreshCard(scoreRefresh, canRefreshScore, it) }
             ScoreTrendCard(ui.trend)                // H2 점수 변화
             CohortDistributionCard(ui.cohort, waistMissing = ui.waistCm == null) // H3 또래 중 내 위치(#193)
         }
@@ -851,13 +852,13 @@ internal fun LifestyleTipCard() {
  * 되는지를 함께 말한다. 재시도 버튼은 네트워크·서버 실패에서만 의미가 있다.
  */
 @Composable
-private fun ScoreRefreshCard(state: ScoreRefreshState?, onRefresh: () -> Unit) {
+private fun ScoreRefreshCard(state: ScoreRefreshState?, canRefresh: Boolean, onRefresh: () -> Unit) {
     AigoCard {
         AigoPrimaryButton(
             text = if (state == ScoreRefreshState.IN_PROGRESS) "다시 계산 중…" else "점수 다시 계산하기",
             onClick = onRefresh,
-            // 다시 눌러도 서버가 같은 답을 주는 상태에서는 비활성(리뷰 P2). 정책은 순수 함수에 있다.
-            enabled = canRequestScoreRefresh(state),
+            // 정책 판정은 호출부가 순수 함수로 계산해 넘긴다 — 시각 경과를 화면 재개마다 반영해야 한다.
+            enabled = canRefresh,
         )
         scoreRefreshStatusText(state)?.let { status ->
             Spacer(Modifier.height(Dimens.Space8))
