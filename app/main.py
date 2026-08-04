@@ -1,6 +1,9 @@
 # FastAPI 앱을 만들고, 라우터와 '공통 예외 처리'를 등록하는 최상위 진입점 파일입니다.
 
 # Request : 예외 핸들러가 넘겨받는 '들어온 요청' 객체 (여기선 직접 쓰진 않지만 시그니처상 필요)
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import ORJSONResponse
@@ -11,12 +14,27 @@ from fastapi.responses import ORJSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.apis.v1 import v1_routers
+from app.core.scheduler import schedule_startup_catch_up, shutdown_scheduler
+
+
+# -------------------------------------------------------------------------------------
+# 자정 자동 예측의 수명주기. 스케줄러를 켜고 기동 보정 작업을 **등록만** 한다 —
+# 여기서 await 하면 배치가 끝날 때까지 서버가 준비 상태가 되지 않아, 배포의 /health 확인
+# (약 60초)이 타임아웃 나면 재시작 루프가 된다(리뷰 P2). 보정은 스케줄러가 백그라운드로 돌린다.
+# -------------------------------------------------------------------------------------
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
+    schedule_startup_catch_up()
+    yield
+    shutdown_scheduler()
+
 
 app = FastAPI(
     default_response_class=ORJSONResponse,
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
+    lifespan=lifespan,
 )
 
 

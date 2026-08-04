@@ -12,7 +12,20 @@ class RiskPredictionCreateRequest(BaseModel):
 
 
 class RiskPredictionReassessRequest(BaseModel):
-    activity_window_days: Literal[7, 14]
+    """재평가 요청. 활동 창은 **7일만** 받는다(리뷰 P1).
+
+    14 를 함께 열어 두면 8일차 게이트와 어긋난다 — 온보딩 8일차에 14 로 부르면 게이트를 통과하는데
+    창의 앞 7일은 온보딩 이전이라 0 으로 채워져, 이 게이트가 막으려던 가입 직후 점수 급락이 그대로
+    재현된다. 게이트를 창 길이에 맞추더라도 '같은 날 첫 호출 14 · 멱등 재호출 7' 처럼 창이 갈리면
+    기존 예측이 어떤 값으로 계산됐는지 날짜만으로 되짚을 수 없어 응답의 activity_input_source 가
+    다시 어긋난다.
+
+    실제 계약이 7일뿐이라 창을 좁히는 쪽을 택했다 — 앱은 `RecordModels.kt` 에서 7 을 고정으로 보내고
+    (직렬화 테스트가 고정), 자동 배치도 `DEFAULT_ACTIVITY_WINDOW_DAYS`=7 이다. 14 가 다시 필요해지면
+    예측 행에 실제 사용한 창·출처를 저장한 뒤 열어야 한다.
+    """
+
+    activity_window_days: Literal[7]
 
 
 class CareStage(StrEnum):

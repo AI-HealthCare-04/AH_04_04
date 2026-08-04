@@ -1,8 +1,10 @@
 from collections.abc import Iterable
+from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.utils.clock import to_kst_date
 from app.models.enums import ActivityInputSource
 from app.models.health import HealthCheckSession, HealthProfile
 
@@ -17,6 +19,24 @@ class HealthProfileRepository:
             HealthCheckSession.user_id == user_id,
         )
         return await self.session.scalar(stmt)
+
+    async def get_onboarding_completed_on(self, user_id: int) -> date | None:
+        """온보딩을 마친 날(KST). 활동 일수 반영 시작일(8일차) 판정의 기준점이다.
+
+        가입일(`users.created_at`)이 아니라 이 날을 쓴다. User 행은 **소셜 로그인 시점에**
+        `onboarding_status=pending` 으로 먼저 만들어져서, 약관 화면에서 이탈했다가 며칠 뒤
+        돌아와 완주한 사용자는 가입일과 실제 사용 시작일이 벌어진다. 그 사용자에게 가입일 기준
+        8일차를 적용하면 프로필도 없던 기간까지 활동 창에 들어와 활동 일수가 0 에 가깝게 잡히고
+        점수가 떨어진다 — 이 기능이 막으려던 바로 그 현상이다.
+
+        완료 세션이 여럿이면 **가장 이른 것**을 쓴다(재측정 등으로 세션이 늘어도 시작일은 안 밀린다).
+        """
+        stmt = select(func.min(HealthCheckSession.completed_at)).where(
+            HealthCheckSession.user_id == user_id,
+            HealthCheckSession.completed_at.is_not(None),
+        )
+        completed_at = await self.session.scalar(stmt)
+        return to_kst_date(completed_at) if completed_at is not None else None
 
     async def create_profile(self, profile: HealthProfile) -> HealthProfile:
         self.session.add(profile)

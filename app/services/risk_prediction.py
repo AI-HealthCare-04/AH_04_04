@@ -38,7 +38,7 @@ from app.ml.predictor import (
     load_cohort_version,
     percentile_low,
 )
-from app.models.enums import ModelVariant, OnboardingStatus, RiskLevel, TermsType
+from app.models.enums import ActivityInputSource, ModelVariant, OnboardingStatus, RiskLevel, TermsType
 from app.models.health import HealthProfile
 from app.models.predictions import PredictionFeedback, RiskPrediction
 from app.models.users import User
@@ -53,6 +53,17 @@ DENSITY_PLOT_MAX_PROBABILITY = 0.5
 # 코호트표 조회 키의 성별 인코딩 — 모델(`_normalize_sex`)과 같아야 한다: male=1, female=2.
 #   0 같은 다른 값이 저장되면 표에 없는 키라 또래 분포가 실패한다(#408 리뷰 P1).
 COHORT_SEX_CODES = frozenset({1, 2})
+
+# 활동 일수를 실기록으로 세기 시작하는 날(현행 7일 창 기준). 온보딩 완료일이 1일차이므로
+#   8일차 = 완료 후 7일. 그 전에는 창을 채울 기록이 없어, 실기록으로 세면 자가응답보다 무조건 낮다.
+#   ⚠️ 판정은 이 상수가 아니라 **창 길이**로 한다(_activity_window_is_ready). 창이 길어지면
+#     시작일도 함께 밀려야 하는데 상수로 고정하면 창 앞쪽이 온보딩 이전으로 새기 때문이다(리뷰 P1).
+#     이 값은 7일 창일 때의 결과를 문서·테스트에서 부르는 이름으로 남긴다.
+ACTIVITY_REFLECTION_START_DAY = 8
+
+# 자동 예측이 쓰는 활동 창. 앱의 재평가 요청 기본값(RecordModels.kt)과 같은 7일로 맞춘다 —
+#   두 경로가 다른 창을 쓰면 같은 날 수동/자동 점수가 달라져 사용자가 설명할 수 없는 차이를 본다.
+DEFAULT_ACTIVITY_WINDOW_DAYS = 7
 
 
 class RiskPredictionService:
@@ -97,18 +108,62 @@ class RiskPredictionService:
         existing = await self.prediction_repo.get_today_reassessment(user.user_id)
         if existing is not None:
             # recalculated=False: 재계산하지 않으므로 기여도는 빈 목록으로 나간다. 앱은 기존 로컬 캐시를 유지한다.
-            return self._to_reassess_response(existing, recalculated=False)
+            #   활동 출처는 게이트가 날짜 기준이라 오늘 만들어진 그 예측과 같은 결과가 나온다.
+            return self._to_reassess_response(
+                existing,
+                recalculated=False,
+                activity_input_source=await self._activity_input_source(user, data.activity_window_days),
+            )
         # 프로필 행을 새로 만들지 않는다(#408 A+3). 재평가에서 실제로 달라지는 값은 활동 일수뿐인데,
         #   그 둘을 담으려고 생년월일·성별·신체계측까지 매번 복제하고 있었다. 활동 일수는 예측 입력으로만
         #   쓰고, 예측 행은 사용자가 직접 입력한 프로필을 그대로 가리킨다.
-        walk_days, musc_days = await self._derive_activity_days(user, data.activity_window_days)
+        activity_override = await self._derive_activity_days(user, data.activity_window_days)
         prediction, contributions = await self._predict_and_save(
             user,
             profile,
-            activity_override=(walk_days, musc_days),
+            activity_override=activity_override,
             is_reassessment=True,
         )
-        return self._to_reassess_response(prediction, contributions=contributions)
+        # 8일차 게이트가 걸리면 override 가 None 이고 예측은 프로필의 자가응답 값으로 계산된다.
+        #   그때 service_log 라고 답하면 응답이 사실과 달라진다(#408 A+3 이후 이 필드의 유일한 출처).
+        return self._to_reassess_response(
+            prediction,
+            contributions=contributions,
+            activity_input_source=(
+                ActivityInputSource.SERVICE_LOG if activity_override is not None else ActivityInputSource.SELF_REPORT
+            ),
+        )
+
+    async def create_auto_prediction(self, user: User) -> RiskPrediction | None:
+        """자정 배치가 사용자 1명의 오늘 점수를 만든다. 이미 있으면 만들지 않고 None.
+
+        수동 재평가와 **카운터가 분리**돼 있어(`is_auto`) 이 호출이 사용자의 그날 재평가 권리를
+        소진하지 않는다. 반대로 사용자가 먼저 재평가했더라도 자동 예측은 따로 남는다 — 추이는
+        하루 한 점을 자동으로 보장하고, 수동 재평가는 그날의 최신 상태를 반영한다.
+
+        활동 일수 규칙은 수동 재평가와 같다 — 온보딩 8일차 전이면 자가응답 값을 그대로 쓴다.
+
+        ⚠️ **잠금을 먼저 잡는다**(리뷰 P1). 확인 후 저장은 그 자체로 check-then-insert 경쟁이고
+        `(user_id, 날짜, is_auto)` 유일성 제약도 없다. 단일 워커여도 겹친다 — 기동 보정과 00:05
+        cron 은 서로 다른 작업이라 `max_instances` 가 막지 못하고, 00:05 직전에 기동하면 둘이
+        동시에 돈다. 수동 재평가와 **같은 users 행 잠금**을 써서 자동끼리는 물론 자동과 수동
+        사이의 경합까지 한 줄에 세운다(커밋까지 유지된다).
+        """
+        await self.prediction_repo.lock_user_for_reassess(user.user_id)
+        if await self.prediction_repo.get_today_auto_prediction(user.user_id) is not None:
+            return None
+        profile = await self.profile_repo.get_latest_profile(user.user_id)
+        if profile is None:
+            return None
+        activity_override = await self._derive_activity_days(user, DEFAULT_ACTIVITY_WINDOW_DAYS)
+        prediction, _ = await self._predict_and_save(
+            user,
+            profile,
+            activity_override=activity_override,
+            is_reassessment=True,
+            is_auto=True,
+        )
+        return prediction
 
     async def get_latest_prediction(self, user: User) -> RiskPredictionResponse:
         prediction = await self.prediction_repo.get_latest_prediction(user.user_id)
@@ -285,6 +340,7 @@ class RiskPredictionService:
         complete_onboarding: bool = False,
         activity_override: tuple[int, int] | None = None,
         is_reassessment: bool = False,
+        is_auto: bool = False,
     ) -> tuple[RiskPrediction, list[FeatureContributionResponse]]:
         """예측을 계산·저장하고, (예측 행, 이번 계산의 SHAP 기여도)를 함께 돌려준다.
 
@@ -313,6 +369,7 @@ class RiskPredictionService:
             user_id=user.user_id,
             profile_id=profile.profile_id,
             is_reassessment=is_reassessment,
+            is_auto=is_auto,
             model_version=result.model_version,
             model_variant=result.model_variant,
             internal_risk_score=Decimal(str(round(result.risk_score, 3))),
@@ -380,10 +437,12 @@ class RiskPredictionService:
         *,
         recalculated: bool = True,
         contributions: list[FeatureContributionResponse] | None = None,
+        activity_input_source: ActivityInputSource = ActivityInputSource.SERVICE_LOG,
     ) -> RiskPredictionReassessResponse:
         # 기여도는 recalculated=True(새로 계산)일 때만 전달된다. recalculated=False 는 None → 빈 목록.
         care_stage = self._care_stage_from_risk_level(prediction.internal_risk_level)
         return RiskPredictionReassessResponse(
+            activity_input_source=activity_input_source,
             recalculated=recalculated,
             next_available_at=next_reassess_available_at(),
             profile_id=prediction.profile_id,
@@ -397,8 +456,19 @@ class RiskPredictionService:
             contributions=contributions or [],
         )
 
-    async def _derive_activity_days(self, user: User, activity_window_days: int) -> tuple[int, int]:
-        """최근 N일 실제 기록에서 걷기·근력 일수를 센다(#408 A+3 — 프로필 행 없이 예측 입력만 만든다)."""
+    async def _derive_activity_days(self, user: User, activity_window_days: int) -> tuple[int, int] | None:
+        """최근 N일 실제 기록에서 걷기·근력 일수를 센다(#408 A+3 — 프로필 행 없이 예측 입력만 만든다).
+
+        **온보딩 완료 8일차부터만 센다**. 그 전에는 None 을 돌려 온보딩 자가응답 값을 그대로
+        쓴다 — 창(7일)을 채울 기록이 아직 없는데 실기록으로 세면 "걷기 주 5일"이라 답한 사용자가
+        가입 이튿날 재평가를 눌렀을 때 `walk_days=0` 이 되어 점수가 급락한다. 사용자는 아무것도
+        하지 않았는데 떨어진 그래프를 보게 되고, 원인도 활동 부족이 아니다.
+
+        8일차 = 완료일 당일을 1일차로 세어 7일이 지난 날. 그날부터는 창이 완료 이후 기록으로
+        가득 차므로 실기록만으로 판단할 수 있다.
+        """
+        if not await self._activity_window_is_ready(user, activity_window_days):
+            return None
         end_date = today_kst()
         start_date = end_date - timedelta(days=activity_window_days - 1)
         activity_logs = await self.dashboard_repo.get_activity_logs_between(
@@ -407,6 +477,33 @@ class RiskPredictionService:
             end_date,
         )
         return derive_activity_day_counts(activity_logs, activity_window_days=activity_window_days)
+
+    async def _activity_window_is_ready(self, user: User, activity_window_days: int) -> bool:
+        """창이 **온보딩 이후 기록만으로** 채워지는 날인가. 완료일을 모르면 아직 아니다.
+
+        기준을 상수(8일차)가 아니라 창 길이로 두는 이유(리뷰 P1) — 창이 7일이면 완료 후 7일이 지난
+        8일차부터지만, 14일이면 15일차여야 앞부분이 온보딩 이전으로 새지 않는다. 상수로 고정하면
+        더 긴 창이 게이트를 통과하면서 창 앞쪽 0 이 그대로 점수에 들어간다.
+
+        지금 요청 계약은 7일뿐이라(RiskPredictionReassessRequest) 결과는 종전과 같은 8일차다.
+        창을 다시 넓히더라도 이 식이 자동으로 따라간다.
+        """
+        completed_on = await self.profile_repo.get_onboarding_completed_on(user.user_id)
+        if completed_on is None:
+            return False
+        return (today_kst() - completed_on).days >= activity_window_days
+
+    async def _activity_input_source(self, user: User, activity_window_days: int) -> ActivityInputSource:
+        """오늘 이 사용자의 예측이 어떤 활동 값을 쓰는가 — 게이트와 같은 판정.
+
+        요청 창이 7일 하나뿐이라(리뷰 P1 로 좁혔다) 같은 날 안에서는 판정이 바뀌지 않는다. 그래서
+        멱등 반환(오늘 이미 재평가함) 경로에서도 그 예측이 저장될 때와 같은 값을 다시 계산해 답할 수
+        있다. 창이 다시 둘 이상이 되면 이 재계산은 성립하지 않으므로, 그때는 예측 행에 실제 사용한
+        창·출처를 저장해야 한다.
+        """
+        if await self._activity_window_is_ready(user, activity_window_days):
+            return ActivityInputSource.SERVICE_LOG
+        return ActivityInputSource.SELF_REPORT
 
     @staticmethod
     def _to_history_item(
