@@ -21,6 +21,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import kotlinx.coroutines.delay
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.Lifecycle
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -66,6 +72,28 @@ fun RecordScreen(
     // 상단 세그먼트: 근육 건강(점수·추이·시뮬) ↔ 미션 기록(달력·걷기·챌린지).
     //   기본값은 근육 건강 — 화면을 열었을 때 결론이 먼저 보여야 한다(#385).
     var tab by remember { mutableStateOf(RecordTab.DASHBOARD) }
+    // 재계산 제한 해제 시각 판정에 쓸 '지금'(#388 리뷰). **시간이 흐르는 것만으로는 재구성이 일어나지
+    //   않는다** — System.currentTimeMillis() 를 그냥 읽으면 자정을 넘겨도 화면이 다시 판정하지 않는다.
+    //   상태로 들고, 아래 두 경로에서 갱신한다.
+    var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    // ① 화면 복귀 — 백그라운드에 있는 동안 자정을 넘겼을 수 있다.
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) nowMillis = System.currentTimeMillis()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    // ② 켜둔 채 자정을 넘기는 경우 — 해제 시각까지 기다렸다가 한 번 깨운다.
+    LaunchedEffect(vm.scoreRefreshNextAvailableAt) {
+        val target = vm.scoreRefreshNextAvailableAt ?: return@LaunchedEffect
+        val wait = target - System.currentTimeMillis()
+        if (wait > 0) {
+            delay(wait)
+            nowMillis = System.currentTimeMillis()
+        }
+    }
     // §5.2 달력 일자 탭 → 바텀시트로 그날 완료 미션 목록.
     var selectedDay by remember { mutableStateOf<String?>(null) }
     // §5.3 걷기 막대 축 전환(시간/걸음).
@@ -220,6 +248,7 @@ fun RecordScreen(
                             canRefreshScore = canRequestScoreRefresh(
                                 state = vm.scoreRefresh,
                                 nextAvailableAtMillis = vm.scoreRefreshNextAvailableAt,
+                                nowMillis = nowMillis,
                             ),
                             onRefreshScore = vm::refreshScore.takeIf { ui.score != null },
                         )
