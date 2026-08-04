@@ -38,8 +38,22 @@ fun scoreRefreshResult(recalculated: Boolean, muscleScore: Int?): ScoreRefreshSt
     else -> ScoreRefreshState.ALREADY_TODAY
 }
 
-/** 재시도 버튼을 줄 상태인가. 네트워크·서버 실패만 다시 눌러서 달라진다. */
-fun canRetryScoreRefresh(state: ScoreRefreshState?): Boolean = state == ScoreRefreshState.FAILED
+/**
+ * 지금 재계산을 **요청할 수 있는 상태인가**(리뷰 P2). 버튼 활성 조건이자 정책 그 자체다.
+ *
+ * 아직 안 눌렀거나 실패한 경우에만 눌러서 결과가 달라진다. 나머지는 다시 눌러도 서버가 같은 답을
+ * 준다 — `APPLIED` 직후도 마찬가지다(다음 호출은 `recalculated=false`). 눌리는 버튼을 두면
+ * "눌러도 안 바뀐다"는 경험만 반복시킨다.
+ */
+fun canRequestScoreRefresh(state: ScoreRefreshState?): Boolean = when (state) {
+    null -> true
+    ScoreRefreshState.FAILED -> true
+    ScoreRefreshState.IN_PROGRESS,
+    ScoreRefreshState.APPLIED,
+    ScoreRefreshState.ALREADY_TODAY,
+    ScoreRefreshState.NOT_ELIGIBLE,
+    -> false
+}
 
 /**
  * 기록 탭 '점수 다시 계산하기' 아래에 붙는 상태 문구. null = 표시할 말 없음(아직 안 눌렀다).

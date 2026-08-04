@@ -37,17 +37,24 @@ class ScoreRefreshTest {
         assertEquals(ScoreRefreshState.NOT_ELIGIBLE, scoreRefreshResult(recalculated = false, muscleScore = null))
     }
 
+    // ── 버튼 활성 조건(리뷰 P2) ────────────────────────────────────────────
+    // 다시 눌러도 서버가 같은 답을 주는 상태에서 버튼을 살려두면 "눌러도 안 바뀐다"만 반복시킨다.
+
     @Test
-    fun only_a_failure_offers_a_retry() {
-        // 422·하루 1회·정상 반영은 다시 눌러도 결과가 같다 — 재시도 버튼은 헛된 기대만 준다.
-        assertTrue(canRetryScoreRefresh(ScoreRefreshState.FAILED))
+    fun the_first_press_and_a_retry_after_failure_are_allowed() {
+        assertTrue("아직 안 눌렀다", canRequestScoreRefresh(null))
+        assertTrue("네트워크·서버 실패는 다시 눌러 볼 값이 있다", canRequestScoreRefresh(ScoreRefreshState.FAILED))
+    }
+
+    @Test
+    fun states_that_return_the_same_answer_disable_the_button() {
         listOf(
-            null,
             ScoreRefreshState.IN_PROGRESS,
+            // APPLIED 직후 다시 부르면 서버가 recalculated=false 를 준다 — 같은 답이다.
             ScoreRefreshState.APPLIED,
             ScoreRefreshState.ALREADY_TODAY,
             ScoreRefreshState.NOT_ELIGIBLE,
-        ).forEach { assertFalse("state=$it", canRetryScoreRefresh(it)) }
+        ).forEach { assertFalse("state=$it 에서는 눌릴 수 없어야 한다", canRequestScoreRefresh(it)) }
     }
 
     // ── 문구 ────────────────────────────────────────────────────────────────
@@ -71,6 +78,16 @@ class ScoreRefreshTest {
         ScoreRefreshState.entries.forEach { state ->
             val text = scoreRefreshStatusText(state)
             assertTrue("state=$state 에 문구가 없다", !text.isNullOrBlank())
+        }
+    }
+
+    @Test
+    fun no_message_promises_automatic_application() {
+        // 자동 재평가 배치가 없다. "내일 반영돼요" 같은 말은 사용자가 다시 누르지 않으면
+        //   영영 반영되지 않는 약속이 된다(리뷰 P1).
+        ScoreRefreshState.entries.forEach { state ->
+            val text = scoreRefreshStatusText(state).orEmpty()
+            assertFalse("자동 반영을 약속하면 안 된다(state=$state): $text", text.contains("내일 반영"))
         }
     }
 

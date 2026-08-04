@@ -210,7 +210,10 @@ fun RecordScreen(
                     item { MuscleDashboardCards(ui, onGoToMissions) }
                     // 사용자가 직접 점수를 다시 계산할 수 있게 한다(#388). 지금까지 트리거가
                     //   '내 정보 저장' 하나뿐이라, 챌린지를 해도 점수가 그대로인 이유를 알 수 없었다.
-                    item { ScoreRefreshCard(state = vm.scoreRefresh, onRefresh = vm::refreshScore) }
+                    // 점수 제공 대상이 아닌 연령대에는 그리지 않는다 — 눌러도 '대상 아님'만 나온다(#403 판정 재사용).
+                    if (ui.score != null || scoreEmptyState(ui.age) == ScoreEmptyState.PENDING) {
+                        item { ScoreRefreshCard(state = vm.scoreRefresh, onRefresh = vm::refreshScore) }
+                    }
                     // 점수가 없으면 위 섹션의 연령·예측 상태별 준비 카드 하나만 보여준다. 개선 섹션의
                     // ImprovementPendingCard까지 이어 붙이면 같은 안내와 미션 버튼이 중복된다(리뷰 #386).
                     // 피드백·"이 점수" 링크도 실제 점수가 있을 때만 의미가 있다.
@@ -312,7 +315,8 @@ private fun ScoreRefreshCard(state: ScoreRefreshState?, onRefresh: () -> Unit) {
         AigoPrimaryButton(
             text = if (state == ScoreRefreshState.IN_PROGRESS) "다시 계산 중…" else "점수 다시 계산하기",
             onClick = onRefresh,
-            enabled = state != ScoreRefreshState.IN_PROGRESS,
+            // 다시 눌러도 서버가 같은 답을 주는 상태에서는 비활성(리뷰 P2). 정책은 순수 함수에 있다.
+            enabled = canRequestScoreRefresh(state),
         )
         scoreRefreshStatusText(state)?.let { status ->
             Spacer(Modifier.height(Dimens.Space8))
