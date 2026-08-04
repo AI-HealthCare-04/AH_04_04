@@ -27,6 +27,19 @@ class RiskComparisonStatus(StrEnum):
     MODEL_CHANGED = "model_changed"
 
 
+class FeatureContributionResponse(BaseModel):
+    """근육 점수 SHAP 기여(#406). feature=musc_days|walk_days|waist_cm(바꿀 수 있는 3개만).
+
+    ⚠️ effect_on_score_log_odds 는 **log-odds 단위이며 점수(0~100)가 아니다.** 앱은 |값|으로 막대
+    길이를, 부호로 색·방향 문구를 정하고 **수치 자체는 화면에 노출하지 않는다**(#406 P2 — "허리 때문에
+    1.29점 깎였다"는 근거 없는 원인 단정 방지). 양수=점수를 올리는 방향, 음수=내리는(개선 여지) 방향.
+    (나이·성별·키·체중·BMI 는 노출하지 않는다.)
+    """
+
+    feature: str
+    effect_on_score_log_odds: float
+
+
 class RiskPredictionResponse(BaseModel):
     prediction_id: int
     profile_id: int
@@ -38,6 +51,10 @@ class RiskPredictionResponse(BaseModel):
     care_stage: CareStage
     display_message: str
     disclaimer: str = "본 결과는 참고용이며 의학적 진단이 아닙니다."
+    # 근육 점수 기여도(#406): 바꿀 수 있는 3개(근력·걷기·허리)만. 예측(create) 시점에 계산해 이 응답에만
+    #   싣고 서버에는 저장하지 않는다(#408 최소화 — 역산 가능한 허리둘레 복제 방지). /me/latest 는 빈 목록이라
+    #   앱이 이 응답을 로컬 캐시해 대시보드 막대를 그린다. 캐시가 없으면 카드를 숨긴다.
+    contributions: list[FeatureContributionResponse] = Field(default_factory=list)
 
 
 class RiskPredictionCreateResponse(RiskPredictionResponse):
@@ -80,6 +97,10 @@ class RiskPredictionReassessResponse(BaseModel):
     care_stage: CareStage
     display_message: str
     disclaimer: str = "본 결과는 참고용이며 의학적 진단이 아닙니다."
+    # 근육 점수 기여도(#406): recalculated=True(이번 호출로 새 계산)일 때만 실어 대시보드 막대를 갱신한다.
+    #   recalculated=False(오늘 이미 재평가한 기존 예측 반환)면 재계산하지 않으므로 빈 목록이다 — 이때
+    #   앱은 기존 로컬 캐시를 유지한다(빈 목록을 받아도 캐시를 지우지 않는다).
+    contributions: list[FeatureContributionResponse] = Field(default_factory=list)
     activity_input_source: ActivityInputSource = ActivityInputSource.SERVICE_LOG
     # 하루 1회 정책(#388). True=이번 호출로 새로 계산, False=오늘 이미 계산해 기존 예측을 반환.
     recalculated: bool = True

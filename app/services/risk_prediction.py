@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Sequence
 from datetime import datetime, time, timedelta
 from decimal import Decimal
 
@@ -13,6 +14,7 @@ from app.dtos.dashboard import ScoreSimPoint, ScoreSimulationResponse
 from app.dtos.risk_prediction import (
     CareStage,
     CohortDistributionResponse,
+    FeatureContributionResponse,
     PredictionFeedbackRequest,
     PredictionFeedbackResponse,
     RiskComparisonStatus,
@@ -28,6 +30,7 @@ from app.ml.predictor import (
     AGE_MIN,
     AGE_TOPCODE,
     AgeNotSupportedError,
+    FeatureContribution,
     RiskPredictor,
     features_from_health_profile,
     load_cohort_distribution,
@@ -68,9 +71,9 @@ class RiskPredictionService:
         profile = await self.profile_repo.get_profile(data.profile_id, user.user_id)
         if profile is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Health profile not found.")
-        prediction = await self._predict_and_save(user, profile, complete_onboarding=True)
+        prediction, contributions = await self._predict_and_save(user, profile, complete_onboarding=True)
         return RiskPredictionCreateResponse(
-            **self._to_response(prediction).model_dump(),
+            **self._to_response(prediction, contributions).model_dump(),
             onboarding_status=user.onboarding_status.value,
         )
 
@@ -92,14 +95,15 @@ class RiskPredictionService:
         #   프로필 행도 함께 안 늘어난다 — 재평가 프로필 생성이 이 분기 뒤에 있기 때문(#388 결정 4).
         existing = await self.prediction_repo.get_today_reassessment(user.user_id)
         if existing is not None:
+            # recalculated=False: 재계산하지 않으므로 기여도는 빈 목록으로 나간다. 앱은 기존 로컬 캐시를 유지한다.
             return self._to_reassess_response(existing, recalculated=False)
         reassessment_profile = await self._create_reassessment_profile(
             user=user,
             source_profile=profile,
             activity_window_days=data.activity_window_days,
         )
-        prediction = await self._predict_and_save(user, reassessment_profile)
-        return self._to_reassess_response(prediction)
+        prediction, contributions = await self._predict_and_save(user, reassessment_profile)
+        return self._to_reassess_response(prediction, contributions=contributions)
 
     async def get_latest_prediction(self, user: User) -> RiskPredictionResponse:
         prediction = await self.prediction_repo.get_latest_prediction(user.user_id)
@@ -268,7 +272,12 @@ class RiskPredictionService:
         profile: HealthProfile,
         *,
         complete_onboarding: bool = False,
-    ) -> RiskPrediction:
+    ) -> tuple[RiskPrediction, list[FeatureContributionResponse]]:
+        """예측을 계산·저장하고, (예측 행, 이번 계산의 SHAP 기여도)를 함께 돌려준다.
+
+        기여도는 **저장하지 않고** 이 반환값으로만 흘려보낸다(#406 리뷰 P1 — 파생값도 허리둘레 역산이
+        가능해 #408 최소화를 무력화하므로 컬럼에 남기지 않는다). 호출부가 create·재계산 응답에만 싣는다.
+        """
         try:
             result = await self.predictor.predict(features_from_health_profile(profile))
         except AgeNotSupportedError as exc:
@@ -304,9 +313,33 @@ class RiskPredictionService:
             user.onboarding_status = OnboardingStatus.COMPLETED
         await self.session.commit()
         await self.session.refresh(prediction)
-        return prediction
+        # SHAP 기여도(#406)는 저장하지 않고, 예측기가 **점수와 같은 모델 번들로** 계산해 result 에 실어준 값을
+        #   그대로 응답 DTO 로 흘려보낸다(리뷰 P1 — 서비스가 전역 아티팩트를 재선택하지 않는다).
+        return prediction, self._contributions(getattr(result, "score_contributions", ()))
 
-    def _to_response(self, prediction: RiskPrediction) -> RiskPredictionResponse:
+    @staticmethod
+    def _contributions(
+        contributions: Sequence[FeatureContribution] | None,
+    ) -> list[FeatureContributionResponse]:
+        """예측기가 result 에 실어준 SHAP 기여도(#406)를 응답 DTO 로 변환한다.
+
+        서비스는 계산하지 않고 전달만 한다 — 점수를 낸 것과 같은 모델 번들 보장은 예측기(``predict_sync``)가
+        진다(리뷰 P1). 저장·재조회 없이 create·재계산 경로에서만 전달되고, 없으면 빈 목록이다(#408).
+        """
+        return [
+            FeatureContributionResponse(
+                feature=c.feature,
+                effect_on_score_log_odds=c.effect_on_score_log_odds,
+            )
+            for c in (contributions or [])
+        ]
+
+    def _to_response(
+        self,
+        prediction: RiskPrediction,
+        contributions: list[FeatureContributionResponse] | None = None,
+    ) -> RiskPredictionResponse:
+        # contributions 는 create 시점에만 전달된다. /me/latest 등 조회 경로는 None → 빈 목록(앱 캐시 사용).
         care_stage = self._care_stage_from_risk_level(prediction.internal_risk_level)
         return RiskPredictionResponse(
             prediction_id=prediction.prediction_id,
@@ -318,6 +351,7 @@ class RiskPredictionService:
             cohort_version=getattr(prediction, "score_cohort_version", None),
             care_stage=care_stage,
             display_message=self._display_message(care_stage),
+            contributions=contributions or [],
         )
 
     def _to_reassess_response(
@@ -325,7 +359,9 @@ class RiskPredictionService:
         prediction: RiskPrediction,
         *,
         recalculated: bool = True,
+        contributions: list[FeatureContributionResponse] | None = None,
     ) -> RiskPredictionReassessResponse:
+        # 기여도는 recalculated=True(새로 계산)일 때만 전달된다. recalculated=False 는 None → 빈 목록.
         care_stage = self._care_stage_from_risk_level(prediction.internal_risk_level)
         return RiskPredictionReassessResponse(
             recalculated=recalculated,
@@ -338,6 +374,7 @@ class RiskPredictionService:
             cohort_version=getattr(prediction, "score_cohort_version", None),
             care_stage=care_stage,
             display_message=self._display_message(care_stage),
+            contributions=contributions or [],
         )
 
     async def _create_reassessment_profile(

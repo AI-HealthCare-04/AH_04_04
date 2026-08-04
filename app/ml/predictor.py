@@ -82,6 +82,9 @@ class RiskPredictionResult:
     score_p_high: float | None = None    # 조회에 쓴 코호트 P95
     score_cohort_age: str | None = None  # "72" 또는 "80+" 등 실제 조회 키
     score_cohort_version: str | None = None
+    # 점수 방향 SHAP 기여도(#406). 예측에 쓴 것과 **같은 모델 번들**로 이 시점에 계산해 싣는다
+    #   (서비스가 전역 아티팩트를 재선택하지 않게 함 — #406 리뷰 P1). 저장하지 않고 응답으로만 흘려보낸다.
+    score_contributions: tuple[FeatureContribution, ...] = ()
 
 
 @lru_cache(maxsize=2)
@@ -332,6 +335,78 @@ def compute_muscle_score(
     return score, band, p_low, p_high, age_key
 
 
+# 화면에 노출할 SHAP 기여도 특징(#406): 사용자가 바꿀 수 있고 방향이 건강과 일치하는 것만 보여준다.
+#   나이·성별·키(비가역)와 체중·BMI(모델에서 '무거울수록 위험↓'로 작동 → '살 찌우세요' 오해)는 제외한다.
+CONTRIBUTION_FEATURES: tuple[str, ...] = ("musc_days", "walk_days", "waist_cm")
+
+
+@dataclass(frozen=True)
+class FeatureContribution:
+    """점수 방향 SHAP 기여(#406). effect_on_score_log_odds = -(위험계수)×표준화값.
+
+    ⚠️ 단위는 **log-odds** 이며 점수(0~100)가 아니다. 양수 = 점수를 올리는 방향, 음수 = 점수를
+       내리는(=개선 여지가 큰) 방향. |값|이 클수록 영향이 크다. 화면에는 막대 길이·부호로만 쓰고
+       수치를 직접 노출하지 않는다(#406 P2 — "허리 때문에 1.29점 깎였다"는 오독 방지).
+    """
+
+    feature: str
+    effect_on_score_log_odds: float
+
+
+def compute_score_contributions(
+    input_snapshot: Mapping[str, Any],
+    *,
+    model: Any,
+    feature_columns: Sequence[str],
+) -> list[FeatureContribution]:
+    """로지스틱 회귀의 닫힌형 SHAP(계수×표준화값)으로 점수 방향 기여도를 구한다(#406, 재학습·shap 라이브러리 불필요).
+
+    ⚠️ LR ``coef_`` 순서는 ``feature_columns`` 가 아니라 전처리(ColumnTransformer)의 **출력 순서**다
+       (범주형 ``sex`` 가 맨 뒤로 감). 반드시 ``get_feature_names_out()`` 로 원 특징명에 매핑해야 부호가
+       뒤집히지 않는다. 기여도는 부가 정보라 어떤 이유로든 계산 실패 시 빈 목록을 돌려 본 응답을 막지 않는다.
+
+    ⚠️ **점수를 낸 것과 반드시 같은 모델 번들로 계산해야 한다**(#406 리뷰 P1). 그래서 이 함수는
+       아티팩트 경로를 **다시 고르지 않고**, ``predict_sync`` 가 예측에 이미 쓴 ``model``·
+       ``feature_columns`` 를 그대로 받는다. 전역 기본 아티팩트를 재선택하면 커스텀 아티팩트·모델 버전
+       전환·테스트 predictor 주입 시 응답의 점수는 A 모델, 막대는 B 모델에서 나올 수 있다.
+
+    ⚠️ 예측 시점에 메모리의 ``result.input_snapshot`` 으로만 호출한다 — 서버는 원본 입력을 저장하지
+       않으므로(#408) 사후 재계산은 불가능하다. 결과는 **저장하지 않고** create·재계산 응답에만 싣는다.
+       (파생값을 저장하면 ``x = mean + std × (effect / -coef)`` 로 허리둘레 원본이 역산돼 #408 최소화를
+       무력화한다 — #406 리뷰 P1. 그래서 저장 컬럼 없이 응답 1회 전달 + 앱 로컬 캐시로 간다.)
+    """
+    if not input_snapshot:
+        return []  # 입력이 없으면 기여도도 없다(임퓨트된 평균값으로 가짜 막대를 만들지 않는다).
+    try:
+        columns = list(feature_columns)
+        frame = pd.DataFrame(
+            [{column: input_snapshot.get(column) for column in columns}],
+            columns=columns,
+        )
+        pre = model.named_steps["pre"]
+        lr = model.named_steps["lr"]
+        standardized = pre.transform(frame).ravel()
+        out_names = list(pre.get_feature_names_out())
+        coef = lr.coef_.ravel()
+        # 전처리 접두사(num__/bin__)를 떼어 원 특징명 → (위험계수, 표준화값)으로 매핑.
+        name_to_coef = {name.split("__", 1)[-1]: float(c) for name, c in zip(out_names, coef, strict=True)}
+        name_to_z = {name.split("__", 1)[-1]: float(z) for name, z in zip(out_names, standardized, strict=True)}
+        contributions: list[FeatureContribution] = []
+        for feature in CONTRIBUTION_FEATURES:
+            if feature not in name_to_coef or feature not in name_to_z:
+                continue  # waist_cm 은 minimal 모델(허리 미입력)엔 없다.
+            if input_snapshot.get(feature) is None:
+                continue  # 개별 값이 없으면 임퓨터 대표값으로 가짜 막대를 만들지 않는다(#406 리뷰).
+            effect = -name_to_coef[feature] * name_to_z[feature]
+            contributions.append(
+                FeatureContribution(feature=feature, effect_on_score_log_odds=round(effect, 4))
+            )
+        return contributions
+    except Exception:
+        logger.warning("Failed to compute score contributions; returning empty.", exc_info=True)
+        return []
+
+
 class RiskPredictor:
     def __init__(
         self,
@@ -377,6 +452,10 @@ class RiskPredictor:
             age=snapshot.get("age"),
         )
 
+        # 기여도(#406)는 점수를 낸 이 model/feature_columns 로 **여기서** 계산한다 — 서비스가 전역
+        #   아티팩트를 다시 고르지 않게 해 점수와 막대가 항상 같은 번들에서 나오게 한다(리뷰 P1).
+        contributions = compute_score_contributions(snapshot, model=model, feature_columns=feature_columns)
+
         return RiskPredictionResult(
             risk_score=score,
             risk_level=level,
@@ -392,4 +471,5 @@ class RiskPredictor:
             score_p_high=p_high,
             score_cohort_age=age_key,
             score_cohort_version=load_cohort_version() if muscle_score is not None else None,
+            score_contributions=tuple(contributions),
         )
