@@ -363,6 +363,75 @@ def check_prediction_snapshot_backfill() -> None:
         asyncio.run(_exec(f"DROP DATABASE IF EXISTS `{MIG_DB}`"))
 
 
+def _marked_reassessments() -> list[int]:
+    """재평가로 표시된 예측 id 목록. GROUP_CONCAT 은 드라이버마다 반환 타입이 갈려 쓰지 않는다."""
+    ids: list[int] = []
+    for prediction_id in (1, 2, 3):
+        flag = asyncio.run(
+            _scalar_on_mig(f"SELECT is_reassessment FROM risk_predictions WHERE prediction_id = {prediction_id}")
+        )
+        if int(flag or 0) == 1:
+            ids.append(prediction_id)
+    return ids
+
+
+def check_reassessment_marker_backfill() -> None:
+    """0022 가 기존 예측의 재평가 여부를 프로필에서 옮겨 오는지 검증한다(#408 A+3).
+
+    이 백필이 어긋나면 하루 1회 정책(#396)이 끊긴다 — 재평가였던 예측이 0 으로 남으면 오늘 이미
+    재평가한 사용자가 한 번 더 계산할 수 있고, 반대면 온보딩 당일 재평가가 막힌다.
+    재평가본(service_log)·온보딩본(form)·프로필이 사라진 고아 행을 함께 심어 확인한다.
+    """
+    print(f"\n임시 DB 재생성(재평가 표시 백필 검증): {MIG_DB}", flush=True)
+    try:
+        asyncio.run(_exec(f"DROP DATABASE IF EXISTS `{MIG_DB}`"))
+        asyncio.run(_exec(f"CREATE DATABASE `{MIG_DB}` CHARACTER SET utf8mb4"))
+        _alembic("upgrade", "0021_drop_input_snapshot")
+        profile_cols = (
+            "(profile_id,user_id,birth_date,sex,height_cm,weight_kg,bmi,walk_days,musc_days,"
+            "activity_input_source,kidney_status,protein_restriction_status,protein_challenge_allowed,"
+            "input_method,has_estimated_value)"
+        )
+        base = "'1958-03-01','male',168,63,22.3,3,2,'self_report','none','none',1"
+        asyncio.run(
+            _exec_many_on_mig(
+                [
+                    "SET FOREIGN_KEY_CHECKS=0",
+                    f"INSERT INTO health_profiles {profile_cols} VALUES (1,1,{base},'form',0)",
+                    f"INSERT INTO health_profiles {profile_cols} VALUES (2,1,{base},'service_log',1)",
+                    "INSERT INTO risk_predictions "
+                    "(prediction_id,user_id,profile_id,model_version,model_variant,"
+                    "internal_risk_score,internal_risk_level) VALUES "
+                    "(1,1,1,'v1','minimal',0.12,'medium'),"   # 온보딩본
+                    "(2,1,2,'v1','minimal',0.13,'medium'),"   # 재평가본
+                    "(3,1,999,'v1','minimal',0.14,'medium')",  # 프로필이 없는 고아 행
+                    "SET FOREIGN_KEY_CHECKS=1",
+                ]
+            )
+        )
+        result = _alembic_capture("upgrade", "head")
+        if result.returncode != 0:
+            sys.exit(
+                "재평가 표시 백필 실패: 마이그레이션이 중단됐다. "
+                f"마지막 출력:\n{((result.stderr or '') + (result.stdout or ''))[-2000:]}"
+            )
+        marked = _marked_reassessments()
+        if marked != [2]:
+            sys.exit(f"재평가 표시 백필 실패: 재평가로 표시된 예측이 기대와 다르다(marked={marked})")
+        print("== OK: 재평가본만 1, 온보딩본·고아 행은 0 ==")
+        # 멱등: 같은 DB 에 다시 올려도 결과가 같아야 한다(DDL 암시적 커밋 이후 재실행 대비).
+        _alembic("downgrade", "0021_drop_input_snapshot")
+        rerun = _alembic_capture("upgrade", "head")
+        if rerun.returncode != 0:
+            sys.exit("재평가 표시 백필 실패: 같은 DB 재실행이 막혔다")
+        marked_again = _marked_reassessments()
+        if marked_again != [2]:
+            sys.exit(f"재평가 표시 백필 실패: 재실행 결과가 다르다(marked={marked_again})")
+        print("== OK: downgrade 후 재실행해도 같은 결과 ==")
+    finally:
+        asyncio.run(_exec(f"DROP DATABASE IF EXISTS `{MIG_DB}`"))
+
+
 def main() -> None:
     check_migration_roundtrip()
     check_voice_data_guard()
@@ -371,6 +440,7 @@ def main() -> None:
     check_prediction_snapshot_guard()
     check_prediction_snapshot_rerun_after_fix()
     check_prediction_snapshot_backfill()
+    check_reassessment_marker_backfill()
     print("\n== ALL OK ==")
 
 

@@ -57,6 +57,11 @@ class RiskPrediction(Base):
     #   화면·추이가 실제로 쓰는 것은 결과 점수와 코호트 키뿐이었다(위 컬럼들).
     #   신규 예측은 NULL 로 남기고 기존 행도 마이그레이션 0020 에서 비웠다.
     input_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # 이 예측이 재평가인가(#408 A+3). 전에는 프로필의 input_method=SERVICE_LOG 로 판별했는데,
+    #   그 판별을 위해 **재평가마다 프로필 행을 통째로 복제**해야 했다(생년월일·성별·키·몸무게·
+    #   허리·신장·단백질까지). 판별 근거를 예측 쪽으로 옮겨 복제를 없앤다.
+    #   하루 1회 정책(#396)의 멱등 판정이 이 컬럼을 쓴다.
+    is_reassessment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # 근육 점수 SHAP 기여도(#406)는 **저장하지 않는다.** 파생값도 `x = mean + std × (effect / -coef)` 로
     #   허리둘레 원본이 역산돼(#406 리뷰 P1, round(,4)로 ±0.005cm 사실상 무손실) #408 최소화를 무력화한다.
     #   대신 create·재계산 응답에만 실어 한 번 내려주고(app/services/risk_prediction._contributions),

@@ -4,8 +4,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.clock import today_kst
-from app.models.enums import InputMethod
-from app.models.health import HealthProfile
 from app.models.predictions import PredictionFeedback, RiskPrediction
 from app.models.users import User
 
@@ -64,19 +62,18 @@ class RiskPredictionRepository:
     async def get_today_reassessment(self, user_id: int) -> RiskPrediction | None:
         """오늘(KST) 저장된 **재평가** 예측 1건. 하루 1회 정책(#388)의 멱등 판정에 쓴다.
 
-        재평가 여부는 별도 컬럼 없이 **프로필의 input_method 로 판별**한다 — 재평가는 항상
-        `_create_reassessment_profile` 이 만든 SERVICE_LOG 프로필을 쓰고(온보딩 최초 예측은 FORM),
-        이 구분만으로 충분해서 마이그레이션 없이 정책을 강제할 수 있다.
-        온보딩 당일에도 재평가를 한 번은 쓸 수 있게, 최초 예측은 이 조회에 걸리지 않는다.
+        재평가 여부는 `risk_predictions.is_reassessment` 로 판별한다(#408 A+3). 전에는 프로필의
+        `input_method = service_log` 로 봤는데, 그러려면 **재평가마다 프로필 행을 통째로 복제**해야
+        했다 — 판별 근거 하나 때문에 생년월일·성별·신체계측이 매번 복사됐다.
+        온보딩 최초 예측은 이 조회에 걸리지 않아 가입 당일에도 재평가를 한 번은 쓸 수 있다.
         """
         start = datetime.combine(today_kst(), time.min)
         end = start + timedelta(days=1)
         stmt = (
             select(RiskPrediction)
-            .join(HealthProfile, HealthProfile.profile_id == RiskPrediction.profile_id)
             .where(
                 RiskPrediction.user_id == user_id,
-                HealthProfile.input_method == InputMethod.SERVICE_LOG,
+                RiskPrediction.is_reassessment.is_(True),
                 RiskPrediction.created_at >= start,
                 RiskPrediction.created_at < end,
             )

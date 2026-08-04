@@ -13,7 +13,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette import status
 
-from app.models.enums import InputMethod
 from app.models.health import HealthProfile
 from app.models.predictions import RiskPrediction
 from app.models.users import User
@@ -65,18 +64,17 @@ async def _onboarded_user(
 
 
 async def _counts(sm: async_sessionmaker[AsyncSession], user_id: int) -> tuple[int, int]:
-    """(예측 행 수, 재평가 프로필 행 수) — 재평가 프로필은 input_method=SERVICE_LOG 로 구분된다."""
+    """(예측 행 수, 프로필 행 수).
+
+    재평가는 **프로필 행을 만들지 않는다**(#408 A+3) — 온보딩이 만든 1행 그대로여야 한다.
+    전에는 판별을 위해 재평가마다 프로필을 복제했고 이 함수도 그 복제본을 셌다.
+    """
     async with sm() as s:
         predictions = await s.scalar(
             select(func.count()).select_from(RiskPrediction).where(RiskPrediction.user_id == user_id)
         )
         profiles = await s.scalar(
-            select(func.count())
-            .select_from(HealthProfile)
-            .where(
-                HealthProfile.user_id == user_id,
-                HealthProfile.input_method == InputMethod.SERVICE_LOG,
-            )
+            select(func.count()).select_from(HealthProfile).where(HealthProfile.user_id == user_id)
         )
     return int(predictions or 0), int(profiles or 0)
 
@@ -89,6 +87,7 @@ async def test_second_reassess_same_day_returns_existing(
     first = await db_client.post(REASSESS, json=BODY, headers=auth)
     assert first.status_code == status.HTTP_201_CREATED
     assert first.json()["recalculated"] is True
+    # 예측 1건, 프로필은 온보딩이 만든 1행 그대로(재평가가 복제하지 않는다).
     assert await _counts(db_sessionmaker, user_id) == (1, 1)
 
     second = await db_client.post(REASSESS, json=BODY, headers=auth)
@@ -107,7 +106,7 @@ async def test_concurrent_reassess_creates_single_prediction(
 
     보조 트랜잭션이 users 행을 먼저 잠가 두 요청을 같은 FOR UPDATE 대기열에 세운 뒤 풀어서,
     둘 다 확실히 경합 상태에서 출발하게 만든다(gather 만으로는 한쪽이 먼저 끝나 경합 없이 지나갈 수 있다).
-    잠금이 없으면 둘 다 '오늘 재평가 없음'을 읽어 예측·프로필이 2행씩 생긴다.
+    잠금이 없으면 둘 다 '오늘 재평가 없음'을 읽어 예측이 2행 생긴다.
     """
     auth, user_id = await _onboarded_user(db_client, db_sessionmaker)
 
