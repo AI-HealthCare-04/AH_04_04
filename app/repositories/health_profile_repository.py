@@ -1,3 +1,5 @@
+from collections.abc import Iterable
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +29,22 @@ class HealthProfileRepository:
             HealthProfile.user_id == user_id,
         )
         return await self.session.scalar(stmt)
+
+    async def get_profiles_by_ids(self, profile_ids: Iterable[int], user_id: int) -> dict[int, HealthProfile]:
+        """추이 응답이 신체 정보 변경 여부를 판정할 때 쓰는 일괄 조회(#389 C).
+
+        예측마다 한 건씩 읽으면 N+1 이라 이력 길이에 비례해 쿼리가 늘어난다. user_id 로 함께
+        걸러 다른 사용자의 프로필이 섞이지 않게 한다.
+        """
+        ids = list(dict.fromkeys(profile_ids))
+        if not ids:
+            return {}
+        stmt = select(HealthProfile).where(
+            HealthProfile.profile_id.in_(ids),
+            HealthProfile.user_id == user_id,
+        )
+        rows = (await self.session.scalars(stmt)).all()
+        return {row.profile_id: row for row in rows}
 
     async def get_latest_profile(self, user_id: int) -> HealthProfile | None:
         stmt = (

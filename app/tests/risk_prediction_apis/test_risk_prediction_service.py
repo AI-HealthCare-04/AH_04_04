@@ -208,6 +208,7 @@ async def test_get_recent_predictions_returns_chronological_continuous_trend() -
         SimpleNamespace(
             prediction_id=13,
             created_at=datetime(2026, 7, 11, 12, 0, 0),
+            profile_id=55,
             internal_risk_level=RiskLevel.MEDIUM,
             internal_risk_score=Decimal("0.281"),
             model_version="awgs2025-v2",
@@ -216,6 +217,7 @@ async def test_get_recent_predictions_returns_chronological_continuous_trend() -
         SimpleNamespace(
             prediction_id=12,
             created_at=datetime(2026, 7, 10, 12, 0, 0),
+            profile_id=55,
             internal_risk_level=RiskLevel.MEDIUM,
             internal_risk_score=Decimal("0.324"),
             model_version="awgs2025-v2",
@@ -224,6 +226,7 @@ async def test_get_recent_predictions_returns_chronological_continuous_trend() -
         SimpleNamespace(
             prediction_id=11,
             created_at=datetime(2026, 7, 9, 12, 0, 0),
+            profile_id=55,
             internal_risk_level=RiskLevel.LOW,
             internal_risk_score=Decimal("0.400"),
             model_version="awgs2025-days-v2",
@@ -237,8 +240,19 @@ async def test_get_recent_predictions_returns_chronological_continuous_trend() -
         return predictions
 
     repo.get_recent_predictions = fake_get_recent_predictions
+
+    # 신체 정보 변경 판정(#389 C)이 프로필 값을 보므로 조회를 stub 한다. 여기서는 프로필이 없어
+    #   profile_changed 가 전부 False 여야 한다 — 이 테스트의 관심사는 추이 순서·증감이다.
+    profile_repo = SimpleNamespace(requested_ids=None)
+
+    async def fake_get_profiles_by_ids(profile_ids: object, user_id: int) -> dict[int, object]:
+        profile_repo.requested_ids = sorted(profile_ids)  # type: ignore[call-overload]
+        return {}
+
+    profile_repo.get_profiles_by_ids = fake_get_profiles_by_ids
     service = RiskPredictionService(session=None)  # type: ignore[arg-type]
     service.prediction_repo = repo  # type: ignore[assignment]
+    service.profile_repo = profile_repo  # type: ignore[assignment]
     user = SimpleNamespace(user_id=1)
 
     response = await service.get_recent_predictions(user, limit=3)  # type: ignore[arg-type]
@@ -743,6 +757,33 @@ def _pred(
     )
 
 
+def _profile(
+    profile_id: int,
+    *,
+    weight: str = "63.00",
+    waist: str | None = "82.00",
+    walk_days: int = 3,
+) -> HealthProfile:
+    """비교 대상이 되는 신체 정보만 채운 가짜 프로필.
+
+    walk_days 는 비교 키에 **들어가지 않아야** 한다 — 레거시 재평가 사본이 이 값만 바꿔 놓았다.
+    """
+    return cast(
+        HealthProfile,
+        SimpleNamespace(
+            profile_id=profile_id,
+            birth_date=date(1958, 3, 1),
+            sex=Sex.MALE,
+            height_cm=Decimal("168.00"),
+            weight_kg=Decimal(weight),
+            waist_cm=None if waist is None else Decimal(waist),
+            kidney_status=KidneyStatus.NONE,
+            protein_restriction_status=ProteinRestrictionStatus.NONE,
+            walk_days=walk_days,
+        ),
+    )
+
+
 def test_baseline_change_reason_is_none_for_first_prediction() -> None:
     item = RiskPredictionService._to_history_item(_pred(1))
 
@@ -791,14 +832,84 @@ def test_baseline_change_reason_is_none_when_nothing_changed() -> None:
     assert item.profile_changed is False
 
 
-def test_profile_changed_marks_new_body_info_snapshot() -> None:
-    # 재평가는 프로필을 복제하지 않으므로(#408 A+3) profile_id 가 달라졌다는 것은 '내 정보' 저장이다.
-    #   체중만 고치면 모델 변형도 코호트도 그대로라 경계·사유가 없지만 점수는 달라진다 —
-    #   그 하락을 활동 부족으로 단정하지 않으려면 앱이 이 신호를 봐야 한다(#389 문제 2).
+def test_baseline_change_reason_ignores_scaffold_transitions() -> None:
+    # 스캐폴드가 한쪽에 끼면 '허리둘레를 넣었다/뺐다'가 아니라 모델 자체가 교체된 것이라
+    #   사유를 단정하면 거짓말이 된다(리뷰). MINIMAL <-> WITH_WAIST 쌍일 때만 사유를 낸다.
+    scaffold_to_waist = RiskPredictionService._to_history_item(
+        _pred(2, variant=ModelVariant.WITH_WAIST),
+        _pred(1, variant=ModelVariant.RULE_BASED_SCAFFOLD),
+    )
+    waist_to_scaffold = RiskPredictionService._to_history_item(
+        _pred(2, variant=ModelVariant.RULE_BASED_SCAFFOLD),
+        _pred(1, variant=ModelVariant.WITH_WAIST),
+    )
+    scaffold_to_minimal = RiskPredictionService._to_history_item(
+        _pred(2, variant=ModelVariant.MINIMAL),
+        _pred(1, variant=ModelVariant.RULE_BASED_SCAFFOLD),
+    )
+
+    assert scaffold_to_waist.baseline_change_reason is None
+    assert waist_to_scaffold.baseline_change_reason is None
+    assert scaffold_to_minimal.baseline_change_reason is None
+
+
+def test_profile_changed_marks_edited_body_info() -> None:
+    # 체중만 고치면 모델 변형도 코호트도 그대로라 경계·사유가 없지만 점수는 달라진다 —
+    #   그 변화를 활동 탓으로 단정하지 않으려면 앱이 이 신호를 봐야 한다(#389 문제 2).
+    profiles = {55: _profile(55, weight="63.00"), 77: _profile(77, weight="66.00")}
+
     item = RiskPredictionService._to_history_item(
         _pred(2, profile_id=77),
         _pred(1, profile_id=55),
+        profiles,
     )
 
     assert item.profile_changed is True
     assert item.baseline_change_reason is None
+
+
+def test_profile_changed_is_false_for_legacy_reassessment_copies() -> None:
+    """#416 이전 재평가가 만든 사본은 신체값이 같다 — 사용자가 고친 게 아니다(리뷰 지적 1).
+
+    그 42행은 의도적으로 보존했으므로 과거 구간에서 계속 나타난다. profile_id 만 비교하면
+    사용자가 아무것도 안 고친 구간이 전부 '신체 정보가 바뀌어서'로 설명된다 — 이 필드가
+    막으려던 바로 그 오인이다.
+    """
+    # 활동 일수만 다른 복제본(레거시 재평가가 실제로 만든 모양).
+    profiles = {
+        55: _profile(55, walk_days=3),
+        90: _profile(90, walk_days=6),
+    }
+
+    item = RiskPredictionService._to_history_item(
+        _pred(2, profile_id=90),
+        _pred(1, profile_id=55),
+        profiles,
+    )
+
+    assert item.profile_changed is False
+
+
+def test_profile_changed_is_false_when_profile_rows_are_missing() -> None:
+    # 프로필을 못 읽으면(삭제·조회 실패) 단정하지 않는다 — 틀린 설명보다 중립 문구가 낫다.
+    item = RiskPredictionService._to_history_item(
+        _pred(2, profile_id=77),
+        _pred(1, profile_id=55),
+        {},
+    )
+
+    assert item.profile_changed is False
+
+
+def test_profile_changed_detects_waist_entry() -> None:
+    # 허리둘레를 처음 넣으면 신체 정보 변경이자 기준 변경이다 — 둘 다 참일 수 있다.
+    profiles = {55: _profile(55, waist=None), 77: _profile(77, waist="82.00")}
+
+    item = RiskPredictionService._to_history_item(
+        _pred(2, profile_id=77, variant=ModelVariant.WITH_WAIST),
+        _pred(1, profile_id=55, variant=ModelVariant.MINIMAL),
+        profiles,
+    )
+
+    assert item.profile_changed is True
+    assert item.baseline_change_reason == BaselineChangeReason.WAIST_ADDED

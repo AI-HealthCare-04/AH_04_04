@@ -121,10 +121,16 @@ class RiskPredictionService:
             return RiskPredictionHistoryResponse(predictions=[])
         predictions = await self.prediction_repo.get_recent_predictions(user.user_id, limit)
         chronological = list(reversed(predictions))
+        # 신체 정보 변경 판정(#389 C)은 프로필 값 비교라 프로필이 필요하다. 예측마다 읽으면 N+1 이므로
+        #   이력에 등장하는 프로필만 한 번에 읽는다.
+        profiles = await self.profile_repo.get_profiles_by_ids(
+            (p.profile_id for p in chronological),
+            user.user_id,
+        )
         items: list[RiskPredictionHistoryItem] = []
         previous: RiskPrediction | None = None
         for prediction in chronological:
-            items.append(self._to_history_item(prediction, previous))
+            items.append(self._to_history_item(prediction, previous, profiles))
             previous = prediction
         return RiskPredictionHistoryResponse(
             predictions=items,
@@ -406,6 +412,7 @@ class RiskPredictionService:
     def _to_history_item(
         prediction: RiskPrediction,
         previous: RiskPrediction | None = None,
+        profiles: dict[int, HealthProfile] | None = None,
     ) -> RiskPredictionHistoryItem:
         score = RiskPredictionService._public_risk_score(prediction)
         change_percentage_points: float | None = None
@@ -428,9 +435,7 @@ class RiskPredictionService:
             change_percentage_points=change_percentage_points,
             comparison_status=comparison_status,
             baseline_change_reason=RiskPredictionService._baseline_change_reason(prediction, previous),
-            # 재평가는 프로필을 복제하지 않으므로(#408 A+3) profile_id 가 달라졌다는 것은
-            #   사용자가 '내 정보'를 저장해 새 스냅샷이 생겼다는 뜻이다.
-            profile_changed=RiskPredictionService._profile_changed(prediction, previous),
+            profile_changed=RiskPredictionService._profile_changed(prediction, previous, profiles or {}),
             care_stage=RiskPredictionService._care_stage_from_risk_level(prediction.internal_risk_level),
         )
 
@@ -448,9 +453,17 @@ class RiskPredictionService:
         if previous is None:
             return None
         if previous.model_variant != prediction.model_variant:
-            if prediction.model_variant == ModelVariant.WITH_WAIST:
+            # 허리 유무로 설명할 수 있는 것은 **MINIMAL <-> WITH_WAIST 쌍뿐**이다. 스캐폴드가 한쪽에
+            #   끼면 "허리둘레를 넣었다/뺐다"가 아니라 모델 자체가 교체된 것이라 사유를 단정하면 거짓말이 된다.
+            if (previous.model_variant, prediction.model_variant) == (
+                ModelVariant.MINIMAL,
+                ModelVariant.WITH_WAIST,
+            ):
                 return BaselineChangeReason.WAIST_ADDED
-            if previous.model_variant == ModelVariant.WITH_WAIST:
+            if (previous.model_variant, prediction.model_variant) == (
+                ModelVariant.WITH_WAIST,
+                ModelVariant.MINIMAL,
+            ):
                 return BaselineChangeReason.WAIST_REMOVED
             # 스캐폴드 등 그 밖의 전환은 사용자에게 설명할 사유가 없다.
             return None
@@ -462,18 +475,45 @@ class RiskPredictionService:
         return None
 
     @staticmethod
-    def _profile_changed(prediction: RiskPrediction, previous: RiskPrediction | None) -> bool:
-        """직전 예측과 다른 신체 정보 스냅샷으로 계산됐는가(#389 C).
+    def _profile_changed(
+        prediction: RiskPrediction,
+        previous: RiskPrediction | None,
+        profiles: dict[int, HealthProfile],
+    ) -> bool:
+        """직전 예측과 **사용자가 입력한 신체 정보**가 달라졌는가(#389 C).
+
+        ⚠️ `profile_id` 비교로는 안 된다(리뷰). #416 은 앞으로의 복제만 멈췄고 그 이전 재평가가 만든
+        프로필 42행은 그대로 남아 있다. 그 행들은 신체값을 **전부 그대로 복사**하고 활동 일수만 바꾼
+        사본이라, id 만 보면 사용자가 아무것도 고치지 않은 구간이 전부 '신체 정보 변경'으로 나온다 —
+        이 필드가 막으려던 바로 그 오인이다. 그래서 값 자체를 비교한다.
+
+        활동 일수(walk_days·musc_days)는 제외한다. 사용자가 '내 정보'에서 고치는 항목이 아니고,
+        재평가가 덮어쓰는 값이라 넣으면 레거시 행에서 다시 오탐한다.
 
         모를 때는 False 다 — '신체 정보가 바뀌어서'라고 잘못 말하느니 기존 중립 문구를 쓰는 편이 낫다.
         """
         if previous is None:
             return False
-        previous_profile = getattr(previous, "profile_id", None)
-        current_profile = getattr(prediction, "profile_id", None)
+        previous_profile = profiles.get(getattr(previous, "profile_id", -1))
+        current_profile = profiles.get(getattr(prediction, "profile_id", -1))
         if previous_profile is None or current_profile is None:
             return False
-        return previous_profile != current_profile
+        return RiskPredictionService._body_info_key(previous_profile) != RiskPredictionService._body_info_key(
+            current_profile
+        )
+
+    @staticmethod
+    def _body_info_key(profile: HealthProfile) -> tuple[object, ...]:
+        """사용자가 입력하는 신체 정보만 모은 비교 키(#389 C)."""
+        return (
+            profile.birth_date,
+            profile.sex,
+            profile.height_cm,
+            profile.weight_kg,
+            profile.waist_cm,
+            profile.kidney_status,
+            profile.protein_restriction_status,
+        )
 
     @staticmethod
     def _public_risk_score(prediction: RiskPrediction) -> float:
