@@ -32,6 +32,12 @@ data class RiskHistoryItem(
     @SerialName("cohort_version") val cohortVersion: String? = null,
     @SerialName("change_percentage_points") val changePercentagePoints: Double? = null,
     @SerialName("comparison_status") val comparisonStatus: String = "baseline",
+    // 기준이 바뀐 **이유**(#389 B): waist_added | waist_removed | cohort_updated.
+    //   null = 첫 예측이거나 서버가 사유를 단정하지 못한 경우(구버전 서버 포함) → 중립 문구로 폴백한다.
+    @SerialName("baseline_change_reason") val baselineChangeReason: String? = null,
+    // 직전 예측과 **다른 신체 정보 스냅샷**으로 계산됐는가(#389 C). 체중처럼 모델을 바꾸지 않는 변경은
+    //   경계도 사유도 만들지 않지만 점수는 달라진다 — 그 변화를 활동 탓으로 단정하지 않으려면 이 값이 필요하다.
+    @SerialName("profile_changed") val profileChanged: Boolean = false,
 )
 
 @Serializable
