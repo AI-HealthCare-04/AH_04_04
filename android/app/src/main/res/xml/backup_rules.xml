@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+   자동 백업 규칙 (API 30 이하 경로 — API 31+ 는 data_extraction_rules.xml 이 우선).
+   https://developer.android.com/guide/topics/data/autobackup
+-->
+<full-backup-content>
+    <!-- 세션 저장소 제외(#358 리뷰): 토큰 암호문의 Keystore 키는 기기 종속이라 다른 기기로
+         복원해도 해독 불가(복원 직후 예상된 복호화 실패 → 재로그인). 애초에 세션 토큰
+         암호문·user_id 가 기기 밖으로 복사되지 않게 백업에서 뺀다. -->
+    <exclude domain="sharedpref" path="aigo_session.xml" />
+    <!-- 점수 기여도 캐시 제외(#406): 건강 상태에서 파생된 값(어떤 습관이 점수를 얼마나 움직였는지)이라
+         기기 밖으로 복사되지 않게 한다. 복원돼도 계정 스코프 키가 맞지 않아 쓸 수 없고, 다음 재계산
+         때 서버가 다시 내려준다. -->
+    <exclude domain="sharedpref" path="contribution_cache.xml" />
+</full-backup-content>

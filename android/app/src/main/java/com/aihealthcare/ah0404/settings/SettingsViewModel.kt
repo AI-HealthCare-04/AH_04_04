@@ -1,0 +1,217 @@
+package com.aihealthcare.ah0404.settings
+
+import android.util.Log
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.aihealthcare.ah0404.network.SettingsApi
+import com.aihealthcare.ah0404.network.UserApi
+import com.aihealthcare.ah0404.network.UserWithdrawRequest
+import com.aihealthcare.ah0404.network.UserSettingsResponse
+import com.aihealthcare.ah0404.network.UserSettingsUpdateRequest
+import com.aihealthcare.ah0404.network.retrofit
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import retrofit2.HttpException
+
+/**
+ * 설정(_15) 상태 + 백엔드 영속화(GET/PATCH /users/me/settings).
+ *
+ *  ⚠️ 동시성 정책(리뷰 #71·#73) — **읽기·쓰기 모두 하나의 Mutex 로 전면 직렬화**하고, **저장 큐가 비면
+ *     서버 권위값으로 재동기화(GET)** 한다. 이 두 규칙만으로 모든 경쟁/실패/순서 조합에서 화면이 서버
+ *     상태로 **수렴**한다(version 같은 별도 토큰 불필요):
+ *      - GET·PATCH 가 총순서로 실행되어 오래된 GET 이 최신 PATCH 를 앞지르지 못한다.
+ *      - 저장이 몇 건 실패하든, 큐가 비는 순간 GET 으로 서버값을 다시 반영해 낙관적 변경이 잔류하지 않는다.
+ *  변경은 낙관적으로 즉시 반영(고령 사용자 즉시 피드백)하되, 최종 수렴이 정합을 보장한다.
+ *  CancellationException 은 safeCall 로 재전파(구조적 동시성 보존).
+ */
+class SettingsViewModel(
+    private val api: SettingsApi = retrofit.create(SettingsApi::class.java),
+    // 회원탈퇴(#356) 전용. 설정 화면이 계정 액션(로그아웃·탈퇴)을 함께 갖고 있어 여기에 둔다.
+    private val userApi: UserApi = retrofit.create(UserApi::class.java),
+) : ViewModel() {
+
+    /** 회원탈퇴 진행 중(버튼 비활성·이중 요청 방지). */
+    var withdrawing by mutableStateOf(false); private set
+
+    /** 회원탈퇴 실패 안내(명확한 서버 거절 — 세션 유지, 재시도 가능). null 이면 오류 없음. */
+    var withdrawError by mutableStateOf<String?>(null); private set
+
+    var loading by mutableStateOf(false); private set
+    var loaded by mutableStateOf(false); private set
+    var loadError by mutableStateOf(false); private set
+
+    var fontSize by mutableStateOf("medium"); private set
+    var soundSize by mutableStateOf("medium"); private set
+    var petType by mutableStateOf("dog"); private set
+    var musicEnabled by mutableStateOf(true); private set
+
+    var saving by mutableStateOf(false); private set
+    var saveError by mutableStateOf<String?>(null); private set
+
+    // 읽기·쓰기 전면 직렬화(총순서 보장). 진행 중 저장 건수(0이 되면 서버로 수렴).
+    private val gate = Mutex()
+    private var pending = 0
+
+    // 마지막으로 서버가 확인해 준(성공 응답으로 반영된) 값의 스냅샷. 초기값=UI 기본값.
+    // 수렴 GET 마저 실패하면(오프라인) 낙관적 변경을 이 값으로 되돌려 미저장 값이 잔류하지 않게 한다.
+    private var confirmed = Snapshot("medium", "medium", "dog", true)
+
+    private data class Snapshot(val font: String, val sound: String, val pet: String, val music: Boolean)
+
+    fun load() {
+        viewModelScope.launch { refresh() }
+    }
+
+    /** GET /users/me/settings — 직렬 큐를 통해 실행. */
+    suspend fun refresh() {
+        loading = true
+        loadError = false
+        gate.withLock {
+            safeCall { api.getSettings() }
+                .onSuccess { applyResponse(it) }
+                .onFailure { loadError = true; Log.w(TAG, "설정 조회 실패: ${it.message}") }
+        }
+        loaded = true
+        loading = false
+    }
+
+    private fun applyResponse(s: UserSettingsResponse) {
+        fontSize = s.fontSize
+        soundSize = s.soundSize
+        petType = normalizePet(s.petType)
+        musicEnabled = s.musicEnabled
+        // 서버가 확인해 준 값 → 스냅샷 갱신(수렴 GET 실패 시 되돌릴 기준).
+        confirmed = Snapshot(fontSize, soundSize, petType, musicEnabled)
+        // 서버 확인값이 들어왔으므로 로드오류 상태 해제(리뷰 #86 후속): 최초 GET 실패 후라도 저장 성공/
+        //   재조회 성공이면 값이 권위값이 되어, 화면(전역 적용)이 이 값을 반영할 수 있게 한다.
+        loadError = false
+    }
+
+    /** 수렴 GET 마저 실패했을 때, 마지막으로 서버가 확인해 준 값으로 화면을 되돌린다(미저장 낙관값 제거). */
+    private fun revertToConfirmed() {
+        fontSize = confirmed.font
+        soundSize = confirmed.sound
+        petType = confirmed.pet
+        musicEnabled = confirmed.music
+    }
+
+    /** dog/cat 이외(서버 기본 "default" 포함)는 제품 기본 펫 "dog"로 매핑 → 세그먼트가 항상 선택 표시. */
+    private fun normalizePet(pet: String): String = if (pet == "dog" || pet == "cat") pet else "dog"
+
+    // ── 개별 변경(낙관적 즉시 반영 → 직렬 PATCH → 큐 비면 서버 수렴) ───────────────
+    fun changeFontSize(value: String) { fontSize = value; enqueueSave(UserSettingsUpdateRequest(fontSize = value)) }
+    fun changeSoundSize(value: String) { soundSize = value; enqueueSave(UserSettingsUpdateRequest(soundSize = value)) }
+    fun changePetType(value: String) { petType = value; enqueueSave(UserSettingsUpdateRequest(petType = value)) }
+    fun changeMusicEnabled(value: Boolean) { musicEnabled = value; enqueueSave(UserSettingsUpdateRequest(musicEnabled = value)) }
+
+    fun dismissSaveError() { saveError = null }
+
+    private fun enqueueSave(body: UserSettingsUpdateRequest) {
+        viewModelScope.launch { save(body) }
+    }
+
+    /**
+     * PATCH(직렬화) + 큐가 비면 서버 권위값으로 수렴. 테스트 진입점.
+     * 성공하면 응답 반영, 실패하면 saveError. 어느 경우든 큐가 비는 순간 GET 으로 서버 상태에 정렬한다.
+     */
+    suspend fun save(body: UserSettingsUpdateRequest): Boolean {
+        pending++
+        saving = true
+        saveError = null
+        try {
+            val ok = gate.withLock {
+                safeCall { api.updateSettings(body) }
+                    .onSuccess { applyResponse(it) }
+                    .onFailure {
+                        saveError = "설정을 저장하지 못했어요. 잠시 후 다시 시도해 주세요."
+                        Log.w(TAG, "설정 저장 실패: ${it.message}")
+                    }
+                    .isSuccess
+            }
+            // 이 저장이 큐의 마지막이면 서버 상태로 수렴(실패/경쟁/순서 뒤섞임 모든 조합에서 화면=서버).
+            if (pending == 1) {
+                val resynced = gate.withLock {
+                    safeCall { api.getSettings() }.onSuccess { applyResponse(it) }.isSuccess
+                }
+                // 수렴 GET 마저 실패(오프라인 등) → 마지막 서버 확인값으로 복구해 미저장 낙관값 잔류 방지.
+                if (!resynced) revertToConfirmed()
+            }
+            return ok
+        } finally {
+            // 취소 예외로 빠져나가도 진행 카운트/저장 표시가 stuck 되지 않게 정리(리뷰 #73 후속).
+            pending--
+            if (pending == 0) saving = false
+        }
+    }
+
+    private suspend fun <T> safeCall(block: suspend () -> T): Result<T> =
+        try {
+            Result.success(block())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+
+    /**
+     * 회원탈퇴(#356). 결과를 세 갈래로 구분한다(리뷰 P1 1·2차 — "예외 = 서버 미처리"라는 보장은 없다):
+     *  - 성공(204): [onWithdrawn] — 호출부가 세션·공급자 credential 을 정리하고 로그인 화면으로 보낸다.
+     *  - 명확한 서버 거절(**401 제외 4xx** — 검증 실패처럼 미처리가 계약상 확실한 경우만):
+     *    세션을 유지하고 재시도를 안내한다.
+     *  - **결과 불명**(타임아웃·연결 끊김 등 응답 미도달, 401, 그리고 **5xx**): 서버가 파기를 커밋했는지
+     *    단말이 알 수 없다 — 500 은 커밋 후 응답 생성 중 실패, 502-504 는 게이트웨이가 원 서버 응답을
+     *    못 받은 경우가 가능하다(리뷰 2차). credential 이 남으면 다음 로그인에서 같은 계정이 자동
+     *    선택돼 빈 신규 계정이 즉시 만들어지므로, [onUncertain] 을 **catch 에서 즉시** 시작한다.
+     *    다이얼로그 생존·사용자 확인에 의존하면 인터셉터의 전역 라우팅(OFFLINE/LOGIN_REQUIRED)이
+     *    이 VM 을 먼저 폐기해 정리가 유실될 수 있다(리뷰 2차 P1). 호출부는 Activity 범위
+     *    (AuthLoginViewModel.signOut)에서 정리하고, 안내는 라우팅 후에도 남는 로그인 화면 상태로 남긴다.
+     *  - 요청 시작 후의 **CancellationException 도 결과 불명이다**(리뷰 3차 P1): 인터셉터가 전역 상태를
+     *    Retrofit continuation 보다 먼저 발행하면 MAIN 재라우팅이 이 VM 을 폐기해 suspend 호출이
+     *    취소로 끝난다 — 요청은 이미 서버로 나갔을 수 있다. [onUncertain] 을 호출한 뒤 재전파해
+     *    구조적 동시성은 보존하되 Activity 범위 정리는 놓치지 않는다.
+     */
+    fun withdraw(onWithdrawn: () -> Unit, onUncertain: () -> Unit) {
+        if (withdrawing) return
+        // 플래그는 코루틴 **밖**에서 즉시 세운다: 안에서 세우면 첫 요청이 디스패치되기 전에 들어온
+        //   두 번째 호출이 가드를 통과해 탈퇴 요청이 두 번 나간다(빠른 연타·상태 전이 틈).
+        withdrawing = true
+        withdrawError = null
+        viewModelScope.launch {
+            try {
+                userApi.withdraw(UserWithdrawRequest())
+                onWithdrawn()
+            } catch (e: CancellationException) {
+                // 여기 도달했다 = userApi.withdraw 가 이미 호출됐다 → 요청이 서버로 나갔을 수 있는데
+                //   전역 라우팅이 이 VM 을 폐기하며 취소된 상황(리뷰 3차 P1). 결과 불명과 동일하게
+                //   Activity 범위 정리를 시작한 뒤 재전파한다(onUncertain 은 suspend 하지 않는다).
+                onUncertain()
+                Log.w(TAG, "회원탈퇴 중 취소 — 결과 불명으로 간주, 안전 측 정리 즉시 시작")
+                throw e
+            } catch (e: HttpException) {
+                if (e.code() != 401 && e.code() in 400..499) {
+                    Log.w(TAG, "회원탈퇴 서버 거절: HTTP ${e.code()}")
+                    withdrawError = "탈퇴 처리에 실패했어요. 잠시 후 다시 시도해 주세요."
+                } else {
+                    Log.w(TAG, "회원탈퇴 결과 불명(HTTP ${e.code()}) — 안전 측 정리 즉시 시작")
+                    onUncertain()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "회원탈퇴 결과 불명(${e.javaClass.simpleName}): ${e.message} — 안전 측 정리 즉시 시작")
+                onUncertain()
+            } finally {
+                withdrawing = false
+            }
+        }
+    }
+
+    fun dismissWithdrawError() { withdrawError = null }
+
+    companion object {
+        const val TAG = "Settings"
+    }
+}

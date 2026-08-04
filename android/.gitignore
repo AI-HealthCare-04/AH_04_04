@@ -1,10 +1,23 @@
-# Android build artifacts (로컬 생성물 — 저장소에 넣지 않는다, #207 리뷰)
-.gradle/
-build/
-/local.properties
 *.iml
-.idea/
-captures/
-.externalNativeBuild/
-.cxx/
+.gradle
+/.idea/
+.kotlin
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
 .DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# release 서명 키 — 절대 커밋 금지. keystore는 레포 밖(홈 디렉터리 등)에 두고
+# 경로·비밀번호는 ~/.gradle/gradle.properties 나 환경변수로 주입한다.
+*.jks
+*.keystore
+keystore.properties

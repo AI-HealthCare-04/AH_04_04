@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 진동 피드백(feedback/AndroidHapticPlayer). normal 등급이라 런타임 요청은 필요 없다. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- 걷기 감지는 가속도계 기반. 런타임 권한은 불필요.
+         센서가 없는 기기에서도 설치 가능하도록 required=false -->
+    <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="false" />
+
+    <!-- 걷기 챌린지 백그라운드 측정(#199): 화면 꺼짐/주머니에서도 측정을 이어가기 위한 포그라운드 서비스.
+         · FOREGROUND_SERVICE / FOREGROUND_SERVICE_HEALTH : health 타입 FGS 실행(normal, 자동 승인).
+         · HIGH_SAMPLING_RATE_SENSORS : health FGS 실행의 '선행 권한' 요건을 자동 승인 권한 하나로 충족한다
+           (공식 문서: 이 권한만으로 충분 → ACTIVITY_RECOGNITION/BODY_SENSORS 불필요, 런타임 프롬프트 없음).
+           우리가 >200Hz 로 샘플링해서가 아니라, 오직 FGS-health 선행요건 충족용으로 선언한다.
+         · POST_NOTIFICATIONS : 지속 알림 표시(Android 13+ 런타임). 거부돼도 측정/서비스는 계속되고 알림만 숨는다.
+         · WAKE_LOCK : FGS 는 프로세스 우선순위만 올릴 뿐 CPU suspend 를 막지 못한다. 기본 가속도계는
+           non-wake-up 센서라 화면 OFF 로 SoC 가 suspend 되면 콜백이 끊기고 FIFO 초과분이 유실된다
+           (10분 측정에서 걸음 누락). 측정 수명 동안 PARTIAL_WAKE_LOCK 을 유지해 CPU 를 깨워 둔다. normal 등급, 런타임 불필요. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH" />
+    <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <application
+        android:name=".AigoApplication"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.MyApplication">
+
+        <!-- Android 16(targetSdk 36)부터 sw600dp 이상 대형 화면에서는 screenOrientation=portrait가
+             기본 무시된다. 이 opt-out으로 태블릿·폴더블에서도 세로 고정을 실제 보장해 회전 시 측정값·타이머
+             리셋(#122)을 막는다. ⚠️ opt-out은 targetSdk 37부터 효력이 없어지므로, 그 전에 #90의 생명주기
+             복원(ViewModel/rememberSaveable 세션 복원)으로 대체하는 것이 최종 해법이다. -->
+        <property
+            android:name="android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY"
+            android:value="true" />
+
+        <activity
+            android:name="com.kakao.sdk.auth.AuthCodeHandlerActivity"
+            android:exported="true"
+            tools:ignore="Instantiatable">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="kakao${KAKAO_NATIVE_APP_KEY}" android:host="oauth" />
+            </intent-filter>
+        </activity>
+        <!-- 세로 고정: 시니어 대상 세로 전용 UI(가로 레이아웃 없음). 회전 시 Activity 재생성으로
+             걸음수·10분 타이머가 리셋되는 문제 방지(#122). 대형 화면은 위 RESTRICTED_RESIZABILITY
+             opt-out으로 함께 보장. 대형/폴더블 권장 경고는 의도적 결정이라 무시. -->
+        <activity
+            android:name=".pet.WalkingChallengeActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.MyApplication"
+            tools:ignore="LockedOrientationActivity,DiscouragedApi" />
+
+        <!-- 세로 고정: 전 화면이 시니어 대상 세로 전용 UI(가로 레이아웃 없음). 자동회전 시
+             MainActivity 재생성으로 탭·측정 상태(센서 걸음수 등)가 전부 리셋되는 문제 방지(#122).
+             대형 화면은 위 RESTRICTED_RESIZABILITY opt-out으로 함께 보장.
+             대형/폴더블 권장 경고는 v1의 의도적 결정이라 무시.
+             configChanges(orientation|screenSize): screenOrientation=portrait로 자동회전은 여전히 막되,
+             운동영상 '가로 전체화면'이 프로그램적으로 강제하는 가로 전환에서만 액티비티 재생성을 막는다
+             (그 순간은 걷기 측정 화면이 아니므로 #122 상태 리셋과 무관). 글꼴/다크모드 등 다른 구성 변경은
+             configChanges에 없어 종전대로 재생성된다. -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.MyApplication"
+            android:windowSoftInputMode="adjustResize"
+            tools:ignore="LockedOrientationActivity,DiscouragedApi">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 걷기 측정 포그라운드 서비스(#199). health 타입: 피트니스(걷기) 측정 지속용.
+             exported=false(외부 실행 불가). 실행 선행요건은 위 HIGH_SAMPLING_RATE_SENSORS 로 충족. -->
+        <service
+            android:name=".mission.WalkingMeasurementService"
+            android:exported="false"
+            android:foregroundServiceType="health" />
+    </application>
+
+</manifest>

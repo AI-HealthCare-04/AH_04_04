@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Aigo 브랜드 색 (XML 테마·스플래시·상태바용). Compose 색은 ui/theme/Color.kt 참조. -->
+    <color name="aigo_primary">#FF164528</color>
+    <color name="aigo_background">#FFFAFBFA</color>
+    <color name="aigo_on_background">#FF1A1C1A</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="black">#FF1A1C1A</color>
+</resources>

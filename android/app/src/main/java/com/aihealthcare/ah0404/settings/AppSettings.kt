@@ -1,0 +1,100 @@
+package com.aihealthcare.ah0404.settings
+
+import android.content.Context
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import kotlin.math.abs
+
+/**
+ * 앱 전역 UI 적용값(글자·소리 크기·배경음악) — 설정(_15)에서 고른 값을 **실제로 화면·미디어에 적용**한다(묶음 C-2/C-3, 방식 B).
+ *
+ *  - `fontScale`: MyApplicationTheme 이 LocalDensity 의 fontScale 에 곱해 **모든 sp 텍스트를 전역 확대/축소**.
+ *  - `soundScale`: 미디어 플레이어 volume 배율.
+ *  - `musicEnabled`: **운동 음악(운동 따라하기 루틴 BGM) 켜기/끄기**. 끄기면 BGM을 준비·재생·오디오포커스 요청 안 함(다른 앱 음악 미방해, #87). (운동 영상 나레이션은 음악이 아니므로 대상 아님)
+ *  Compose 가 관찰하도록 State 로 두어 설정 변경 시 즉시 반영되고, SharedPreferences 로 재시작에도 유지된다.
+ *  (설정 저장의 단일 원천은 서버 #73 이지만, 전역 즉시 적용·오프라인/시작 시점을 위해 로컬 캐시를 둔다.)
+ */
+object AppSettings {
+    const val SIZE_SMALL = "small"
+    const val SIZE_MEDIUM = "medium"
+    const val SIZE_LARGE = "large"
+    const val SOUND_MEDIUM = 0.8f
+
+    // 영상 재생 속도: 사용자가 영상 안 톱니로 직접 조절(전역 1개로 기억). 기본 1.0배속.
+    //   난이도 개념(추론/설정 연동)은 폐기 — 재생속도 톱니로 통일(서서·근력·게임·몸풀기·마무리 공통).
+    const val DEFAULT_SPEED = 1.0f
+    val SPEED_OPTIONS = listOf(0.75f, 1.0f, 1.25f, 1.5f)
+
+    var fontScale by mutableFloatStateOf(1.0f); private set
+    var soundScale by mutableFloatStateOf(SOUND_MEDIUM); private set
+    var musicEnabled by mutableStateOf(true); private set
+
+    /** 영상 재생 속도(전역). 사용자가 영상 안 톱니로 고른 값을 모든 영상에 공통 적용하고 재시작에도 유지한다. */
+    var playbackSpeed by mutableFloatStateOf(DEFAULT_SPEED); private set
+
+    private const val PREFS = "aigo_ui_settings"
+    private const val KEY_FONT = "font_size"
+    private const val KEY_SOUND = "sound_size"
+    private const val KEY_MUSIC = "music_enabled"
+    private const val KEY_SPEED = "playback_speed"
+
+    /** 글자 배율: 작게 0.9 / 보통 1.0 / 크게 1.2. (시니어 가독성 위해 크게를 넉넉히) */
+    fun fontScaleFor(size: String): Float = when (size) {
+        SIZE_SMALL -> 0.9f
+        SIZE_LARGE -> 1.2f
+        else -> 1.0f
+    }
+
+    /** 소리 배율(미디어 volume): 작게 0.5 / 보통 0.8 / 크게 1.0. */
+    fun soundScaleFor(size: String): Float = when (size) {
+        SIZE_SMALL -> 0.5f
+        SIZE_LARGE -> 1.0f
+        else -> SOUND_MEDIUM
+    }
+
+    private fun prefs(context: Context) =
+        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    /** 앱 시작 시: 마지막으로 저장된 값으로 전역 적용값 복원(시작 즉시 반영). */
+    fun load(context: Context) {
+        val p = prefs(context)
+        fontScale = fontScaleFor(p.getString(KEY_FONT, SIZE_MEDIUM) ?: SIZE_MEDIUM)
+        soundScale = soundScaleFor(p.getString(KEY_SOUND, SIZE_MEDIUM) ?: SIZE_MEDIUM)
+        musicEnabled = p.getBoolean(KEY_MUSIC, true)
+        // 저장된 값이 옵션 밖(구버전/손상)이어도 확정 4옵션으로 정규화해 복원.
+        playbackSpeed = normalizeSpeed(p.getFloat(KEY_SPEED, DEFAULT_SPEED))
+    }
+
+    fun setFontSize(context: Context, size: String) {
+        fontScale = fontScaleFor(size)
+        prefs(context).edit().putString(KEY_FONT, size).apply()
+    }
+
+    fun setSoundSize(context: Context, size: String) {
+        soundScale = soundScaleFor(size)
+        prefs(context).edit().putString(KEY_SOUND, size).apply()
+    }
+
+    fun setMusicEnabled(context: Context, enabled: Boolean) {
+        musicEnabled = enabled
+        prefs(context).edit().putBoolean(KEY_MUSIC, enabled).apply()
+    }
+
+    /** 재생 속도를 확정 옵션([SPEED_OPTIONS]) 중 가장 가까운 값으로 정규화한다. Media3 기본 컨트롤러가
+     *  1.75·2.0 등 옵션 밖 값을 줘도 전역엔 확정 4옵션만 저장되게 한다(지영 리뷰). */
+    fun normalizeSpeed(speed: Float): Float =
+        SPEED_OPTIONS.minByOrNull { abs(it - speed) } ?: DEFAULT_SPEED
+
+    /** 사용자가 영상 톱니로 고른 재생 속도를 전역 저장(영속). 확정 4옵션으로 정규화해 저장한다.
+     *  ExoPlayer setPlaybackSpeed 는 기본 시간축 신축(pitch 유지)이라 빨라져도 목소리 음정은 자연스럽다. */
+    fun setPlaybackSpeed(context: Context, speed: Float) {
+        val normalized = normalizeSpeed(speed)
+        // 이미 같은 값이면 상태·디스크 쓰기 불필요 — 플레이어 생성 시 초기 setPlaybackSpeed 가 곧바로
+        //   onPlaybackParametersChanged 를 유발해 매 진입 재기록하던 것을 막는다(정인 리뷰 nit).
+        if (normalized == playbackSpeed) return
+        playbackSpeed = normalized
+        prefs(context).edit().putFloat(KEY_SPEED, normalized).apply()
+    }
+}

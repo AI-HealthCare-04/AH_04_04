@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+   백업·기기 이전 규칙 (API 31+).
+   https://developer.android.com/about/versions/12/backup-restore#xml-changes
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- 세션 저장소 제외(#358 리뷰): Keystore 키가 기기 종속이라 복원본은 해독 불가 —
+             세션 토큰 암호문·user_id 를 클라우드 백업에서 뺀다. -->
+        <exclude domain="sharedpref" path="aigo_session.xml" />
+        <!-- 점수 기여도 캐시 제외(#406): 건강 파생값이라 기기 밖으로 내보내지 않는다. -->
+        <exclude domain="sharedpref" path="contribution_cache.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <!-- 기기 이전도 동일: 새 기기의 Keystore 에는 키가 없어 세션은 어차피 재로그인이다. -->
+        <exclude domain="sharedpref" path="aigo_session.xml" />
+        <!-- 기여도 캐시도 이전하지 않는다 — 새 기기에서 다음 재계산 때 서버가 다시 내려준다(#406). -->
+        <exclude domain="sharedpref" path="contribution_cache.xml" />
+    </device-transfer>
+</data-extraction-rules>

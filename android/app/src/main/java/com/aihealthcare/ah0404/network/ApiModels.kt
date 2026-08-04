@@ -1,0 +1,162 @@
+package com.aihealthcare.ah0404.network
+
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+
+@Serializable
+data class LoginRequest(
+    @SerialName("authorization_code") val authorizationCode: String
+)
+
+@Serializable
+data class LoginResponse(
+    @SerialName("access_token") val accessToken: String
+)
+
+@Serializable
+data class Mission(
+    @SerialName("mission_template_id") val missionTemplateId: Int,
+    @SerialName("mission_type") val missionType: String,
+    val title: String,
+    // 백엔드 DTO가 nullable(str | None)이라 안전하게 nullable로 맞춤
+    val description: String? = null,
+    val level: String,
+    @SerialName("target_value") val targetValue: Int,
+    @SerialName("target_unit") val targetUnit: String,
+    @SerialName("requires_safety_notice") val requiresSafetyNotice: Boolean,
+    @SerialName("daily_count_limit") val dailyCountLimit: Int? = null,
+    @SerialName("reward_points") val rewardPoints: Int,
+    // 단백질(식사) 미션 한정: 오늘 이미 저장된 기록. 없으면 null. 재진입 시 카드 선택 복원에 쓴다.
+    @SerialName("today_log") val todayLog: MealTodayLog? = null,
+    // 운동·걷기 미션 한정: 오늘 누적 진행(분·걸음·목표달성). 다른 종류는 null. 재생/측정 전에도 '오늘까지 N분'을 보여준다.
+    @SerialName("today_progress") val todayProgress: MissionTodayProgress? = null,
+    // 게임 미션 한정(#346): 오늘 완료 여부(하루 1회 counted 기준). 다른 종류·구버전 서버는 null.
+    @SerialName("today_done") val todayDone: Boolean? = null,
+)
+
+// 단백질 미션의 '오늘 기록' — 재진입 시 앱이 선택 상태를 복원한다(GET /missions today_log).
+@Serializable
+data class MealTodayLog(
+    val eaten: List<String>,               // 오늘 먹은 단백질 카테고리 id 목록
+    @SerialName("logged_at") val loggedAt: String,
+)
+
+// 운동·걷기 미션의 '오늘 누적 진행'(GET /missions today_progress). 서버 당일 합산 권위값.
+//   totalMin=오늘 누적 분, totalSteps=걷기 전용 누적 걸음(운동은 null), goalReached=목표(targetValue) 도달 여부.
+@Serializable
+data class MissionTodayProgress(
+    @SerialName("total_min") val totalMin: Float,
+    @SerialName("total_steps") val totalSteps: Int? = null,
+    @SerialName("goal_reached") val goalReached: Boolean,
+)
+
+@Serializable
+data class MissionsResponse(
+    val missions: List<Mission>
+)
+
+// =====================================================================================
+//  미션 수행 흐름 (걷기): POST /mission-logs → POST /sensor-sessions → PATCH /mission-logs/{id}
+//  필드/이름은 백엔드 DTO(app/dtos/mission.py, sensor.py)와 1:1로 맞춘 계약이다.
+//  Json 설정이 encodeDefaults=false 라 기본값(null)인 optional 필드는 전송에서 빠진다.
+// =====================================================================================
+
+// [요청] 미션 시작/생성. 걷기는 status="in_progress" 로 시작(운동도 동일). 식사/게임은 "completed".
+@Serializable
+data class MissionLogCreateRequest(
+    @SerialName("mission_template_id") val missionTemplateId: Int,
+    @SerialName("mission_type") val missionType: String,   // "walking" | "exercise" | "meal" | "game"
+    val status: String,                                    // "in_progress" | "completed"
+    // 게임 즉시완료에서 필수: 서버 _complete_immediately 가 counted_for_daily = bool(success) 로
+    //   판정한다 — 누락 시 시청 완주가 영원히 비적립(최종 RC QA 발견). 걷기/운동 시작(in_progress)은
+    //   서버가 무시하므로 null(미전송) 유지.
+    val success: Boolean? = null,
+    // 운동(requires_safety_notice=true)에서만 필요. 걷기 데모에선 null로 두면 전송 안 됨.
+    @SerialName("safety_notice_confirmed") val safetyNoticeConfirmed: Boolean? = null,
+    // 기기에서 이 기록(측정)이 만들어진 시각(ISO-8601). 서버가 재전송을 같은 수행으로 알아보는 자연 키(#158).
+    //   재전송 시 반드시 같은 값을 다시 보내야 중복 집계가 막힌다 → 측정 '시작' 시각을 한 번 잡아 고정한다.
+    //   null 이면 서버 유니크에서 제외돼 종전 동작(중복 방지 없음)과 호환.
+    @SerialName("created_on_device_at") val createdOnDeviceAt: String? = null,
+    // 식사(단백질) 즉시완료에서만 채운다. 걷기/운동은 null → 전송에서 빠짐.
+    @SerialName("meal_detail") val mealDetail: MealDetail? = null,
+)
+
+// [요청 일부] 단백질 식사 상세. protein_foods 는 정의된 7개 카테고리 id 목록,
+//   protein_meal_count 는 그 개수(서버가 1종 이상이면 오늘 목표 달성으로 카운트, #227).
+@Serializable
+data class MealDetail(
+    @SerialName("protein_foods") val proteinFoods: List<String>,
+    @SerialName("protein_meal_count") val proteinMealCount: Int,
+    @SerialName("raw_text") val rawText: String? = null,
+)
+
+@Serializable
+data class MissionLogCreateResponse(
+    @SerialName("mission_log_id") val missionLogId: Int,
+    val status: String,   // "in_progress" | "completed" — 재전송이 이미 완료된 로그를 돌려주면 "completed"
+    val success: Boolean,
+    @SerialName("counted_for_daily") val countedForDaily: Boolean,
+    @SerialName("daily_limit_reached") val dailyLimitReached: Boolean = false,   // 식사 전용 필드. 걷기 응답엔 없을 수 있어 기본값
+    @SerialName("earned_points") val earnedPoints: Int,
+    @SerialName("daily_result") val dailyResult: String,                 // none | success | great_success
+    // 재전송이라 새로 만들지 않고 기존 것을 돌려줬는가(#158). true 면 status 가 기존 로그의 상태다.
+    @SerialName("deduplicated") val deduplicated: Boolean = false,
+)
+
+// [요청] 센서 측정 결과 저장. recognition_status 는 백엔드에서 필수(기본값 없음).
+@Serializable
+data class SensorSessionCreateRequest(
+    @SerialName("mission_log_id") val missionLogId: Int,
+    @SerialName("sensor_type") val sensorType: String,          // MVP: "accelerometer"
+    @SerialName("recognition_status") val recognitionStatus: String,  // "success" | "low_confidence" | "failed" | "manual_override"
+    @SerialName("detected_count") val detectedCount: Int? = null,     // 걷기: 걸음 수
+    @SerialName("duration_sec") val durationSec: Int? = null,
+    @SerialName("motion_score") val motionScore: Float? = null,
+)
+
+@Serializable
+data class SensorSessionCreateResponse(
+    @SerialName("sensor_session_id") val sensorSessionId: Int,
+    @SerialName("recognition_status") val recognitionStatus: String,
+)
+
+// [요청 일부] 걷기 완료 상세. duration_min 은 필수.
+@Serializable
+data class WalkingDetail(
+    @SerialName("duration_min") val durationMin: Float,
+    @SerialName("distance_km") val distanceKm: Float? = null,
+    val steps: Int? = null,
+)
+
+// [요청 일부] 운동 완료 상세. 판정 필드는 걷기와 동일하게 duration_min(필수). 서버가 당일 '분'을 누적 합산해
+//   목표(하루 10분, #168/migration 0010)와 비교한다 → 앱은 세션별 수행 분만 실어 보내면 된다(클라 누적 불필요).
+@Serializable
+data class ExerciseDetail(
+    @SerialName("duration_min") val durationMin: Float,
+)
+
+// [요청] 미션 완료(PATCH). 걷기는 walking_detail, 운동은 exercise_detail 을 채운다.
+// ⚠️ success 를 반드시 보낸다(누락 시 서버가 실패로 처리할 수 있음).
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class MissionLogUpdateRequest(
+    val success: Boolean,
+    // 기본값이 있어도 encodeDefaults=false 때문에 빠지지 않도록 항상 직렬화.
+    // (계약: 완료 status="completed" 는 반드시 전송)
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS) val status: String = "completed",
+    @SerialName("walking_detail") val walkingDetail: WalkingDetail? = null,
+    @SerialName("exercise_detail") val exerciseDetail: ExerciseDetail? = null,
+)
+
+@Serializable
+data class MissionLogUpdateResponse(
+    @SerialName("mission_log_id") val missionLogId: Int,
+    val status: String,
+    val success: Boolean,
+    @SerialName("counted_for_daily") val countedForDaily: Boolean,
+    @SerialName("daily_result") val dailyResult: String,
+    @SerialName("sync_status") val syncStatus: String,
+    @SerialName("daily_total_min") val dailyTotalMin: Float? = null,   // 걷기: 같은 날 서버 자동 합산값
+)
