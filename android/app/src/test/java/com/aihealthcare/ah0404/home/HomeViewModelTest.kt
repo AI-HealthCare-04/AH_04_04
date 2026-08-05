@@ -1,6 +1,5 @@
 package com.aihealthcare.ah0404.home
 
-import com.aihealthcare.ah0404.network.HomeActivityProfile
 import com.aihealthcare.ah0404.network.HomeApi
 import com.aihealthcare.ah0404.network.HomeAvailableMissionSummary
 import com.aihealthcare.ah0404.network.HomeLatestPrediction
@@ -45,7 +44,6 @@ class HomeViewModelTest {
         HomeResponse(
             user = HomeUser("홍길동"),
             pointBalance = HomePointBalance(1250),
-            activityProfile = HomeActivityProfile("normal"),
             latestPrediction = prediction,
             todaySummary = HomeTodaySummary(2),
             availableMissionSummary = HomeAvailableMissionSummary(meal = 2, exercise = 3, walking = 1, game = 1),
@@ -61,7 +59,6 @@ class HomeViewModelTest {
         val ui = vm.ui!!
         assertEquals("홍길동", ui.nickname)
         assertEquals(1250, ui.points)
-        // activity_profile 은 응답에 남아 있지만 화면에 매핑하지 않는다(난이도 폐기로 홈에서 내림).
         assertEquals("maintain", ui.careStage)
         assertEquals("잘 유지 중이에요", ui.predictionMessage)
         assertEquals(2, ui.completedToday)

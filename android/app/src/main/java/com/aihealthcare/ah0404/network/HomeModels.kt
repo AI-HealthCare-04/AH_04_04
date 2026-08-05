@@ -13,7 +13,6 @@ import kotlinx.serialization.Serializable
 data class HomeResponse(
     val user: HomeUser,
     @SerialName("point_balance") val pointBalance: HomePointBalance,
-    @SerialName("activity_profile") val activityProfile: HomeActivityProfile,
     @SerialName("latest_prediction") val latestPrediction: HomeLatestPrediction? = null,
     @SerialName("today_summary") val todaySummary: HomeTodaySummary,
     @SerialName("available_mission_summary") val availableMissionSummary: HomeAvailableMissionSummary,
@@ -26,9 +25,6 @@ data class HomeUser(val nickname: String = "")
 
 @Serializable
 data class HomePointBalance(@SerialName("current_points") val currentPoints: Int = 0)
-
-@Serializable
-data class HomeActivityProfile(@SerialName("current_level") val currentLevel: String = "easy")
 
 @Serializable
 data class HomeLatestPrediction(

@@ -289,8 +289,6 @@ private fun ProfileContent(vm: ProfileViewModel, info: UserInfoResponse) {
         Divider()
         InfoRow("성별", sexLabel(info.sex))
         Divider()
-        InfoRow("운동 강도", activityLevelLabel(info.activityLevel))
-        Divider()
         InfoRow("보유 포인트", "%,d P".format(info.currentPoints))
         Divider()
         InfoRow("로그인 방식", providerLabel(info.provider))
@@ -366,11 +364,6 @@ private fun sexLabel(sex: String?): String = when (sex) {
     else -> "미입력"
 }
 
-private fun activityLevelLabel(level: String): String = when (level) {
-    "easy" -> "가볍게"
-    "hard" -> "활발히"
-    else -> "보통"
-}
 
 private fun providerLabel(provider: String): String = when (provider) {
     "google" -> "구글"
