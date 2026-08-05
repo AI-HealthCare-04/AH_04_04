@@ -27,6 +27,12 @@ async def _guest(db_client: AsyncClient) -> dict[str, str]:
     return {"Authorization": f"Bearer {body['access_token']}"}
 
 
+async def _current_points(db_client: AsyncClient, auth: dict[str, str]) -> int:
+    # 포인트 조회 API 제거(#429) 이후 잔액 확인은 홈 point_balance 로 한다(단일 노출 경로).
+    home = (await db_client.get(f"{API}/home", headers=auth)).json()
+    return home["point_balance"]["current_points"]
+
+
 async def _seed_exercise_template(
     sm: async_sessionmaker[AsyncSession], *, target_min: int = 10, reward_points: int = 10
 ) -> int:
@@ -88,8 +94,7 @@ async def test_short_sessions_do_not_succeed_even_if_app_claims_success(
         assert body["success"] is False
         assert body["counted_for_daily"] is False
 
-    points = (await db_client.get(f"{API}/users/me/points", headers=auth)).json()
-    assert points["current_points"] == 0
+    assert await _current_points(db_client, auth) == 0
 
 
 # -------------------------------------------------------------------------------------
@@ -112,8 +117,7 @@ async def test_repeated_sessions_accumulate_to_success(
     assert third["counted_for_daily"] is True
     assert third["daily_total_min"] == 12.6  # 앱이 진행률을 그릴 수 있도록 합산값을 돌려준다
 
-    points = (await db_client.get(f"{API}/users/me/points", headers=auth)).json()
-    assert points["current_points"] == 10
+    assert await _current_points(db_client, auth) == 10
 
 
 # -------------------------------------------------------------------------------------
@@ -131,8 +135,7 @@ async def test_points_awarded_once_even_if_user_keeps_going(
     assert extra["success"] is True  # 목표는 이미 넘었으므로 성공 상태 유지
     assert extra["counted_for_daily"] is False  # 그러나 다시 세지 않는다
 
-    points = (await db_client.get(f"{API}/users/me/points", headers=auth)).json()
-    assert points["current_points"] == 10
+    assert await _current_points(db_client, auth) == 10
 
 
 # -------------------------------------------------------------------------------------

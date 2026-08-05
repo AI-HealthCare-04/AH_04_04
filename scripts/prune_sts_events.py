@@ -25,7 +25,8 @@ from app.core.db.session import engine
 
 RETENTION_DAYS = 90
 
-EVENT_TABLES = ("sts_overlay_events", "sts_score_view_events")
+# sts_score_view_events 는 분모 폐기(#429, 마이그레이션 0024)로 목록에서 제거했다.
+EVENT_TABLES = ("sts_overlay_events",)
 
 
 async def prune(conn: AsyncConnection, *, apply: bool, retention_days: int = RETENTION_DAYS) -> dict[str, int]:

@@ -54,7 +54,6 @@ const NAMES = [
   "GET /users/me/settings",
   "GET /missions",
   "GET /mission-logs",
-  "GET /dashboard/summary",
   "GET /dashboard/stamps",
   "GET /risk-predictions/me/latest",
   "GET /risk-predictions/me/history",
@@ -63,7 +62,6 @@ const NAMES = [
   "GET /physical-assessments/me/history",
   "GET /exercise-videos",
   "GET /terms",
-  "GET /daily-tips",
   "GET /support/faqs",
 ];
 if (WRITES) NAMES.push("POST /mission-logs", "PATCH /mission-logs/{id}");
@@ -224,7 +222,6 @@ function journey() {
 
   group("기록 탭", () => {
     get("/mission-logs", "GET /mission-logs");
-    get("/dashboard/summary", "GET /dashboard/summary");
     // month(YYYY-MM)는 필수 — 누락하면 400 이라 집계 쿼리가 아니라 검증 실패 경로를 재게 된다(#364 실측에서 발견).
     get(`/dashboard/stamps?month=${STAMP_MONTH}`, "GET /dashboard/stamps");
   });
@@ -243,7 +240,6 @@ function journey() {
   group("정적", () => {
     get("/exercise-videos", "GET /exercise-videos");
     get("/terms", "GET /terms");
-    get("/daily-tips", "GET /daily-tips");
     get("/support/faqs", "GET /support/faqs");
   });
   sleep(1);

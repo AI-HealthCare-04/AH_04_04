@@ -4,22 +4,17 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import config
-from app.dtos.activity_profile import ActivityProfileResponse
 from app.dtos.health_check import (
     HealthCheckSessionCreateRequest,
     HealthCheckSessionResponse,
     HealthCheckSkipResponse,
 )
-from app.models.activity import UserActivityProfile
 from app.models.enums import (
-    ActivityLevel,
     HealthCheckStatus,
-    LevelReason,
     OnboardingStatus,
 )
 from app.models.health import HealthCheckSession
 from app.models.users import User
-from app.repositories.activity_profile_repository import ActivityProfileRepository
 from app.repositories.health_check_repository import HealthCheckRepository
 
 
@@ -27,7 +22,6 @@ class HealthCheckService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repo = HealthCheckRepository(session)
-        self.activity_repo = ActivityProfileRepository(session)
 
     async def start_session(self, user: User, data: HealthCheckSessionCreateRequest) -> HealthCheckSessionResponse:
         # 중단 후 재진입(#180): 남아 있는 STARTED 세션이 있으면 새로 만들지 않고 재사용한다.
@@ -51,16 +45,13 @@ class HealthCheckService:
         health_check_session.status = HealthCheckStatus.SKIPPED
         health_check_session.completed_at = datetime.now(config.TIMEZONE)
         await self.repo.update_session(health_check_session)
-        activity_profile = await self._get_or_create_default_activity_profile(user.user_id)
         user.onboarding_status = OnboardingStatus.COMPLETED
         await self.session.commit()
         await self.session.refresh(health_check_session)
-        await self.session.refresh(activity_profile)
         return HealthCheckSkipResponse(
             session_id=health_check_session.session_id,
             status=health_check_session.status,
             onboarding_status=user.onboarding_status.value,
-            activity_profile=ActivityProfileResponse.model_validate(activity_profile),
         )
 
     async def _get_started_session(self, session_id: int, user_id: int) -> HealthCheckSession:
@@ -71,18 +62,3 @@ class HealthCheckService:
         if health_check_session.status != HealthCheckStatus.STARTED:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="이미 종료된 세션입니다.")
         return health_check_session
-
-    async def _get_or_create_default_activity_profile(self, user_id: int) -> UserActivityProfile:
-        activity_profile = await self.activity_repo.get_by_user_id(user_id)
-        if activity_profile is not None:
-            return activity_profile
-
-        activity_profile = UserActivityProfile(
-            user_id=user_id,
-            current_level=ActivityLevel.EASY,
-            level_reason=LevelReason.RULE,
-            physical_assessment_id=None,
-            started_at=datetime.now(config.TIMEZONE),
-        )
-        await self.activity_repo.create_profile(activity_profile)
-        return activity_profile

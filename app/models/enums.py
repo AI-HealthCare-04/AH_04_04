@@ -78,26 +78,11 @@ class AssessmentType(StrEnum):
     REASSESSMENT = "reassessment"
 
 
+# 난이도 폐기(#428) 후에는 mission_templates.level 컬럼 값으로만 남는다(걷기는 EASY=20분만 노출).
 class ActivityLevel(StrEnum):
     EASY = "easy"
     NORMAL = "normal"
     HARD = "hard"
-
-
-# 현재 난이도 상태의 사유 (user_activity_profiles.level_reason). 명세 v7.2 운동 난이도 조회.
-class LevelReason(StrEnum):
-    INITIAL_TEST = "initial_test"
-    RULE = "rule"
-    LLM_RECOMMENDATION = "llm_recommendation"
-    USER_SELECTED = "user_selected"
-
-
-# 난이도 '변경 요청'의 사유 (운동 난이도 변경 요청 본문 reason_type). level_reason과 분리한다.
-# 요청 이력은 후속 activity_level_change_logs 테이블에 남긴다(현재는 검증만, 미저장).
-class ReasonType(StrEnum):
-    RULE = "rule"
-    LLM_RECOMMENDATION = "llm_recommendation"
-    USER_REQUEST = "user_request"
 
 
 class ModelVariant(StrEnum):

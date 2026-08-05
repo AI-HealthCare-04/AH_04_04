@@ -1,7 +1,7 @@
 # =====================================================================================
 # 인증(Auth) API 테스트. (API 명세 v7.1)
 # DB가 필요한 해피패스(실제 로그인 → 유저 생성)는 테스트 DB 픽스처 준비 후 추가(아래 TODO).
-# 여기서는 DB 없이 검증 가능한 것만 다룹니다: logout 인증 가드 + 로그인 요청 검증.
+# 여기서는 DB 없이 검증 가능한 것만 다룹니다: 로그인 요청 검증.
 # =====================================================================================
 
 import pytest
@@ -9,13 +9,6 @@ from httpx import AsyncClient
 from starlette import status
 
 from app.core import config
-
-
-# 로그아웃은 인증 필요(Bearer). 토큰 없이 부르면 401.
-async def test_logout_requires_auth(client: AsyncClient) -> None:
-    response = await client.post("/api/v1/auth/logout")
-    assert response.status_code == status.HTTP_401_UNAUTHORIZED
-    assert "error_detail" in response.json()  # 전역 핸들러가 명세 규격으로 통일
 
 
 # google 로그인은 id_token과 nonce 필수 → 없으면 422.

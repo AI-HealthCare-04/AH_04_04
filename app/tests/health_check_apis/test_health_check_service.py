@@ -8,8 +8,7 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dtos.health_check import HealthCheckSessionCreateRequest
-from app.models.activity import UserActivityProfile
-from app.models.enums import ActivityLevel, HealthCheckStatus, InputMethod, LevelReason, OnboardingStatus
+from app.models.enums import HealthCheckStatus, InputMethod, OnboardingStatus
 from app.models.health import HealthCheckSession
 from app.models.users import User
 from app.services.health_check import HealthCheckService
@@ -32,11 +31,6 @@ class _FakeSession:
                 instance.session_id = 100
             if instance.created_at is None:
                 instance.created_at = _NOW
-        if isinstance(instance, UserActivityProfile):
-            if instance.activity_profile_id is None:
-                instance.activity_profile_id = 200
-            if instance.updated_at is None:
-                instance.updated_at = _NOW
 
 
 class _FakeHealthCheckRepository:
@@ -66,37 +60,18 @@ class _FakeHealthCheckRepository:
         return health_check_session
 
 
-class _FakeActivityProfileRepository:
-    def __init__(self, activity_profile: UserActivityProfile | None = None) -> None:
-        self.activity_profile = activity_profile
-        self.created_profile: UserActivityProfile | None = None
-
-    async def get_by_user_id(self, user_id: int) -> UserActivityProfile | None:
-        return self.activity_profile
-
-    async def create_profile(self, profile: UserActivityProfile) -> UserActivityProfile:
-        profile.activity_profile_id = 200
-        profile.updated_at = _NOW
-        self.activity_profile = profile
-        self.created_profile = profile
-        return profile
-
-
 def _user() -> User:
     return cast(User, SimpleNamespace(user_id=1, onboarding_status=OnboardingStatus.PENDING))
 
 
 def _service(
     health_check_session: HealthCheckSession | None = None,
-    activity_profile: UserActivityProfile | None = None,
-) -> tuple[HealthCheckService, _FakeHealthCheckRepository, _FakeActivityProfileRepository, _FakeSession]:
+) -> tuple[HealthCheckService, _FakeHealthCheckRepository, _FakeSession]:
     session = _FakeSession()
     repo = _FakeHealthCheckRepository(health_check_session)
-    activity_repo = _FakeActivityProfileRepository(activity_profile)
     service = HealthCheckService(cast(AsyncSession, session))
     service.repo = repo  # type: ignore[assignment]
-    service.activity_repo = activity_repo  # type: ignore[assignment]
-    return service, repo, activity_repo, session
+    return service, repo, session
 
 
 def _started_session() -> HealthCheckSession:
@@ -111,20 +86,8 @@ def _started_session() -> HealthCheckSession:
     )
 
 
-def _activity_profile() -> UserActivityProfile:
-    return UserActivityProfile(
-        activity_profile_id=201,
-        user_id=1,
-        current_level=ActivityLevel.NORMAL,
-        level_reason=LevelReason.USER_SELECTED,
-        physical_assessment_id=None,
-        started_at=_NOW,
-        updated_at=_NOW,
-    )
-
-
 async def test_start_session_creates_started_form_session() -> None:
-    service, repo, _, session = _service()
+    service, repo, session = _service()
 
     result = await service.start_session(_user(), HealthCheckSessionCreateRequest())
 
@@ -137,38 +100,24 @@ async def test_start_session_creates_started_form_session() -> None:
 
 
 async def test_skip_session_marks_started_session_skipped_and_completes_onboarding() -> None:
-    service, repo, activity_repo, session = _service(_started_session())
+    # 난이도 폐기(#428): 건너뛰기는 기본 난이도를 만들지 않고 온보딩 상태 전이만 담당한다.
+    service, repo, session = _service(_started_session())
     user = _user()
 
     result = await service.skip_session(user, 10)
 
     assert result.session_id == 10
     assert result.status == HealthCheckStatus.SKIPPED
-    assert result.onboarding_status == OnboardingStatus.COMPLETED
-    assert result.activity_profile.current_level == ActivityLevel.EASY
-    assert result.activity_profile.level_reason == LevelReason.RULE
+    assert result.onboarding_status == OnboardingStatus.COMPLETED.value
     assert user.onboarding_status == OnboardingStatus.COMPLETED
     assert repo.health_check_session is not None
     assert repo.health_check_session.status == HealthCheckStatus.SKIPPED
     assert repo.health_check_session.completed_at is not None
-    assert activity_repo.created_profile is not None
     assert session.committed is True
 
 
-async def test_skip_session_reuses_existing_activity_profile() -> None:
-    existing_profile = _activity_profile()
-    service, _, activity_repo, _ = _service(_started_session(), existing_profile)
-
-    result = await service.skip_session(_user(), 10)
-
-    assert result.activity_profile.activity_profile_id == existing_profile.activity_profile_id
-    assert result.activity_profile.current_level == ActivityLevel.NORMAL
-    assert result.activity_profile.level_reason == LevelReason.USER_SELECTED
-    assert activity_repo.created_profile is None
-
-
 async def test_missing_session_returns_404() -> None:
-    service, _, _, session = _service()
+    service, _, session = _service()
 
     with pytest.raises(HTTPException) as exc:
         await service.skip_session(_user(), 999)
@@ -182,7 +131,7 @@ async def test_finished_session_cannot_be_changed_again() -> None:
     # 이미 종료된 세션에 skip을 재시도하면 409(_get_started_session 가드).
     finished = _started_session()
     finished.status = HealthCheckStatus.SKIPPED
-    service, _, _, session = _service(finished)
+    service, _, session = _service(finished)
 
     with pytest.raises(HTTPException) as exc:
         await service.skip_session(_user(), 10)

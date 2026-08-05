@@ -8,10 +8,7 @@ from app.dependencies.security import get_request_user
 from app.dtos.dashboard import (
     ChallengeTotalsResponse,
     DashboardPredictionInputs,
-    DashboardSummaryResponse,
     HomeResponse,
-    MuscleScoreContextResponse,
-    PointsResponse,
     ScoreSimulationResponse,
     StampsResponse,
     WalkingDailyResponse,
@@ -55,15 +52,6 @@ async def get_stamps(
     return await DashboardService(session).get_stamps(user, month)
 
 
-@dashboard_router.get("/dashboard/summary", response_model=DashboardSummaryResponse, status_code=status.HTTP_200_OK)
-async def get_dashboard_summary(
-    user: Annotated[User, Depends(get_request_user)],
-    session: Annotated[AsyncSession, Depends(get_db_session)],
-    days: int = 14,
-) -> DashboardSummaryResponse:
-    return await DashboardService(session).get_summary(user, days)
-
-
 @dashboard_router.get(
     "/dashboard/walking-daily", response_model=WalkingDailyResponse, status_code=status.HTTP_200_OK
 )
@@ -88,17 +76,6 @@ async def get_score_simulation(
 
 
 @dashboard_router.get(
-    "/dashboard/muscle-score-context", response_model=MuscleScoreContextResponse, status_code=status.HTTP_200_OK
-)
-async def get_muscle_score_context(
-    user: Annotated[User, Depends(get_request_user)],
-    session: Annotated[AsyncSession, Depends(get_db_session)],
-) -> MuscleScoreContextResponse:
-    # 근력 기능 안전망 카드(#기록탭 §3.4) 발화 입력: 최신 5STS(초) + BMI.
-    return await DashboardService(session).get_muscle_score_context(user)
-
-
-@dashboard_router.get(
     "/dashboard/challenge-totals", response_model=ChallengeTotalsResponse, status_code=status.HTTP_200_OK
 )
 async def get_challenge_totals(
@@ -107,12 +84,3 @@ async def get_challenge_totals(
 ) -> ChallengeTotalsResponse:
     # 기록 탭 챌린지 비율 도넛(#기록탭 §5.4): 유형별 완료 일수(모든 유형 하루 1회 상한, 0회 유형 포함).
     return await DashboardService(session).get_challenge_totals(user)
-
-
-@dashboard_router.get("/users/me/points", response_model=PointsResponse, status_code=status.HTTP_200_OK)
-async def get_points(
-    user: Annotated[User, Depends(get_request_user)],
-    session: Annotated[AsyncSession, Depends(get_db_session)],
-) -> PointsResponse:
-    # 포인트 잔액·적립 이력 조회(인증 필요). 사용 이력(point_spend_logs)은 v6.0에서 제거되어 미노출.
-    return await DashboardService(session).get_points(user)

@@ -7,7 +7,6 @@ from app.core.db.session import get_db_session
 from app.dependencies.security import get_request_user
 from app.dtos.physical_assessment import (
     PhysicalAssessmentCreateRequest,
-    PhysicalAssessmentHistoryItem,
     PhysicalAssessmentHistoryResponse,
     PhysicalAssessmentResponse,
 )
@@ -24,19 +23,6 @@ async def create_physical_assessment(
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> PhysicalAssessmentResponse:
     return await PhysicalAssessmentService(session).create_assessment(user, data)
-
-
-@physical_assessment_router.get(
-    "/me/latest",
-    response_model=PhysicalAssessmentHistoryItem,
-    status_code=status.HTTP_200_OK,
-)
-async def get_latest_physical_assessment(
-    user: Annotated[User, Depends(get_request_user)],
-    session: Annotated[AsyncSession, Depends(get_db_session)],
-) -> PhysicalAssessmentHistoryItem:
-    # #353: 최신 5STS 측정값. 스킵 기록은 제외 — 측정이 한 번도 없으면 404(앱이 '측정 전' 구분).
-    return await PhysicalAssessmentService(session).get_latest_measured(user)
 
 
 @physical_assessment_router.get(

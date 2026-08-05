@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.models.enums import ActivityLevel, AssessmentType, LevelReason
+from app.models.enums import AssessmentType
 
 _logger = logging.getLogger(__name__)
 
@@ -51,11 +51,6 @@ class PhysicalAssessmentCreateRequest(BaseModel):
         return self
 
 
-class PhysicalAssessmentActivityProfile(BaseModel):
-    current_level: ActivityLevel
-    level_reason: LevelReason
-
-
 class PhysicalAssessmentHistoryItem(BaseModel):
     """5STS 측정 이력 항목(#353). 측정 기록(시간 존재)만 담는다 — 스킵 기록은 추이에 안 쓴다.
 
@@ -73,6 +68,5 @@ class PhysicalAssessmentHistoryResponse(BaseModel):
 
 
 class PhysicalAssessmentResponse(BaseModel):
+    # 난이도 폐기(#428): 5STS 는 측정 기록·추이·안전망 입력으로만 쓰인다 — 난이도 산출·반환 제거.
     physical_assessment_id: int
-    used_for_level_setting: bool
-    activity_profile: PhysicalAssessmentActivityProfile

@@ -36,6 +36,12 @@ async def _guest(db_client: AsyncClient) -> tuple[dict[str, str], int]:
     return {"Authorization": f"Bearer {body['access_token']}"}, body["user"]["user_id"]
 
 
+async def _current_points(db_client: AsyncClient, auth: dict[str, str]) -> int:
+    # 포인트 조회 API 제거(#429) 이후 잔액 확인은 홈 point_balance 로 한다(단일 노출 경로).
+    home = (await db_client.get(f"{API}/home", headers=auth)).json()
+    return home["point_balance"]["current_points"]
+
+
 async def _seed_template(
     sm: async_sessionmaker[AsyncSession],
     *,
@@ -102,9 +108,7 @@ async def test_resend_with_same_device_time_returns_existing_log(
     assert await _count_logs(db_sessionmaker, user_id) == 1
 
     # 포인트가 두 번 적립되지 않는다.
-    points = (await db_client.get(f"{API}/users/me/points", headers=auth)).json()
-    assert points["current_points"] == 5
-    assert len(points["earn_logs"]) == 1
+    assert await _current_points(db_client, auth) == 5
 
 
 # -------------------------------------------------------------------------------------
