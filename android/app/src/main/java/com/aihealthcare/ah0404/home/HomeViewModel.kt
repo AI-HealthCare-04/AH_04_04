@@ -11,6 +11,7 @@ import com.aihealthcare.ah0404.network.HomeResponse
 import com.aihealthcare.ah0404.network.retrofit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import retrofit2.HttpException
 
 /**
  * 홈(_3) 상태 + 백엔드 배선(GET /home). mock 제거 → 실제 서버 응답을 HomeUi 로 매핑.
@@ -46,13 +47,25 @@ class HomeViewModel(
         if (gen != generation) return
         result
             .onSuccess { ui = it.toUi() }
-            .onFailure { error = true; Log.w(TAG, "홈 조회 실패: ${it.message}") }
+            .onFailure { error = true; Log.w(TAG, "홈 조회 실패: ${it.diagnostic()}") }
         loading = false
     }
 
     companion object {
         const val TAG = "Home"
     }
+}
+
+/**
+ * 실패 원인을 로그 한 줄로 구분 가능하게 만든다.
+ *
+ * 종전에는 `it.message` 만 남겼는데, 이 화면의 실패는 네트워크·401·5xx·**응답 파싱** 어느 쪽이든
+ * 같은 문구로 뭉개진다. 파싱 예외는 message 가 null 인 경우도 있어 로그가 통째로 비었다.
+ * 예외 종류와 HTTP 코드를 함께 남겨야 제보를 받았을 때 재현 없이도 갈래를 좁힐 수 있다.
+ */
+internal fun Throwable.diagnostic(): String = when (this) {
+    is HttpException -> "HTTP ${code()} ${javaClass.simpleName}: ${message()}"
+    else -> "${javaClass.simpleName}: ${message ?: "(메시지 없음)"}"
 }
 
 /** GET /home 응답 → 화면용 HomeUi. 비노출 계약: care_stage/display_message 만 노출. */
