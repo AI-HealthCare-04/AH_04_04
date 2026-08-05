@@ -449,6 +449,9 @@ private fun MainContent(
                 onGoMissions = { selectedTab = MainTab.MISSIONS },
                 onOpenSettings = { selectedTab = MainTab.SETTINGS },
                 onOpenRecords = { selectedTab = MainTab.RECORDS },
+                // 홈 조회가 계속 실패할 때의 탈출 경로. 설정의 로그아웃과 **같은 콜백**이라
+                //   세션 정리 + sessionRevision++ 가 함께 일어나 라우팅이 실제로 재평가된다.
+                onRelogin = onLogout,
                 modifier = contentModifier,
             )
             MainTab.MISSIONS -> MissionScreen(

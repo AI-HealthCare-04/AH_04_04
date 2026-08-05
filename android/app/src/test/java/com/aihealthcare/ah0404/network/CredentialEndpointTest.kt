@@ -35,9 +35,18 @@ class CredentialEndpointTest {
     }
 
     @Test
+    fun 로그아웃은_인증이_필요하므로_자격증명이_아니다() {
+        // 리뷰 P2: `/auth/` 접두사로 뭉뚱그리면 POST /auth/logout 의 401 까지 세션 이상 보고에서
+        //   빠진다. 로그아웃은 토큰을 들고 호출하는 요청이라 그 401 은 세션 이상이 맞다.
+        assertFalse(request("/api/v1/auth/logout").isCredentialEndpoint())
+    }
+
+    @Test
     fun 사용자_경로에_auth_가_들어가도_자격증명으로_오인하지_않는다() {
-        // `startsWith` 로 접두사만 본다 — 경로 중간의 'auth' 는 해당 없음.
         assertFalse(request("/api/v1/users/me/auth-history").isCredentialEndpoint())
         assertFalse(request("/api/v1/support/oauth-guide").isCredentialEndpoint())
+        // 허용 목록은 정확히 일치·접두사로만 — 비슷한 이름이 통과하면 안 된다.
+        assertFalse(request("/api/v1/auth/guest-preview").isCredentialEndpoint())
+        assertFalse(request("/api/v1/auth/login").isCredentialEndpoint())
     }
 }

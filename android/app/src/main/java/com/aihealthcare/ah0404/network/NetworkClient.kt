@@ -70,14 +70,19 @@ private val okHttpClient = OkHttpClient.Builder()
     .build()
 
 /**
- * 자격 증명으로 인증을 **얻는** 요청인가(`auth/guest`, `auth/login/...`).
+ * 자격 증명으로 인증을 **얻는** 요청인가. 게스트 발급과 소셜 로그인 두 가지뿐이다.
  *
  * 이 경로들의 401 은 "소셜 토큰이 유효하지 않다"는 뜻이지 세션 만료가 아니다. 세션 이상으로
  * 보고하면 로그인 실패가 곧바로 로그인 화면 재진입으로 이어져 원인을 알리지 못한다.
  * 그 외 API 의 401 은 헤더 유무와 무관하게 세션 이상으로 본다.
+ *
+ * ⚠️ `/auth/` 접두사로 뭉뚱그리지 않는다(리뷰 P2). `POST /auth/logout` 은 **인증이 필요한**
+ *   요청이라 그 401 은 세션 이상이 맞다. 공개 엔드포인트만 허용 목록으로 못박는다.
  */
-internal fun Request.isCredentialEndpoint(): Boolean =
-    url.encodedPath.substringAfter("/api/v1", "").startsWith("/auth/")
+internal fun Request.isCredentialEndpoint(): Boolean {
+    val path = url.encodedPath.substringAfter("/api/v1", "")
+    return path == "/auth/guest" || path.startsWith("/auth/login/")
+}
 
 val retrofit: Retrofit = Retrofit.Builder()
     .baseUrl(BuildConfig.API_BASE_URL)

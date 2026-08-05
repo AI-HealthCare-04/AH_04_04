@@ -122,11 +122,11 @@ fun HomeScreen(
     onGoMissions: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenRecords: () -> Unit,
+    onRelogin: () -> Unit,
     modifier: Modifier = Modifier,
     vm: HomeViewModel = viewModel(),
 ) {
     LaunchedEffect(Unit) { vm.load() }
-    val context = LocalContext.current.applicationContext
     val ui = vm.ui
     when {
         // 캐시된 ui 가 있으면 콘텐츠 유지하되, 재조회 실패 시 상단 배너로 알린다(리뷰 #79:
@@ -140,13 +140,11 @@ fun HomeScreen(
             onOpenRecords = onOpenRecords,
             modifier = modifier,
         )
-        vm.error -> HomeError(
-            onRetry = vm::load,
-            // 세션을 비우면 라우팅이 재평가돼 LOGIN_REQUIRED 로 간다(#154 로그아웃과 같은 경로 —
-            //   완료 플래그는 보존되므로 같은 계정으로 다시 들어와도 온보딩을 반복하지 않는다).
-            onRelogin = { SessionStore.clearAuthentication(context) },
-            modifier = modifier,
-        )
+        // 재로그인은 **호스트가 처리한다**(리뷰 P1). 여기서 SessionStore 를 직접 비우면 토큰과 디스크
+        //   세션만 지워지고 MainActivity 의 sessionRevision 이 안 올라, 라우팅의 tokenStatus 가
+        //   remember(sessionRevision) 에 캐시된 채로 남는다 — 버튼을 눌러도 이 화면 그대로다.
+        //   설정의 로그아웃과 같은 콜백(signOut { sessionRevision++ })을 그대로 쓴다.
+        vm.error -> HomeError(onRetry = vm::load, onRelogin = onRelogin, modifier = modifier)
         else -> HomeLoading(modifier)
     }
 }
