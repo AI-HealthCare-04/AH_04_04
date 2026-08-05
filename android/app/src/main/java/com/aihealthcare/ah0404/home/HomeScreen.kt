@@ -41,6 +41,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aihealthcare.ah0404.R
@@ -121,6 +122,7 @@ fun HomeScreen(
     onGoMissions: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenRecords: () -> Unit,
+    onRelogin: () -> Unit,
     modifier: Modifier = Modifier,
     vm: HomeViewModel = viewModel(),
 ) {
@@ -138,7 +140,11 @@ fun HomeScreen(
             onOpenRecords = onOpenRecords,
             modifier = modifier,
         )
-        vm.error -> HomeError(onRetry = vm::load, modifier = modifier)
+        // 재로그인은 **호스트가 처리한다**(리뷰 P1). 여기서 SessionStore 를 직접 비우면 토큰과 디스크
+        //   세션만 지워지고 MainActivity 의 sessionRevision 이 안 올라, 라우팅의 tokenStatus 가
+        //   remember(sessionRevision) 에 캐시된 채로 남는다 — 버튼을 눌러도 이 화면 그대로다.
+        //   설정의 로그아웃과 같은 콜백(signOut { sessionRevision++ })을 그대로 쓴다.
+        vm.error -> HomeError(onRetry = vm::load, onRelogin = onRelogin, modifier = modifier)
         else -> HomeLoading(modifier)
     }
 }
@@ -149,11 +155,24 @@ private fun HomeLoading(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun HomeError(onRetry: () -> Unit, modifier: Modifier = Modifier) {
+private fun HomeError(onRetry: () -> Unit, onRelogin: () -> Unit, modifier: Modifier = Modifier) {
     Box(modifier.fillMaxSize().padding(Dimens.ScreenPadding), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text("홈 정보를 불러오지 못했어요.", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(Dimens.Space8))
+            Text(
+                "잠시 후 다시 시도해 주세요. 계속 안 되면 다시 로그인해 주세요.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(Dimens.Space16))
             AigoPrimaryButton(text = "다시 시도", onClick = onRetry)
+            Spacer(Modifier.height(Dimens.Space8))
+            // 탈출 경로(제보 대응). '다시 시도'가 같은 요청을 반복할 뿐이라, 실패가 지속되는
+            //   원인(세션 이상·응답 파싱 등)에서는 이 화면에서 나갈 방법이 없었다 — 앱을 지우는 것 외에.
+            //   재로그인은 세션을 비우고 라우팅을 다시 태우므로 어떤 원인이든 사용자가 스스로 복구할 수 있다.
+            AigoSecondaryButton(text = "다시 로그인", onClick = onRelogin)
         }
     }
 }
