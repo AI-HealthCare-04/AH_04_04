@@ -548,12 +548,15 @@ private fun bundledRoutineFile(stage: String): String? =
     BUNDLED_ROUTINES.firstOrNull { it.stage == stage }?.file
 
 /**
- * 스트리밍 운동 단계의 포스터(선택 이미지). 있으면 바로 재생하지 않고 포스터를 먼저 보여주고, 탭하면 재생한다.
- * 없으면 종전대로 바로 재생. (근력=seated, 서서=standing)
+ * 운동 단계의 포스터(선택 이미지). 네 단계 모두 포스터를 먼저 보여주고, 탭하면 시작한다 —
+ * 스트리밍(근력=seated, 유산소=standing)은 재생으로, 번들 루틴(몸풀기=warmup, 마무리=cooldown)은
+ * 루틴 플레이어로 간다. 포스터가 없는 단계는 각 분기의 종전 동작(바로 재생 / 텍스트 안내)으로 떨어진다.
  */
-private fun exercisePosterRes(stage: String): Int? = when (stage) {
+internal fun exercisePosterRes(stage: String): Int? = when (stage) {
     "seated" -> R.drawable.exercise_poster_seated
     "standing" -> R.drawable.exercise_poster_standing
+    "warmup" -> R.drawable.exercise_poster_warmup
+    "cooldown" -> R.drawable.exercise_poster_cooldown
     else -> null
 }
 
@@ -578,15 +581,35 @@ private fun VideoArea(
         val bundledRoutine = bundledRoutineFile(item.stage)
         when {
             // 몸풀기·마무리: 번들 루틴(따라 하는 실제 운동). 스트리밍 준비중과 별개로 오프라인에서도 지금 재생 가능.
+            //   스트리밍 단계와 같은 포스터→탭→시작 흐름으로 맞춘다 — 네 탭 중 둘만 이모지 안내였던 비대칭 해소.
             bundledRoutine != null -> {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                    Text("🤸", style = MaterialTheme.typography.headlineLarge)
-                    Text(
-                        "따라 하는 ${item.label} 운동이에요.",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                val poster = exercisePosterRes(item.stage)
+                if (poster != null) {
+                    // 포스터에 '함께 운동해봐요'와 재생 버튼이 이미 그려져 있어 별도 버튼을 겹치지 않는다.
+                    //   16:9 포스터를 16:9 박스에 Fit — 잘림 없이 카드 전체가 보인다(스트리밍 포스터와 동일).
+                    Image(
+                        painter = painterResource(poster),
+                        contentDescription = "${displayExerciseLabel(item.label)} 시작하기",
+                        contentScale = ContentScale.Fit,
+                        // TalkBack에서 버튼 역할로 안내(지영 리뷰 #254 비차단). 포스터에 그려진 문구 외 역할을 명확히.
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clickable(onClickLabel = "운동 시작", role = Role.Button) { onStartRoutine(bundledRoutine) },
                     )
-                    Button(onClick = { onStartRoutine(bundledRoutine) }) { Text("운동 시작하기") }
+                } else {
+                    // 포스터 없는 번들 루틴(방어적) — 종전 텍스트 안내. 새 번들 단계를 포스터 없이 추가해도 진입은 막지 않는다.
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Text("🤸", style = MaterialTheme.typography.headlineLarge)
+                        Text(
+                            "따라 하는 ${item.label} 운동이에요.",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Button(onClick = { onStartRoutine(bundledRoutine) }) { Text("운동 시작하기") }
+                    }
                 }
             }
             // 스트리밍 단계: 포스터가 있으면 포스터→탭→재생(바로 재생 대신 선택 화면), 없으면 종전대로 바로 재생.

@@ -8,10 +8,8 @@ from app.dtos.users import (
     UserUpdateRequest,
     UserWithdrawRequest,
 )
-from app.models.enums import ActivityLevel
 from app.models.settings import PersonalizedSetting
 from app.models.users import User
-from app.repositories.activity_profile_repository import ActivityProfileRepository
 from app.repositories.dashboard_repository import DashboardRepository
 from app.repositories.health_profile_repository import HealthProfileRepository
 from app.repositories.settings_repository import PersonalizedSettingRepository
@@ -24,7 +22,6 @@ class UserManageService:
         self.user_repo = UserRepository(session)
         # `_14 내 정보` 통합 응답을 조립하기 위한 읽기 전용 소스들(각 도메인의 단일 원천을 재사용).
         self.health_repo = HealthProfileRepository(session)
-        self.activity_repo = ActivityProfileRepository(session)
         self.dashboard_repo = DashboardRepository(session)
 
     async def get_user_info(self, user: User) -> UserInfoResponse:
@@ -32,11 +29,9 @@ class UserManageService:
         #   - birth_date/sex : 최신 '사용자 입력' 건강프로필. 없으면(건강체크 전) null.
         #       get_latest_profile은 재평가(SERVICE_LOG)본을 제외하므로 사용자가 직접 입력한 값이 온다.
         #   - current_points : 미션 적립 합계(포인트의 단일 원천 = mission_logs). dashboard와 동일 계산.
-        #   - activity_level : user_activity_profiles.current_level. 없으면 easy(홈 표시와 동일 기본값).
+        #   운동 강도는 난이도 폐기(#428)로 응답에서 제거했다.
         profile = await self.health_repo.get_latest_profile(user.user_id)
-        activity_profile = await self.activity_repo.get_by_user_id(user.user_id)
         current_points = await self.dashboard_repo.get_current_points(user.user_id)
-        activity_level = activity_profile.current_level if activity_profile else ActivityLevel.EASY
         return UserInfoResponse(
             user_id=user.user_id,
             provider=user.provider,
@@ -46,7 +41,6 @@ class UserManageService:
             birth_date=profile.birth_date if profile else None,
             sex=profile.sex if profile else None,
             current_points=current_points,
-            activity_level=activity_level,
         )
 
     async def update_user(self, user: User, data: UserUpdateRequest) -> User:

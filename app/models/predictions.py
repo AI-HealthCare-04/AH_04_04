@@ -25,7 +25,12 @@ from app.models.enums import FeedbackReason, FeedbackResponse, ModelVariant, Ris
 
 class RiskPrediction(Base):
     __tablename__ = "risk_predictions"
-    __table_args__ = (Index("ix_risk_predictions_user_created_id", "user_id", "created_at", "prediction_id"),)
+    __table_args__ = (
+        Index("ix_risk_predictions_user_created_id", "user_id", "created_at", "prediction_id"),
+        # 자정 배치가 사용자마다 "오늘 자동 예측이 있나"를 묻는다. 대상 전원을 도는 조회라
+        #   이 복합 인덱스가 없으면 사용자 수만큼 풀스캔이 된다.
+        Index("ix_risk_predictions_user_auto_created", "user_id", "is_auto", "created_at"),
+    )
 
     prediction_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id"), nullable=False)
@@ -61,7 +66,16 @@ class RiskPrediction(Base):
     #   그 판별을 위해 **재평가마다 프로필 행을 통째로 복제**해야 했다(생년월일·성별·키·몸무게·
     #   허리·신장·단백질까지). 판별 근거를 예측 쪽으로 옮겨 복제를 없앤다.
     #   하루 1회 정책(#396)의 멱등 판정이 이 컬럼을 쓴다.
+    #   ⚠️ **활동 일수를 실기록에서 셌다는 뜻이 아니다.** 8일차 게이트(ACTIVITY_REFLECTION_START_DAY)
+    #     때문에 온보딩 완료 7일 이내의 재평가는 자가응답 값으로 계산되지만, 멱등 판정에 필요하므로
+    #     그 행도 True 다. 활동 입력 출처는 이 컬럼이 아니라 게이트 통과 여부로 판정한다.
     is_reassessment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # 이 예측을 **누가 시켰나**. 자정 배치가 만들었으면 True, 사용자가 눌렀으면 False.
+    #   [is_reassessment] 와 뜻이 다르다 — 그건 '재평가 경로로 만들어졌는가'(온보딩 최초 예측이
+    #   아닌가)이고 자동도 재평가 경로라 둘 다 True 인 행이 정상이다. 이 컬럼은 하루 1회 정책의 **카운터를 나누는**
+    #   데만 쓴다: 자동이 그날 1회를 소진해 버리면 사용자가 내 정보를 고치고 재평가를 눌러도
+    #   자동 예측이 그대로 반환돼 수정이 다음 날까지 반영되지 않는다.
+    is_auto: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # 근육 점수 SHAP 기여도(#406)는 **저장하지 않는다.** 파생값도 `x = mean + std × (effect / -coef)` 로
     #   허리둘레 원본이 역산돼(#406 리뷰 P1, round(,4)로 ±0.005cm 사실상 무손실) #408 최소화를 무력화한다.
     #   대신 create·재계산 응답에만 실어 한 번 내려주고(app/services/risk_prediction._contributions),

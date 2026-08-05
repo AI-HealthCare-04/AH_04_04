@@ -34,6 +34,12 @@ async def _guest(db_client: AsyncClient) -> tuple[dict[str, str], int]:
     return {"Authorization": f"Bearer {body['access_token']}"}, body["user"]["user_id"]
 
 
+async def _current_points(db_client: AsyncClient, auth: dict[str, str]) -> int:
+    # 포인트 조회 API 제거(#429) 이후 잔액 확인은 홈 point_balance 로 한다(단일 노출 경로).
+    home = (await db_client.get(f"{API}/home", headers=auth)).json()
+    return home["point_balance"]["current_points"]
+
+
 async def _seed_template(
     sm: async_sessionmaker[AsyncSession],
     *,
@@ -141,12 +147,8 @@ async def test_meal_complete_awards_points_and_reflects_on_home(
     meal_card = next(item for item in missions if item["mission_template_id"] == template_id)
     assert meal_card["today_log"]["logged_at"].endswith("+09:00")
 
-    # 포인트 API: 잔액·적립이력
-    points = (await db_client.get(f"{API}/users/me/points", headers=auth)).json()
-    assert points["current_points"] == 10
-    assert len(points["earn_logs"]) == 1
-    assert points["earn_logs"][0]["reason"] == "meal"
-    assert points["earn_logs"][0]["earned_points"] == 10
+    # 잔액 확인(포인트 조회 API 제거 후 홈 point_balance 가 단일 노출 경로)
+    assert await _current_points(db_client, auth) == 10
 
 
 # -------------------------------------------------------------------------------------
@@ -545,8 +547,7 @@ async def test_recompleting_finished_log_returns_409_without_double_points(
     assert again.status_code == status.HTTP_409_CONFLICT
 
     # 포인트는 15 그대로
-    points = (await db_client.get(f"{API}/users/me/points", headers=auth)).json()
-    assert points["current_points"] == 15
+    assert await _current_points(db_client, auth) == 15
 
 
 # -------------------------------------------------------------------------------------

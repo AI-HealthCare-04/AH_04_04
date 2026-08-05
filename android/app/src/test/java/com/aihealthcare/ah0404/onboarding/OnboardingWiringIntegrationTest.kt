@@ -98,13 +98,13 @@ class OnboardingWiringIntegrationTest {
         assertTrue("profile_id 발급", profile.profileId > 0)
         assertTrue("bmi 계산됨", profile.bmi > 0)
 
-        // 6) 기초체력검사 → activity_profile(난이도)
+        // 6) 기초체력검사 저장 — 난이도 폐기(#428)로 응답은 id 만 온다
         val assessment = api.createPhysicalAssessment(
             PhysicalAssessmentRequest(
                 sessionId = session.sessionId, chairStand5TimeSec = 12.4,
             )
         )
-        assertNotNull("난이도 산정", assessment.activityProfile.currentLevel)
+        assertTrue("측정 저장", assessment.physicalAssessmentId > 0)
 
         // 7) 위험도 예측 → onboarding_status = completed (pending→completed 최종 전이)
         val risk = api.createRiskPrediction(RiskPredictionRequest(profile.profileId))

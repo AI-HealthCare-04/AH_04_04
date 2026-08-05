@@ -1,9 +1,9 @@
 # =====================================================================================
-# 인증(Auth) 라우터 — 로그인 4종. (API 명세 v7.1)
+# 인증(Auth) 라우터 — 로그인 3종. (API 명세 v1.3)
 #   POST /auth/login/google  구글 로그인/회원가입 (인증 불필요)
-#   POST /auth/login/kakao   카카오 로그인/회원가입 (인증 불필요, 구현 후순위)
+#   POST /auth/login/kakao   카카오 로그인/회원가입 (인증 불필요)
 #   POST /auth/guest         체험하기(게스트) 로그인 (인증 불필요, 매 호출 새 게스트)
-#   POST /auth/logout        로그아웃 (인증 필요, 204 No Content)
+#   로그아웃 라우트 없음 — 무상태 JWT라 앱이 기기에서 토큰을 파기하는 것으로 처리(명세 v1.3 공통 규칙).
 # =====================================================================================
 
 from typing import Annotated, Any
@@ -12,9 +12,7 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db.session import get_db_session
-from app.dependencies.security import get_request_user
 from app.dtos.auth import AuthUser, GuestAuthUser, GuestLoginResponse, LoginResponse, SocialLoginRequest
-from app.models.users import User
 from app.services.auth import AuthService, LoginResult
 
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
@@ -84,10 +82,3 @@ async def guest_login(
     )
 
 
-@auth_router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(
-    user: Annotated[User, Depends(get_request_user)],
-) -> None:
-    # 스테이트리스 JWT(리프레시/블록리스트 없음): 서버는 인증만 확인하고 응답 본문 없이 204를 반환합니다.
-    # 실제 토큰 폐기는 클라이언트가 저장소에서 access_token을 지우는 것으로 처리합니다.
-    return None

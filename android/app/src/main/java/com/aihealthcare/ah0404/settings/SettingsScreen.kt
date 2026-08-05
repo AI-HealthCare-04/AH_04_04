@@ -203,10 +203,35 @@ fun SettingsScreen(
         }
         Spacer(Modifier.height(14.dp))
 
+        // 소리 크기 + 운동 음악을 한 카드로(#422). 둘은 '전체 볼륨 + 개별 음소거' 관계인데 사이에
+        //   펫 종류·다시 알림이 끼어 있어 한 화면에 같이 보이지 않았고, 의도된 구조가 아니라 설계
+        //   실수처럼 읽혔다. 붙여 놓고 소리 크기의 적용 범위를 한 줄로 밝힌다.
         SettingsCard {
             Text("소리 크기", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = SInk)
             Spacer(Modifier.height(10.dp))
             SettingSegment(sizeOptions, vm.soundSize, vm::changeSoundSize)
+            Spacer(Modifier.height(10.dp))
+            // soundSize 는 실제로 안내 음성(MainActivity)·5STS 음성(StsAssessmentTts)·운동 영상
+            //   (ExerciseVideosScreen, StreamingVideoPlayer)·루틴 BGM(RoutinePlayerScreen) 전부에 걸린다.
+            //   범위를 제목 괄호로 넣으면 굵은 제목이 두 줄이 되어 고령 사용자가 훑기 어려워, 설명 줄로 뺀다.
+            Text(
+                "안내 음성·운동 영상·운동 음악에 모두 적용돼요",
+                fontSize = 15.sp,
+                lineHeight = 21.sp,
+                color = SMuted,
+            )
+            Spacer(Modifier.height(14.dp))
+            androidx.compose.material3.HorizontalDivider(color = SCardBorder)
+            Spacer(Modifier.height(14.dp))
+            // '배경 음악'은 앱 전체에 음악이 깔린다는 뜻으로 읽혀 헷갈린다는 피드백. 실제로 이 토글이
+            //   끄고 켜는 것은 운동 따라하기 화면의 루틴 BGM 하나뿐이라(RoutinePlayerScreen), 대상을
+            //   이름에 드러내고 한 줄 설명을 덧붙인다.
+            SettingsToggleRow(
+                label = "운동 음악",
+                checked = vm.musicEnabled,
+                onChange = vm::changeMusicEnabled,
+                description = "운동 따라하기 화면에서 나오는 음악이에요",
+            )
         }
         Spacer(Modifier.height(14.dp))
 
@@ -266,19 +291,6 @@ fun SettingsScreen(
                         },
                 )
             }
-        }
-        Spacer(Modifier.height(14.dp))
-
-        SettingsCard {
-            // '배경 음악'은 앱 전체에 음악이 깔린다는 뜻으로 읽혀 헷갈린다는 피드백. 실제로 이 토글이
-            //   끄고 켜는 것은 운동 따라하기 화면의 루틴 BGM 하나뿐이라(RoutinePlayerScreen), 대상을
-            //   이름에 드러내고 한 줄 설명을 덧붙인다.
-            SettingsToggleRow(
-                label = "운동 음악",
-                checked = vm.musicEnabled,
-                onChange = vm::changeMusicEnabled,
-                description = "운동 따라하기 화면에서 나오는 음악이에요",
-            )
         }
         Spacer(Modifier.height(14.dp))
 

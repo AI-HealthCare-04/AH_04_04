@@ -41,14 +41,9 @@ def test_hide_follows_protein_challenge_allowed(allowed: bool, expected_hide: bo
 # ---------------- get_missions 배선 (필터 플래그 전달) ----------------
 
 
-def _service_capturing_filter(
-    *, profile: object | None, current_level: object | None = None
-) -> tuple[MissionService, dict[str, object]]:
+def _service_capturing_filter(*, profile: object | None) -> tuple[MissionService, dict[str, object]]:
     service = MissionService(session=None)  # type: ignore[arg-type]
     captured: dict[str, object] = {}
-
-    async def fake_current_level(user_id: object) -> object:
-        return current_level
 
     async def fake_latest_profile(user_id: object) -> object:
         return profile
@@ -60,7 +55,6 @@ def _service_capturing_filter(
         captured["level"] = level
         return []
 
-    service.repo.get_user_current_level = fake_current_level  # type: ignore[assignment]
     service.health_repo.get_latest_profile = fake_latest_profile  # type: ignore[assignment]
     service.repo.get_active_templates = fake_active_templates  # type: ignore[assignment]
     return service, captured
@@ -69,7 +63,7 @@ def _service_capturing_filter(
 def test_get_missions_hides_kidney_missions_when_challenge_not_allowed() -> None:
     service, captured = _service_capturing_filter(profile=_profile(protein_challenge_allowed=False))
 
-    asyncio.run(service.get_missions(_USER, mission_type=None, level=ActivityLevel.EASY))
+    asyncio.run(service.get_missions(_USER, mission_type=None))
 
     assert captured["exclude_kidney_check"] is True
 
@@ -77,7 +71,7 @@ def test_get_missions_hides_kidney_missions_when_challenge_not_allowed() -> None
 def test_get_missions_keeps_kidney_missions_when_challenge_allowed() -> None:
     service, captured = _service_capturing_filter(profile=_profile(protein_challenge_allowed=True))
 
-    asyncio.run(service.get_missions(_USER, mission_type=None, level=ActivityLevel.EASY))
+    asyncio.run(service.get_missions(_USER, mission_type=None))
 
     assert captured["exclude_kidney_check"] is False
 
@@ -85,39 +79,25 @@ def test_get_missions_keeps_kidney_missions_when_challenge_allowed() -> None:
 def test_get_missions_keeps_all_when_no_profile() -> None:
     service, captured = _service_capturing_filter(profile=None)
 
-    asyncio.run(service.get_missions(_USER, mission_type=None, level=ActivityLevel.EASY))
+    asyncio.run(service.get_missions(_USER, mission_type=None))
 
     assert captured["exclude_kidney_check"] is False
 
 
-# ---------------- get_missions 레벨 결정 (걷기 1개 노출의 전제) ----------------
-#   레벨 우선순위: 쿼리 명시 > 사용자 현재 레벨 > EASY(기본).
-#   기본 EASY는 홈(dashboard)과 동일 규칙 — 프로필 없는 사용자에게 걷기 3종이
-#   전부 보이던(무필터) 문제를 막고 목록·홈 요약을 일치시킨다.
+# ---------------- get_missions 걷기 고정 필터 (난이도 폐기 #428) ----------------
+#   걷기는 일일 20분 단일 목표 — 사용자별 저장 레벨 조회 자체가 없어졌고,
+#   목록은 무조건 EASY(20분) 걷기 필터로 조회한다. (레벨 필터가 걷기에만 적용되고
+#   다른 종류는 영향을 받지 않는 것은 test_mission_level_filter_repo 가 잠근다.)
 
 
-def test_get_missions_defaults_to_easy_when_no_level_and_no_profile() -> None:
-    service, captured = _service_capturing_filter(profile=None, current_level=None)
+def test_get_missions_always_filters_walking_to_easy() -> None:
+    # 과거에 다른 레벨을 저장했던 사용자든 처음인 사용자든, 서비스는 사용자 레벨을
+    # 조회하지 않고 항상 EASY 필터로 목록을 만든다.
+    service, captured = _service_capturing_filter(profile=None)
 
-    asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
+    asyncio.run(service.get_missions(_USER, mission_type=None))
 
     assert captured["level"] is ActivityLevel.EASY
-
-
-def test_get_missions_uses_user_current_level_when_not_specified() -> None:
-    service, captured = _service_capturing_filter(profile=None, current_level=ActivityLevel.HARD)
-
-    asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
-
-    assert captured["level"] is ActivityLevel.HARD
-
-
-def test_get_missions_explicit_level_overrides_user_level() -> None:
-    service, captured = _service_capturing_filter(profile=None, current_level=ActivityLevel.HARD)
-
-    asyncio.run(service.get_missions(_USER, mission_type=None, level=ActivityLevel.NORMAL))
-
-    assert captured["level"] is ActivityLevel.NORMAL
 
 
 # ---------------- get_missions 오늘 진행(today_progress) 부착 ----------------
@@ -151,9 +131,6 @@ def _service_with_templates(
     service = MissionService(session=None)  # type: ignore[arg-type]
     calls = {"exercise": 0, "walking": 0, "game": 0}
 
-    async def fake_current_level(user_id: object) -> object:
-        return None
-
     async def fake_latest_profile(user_id: object) -> object:
         return None  # 프로필 없음 → 신장 필터 미적용
 
@@ -178,7 +155,6 @@ def _service_with_templates(
         return game_done
 
     service.repo.has_counted_today = fake_has_counted_today  # type: ignore[assignment]
-    service.repo.get_user_current_level = fake_current_level  # type: ignore[assignment]
     service.health_repo.get_latest_profile = fake_latest_profile  # type: ignore[assignment]
     service.repo.get_active_templates = fake_active_templates  # type: ignore[assignment]
     service.repo.get_today_meal_logs = fake_meal_logs  # type: ignore[assignment]
@@ -193,7 +169,7 @@ def test_get_missions_attaches_exercise_today_progress_below_goal() -> None:
         exercise_min=4.0,
     )
 
-    resp = asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
+    resp = asyncio.run(service.get_missions(_USER, mission_type=None))
 
     assert calls == {"exercise": 1, "walking": 0, "game": 0}  # 운동만 있으니 걷기·게임 집계는 안 탄다
     progress = resp[0].today_progress
@@ -209,7 +185,7 @@ def test_get_missions_exercise_goal_reached_at_target() -> None:
         exercise_min=10.0,
     )
 
-    resp = asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
+    resp = asyncio.run(service.get_missions(_USER, mission_type=None))
 
     assert resp[0].today_progress is not None
     assert resp[0].today_progress.goal_reached is True  # 목표(10)에 도달하면 달성
@@ -221,7 +197,7 @@ def test_get_missions_attaches_walking_today_progress_with_steps() -> None:
         walking=(12.0, 1500),
     )
 
-    resp = asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
+    resp = asyncio.run(service.get_missions(_USER, mission_type=None))
 
     assert calls == {"exercise": 0, "walking": 1, "game": 0}
     progress = resp[0].today_progress
@@ -238,7 +214,7 @@ def test_get_missions_attaches_game_today_done() -> None:
         game_done=True,
     )
 
-    resp = asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
+    resp = asyncio.run(service.get_missions(_USER, mission_type=None))
 
     assert calls == {"exercise": 0, "walking": 0, "game": 1}
     assert resp[0].today_done is True
@@ -251,7 +227,7 @@ def test_get_missions_game_today_done_false_when_not_played() -> None:
         game_done=False,
     )
 
-    resp = asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
+    resp = asyncio.run(service.get_missions(_USER, mission_type=None))
 
     assert resp[0].today_done is False  # null 이 아니라 False — 앱이 '아직 안 함'을 구분
 
@@ -263,7 +239,7 @@ def test_get_missions_today_done_null_for_non_game_types() -> None:
         game_done=True,
     )
 
-    resp = asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
+    resp = asyncio.run(service.get_missions(_USER, mission_type=None))
 
     assert calls["game"] == 0
     assert resp[0].today_done is None
@@ -275,7 +251,7 @@ def test_get_missions_skips_progress_queries_when_type_absent() -> None:
 
     service, calls = _service_with_templates([meal])  # get_today_meal_logs 는 헬퍼가 빈 dict 로 stub
 
-    resp = asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
+    resp = asyncio.run(service.get_missions(_USER, mission_type=None))
 
     assert calls == {"exercise": 0, "walking": 0, "game": 0}
     assert resp[0].today_progress is None  # 식사 미션엔 today_progress 안 붙는다
@@ -288,7 +264,7 @@ def test_get_missions_progress_zero_when_nothing_done_today() -> None:
         exercise_min=0.0,
     )
 
-    resp = asyncio.run(service.get_missions(_USER, mission_type=None, level=None))
+    resp = asyncio.run(service.get_missions(_USER, mission_type=None))
 
     assert resp[0].today_progress is not None
     assert resp[0].today_progress.total_min == 0.0

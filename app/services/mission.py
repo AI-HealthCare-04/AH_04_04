@@ -62,13 +62,10 @@ class MissionService:
         self,
         user: User,
         mission_type: MissionType | None,
-        level: ActivityLevel | None,
     ) -> list[MissionResponse]:
-        # 레벨 우선순위: 쿼리로 명시한 값 > 사용자의 현재 레벨 > EASY(기본).
-        #   기본 EASY는 홈(dashboard get_home)과 동일 규칙 — 목록·홈 요약의 걷기 노출을 일치시키고,
-        #   프로필 없는 사용자(온보딩 직후 등)에게 걷기 3종이 전부 보이던 문제를 막는다.
-        #   (레벨 필터는 걷기에만 적용 — repo.get_active_templates 참고)
-        effective_level = level or await self.repo.get_user_current_level(user.user_id) or ActivityLevel.EASY
+        # 난이도 폐기(#428): 걷기는 일일 20분 단일 목표라 걷기 템플릿은 EASY(20분) 행만 노출한다.
+        #   (레벨 필터는 걷기에만 적용 — repo.get_active_templates 참고. normal/hard 걷기 행은 시드로만 남고 미노출.)
+        effective_level = ActivityLevel.EASY
         # 안전 필터: 신장/단백질 제한 사용자에게는 고단백(requires_kidney_check) 미션을 숨긴다.
         latest_profile = await self.health_repo.get_latest_profile(user.user_id)
         exclude_kidney_check = self._should_hide_kidney_missions(latest_profile)
@@ -669,8 +666,8 @@ class MissionService:
         #   (미션 완료 요청 대부분이 이 경로라 불필요한 쿼리 3~4개를 아낀다.)
         if not completed:
             return
-        # 레벨 기본값(EASY)·안전 필터 모두 get_missions 와 동일하게 맞춘다.
-        level = await self.repo.get_user_current_level(user_id) or ActivityLevel.EASY
+        # 걷기 20분 단일 목표(#428): get_missions 와 동일하게 EASY 고정 + 안전 필터.
+        level = ActivityLevel.EASY
         profile = await self.health_repo.get_latest_profile(user_id)
         templates = await self.repo.get_active_templates(
             level=level,

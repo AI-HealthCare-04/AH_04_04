@@ -79,7 +79,6 @@ private val HomeOutlineFill = Color(0xFFFCFBF6)
 data class HomeUi(
     val nickname: String,
     val points: Int,                    // point_balance.current_points
-    val activityLevel: String,          // activity_profile.current_level (easy/normal/hard)
     val careStage: String?,             // latest_prediction.care_stage (good/maintain/action_needed)
     val predictionMessage: String?,     // latest_prediction.display_message
     val disclaimer: String?,
@@ -101,7 +100,6 @@ data class HomeUi(
 fun mockHome() = HomeUi(
     nickname = "홍길동",
     points = 1250,
-    activityLevel = "normal",
     careStage = "maintain",
     predictionMessage = "지금처럼 꾸준히 이어가고 있어요. 오늘도 가볍게 시작해 볼까요?",
     disclaimer = null,
@@ -269,12 +267,6 @@ private fun HomeContent(
             }
         }
 
-        Text(
-            "활동 강도 · ${activityLevelLabel(ui.activityLevel)}",
-            fontSize = 15.sp,
-            color = HomeMuted,
-        )
-
         // 🐶 펫-룸 히어로: 방 배경 이미지 위에 기존 애니메이션 펫(PetIdle) + 말풍선(시안 '기존 움직이는 펫 영역').
         //   PetIdle 은 GLTextureView 라 스크롤 Column 안에 인라인으로 얹어도 안 깨진다.
         // 홈 박스가 줄어든 만큼 히어로를 키운다(사용자 피드백). 말풍선이 길거나 큰글꼴이어도 자리가 넉넉하도록 높이 여유.
@@ -430,8 +422,3 @@ private fun HomeOutlineButton(text: String, onClick: () -> Unit) {
     }
 }
 
-private fun activityLevelLabel(level: String): String = when (level) {
-    "easy" -> "가볍게"
-    "hard" -> "활발히"
-    else -> "보통"
-}

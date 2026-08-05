@@ -105,14 +105,35 @@ class ScoreTrendTest {
     }
 
     @Test
-    fun walk_summary_line_shows_gain_and_omits_zero_gain() {
+    fun walk_summary_row_shows_gain_and_omits_zero_gain() {
         // 리뷰 #275-①: 걷기 시뮬은 최대 일수 요약 1줄. 이득 0이면 생략(걷기 무용 오해 방지).
         assertEquals(
-            "걷기를 주 7일로 늘리면 → 73점 (+3점)",
-            walkSummaryLine(listOf(ScoreSimPoint(0, 70), ScoreSimPoint(7, 73)), currentScore = 70),
+            SimulationRow("걷기를 주 7일로 늘리면", "73점 (+3점)"),
+            walkSummaryRow(listOf(ScoreSimPoint(0, 70), ScoreSimPoint(7, 73)), currentScore = 70),
         )
-        assertNull(walkSummaryLine(listOf(ScoreSimPoint(7, 70)), currentScore = 70))
-        assertNull(walkSummaryLine(emptyList(), currentScore = 70))
+        assertNull(walkSummaryRow(listOf(ScoreSimPoint(7, 70)), currentScore = 70))
+        assertNull(walkSummaryRow(emptyList(), currentScore = 70))
+    }
+
+    @Test
+    fun musc_simulation_rows_split_sentence_and_score_and_drop_day_zero() {
+        // 핸드오프 §3: 문장(좌)과 점수(우)를 나눠 우측 정렬한다. 0일은 '지금'이라 예측 줄이 아니다.
+        assertEquals(
+            listOf(
+                SimulationRow("지금보다 근력운동을 주 1일 하면", "76점"),
+                SimulationRow("지금보다 근력운동을 주 2일 하면", "81점"),
+            ),
+            muscSimulationRows(listOf(ScoreSimPoint(0, 70), ScoreSimPoint(1, 76), ScoreSimPoint(2, 81))),
+        )
+    }
+
+    @Test
+    fun musc_simulation_rows_apply_display_floor() {
+        // 표시 하한 5점(§3.1)은 예측 줄에도 그대로 적용된다 — 3점 예측이 '3점'으로 새어 나가면 안 된다.
+        assertEquals(
+            listOf(SimulationRow("지금보다 근력운동을 주 1일 하면", "5점")),
+            muscSimulationRows(listOf(ScoreSimPoint(1, 3))),
+        )
     }
 
     @Test
