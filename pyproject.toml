@@ -5,7 +5,9 @@ description = "Senior lifestyle challenge MVP backend"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "cryptography>=46.0.3",
+    # 하한을 패치본으로 올린다 — 잠금만 올리면 새로 lock 할 때 취약 버전으로 되돌아갈 수 있다.
+    #   GHSA: PKCS#7 Bleichenbacher 오라클(50.0.0), 경로 구축 지수 폭발·와일드카드 DNS(49.0.0).
+    "cryptography>=50.0.0",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.12.0",
     "python-dateutil>=2.9.0.post0",
@@ -28,7 +30,9 @@ app = [
     "orjson>=3.11.5",
     "pandas>=2.0",
     "passlib[bcrypt]>=1.7.4",
-    "pyjwt>=2.10.1",
+    # PyJWKClient 의 SSRF(스킴 허용목록 부재)·JWKS 무제한 요청 수정본. 우리는 PyJWKClient 를
+    #   쓰지 않지만(oauth.py 가 고정 URL 로 직접 조회) 하한을 올려 재발 여지를 없앤다.
+    "pyjwt>=2.13.0",
     "scikit-learn>=1.6.1,<1.7",
     "sqlalchemy[asyncio]>=2.0.45",
     "uvicorn>=0.40.0",
