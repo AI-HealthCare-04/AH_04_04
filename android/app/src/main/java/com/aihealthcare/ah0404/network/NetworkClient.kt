@@ -13,8 +13,33 @@ import java.io.IOException
 
 // API 주소는 debug/release 빌드 타입별 BuildConfig 값으로 주입한다.
 object TokenHolder {
+    /**
+     * 현재 세션 토큰. **비어 있지 않은 값이 들어오면 인증 실패 래치를 함께 내린다.**
+     *
+     * [AuthFailureCoordinator.reportUnauthorized] 는 single-flight 라 한 번 서면
+     * [AuthFailureCoordinator.onAuthenticated] 로만 내려간다. 그런데 그 호출이 `SessionStore`
+     * 세 곳(applyLogin·markOnboarded·clearAuthentication)에만 있어서, **토큰을 여기에 직접 넣는
+     * 경로들이 래치를 그대로 두고 지나갔다.**
+     *
+     *   · 체험하기 게스트 로그인(`OnboardingViewModel.start`)
+     *   · 앱 시작 시 세션 복원(`SessionStore.restore`)
+     *   · 걷기 헤드리스 데모(`WalkingFlowUseCase`)
+     *
+     * 래치가 선 채로 남으면 **이후의 모든 401 이 조용히 버려진다** — `reportUnauthorized()` 가
+     * false 를 돌려주고 `failure` 가 갱신되지 않아 라우팅이 움직이지 않는다. 그러면 화면은 실패에
+     * 고착되고, 홈처럼 전체 화면 오류를 쓰는 곳만 눈에 띄게 막힌다(다른 탭은 빈 상태로 열린다).
+     *
+     * 경로마다 챙기는 대신 **토큰이 갱신되는 지점 한 곳**에서 내린다. 새 토큰을 받았다는 것은
+     * 인증이 새로 성립했다는 뜻이므로, 이전 인증 실패 상태를 유지할 이유가 없다. 앞으로 토큰
+     * 발급 경로가 늘어도 자동으로 따라온다.
+     */
     @Volatile
     var token: String = ""
+        set(value) {
+            field = value
+            // 빈 값은 '토큰 제거'라 인증 성립이 아니다. 로그아웃 경로는 SessionStore 가 따로 정리한다.
+            if (value.isNotBlank()) AuthFailureCoordinator.onAuthenticated()
+        }
 }
 
 private val json = Json { ignoreUnknownKeys = true }
