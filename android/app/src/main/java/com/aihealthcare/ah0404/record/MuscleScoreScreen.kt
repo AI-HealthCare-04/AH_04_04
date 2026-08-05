@@ -46,8 +46,10 @@ import com.aihealthcare.ah0404.network.RiskHistoryItem
 import com.aihealthcare.ah0404.ui.components.AigoCard
 import com.aihealthcare.ah0404.ui.components.AigoPrimaryButton
 import com.aihealthcare.ah0404.ui.text.keepKoreanWords
+import com.aihealthcare.ah0404.ui.theme.AigoError
 import com.aihealthcare.ah0404.ui.theme.AigoOutlineVariant
 import com.aihealthcare.ah0404.ui.theme.AigoPrimary
+import com.aihealthcare.ah0404.ui.theme.AigoSecondary
 import com.aihealthcare.ah0404.ui.theme.AigoTertiaryDark
 import com.aihealthcare.ah0404.ui.theme.ChartLineGreen
 import com.aihealthcare.ah0404.ui.theme.Dimens
@@ -136,6 +138,9 @@ internal data class MuscleScoreUi(
     val trend: List<ScorePoint>,
     val walkSim: List<ScoreSimPoint>,
     val muscSim: List<ScoreSimPoint>,
+    // 지금 하고 있는 근력운동 일수(prediction-inputs). 예측 행을 **늘리는 쪽만** 남기는 기준이다.
+    //   null = 조회 실패 → 0 으로 보아 기존처럼 전부 보여준다(모른다고 카드를 숨기지는 않는다).
+    val muscDaysNow: Int? = null,
     val stsSeconds: Double?, // §3.4 5STS(초). null=미측정/스킵 → 안전망 카드 미표시
     val bmi: Double?,        // §3.4
     val cohort: CohortDistributionResponse? = null, // #193 또래 분포. null=미탑재/65세미만/실패 → 카드 미표시
@@ -211,10 +216,22 @@ private fun bandLabel(band: String?): String = when (band) {
     else -> "유지"
 }
 
+/**
+ * 구간 색 — 배지 글자와 [ScoreFaceIcon] 표정에 함께 쓴다.
+ *
+ * ⚠️ **'유지'는 경고색을 쓰지 않는다.** 예전에는 주황(`#EF6C00`)이었는데, 유지는 정상 구간인데도
+ * 화면이 위험 신호처럼 읽혔다 — 같은 구간의 안내 문구가 "조금만 더 챙기면 좋은 단계예요"인데
+ * 색만 반대로 말하고 있었다. 고령 사용자에게 불필요한 불안이라 녹색 계열(보조 녹색)로 바꾼다.
+ * 좋음과는 표정 곡률·배지 글자로 구분되므로 색만으로 구분을 지지 않는다(WCAG 1.4.1).
+ *
+ * 그 주황은 대비도 미달이었다. 카드 배경(`AigoSurface`) 대비 실측:
+ *   주황 `#EF6C00` **2.94:1**(글자 4.5·그래픽 3 모두 미달) -> `AigoSecondary` **6.15:1**.
+ *   좋음 `AigoPrimary` 10.45:1, 주의 `AigoError` 6.16:1 로 나머지도 테마 토큰으로 올린다.
+ */
 private fun bandColor(band: String?): Color = when (band) {
-    "good" -> Color(0xFF2E7D32)
-    "caution" -> Color(0xFFC62828)
-    else -> Color(0xFFEF6C00)
+    "good" -> AigoPrimary
+    "caution" -> AigoError
+    else -> AigoSecondary
 }
 
 // 기록 탭 재구성(#334): '나의 기록'=대시보드(지금 내 상태·변화), '근육 건강 정보'=개선 잠재력(전망).
@@ -286,7 +303,7 @@ internal fun MuscleImprovementCards(ui: MuscleScoreUi, onGoToMissions: () -> Uni
     if (score != null) {
         StsSafetyCard(ui, onGoToMissions) // §3.4 (조건 충족 시에만)
         ContributionCard(ui.contributions) // #406 무엇이 점수에 영향을 줬나(바꿀 수 있는 것만)
-        ScoreSimulationCard(ui.muscSim, ui.walkSim, score)
+        ScoreSimulationCard(ui.muscSim, ui.walkSim, score, ui.muscDaysNow)
         Spacer(Modifier.height(Dimens.Space8))
     } else {
         // 도달하지 않는다 — 호출부(RecordScreen)가 `ui.score != null` 일 때만 이 섹션을 그린다(#385).
@@ -727,10 +744,24 @@ private fun CohortDistributionCard(cohort: CohortDistributionResponse?, waistMis
  */
 internal data class SimulationRow(val label: String, val value: String)
 
-/** 미래 지향 카피(§4): "지금보다 근력운동을 주 {n}일 하면" — {score}점. 0일(현재)은 예측이 아니라 제외. */
-internal fun muscSimulationRows(muscSim: List<ScoreSimPoint>): List<SimulationRow> =
-    muscSim.filter { it.days >= 1 }
-        .map { SimulationRow("지금보다 근력운동을 주 ${it.days}일 하면", "${shown(it.score)}점") }
+/**
+ * 예측 행(§4) — **지금보다 늘렸을 때만** 보여준다.
+ *
+ * 서버가 주는 `days` 는 '더 하는 일수'가 아니라 **주 N일이라는 목표치**다(0..5 전부 내려온다).
+ * 그래서 두 가지가 어긋나 있었다.
+ *  1. 이미 주 3일 하는 사람에게 주 1일·2일 행이 보였다 — **지금보다 줄이는 선택지를, 그것도 점수가
+ *     떨어지는 모습으로** 제안하는 꼴이었다. 개선 카드가 할 말이 아니다.
+ *  2. 문구가 "지금보다 ... 주 N일 하면"이라 N 이 '추가로 N일'로 읽혔다. 목표치인데 증분처럼 읽힌다.
+ *
+ * 그래서 현재 일수([currentMuscDays])보다 큰 목표만 남기고, 문구도 같은 카드의 걷기 줄
+ * ("걷기를 주 7일로 늘리면")과 같은 '주 N일로 늘리면'으로 맞춘다. 현재 일수를 모르면(조회 실패)
+ * 0 으로 보아 기존 동작을 유지한다 — 모른다고 카드를 통째로 숨기지는 않는다.
+ */
+internal fun muscSimulationRows(muscSim: List<ScoreSimPoint>, currentMuscDays: Int? = null): List<SimulationRow> {
+    val now = currentMuscDays ?: 0
+    return muscSim.filter { it.days > now }
+        .map { SimulationRow("근력운동을 주 ${it.days}일로 늘리면", "${shown(it.score)}점") }
+}
 
 /**
  * 걷기 요약 1줄(리뷰 #275-①). 근력과 달리 걷기는 계수가 완만해(예측 화면 '해석 주의' 명시) 일수별 전체
@@ -752,8 +783,13 @@ internal fun walkSummaryRow(walkSim: List<ScoreSimPoint>, currentScore: Int): Si
  * 카드 자체를 KPI 처럼 강조하지 않는다: 점수만 진한 녹색으로 두고 배경·테두리는 다른 카드와 같다.
  */
 @Composable
-private fun ScoreSimulationCard(muscSim: List<ScoreSimPoint>, walkSim: List<ScoreSimPoint>, currentScore: Int) {
-    val rows = muscSimulationRows(muscSim) + listOfNotNull(walkSummaryRow(walkSim, currentScore))
+private fun ScoreSimulationCard(
+    muscSim: List<ScoreSimPoint>,
+    walkSim: List<ScoreSimPoint>,
+    currentScore: Int,
+    currentMuscDays: Int? = null,
+) {
+    val rows = muscSimulationRows(muscSim, currentMuscDays) + listOfNotNull(walkSummaryRow(walkSim, currentScore))
     // 보여 줄 줄이 하나도 없으면 카드를 통째로 숨긴다 — 제목과 설명만 남은 빈 카드는
     //   "여기 뭔가 있어야 하는데 없다"로 읽힌다(ContributionCard 와 같은 판단).
     if (rows.isEmpty()) return

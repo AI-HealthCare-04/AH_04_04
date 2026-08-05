@@ -247,6 +247,9 @@ class RecordViewModel(
                 trend = buildScoreTrend(history),
                 walkSim = simResult.getOrNull()?.walk?.mapNotNull { p -> p.score?.let { ScoreSimPoint(p.days, it) } } ?: emptyList(),
                 muscSim = simResult.getOrNull()?.musc?.mapNotNull { p -> p.score?.let { ScoreSimPoint(p.days, it) } } ?: emptyList(),
+                // 예측 행을 '늘리는 쪽'만 남기는 기준(§4). 서버가 주는 days 는 목표치라, 지금 일수를
+                //   모르면 이미 실천 중인 사람에게 줄이는 선택지가 점수 하락과 함께 보인다.
+                muscDaysNow = predictionPrefill?.muscDays,
                 // §3.4 안전망 오버레이(#406) 입력. 둘 중 하나라도 없으면 카드는 뜨지 않거나(5STS 미측정)
                 //   기본 티어로만 뜬다(BMI 미상) — 모르는 값을 메우지 않는다.
                 //   ⚠️ BMI 는 서버 원본(소수)에서 계산한다. predictionPrefill 은 정수로 반올림된 값이라
