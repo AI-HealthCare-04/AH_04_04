@@ -764,6 +764,27 @@ internal fun muscSimulationRows(muscSim: List<ScoreSimPoint>, currentMuscDays: I
 }
 
 /**
+ * 근력운동이 이미 최대치라 제안할 목표가 남지 않았을 때의 안내(§4).
+ *
+ * 최대치 사용자는 예측 행이 비고, 걷기 이득까지 0이면 카드가 통째로 사라졌다 — **가장 열심히 한
+ * 사용자가 아무 설명도 못 듣는** 상태다. 왜 제안이 없는지를 대신 말한다.
+ *
+ * ⚠️ **점수를 함께 쓰지 않는다.** 이 카드 오른쪽 열은 전부 '이렇게 하면 될 점수'라, 거기에 회고형
+ * 숫자(예: '근력운동으로 이미 +29점')를 같은 모양으로 넣으면 52점인 사용자가 "내일 81점이 된다"로
+ * 읽는다. 게다가 '네 점수 중 N점은 근력운동 덕분'은 인과 단정이라, 기여도 수치를 화면에 노출하지
+ * 않기로 한 #406 결정("허리 때문에 1.29점 깎였다" 방지)과도 어긋난다.
+ *
+ * 일수는 하드코딩하지 않고 실제 값을 쓴다 — 서버 상한(현재 musc_days 는 0..5)이 바뀌거나 시뮬
+ * 데이터가 덜 와도 문구가 사실과 어긋나지 않는다.
+ */
+internal fun muscMaxedNote(muscSim: List<ScoreSimPoint>, currentMuscDays: Int?): String? {
+    val maxDays = muscSim.maxOfOrNull { it.days } ?: return null // 시뮬 조회 실패면 아무 말도 하지 않는다.
+    val now = currentMuscDays ?: return null // 지금 몇 일인지 모르면 '최대치'라고 단정할 수 없다.
+    if (now <= 0 || now < maxDays) return null
+    return "근력운동을 주 ${now}일로 꾸준히 하고 계세요. 지금 점수에 이미 반영돼 있어요."
+}
+
+/**
  * 걷기 요약 1줄(리뷰 #275-①). 근력과 달리 걷기는 계수가 완만해(예측 화면 '해석 주의' 명시) 일수별 전체
  * 나열은 "주 7일 걸어도 그대로" 같은 김빠지는 목록이 된다 → 최대 일수 지점 1줄로 요약하고,
  * **점수 이득이 0이면 줄 자체를 생략**한다(걷기가 소용없다는 오해 방지 — 걷기의 가치는 챌린지가 담당).
@@ -790,9 +811,12 @@ private fun ScoreSimulationCard(
     currentMuscDays: Int? = null,
 ) {
     val rows = muscSimulationRows(muscSim, currentMuscDays) + listOfNotNull(walkSummaryRow(walkSim, currentScore))
-    // 보여 줄 줄이 하나도 없으면 카드를 통째로 숨긴다 — 제목과 설명만 남은 빈 카드는
+    // 근력이 최대치면 설명줄을 '왜 제안이 없는지'로 바꾼다 — 그 상태에서 "생활습관을 바꾸면 예상
+    //   점수를 볼 수 있어요"만 남으면 예상 점수가 없는 화면과 어긋난다.
+    val maxedNote = muscMaxedNote(muscSim, currentMuscDays)
+    // 보여 줄 줄도 안내도 없으면 카드를 통째로 숨긴다 — 제목과 설명만 남은 빈 카드는
     //   "여기 뭔가 있어야 하는데 없다"로 읽힌다(ContributionCard 와 같은 판단).
-    if (rows.isEmpty()) return
+    if (rows.isEmpty() && maxedNote == null) return
 
     AigoCard(contentSpacing = Dimens.Space12) {
         Row(
@@ -821,7 +845,7 @@ private fun ScoreSimulationCard(
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
-                    keepKoreanWords("생활습관을 바꾸면 예상 점수를 볼 수 있어요."),
+                    keepKoreanWords(maxedNote ?: "생활습관을 바꾸면 예상 점수를 볼 수 있어요."),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

@@ -157,8 +157,48 @@ class ScoreTrendTest {
 
     @Test
     fun musc_simulation_rows_are_empty_at_max_days() {
-        // 이미 최대(주 5일)면 더 제안할 것이 없다 — 빈 목록이면 카드가 통째로 숨는다.
+        // 이미 최대(주 5일)면 더 제안할 것이 없다 — 대신 아래 안내 문구가 그 자리를 채운다.
         assertTrue(muscSimulationRows(fullSim, currentMuscDays = 5).isEmpty())
+    }
+
+    // ── 최대치 사용자에게 카드가 사라지지 않게 하는 안내 ────────────────────
+
+    @Test
+    fun musc_maxed_note_explains_why_there_is_nothing_to_suggest() {
+        // 제안 행이 비고 걷기 이득까지 0이면 카드가 통째로 사라졌다 — 가장 열심히 한 사용자가
+        //   아무 설명도 못 듣는 상태였다.
+        assertEquals(
+            "근력운동을 주 5일로 꾸준히 하고 계세요. 지금 점수에 이미 반영돼 있어요.",
+            muscMaxedNote(fullSim, currentMuscDays = 5),
+        )
+    }
+
+    @Test
+    fun musc_maxed_note_uses_actual_days_not_a_hardcoded_max() {
+        // 서버 상한이 바뀌거나 시뮬 데이터가 덜 와도 문구가 사실과 어긋나면 안 된다.
+        val shortSim = listOf(ScoreSimPoint(0, 52), ScoreSimPoint(1, 59), ScoreSimPoint(2, 65))
+        assertEquals(
+            "근력운동을 주 2일로 꾸준히 하고 계세요. 지금 점수에 이미 반영돼 있어요.",
+            muscMaxedNote(shortSim, currentMuscDays = 2),
+        )
+    }
+
+    @Test
+    fun musc_maxed_note_is_absent_when_targets_remain_or_state_is_unknown() {
+        assertNull("아직 늘릴 여지가 있으면 제안 행이 나가야 한다", muscMaxedNote(fullSim, currentMuscDays = 3))
+        assertNull("지금 몇 일인지 모르면 '최대치'라고 단정할 수 없다", muscMaxedNote(fullSim, currentMuscDays = null))
+        assertNull("한 번도 안 한 사람에게 '꾸준히 하고 계세요'는 거짓말이다", muscMaxedNote(fullSim, currentMuscDays = 0))
+        assertNull("시뮬 조회 실패면 아무 말도 하지 않는다", muscMaxedNote(emptyList(), currentMuscDays = 5))
+    }
+
+    @Test
+    fun musc_maxed_note_and_rows_never_appear_together() {
+        // 둘 다 나오면 "더 하라"와 "이미 최대다"가 같은 카드에서 부딪힌다.
+        (0..5).forEach { now ->
+            val hasRows = muscSimulationRows(fullSim, now).isNotEmpty()
+            val hasNote = muscMaxedNote(fullSim, now) != null
+            assertFalse("근력 주 ${now}일에서 행과 안내가 함께 나왔다", hasRows && hasNote)
+        }
     }
 
     @Test
