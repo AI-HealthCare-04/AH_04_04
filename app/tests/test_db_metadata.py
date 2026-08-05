@@ -33,7 +33,7 @@ def test_deferred_tables_are_not_in_initial_metadata() -> None:
 
 
 def test_dropped_level_and_sts_view_tables_are_not_in_metadata() -> None:
-    # 난이도 폐기(#428)·조회 이벤트 제거: 마이그레이션 0023이 떨군 테이블은 모델에도 없어야 한다.
+    # 난이도 폐기(#428)·조회 이벤트 제거: 마이그레이션 0024가 떨군 테이블은 모델에도 없어야 한다.
     assert "user_activity_profiles" not in Base.metadata.tables
     assert "activity_level_change_logs" not in Base.metadata.tables
     assert "sts_score_view_events" not in Base.metadata.tables
