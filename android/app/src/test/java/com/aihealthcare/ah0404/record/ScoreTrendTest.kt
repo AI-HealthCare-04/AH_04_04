@@ -168,9 +168,19 @@ class ScoreTrendTest {
         // 제안 행이 비고 걷기 이득까지 0이면 카드가 통째로 사라졌다 — 가장 열심히 한 사용자가
         //   아무 설명도 못 듣는 상태였다.
         assertEquals(
-            "근력운동을 주 5일로 꾸준히 하고 계세요. 지금 점수에 이미 반영돼 있어요.",
+            "근력운동을 주 5일로 꾸준히 하고 계세요.",
             muscMaxedNote(fullSim, currentMuscDays = 5),
         )
+    }
+
+    @Test
+    fun musc_maxed_note_does_not_claim_the_score_reflects_it() {
+        // 최근 7일 실적(prediction-inputs)과 화면 점수(마지막 예측 스냅샷)는 같은 입력이라는 보장이
+        //   없다 — 하루 1회 정책(#388) 때문에 오늘 5일을 채워도 점수는 어제 것일 수 있다. 예측이 어떤
+        //   값으로 계산됐는지는 input_snapshot 폐지(#408)로 알 수도 없으므로 반영 여부를 말하지 않는다.
+        val note = muscMaxedNote(fullSim, currentMuscDays = 5)!!
+        assertFalse("점수 반영을 단정하면 안 된다", note.contains("반영"))
+        assertFalse(note.contains("점수"))
     }
 
     @Test
@@ -178,7 +188,7 @@ class ScoreTrendTest {
         // 서버 상한이 바뀌거나 시뮬 데이터가 덜 와도 문구가 사실과 어긋나면 안 된다.
         val shortSim = listOf(ScoreSimPoint(0, 52), ScoreSimPoint(1, 59), ScoreSimPoint(2, 65))
         assertEquals(
-            "근력운동을 주 2일로 꾸준히 하고 계세요. 지금 점수에 이미 반영돼 있어요.",
+            "근력운동을 주 2일로 꾸준히 하고 계세요.",
             muscMaxedNote(shortSim, currentMuscDays = 2),
         )
     }

@@ -774,6 +774,13 @@ internal fun muscSimulationRows(muscSim: List<ScoreSimPoint>, currentMuscDays: I
  * 읽는다. 게다가 '네 점수 중 N점은 근력운동 덕분'은 인과 단정이라, 기여도 수치를 화면에 노출하지
  * 않기로 한 #406 결정("허리 때문에 1.29점 깎였다" 방지)과도 어긋난다.
  *
+ * ⚠️ **점수에 반영됐다고도 말하지 않는다**(리뷰). [currentMuscDays] 는 `prediction-inputs` 의
+ * **최근 7일 실적**(라이브)인데 화면의 점수는 **마지막 예측·재평가 시점의 스냅샷**이라, 둘이 같은
+ * 입력이라는 보장이 없다 — 하루 1회 정책(#388) 때문에 오늘 5일을 채워도 점수는 어제 것일 수 있다.
+ * 그때 "지금 점수에 이미 반영돼 있어요"는 거짓이 된다. 예측이 어떤 값으로 계산됐는지는 알 수도 없다:
+ * 입력 원본(`input_snapshot`)을 서버 보관 최소화(#408)로 없앴기 때문이다. 그래서 **지금 하고 있는
+ * 활동만 사실대로 말하고 점수와의 관계는 언급하지 않는다.**
+ *
  * 일수는 하드코딩하지 않고 실제 값을 쓴다 — 서버 상한(현재 musc_days 는 0..5)이 바뀌거나 시뮬
  * 데이터가 덜 와도 문구가 사실과 어긋나지 않는다.
  */
@@ -781,7 +788,7 @@ internal fun muscMaxedNote(muscSim: List<ScoreSimPoint>, currentMuscDays: Int?):
     val maxDays = muscSim.maxOfOrNull { it.days } ?: return null // 시뮬 조회 실패면 아무 말도 하지 않는다.
     val now = currentMuscDays ?: return null // 지금 몇 일인지 모르면 '최대치'라고 단정할 수 없다.
     if (now <= 0 || now < maxDays) return null
-    return "근력운동을 주 ${now}일로 꾸준히 하고 계세요. 지금 점수에 이미 반영돼 있어요."
+    return "근력운동을 주 ${now}일로 꾸준히 하고 계세요."
 }
 
 /**
