@@ -120,8 +120,8 @@ class ScoreTrendTest {
         // 핸드오프 §3: 문장(좌)과 점수(우)를 나눠 우측 정렬한다. 0일은 '지금'이라 예측 줄이 아니다.
         assertEquals(
             listOf(
-                SimulationRow("지금보다 근력운동을 주 1일 하면", "76점"),
-                SimulationRow("지금보다 근력운동을 주 2일 하면", "81점"),
+                SimulationRow("근력운동을 주 1일로 늘리면", "76점"),
+                SimulationRow("근력운동을 주 2일로 늘리면", "81점"),
             ),
             muscSimulationRows(listOf(ScoreSimPoint(0, 70), ScoreSimPoint(1, 76), ScoreSimPoint(2, 81))),
         )
@@ -131,9 +131,94 @@ class ScoreTrendTest {
     fun musc_simulation_rows_apply_display_floor() {
         // 표시 하한 5점(§3.1)은 예측 줄에도 그대로 적용된다 — 3점 예측이 '3점'으로 새어 나가면 안 된다.
         assertEquals(
-            listOf(SimulationRow("지금보다 근력운동을 주 1일 하면", "5점")),
+            listOf(SimulationRow("근력운동을 주 1일로 늘리면", "5점")),
             muscSimulationRows(listOf(ScoreSimPoint(1, 3))),
         )
+    }
+
+    // ── 이미 실천 중인 사용자에게 '줄이는 선택지'를 제안하지 않는다 ──────────
+
+    private val fullSim = listOf(
+        ScoreSimPoint(0, 52), ScoreSimPoint(1, 59), ScoreSimPoint(2, 65),
+        ScoreSimPoint(3, 71), ScoreSimPoint(4, 76), ScoreSimPoint(5, 81),
+    )
+
+    @Test
+    fun musc_simulation_rows_only_show_targets_above_current_days() {
+        // 주 3일 실천 중이면 1·2일 행은 '줄이는 선택지'다 — 게다가 점수가 떨어지는 모습으로 보인다.
+        assertEquals(
+            listOf(
+                SimulationRow("근력운동을 주 4일로 늘리면", "76점"),
+                SimulationRow("근력운동을 주 5일로 늘리면", "81점"),
+            ),
+            muscSimulationRows(fullSim, currentMuscDays = 3),
+        )
+    }
+
+    @Test
+    fun musc_simulation_rows_are_empty_at_max_days() {
+        // 이미 최대(주 5일)면 더 제안할 것이 없다 — 대신 아래 안내 문구가 그 자리를 채운다.
+        assertTrue(muscSimulationRows(fullSim, currentMuscDays = 5).isEmpty())
+    }
+
+    // ── 최대치 사용자에게 카드가 사라지지 않게 하는 안내 ────────────────────
+
+    @Test
+    fun musc_maxed_note_explains_why_there_is_nothing_to_suggest() {
+        // 제안 행이 비고 걷기 이득까지 0이면 카드가 통째로 사라졌다 — 가장 열심히 한 사용자가
+        //   아무 설명도 못 듣는 상태였다.
+        assertEquals(
+            "근력운동을 주 5일로 꾸준히 하고 계세요.",
+            muscMaxedNote(fullSim, currentMuscDays = 5),
+        )
+    }
+
+    @Test
+    fun musc_maxed_note_does_not_claim_the_score_reflects_it() {
+        // 최근 7일 실적(prediction-inputs)과 화면 점수(마지막 예측 스냅샷)는 같은 입력이라는 보장이
+        //   없다 — 하루 1회 정책(#388) 때문에 오늘 5일을 채워도 점수는 어제 것일 수 있다. 예측이 어떤
+        //   값으로 계산됐는지는 input_snapshot 폐지(#408)로 알 수도 없으므로 반영 여부를 말하지 않는다.
+        val note = muscMaxedNote(fullSim, currentMuscDays = 5)!!
+        assertFalse("점수 반영을 단정하면 안 된다", note.contains("반영"))
+        assertFalse(note.contains("점수"))
+    }
+
+    @Test
+    fun musc_maxed_note_uses_actual_days_not_a_hardcoded_max() {
+        // 서버 상한이 바뀌거나 시뮬 데이터가 덜 와도 문구가 사실과 어긋나면 안 된다.
+        val shortSim = listOf(ScoreSimPoint(0, 52), ScoreSimPoint(1, 59), ScoreSimPoint(2, 65))
+        assertEquals(
+            "근력운동을 주 2일로 꾸준히 하고 계세요.",
+            muscMaxedNote(shortSim, currentMuscDays = 2),
+        )
+    }
+
+    @Test
+    fun musc_maxed_note_is_absent_when_targets_remain_or_state_is_unknown() {
+        assertNull("아직 늘릴 여지가 있으면 제안 행이 나가야 한다", muscMaxedNote(fullSim, currentMuscDays = 3))
+        assertNull("지금 몇 일인지 모르면 '최대치'라고 단정할 수 없다", muscMaxedNote(fullSim, currentMuscDays = null))
+        assertNull("한 번도 안 한 사람에게 '꾸준히 하고 계세요'는 거짓말이다", muscMaxedNote(fullSim, currentMuscDays = 0))
+        assertNull("시뮬 조회 실패면 아무 말도 하지 않는다", muscMaxedNote(emptyList(), currentMuscDays = 5))
+    }
+
+    @Test
+    fun musc_maxed_note_and_rows_never_appear_together() {
+        // 둘 다 나오면 "더 하라"와 "이미 최대다"가 같은 카드에서 부딪힌다.
+        (0..5).forEach { now ->
+            val hasRows = muscSimulationRows(fullSim, now).isNotEmpty()
+            val hasNote = muscMaxedNote(fullSim, now) != null
+            assertFalse("근력 주 ${now}일에서 행과 안내가 함께 나왔다", hasRows && hasNote)
+        }
+    }
+
+    @Test
+    fun musc_simulation_rows_fall_back_to_all_when_current_days_unknown() {
+        // 현재 일수 조회 실패(null)는 0 으로 본다 — 모른다고 카드를 숨기지는 않는다.
+        assertEquals(
+            muscSimulationRows(fullSim, currentMuscDays = 0),
+            muscSimulationRows(fullSim, currentMuscDays = null),
+        )
+        assertEquals(5, muscSimulationRows(fullSim, currentMuscDays = null).size)
     }
 
     @Test
