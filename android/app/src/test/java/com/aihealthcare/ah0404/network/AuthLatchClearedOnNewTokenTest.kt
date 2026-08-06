@@ -34,11 +34,11 @@ class AuthLatchClearedOnNewTokenTest {
     @Test
     fun 새_토큰을_받으면_래치가_내려가_다음_401_이_다시_보고된다() {
         // ① 첫 401 — 정상 보고된다.
-        assertTrue("첫 401 은 보고돼야 한다", AuthFailureCoordinator.reportUnauthorized())
+        assertTrue("첫 401 은 보고돼야 한다", AuthFailureCoordinator.reportUnauthorizedFor(TokenHolder.token))
         assertEquals(AuthFailure.UNAUTHORIZED, AuthFailureCoordinator.failure.value)
 
         // ② 같은 래치 상태에서의 두 번째 401 은 중복이라 보고하지 않는다(single-flight 의 의도).
-        assertTrue("중복 401 은 삼킨다", !AuthFailureCoordinator.reportUnauthorized())
+        assertTrue("중복 401 은 삼킨다", !AuthFailureCoordinator.reportUnauthorizedFor(TokenHolder.token))
 
         // ③ 새 토큰 발급 — 체험하기 게스트 로그인이 정확히 이 형태다.
         //    SessionStore.applyLogin 을 타지 않으므로, 이 대입 자체가 래치를 내려야 한다.
@@ -48,14 +48,14 @@ class AuthLatchClearedOnNewTokenTest {
         // ④ 이후의 401 은 **다시** 보고돼야 한다. 이게 안 되면 라우팅이 영영 안 움직인다.
         assertTrue(
             "새 토큰 뒤의 401 은 다시 보고돼야 라우팅이 로그인으로 넘어간다",
-            AuthFailureCoordinator.reportUnauthorized(),
+            AuthFailureCoordinator.reportUnauthorizedFor(TokenHolder.token),
         )
         assertEquals(AuthFailure.UNAUTHORIZED, AuthFailureCoordinator.failure.value)
     }
 
     @Test
     fun 빈_토큰_대입은_인증_성립이_아니다() {
-        AuthFailureCoordinator.reportUnauthorized()
+        AuthFailureCoordinator.reportUnauthorizedFor(TokenHolder.token)
         assertEquals(AuthFailure.UNAUTHORIZED, AuthFailureCoordinator.failure.value)
 
         // 로그아웃·복원 실패로 토큰을 비우는 경로. 인증이 성립한 게 아니라 사라진 것이므로

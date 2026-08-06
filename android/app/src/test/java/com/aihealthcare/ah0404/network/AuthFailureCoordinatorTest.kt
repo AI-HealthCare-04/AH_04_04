@@ -17,18 +17,18 @@ class AuthFailureCoordinatorTest {
 
     @Test
     fun unauthorized_isSingleFlightUntilAuthenticationSucceeds() {
-        assertTrue(AuthFailureCoordinator.reportUnauthorized())
-        assertFalse(AuthFailureCoordinator.reportUnauthorized())
+        assertTrue(AuthFailureCoordinator.reportUnauthorizedFor(TokenHolder.token))
+        assertFalse(AuthFailureCoordinator.reportUnauthorizedFor(TokenHolder.token))
         assertEquals(AuthFailure.UNAUTHORIZED, AuthFailureCoordinator.failure.value)
 
         AuthFailureCoordinator.onAuthenticated()
 
-        assertTrue(AuthFailureCoordinator.reportUnauthorized())
+        assertTrue(AuthFailureCoordinator.reportUnauthorizedFor(TokenHolder.token))
     }
 
     @Test
     fun transientFailure_neverOverwritesUnauthorized() {
-        AuthFailureCoordinator.reportUnauthorized()
+        AuthFailureCoordinator.reportUnauthorizedFor(TokenHolder.token)
         AuthFailureCoordinator.reportNetworkFailure()
         AuthFailureCoordinator.reportServerFailure()
 
@@ -52,7 +52,7 @@ class AuthFailureCoordinatorTest {
         AuthFailureCoordinator.onRequestSucceeded()
         assertNull(AuthFailureCoordinator.failure.value)
 
-        AuthFailureCoordinator.reportUnauthorized()
+        AuthFailureCoordinator.reportUnauthorizedFor(TokenHolder.token)
         AuthFailureCoordinator.onRequestSucceeded()
         assertEquals(AuthFailure.UNAUTHORIZED, AuthFailureCoordinator.failure.value)
     }
