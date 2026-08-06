@@ -67,7 +67,13 @@ private val okHttpClient = OkHttpClient.Builder()
                 //   (홈은 error 로 굳고 '다시 시도' 가 같은 요청을 반복할 뿐이라 탈출 경로가 없다).
                 //   헤더 유무 대신 **경로**로 가른다 — 로그인·게스트는 자격 증명 오류로 401 을 주므로
                 //   세션 만료로 취급하면 안 되고, 그 외는 헤더가 없다는 사실 자체가 이미 세션 이상이다.
-                response.code == 401 && !chain.request().isCredentialEndpoint() -> {
+                //   ⚠️ **지금 세션의 401 만** 보고한다(리뷰 P1). 토큰을 교체해도 그 전에 떠난 요청은
+                //   아직 날아다니고, 그 응답이 뒤늦게 401 로 돌아온다. 그걸 그대로 보고하면 방금 발급받은
+                //   게스트·소셜 세션이 즉시 LOGIN_REQUIRED 로 밀린다 — 체험하기를 눌렀는데 다시 로그인
+                //   화면이 뜨는 형태라, 이 PR 이 없애려던 증상을 다른 경로로 되살린다.
+                response.code == 401 &&
+                    !chain.request().isCredentialEndpoint() &&
+                    chain.request().usesCurrentToken() -> {
                     AuthFailureCoordinator.reportUnauthorized()
                 }
                 response.code >= 500 -> AuthFailureCoordinator.reportServerFailure()
@@ -109,11 +115,34 @@ private val okHttpClient = OkHttpClient.Builder()
  *
  * 이 경로들의 401 은 "소셜 토큰이 유효하지 않다"는 뜻이지 세션 만료가 아니다. 세션 이상으로
  * 보고하면 로그인 실패가 곧바로 로그인 화면 재진입으로 이어져 원인을 알리지 못한다.
- * 그 외 API 의 401 은 헤더 유무와 무관하게 세션 이상으로 본다.
  *
- * ⚠️ `/auth/` 접두사로 뭉뚱그리지 않는다(리뷰 P2). `POST /auth/logout` 은 **인증이 필요한**
+ * ⚠️ `/auth/` 접두사로 뭉뚱그리지 않는다(#433 리뷰 P2). `POST /auth/logout` 은 **인증이 필요한**
  *   요청이라 그 401 은 세션 이상이 맞다. 공개 엔드포인트만 허용 목록으로 못박는다.
  */
+internal fun Request.isCredentialEndpoint(): Boolean {
+    val path = url.encodedPath.substringAfter("/api/v1", "")
+    return path == "/auth/guest" || path.startsWith("/auth/login/")
+}
+
+/**
+ * 이 요청이 **현재 세션의 토큰**으로 나갔는가. 늦게 도착한 이전 세션의 401 을 걸러낸다(리뷰 P1).
+ *
+ * 토큰을 교체해도 그 전에 떠난 요청은 아직 날아다니고, 그 응답이 뒤늦게 401 로 돌아온다.
+ * 그걸 보고하면 방금 발급받은 세션이 즉시 LOGIN_REQUIRED 로 밀린다 — 체험하기를 눌렀는데
+ * 다시 로그인 화면이 뜨는 형태라, 이 수정이 없애려던 증상을 다른 경로로 되살린다.
+ *
+ * 토큰 문자열을 그대로 비교한다. 세대 카운터를 따로 두지 않아도 교체 여부가 드러나고,
+ * `TokenHolder.token` 이 유일한 원천이라 어긋날 자리가 없다.
+ *
+ * 헤더가 없는 요청은 '보낼 토큰이 없었다'는 뜻이다. 지금도 비어 있으면 같은 (빈) 세션이므로
+ * 보고 대상이 맞다 — #433 이 메운 구멍이 이 경우다. 반대로 그 사이 토큰이 생겼다면 이미
+ * 지나간 세션의 응답이라 무시한다.
+ */
+internal fun Request.usesCurrentToken(): Boolean {
+    val sent = header("Authorization")?.removePrefix("Bearer ").orEmpty()
+    return sent == TokenHolder.token
+}
+
 /**
  * 본문이 우리 API 의 JSON 으로 보이는가. Content-Type 만 본다(본문을 읽으면 소비돼 버린다).
  *
@@ -123,11 +152,6 @@ private val okHttpClient = OkHttpClient.Builder()
 internal fun Response.looksLikeJson(): Boolean {
     val subtype = body?.contentType()?.subtype?.lowercase() ?: return true
     return subtype == "json" || subtype.endsWith("+json")
-}
-
-internal fun Request.isCredentialEndpoint(): Boolean {
-    val path = url.encodedPath.substringAfter("/api/v1", "")
-    return path == "/auth/guest" || path.startsWith("/auth/login/")
 }
 
 val retrofit: Retrofit = Retrofit.Builder()
